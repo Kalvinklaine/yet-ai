@@ -32,6 +32,7 @@
     "smoke:controlled-agent-real-edit": "node scripts/smoke-controlled-agent-real-edit.mjs",
     "smoke:controlled-agent-real-verification": "node scripts/smoke-controlled-agent-real-verification.mjs",
     "smoke:controlled-agent-one-step-loop": "node scripts/smoke-controlled-agent-one-step-loop.mjs",
+    "smoke:controlled-agent-repair-loop": "node scripts/smoke-controlled-agent-repair-loop.mjs",
     "smoke:controlled-agent-resilience": "node scripts/smoke-controlled-agent-resilience.mjs",
     "smoke:controlled-agent-runtime-session": "node scripts/smoke-controlled-agent-runtime-session.mjs",
     "smoke:controlled-agent-run-state": "node scripts/smoke-controlled-agent-run-state.mjs",

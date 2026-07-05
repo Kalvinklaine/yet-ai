@@ -183,6 +183,14 @@ npm run smoke:controlled-agent-run-state
 
 The smoke transpiles the pure GUI run-state reducer and builds the GUI against loopback-only runtime mocks. It verifies the skeleton remains disabled until explicit user opt-in in reducer state, creates only GUI-local/mock run metadata from `/v1/caps`, renders metadata-driven planning/read/verification phases, supports visible Stop as local React state only, blocks unsafe metadata, and emits no hidden read/search/write/apply/verify/command/rollback/provider bridge or runtime authority. It also checks loopback-only network, clean browser storage, no real agent start, no worktree mutation, and no raw prompt/file body/command/private-path/secret leakage. S76 is a preview-only state skeleton: it is not a runtime loop, not autonomous execution, not production readiness, not a provider/tool surface, and not real-provider CI evidence.
 
+For the S87 bounded repair eligibility boundary, run:
+
+```sh
+npm run smoke:controlled-agent-repair-loop
+```
+
+The smoke transpiles and imports the pure GUI repair-loop evaluator locally, then checks failed/timed-out verification eligibility, one-attempt exhaustion, explicit user confirmation before repair metadata, non-failed verification ineligibility, unsafe metadata blocking, user Stop behavior, and all-false authority flags. S87 is explicit bounded repair eligibility/UX evidence only: it is not automatic repair orchestration, not multiple repair attempts, not a runtime/provider loop, not hidden reads/search/indexing, not free-form shell/git/package/network/tool authority, not raw persistence, and not production autonomy.
+
 The full S76 final audit gate is:
 
 ```sh

@@ -286,6 +286,18 @@ npm run smoke:controlled-agent-one-step-loop
 
 Manual RC notes may record only sanitized one-step status, counters, bounded path labels, command id labels, stop reason, and terminal report metadata. Do not paste raw prompts, provider responses, file bodies, diffs, replacement text, command strings, cwd/env values, stdout/stderr dumps, private paths, secrets, bridge payloads, browser-storage dumps, or raw local evidence. Do not report S86 as arbitrary shell access, hidden reads/search/indexing, broad mutation, create/delete/rename/move support, git/package/network/tool authority, provider tool calling, automatic repair/retry/rollback, browser or JetBrains execution authority, task-board mutation, production autonomy, marketplace readiness, release readiness, or real-provider CI.
 
+## S87 bounded repair eligibility note
+
+S87 adds explicit bounded repair eligibility/UX evidence after a failed or timed-out allowlisted controlled verification. Manual RC language should describe only sanitized eligibility, attempt budget, previous verification status, repair proposal/edit/verification labels, user confirmation state, and terminal stop reason. The user must explicitly confirm the one bounded repair attempt; the panel evidence and focused smoke are not automatic repair orchestration.
+
+The exact focused S87 smoke is:
+
+```sh
+npm run smoke:controlled-agent-repair-loop
+```
+
+Manual RC notes may record only sanitized repair state, attempt count, max-attempt count, verification-run count, user-turn count, stop reason, and diagnostic labels. Confirm that non-failed verification is ineligible, unsafe metadata blocks, user Stop stops, and no second repair attempt is offered. Do not paste raw prompts, provider responses, file bodies, diffs, replacement text, command strings, cwd/env values, stdout/stderr dumps, private paths, secrets, bridge payloads, browser-storage dumps, or raw local evidence. Do not report S87 as automatic repair, automatic retry, automatic verification, automatic rollback, broad mutation, hidden reads/search/indexing, free-form shell, git/package/network/tool authority, provider tool calling, production autonomy, marketplace readiness, release readiness, or real-provider CI.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
