@@ -442,9 +442,15 @@ Passing this smoke means unsupported or stale controlled-agent signals fail clos
 
 Sprint 90 uses [`../dogfood/s90-controlled-autonomy-readiness.md`](../dogfood/s90-controlled-autonomy-readiness.md) as the controlled-autonomy readiness decision matrix. The matrix records evidence and an honest `ready`, `partial`, or `blocked` decision for explicit Start/Stop, bounded read, bounded edit, allowlisted verification, one repair attempt, dogfood usefulness, cross-host availability, resilience, and public wording safety.
 
-The overall S90 decision is `partial`: the controlled local-agent path has enough bounded dev-preview evidence for narrow local dogfood planning and further hardening, but it is not production autonomy, not real-provider CI, and not cross-host complete. VS Code remains the only current real controlled execution host for implemented slices. Browser remains preview-only/unsupported for trusted workspace execution, and JetBrains remains fail-closed for controlled execution parity until future verified work changes that status.
+The overall S90 decision is `partial`: approve only an experimental controlled local agent dev-preview for narrow local/mock and explicit-user-start evidence. The controlled local-agent path has enough bounded dev-preview evidence for narrow local dogfood planning and further hardening, but it is not production autonomy, not broad workspace automation, not real-provider CI, not release or marketplace evidence, and not cross-host complete. VS Code remains the only current real controlled execution host for implemented slices. Browser remains preview-only/unsupported for trusted workspace execution, and JetBrains remains fail-closed for controlled execution parity until future verified work changes that status.
 
-S90 adds no production autonomy, no broad workspace authority, no hidden reads/search/indexing, no free-form shell/git/package/network/provider-tool authority, no automatic repair/retry/rollback, no raw payload persistence, and no real-provider CI claim. The exact documentation gate remains:
+S90 adds no production autonomy, no broad workspace authority, no hidden reads/search/indexing, no free-form shell/git/package/network/provider-tool authority, no automatic repair/retry/rollback, no raw payload persistence, and no real-provider CI claim. Its evidence summary is the fixed local/mock chain: S86 one-step loop, S87 one-attempt repair eligibility, S88 useful dogfood fixture validation, optional S89 resilience, and S90 public wording safety. The exact S90 verification chain is:
+
+```sh
+npm run smoke:controlled-autonomy-readiness && npm run audit:controlled-autonomy-wording && npm run check
+```
+
+The readiness smoke includes `npm run audit:controlled-autonomy-wording`, and the audit is repeated explicitly in the acceptance chain to keep final public wording hygiene visible. For smaller documentation-only sanity checks, the minimum repository validation remains:
 
 ```sh
 npm run check

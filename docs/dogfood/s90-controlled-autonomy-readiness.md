@@ -1,6 +1,6 @@
 # S90 Controlled Autonomy Readiness Matrix
 
-This matrix is the Sprint 90 readiness gate for the controlled local-agent path. It is experimental/dev-preview evidence only, not production autonomy, not real-provider CI, not a marketplace or release gate, and not approval for broad workspace authority. The current evidence remains local-first, explicit-user, bounded, and sanitized.
+This matrix is the Sprint 90 readiness gate for the controlled local-agent path. It is experimental/dev-preview evidence only, not production autonomy, not real-provider CI, not a marketplace or release gate, and not approval for broad workspace authority. The current evidence remains local-first, explicit-user-start, bounded, and sanitized.
 
 Decision values:
 
@@ -24,7 +24,17 @@ Decision values:
 
 ## S90 readiness decision
 
-S90 is `partial` overall. The controlled local-agent path is useful enough for narrow local dogfood planning and continued dev-preview hardening, but it is not production autonomy and not cross-host complete.
+S90 is `partial` overall. The controlled local-agent path is useful enough for narrow local/mock dogfood planning and continued dev-preview hardening, but it is not production autonomy, not broad workspace automation, not real-provider CI, and not cross-host complete.
+
+Final S90 wording: approve only an experimental controlled local agent dev-preview for narrow local/mock and explicit-user-start evidence. This approval is limited to the documented S86-S89 evidence chain and does not approve production autonomy, broad workspace automation, real-provider CI, release evidence, marketplace evidence, or cross-host controlled execution parity.
+
+Evidence summary:
+
+- S86 proves a deterministic one-step controlled loop can advance after explicit Start through one bounded read, one sanitized proposal step, one bounded edit metadata step, one allowlisted verification metadata step, and a sanitized terminal report, with Stop and unsafe states failing closed.
+- S87 proves at most one bounded repair eligibility path after failed or timed-out verification, and only after explicit user confirmation; it is not automatic repair.
+- S88 proves useful small-task fixture shape and matrix wiring for local/mock planning only; it does not execute GUI orchestration or provider calls.
+- S89 proves resilience for stale results, Stop, runtime disconnect, duplicate terminal results, capped repair eligibility, and stale privileged host messages failing closed.
+- The S90 readiness bundle runs these local/mock gates in fixed fail-fast order and includes the public wording audit.
 
 Allowed S90 claims:
 
@@ -45,9 +55,25 @@ Disallowed S90 claims:
 - automatic repair, automatic retry, automatic rollback, or multi-step autonomous execution;
 - raw prompt, file body, diff, command, output, private path, secret, or bridge payload persistence.
 
+Remaining limitations:
+
+- Browser remains preview-only/unsupported for trusted workspace execution and must not be reported as a controlled execution host.
+- JetBrains remains fail-closed/unsupported for controlled execution parity until future verified work changes that status.
+- VS Code is the only current real controlled execution host for implemented bounded read, bounded edit, and allowlisted verification slices.
+- Dogfood usefulness is fixture-validation and planning evidence, not executed real-provider or cross-host CI evidence.
+- Release, marketplace, signing, notarization, installer, update-channel, and production support evidence remain out of scope.
+
 ## Verification
 
-For this documentation gate, run:
+For this S90 documentation and readiness audit gate, run the exact acceptance chain:
+
+```sh
+npm run smoke:controlled-autonomy-readiness && npm run audit:controlled-autonomy-wording && npm run check
+```
+
+The readiness smoke runs S86 one-step loop, S87 one-attempt repair loop, S88 useful dogfood fixture validation, the S90 public wording audit, and the S89 resilience gate when that script exists. The separate wording audit invocation is kept explicit so final docs remain public-hygiene-safe even though `npm run check` also runs it.
+
+For documentation-only sanity during smaller edits, the minimum repository validation remains:
 
 ```sh
 npm run check
