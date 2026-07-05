@@ -144,7 +144,7 @@ export function buildControlledLocalAgentMvp(input: unknown): ControlledLocalAge
     step("bounded_read", fileReadStepState(boundedRead.state), boundedRead.summary, boundedRead.diagnostics.map((item) => item.code)),
     step("edit_metadata", editStepState(edit.state), edit.summary, edit.diagnostics),
     step("verification", verificationStepState(verification.state), verification.summary, verification.diagnostics.map((item) => item.code)),
-    step("repair", repair ? repairStepState(repair.state, repair.mustStop) : "pending", repair ? `Repair metadata ${repair.state}.` : "Repair metadata is unavailable.", repair?.diagnostics ?? []),
+    step("repair", repair ? repairStepState(repair.state, repair.mustStop) : "pending", repair ? `Repair metadata ${repair.state}.` : "Repair metadata is unavailable.", repair?.diagnostics.map((item) => item.code) ?? []),
     step("final_report", finalReportStepState(status), progress.finalReport?.summary ?? progress.currentStepLabel, progress.diagnostics),
   ];
   const diagnostics = uniqueDiagnostics([...readinessDiagnostics, ...runtimeSession.diagnostics, ...progress.diagnostics]);
@@ -194,7 +194,7 @@ function verificationStepState(state: string): ControlledLocalAgentMvpChecklistS
 function repairStepState(state: string, mustStop: boolean): ControlledLocalAgentMvpChecklistState {
   if (mustStop) return state === "exhausted" ? "failed" : "blocked";
   if (state === "eligible") return "ready";
-  if (state === "completed") return "completed";
+  if (state === "repaired") return "completed";
   return "pending";
 }
 
