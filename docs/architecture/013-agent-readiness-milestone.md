@@ -410,6 +410,18 @@ cd apps/gui && npm test -- bridgeAdapter App && npm run typecheck
 
 These checks are local/mock evidence only. They do not call providers, require hosted Yet AI services, grant browser workspace authority, or implement JetBrains controlled verification execution.
 
+## Sprint 89 resilience smoke and final audit status
+
+Sprint 89 also adds a focused controlled-agent resilience smoke for stale, Stop, and disconnect behavior:
+
+```sh
+npm run smoke:controlled-agent-resilience
+```
+
+This smoke is an audit gate over already-scoped S86/S87/S89 behavior. It runs the existing GUI resilience tests for controlled Agent Run verification correlation, one-step loop stop states, and bounded repair eligibility, plus the VS Code webview readiness tests for pre-ready privileged message rejection and stale host-ready correlation. The covered cases are stale controlled verification results after chat changes, stale results after explicit Stop, stale results after runtime disconnect, duplicate controlled verification terminal results, one-step loop explicit Stop, one-step loop runtime disconnect, no automatic repair from S86, capped/user-confirmed S87 repair eligibility, pre-ready controlled command/edit rejection, and stale host-ready privileged-message blocking.
+
+Passing this smoke means unsupported or stale controlled-agent signals fail closed and do not advance the current run. It does not add new execution authority, a provider/model loop, browser or JetBrains controlled verification execution, hidden reads/search/indexing, free-form shell, git/package/network authority, automatic retry, automatic repair, rollback execution, task-board mutation, raw output persistence, production autonomy, marketplace readiness, release readiness, or real-provider CI. Resilience evidence stays local/mock-only and bounded to explicit user-controlled paths.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

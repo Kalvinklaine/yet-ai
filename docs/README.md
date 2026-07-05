@@ -270,6 +270,14 @@ S85 enables real allowlisted controlled Agent Run verification execution in VS C
 
 S85 does not implement repair, retry, rollback, a provider/model loop, arbitrary shell execution, model-selected command text, task-board mutation, production autonomy, marketplace readiness, release readiness, or real-provider CI. S86 remains the earliest honest one-step controlled-autonomy milestone, and only after bounded read, edit, verification, loop, reporting, and safety gates are intentionally wired and verified.
 
+For the S89 controlled resilience smoke, run:
+
+```sh
+npm run smoke:controlled-agent-resilience
+```
+
+The smoke runs focused GUI and VS Code plugin checks for stale, duplicate, Stop, and runtime-disconnect resilience. It verifies controlled verification results are correlated before they can update Agent Run state, stale host results after chat changes, Stop, or runtime disconnect stay ignored, duplicate terminal results do not overwrite accepted state, the one-step loop stops on explicit Stop/runtime disconnect without repair, bounded repair stays user-confirmed and capped, and VS Code pre-ready or stale host-ready privileged messages fail closed with sanitized results. It is local/mock-only evidence: it does not add provider calls, a runtime loop, browser or JetBrains execution authority, hidden reads, free-form shell, git/package/network actions, auto-retry, auto-repair, rollback, task-board mutation, raw output persistence, production autonomy, marketplace readiness, release readiness, or real-provider CI.
+
 For S88 useful-autonomy dogfood planning, use `docs/dogfood/s88-useful-autonomy-matrix.md`. The matrix defines deterministic small-task fixtures for copy change, simple TypeScript fix, failing test fix, one-file code cleanup, and recovery copy. Each row stays within S86/S87 authority: one explicit Start, one bounded read, one sanitized proposal step, one bounded replacement edit, one allowlisted verification command id, and at most one bounded repair attempt when S87 repair metadata is available. It is planning evidence only until future implementation cards add runnable fixtures or smokes.
 
 The exact S85 final audit gate is:
