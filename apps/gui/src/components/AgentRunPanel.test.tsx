@@ -87,6 +87,43 @@ const rollbackCompletedState = {
   summary: "Rollback completion is reported with sanitized status",
 };
 
+const idleOneStepLoop = {
+  phase: "idle",
+  authority: "one_step_loop_metadata_only",
+  cloudRequired: false,
+  executionAllowed: false,
+  agentStartAllowed: false,
+  autoStartAllowed: false,
+  canReadFiles: false,
+  canWriteFiles: false,
+  canRunCommands: false,
+  canApplyEdits: false,
+  canCallProvider: false,
+  canUseGit: false,
+  canUseNetwork: false,
+  canUseTools: false,
+  canInstallPackages: false,
+  canRepair: false,
+  enabled: false,
+  stopped: false,
+  budgets: { maxLoopSteps: 1, maxFileReads: 1, maxReadBytes: 8192, maxTouchedFiles: 1, maxEditBytes: 12000, maxVerificationRuns: 1, maxRuntimeSeconds: 300, maxRepairAttempts: 0 },
+  counters: { loopSteps: 0, fileReads: 0, readBytes: 0, filesTouched: 0, editBytes: 0, verificationRuns: 0, runtimeSeconds: 0, userTurns: 0, repairAttempts: 0 },
+  summary: "One-step controlled loop is idle until explicit user start.",
+  diagnostics: [],
+  details: {},
+} as const;
+
+const activeOneStepLoop = {
+  ...idleOneStepLoop,
+  phase: "read_context",
+  enabled: true,
+  summary: "Bounded read completed.",
+  counters: { ...idleOneStepLoop.counters, fileReads: 1, readBytes: 120 },
+} as const;
+
+const readyOneStepRequest = { state: "ready", diagnostics: [], details: {}, authority: {} } as any;
+const blockedOneStepRequest = { state: "blocked", diagnostics: [{ code: "blocked", message: "not ready" }], details: {}, authority: {} } as any;
+
 const readyInput: AgentRunInput = {
   goal: { id: "goal-1", title: "Add safe panel", summary: "Add safe panel" },
   proposal: { id: "proposal-1", summary: "Small safe proposal", touchedFiles: ["src/example.ts"] },
@@ -143,6 +180,77 @@ describe("AgentRunPanel", () => {
     expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
     expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
     expect(findButton("Manually review rollback").disabled).toBe(true);
+  });
+
+  it("renders explicit S86 one-step Start and Stop controls", () => {
+    const onStartOneStepRun = vi.fn();
+    const onStopOneStepRun = vi.fn();
+    renderPanel(undefined, {
+      host: "vscode",
+      oneStepLoopState: idleOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+      onStartOneStepRun,
+      onStopOneStepRun,
+    });
+
+    expect(panelText()).toContain("S86 one-step Agent Run");
+    expect(panelText()).toContain("VS Code-only");
+    expect(panelText()).toContain("explicit Start/Stop");
+    expect(panelText()).toContain("Read request: ready");
+    expect(panelText()).toContain("Edit request: ready");
+    expect(panelText()).toContain("Verification request: ready");
+    expect(findButton("Start one-step Agent Run").disabled).toBe(false);
+    expect(findButton("Stop one-step Agent Run").disabled).toBe(true);
+
+    act(() => {
+      findButton("Start one-step Agent Run").click();
+    });
+    expect(onStartOneStepRun).toHaveBeenCalledTimes(1);
+    expect(onStopOneStepRun).not.toHaveBeenCalled();
+
+    renderPanel(undefined, {
+      host: "vscode",
+      oneStepLoopState: activeOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+      onStartOneStepRun,
+      onStopOneStepRun,
+    });
+
+    expect(findButton("Start one-step Agent Run").disabled).toBe(true);
+    expect(findButton("Stop one-step Agent Run").disabled).toBe(false);
+    act(() => {
+      findButton("Stop one-step Agent Run").click();
+    });
+    expect(onStopOneStepRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables S86 one-step Start outside VS Code and when prerequisites are blocked", () => {
+    renderPanel(undefined, {
+      host: "jetbrains",
+      oneStepLoopState: idleOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+    });
+
+    expect(panelText()).toContain("One-step controlled run Start is disabled outside VS Code and posts no bridge request.");
+    expect(findButton("Start one-step Agent Run").disabled).toBe(true);
+
+    renderPanel(undefined, {
+      host: "vscode",
+      oneStepLoopState: idleOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: blockedOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+    });
+
+    expect(panelText()).toContain("Start needs ready controlled read, edit, and allowlisted verification request metadata.");
+    expect(panelText()).toContain("Edit request: blocked");
+    expect(findButton("Start one-step Agent Run").disabled).toBe(true);
   });
 
   it("renders goal ready state before a proposal", () => {
@@ -730,6 +838,12 @@ type PanelTestProps = {
   onDraftVerificationFollowup?: () => void;
   onDraftVerificationFix?: () => void;
   proposalHistory?: ProposalHistory;
+  oneStepLoopState?: any;
+  oneStepReadRequest?: any;
+  oneStepEditRequest?: any;
+  oneStepCommandRunRequest?: any;
+  onStartOneStepRun?: () => void;
+  onStopOneStepRun?: () => void;
 };
 
 function renderPanel(input: unknown, props: PanelTestProps = {}) {
@@ -754,6 +868,12 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onDraftVerificationFollowup={props.onDraftVerificationFollowup ?? vi.fn()}
         onDraftVerificationFix={props.onDraftVerificationFix ?? vi.fn()}
         proposalHistory={props.proposalHistory ?? proposalHistory}
+        oneStepLoopState={props.oneStepLoopState}
+        oneStepReadRequest={props.oneStepReadRequest}
+        oneStepEditRequest={props.oneStepEditRequest}
+        oneStepCommandRunRequest={props.oneStepCommandRunRequest}
+        onStartOneStepRun={props.onStartOneStepRun}
+        onStopOneStepRun={props.onStopOneStepRun}
       />,
     );
   });

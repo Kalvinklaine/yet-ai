@@ -2,6 +2,10 @@ import type { ApplyWorkspaceEditPayload, BridgeHost, VerificationCommandId } fro
 import { buildAgentRunApplyRiskSummary } from "../services/agentRunApplyRisk";
 import { buildAgentRunCheckpointDecision, type AgentRunCheckpointDecisionSummary } from "../services/agentRunCheckpointDecision";
 import { evaluateAgentRunState, type AgentRunInput } from "../services/agentRunState";
+import type { ControlledAgentCommandRunRequestResult } from "../services/controlledAgentCommandRunRequest";
+import type { ControlledAgentEditRequestResult } from "../services/controlledAgentEditRequest";
+import type { ControlledAgentFileReadRequestResult } from "../services/controlledAgentFileReadRequest";
+import type { ControlledOneStepAgentLoopState } from "../services/controlledOneStepAgentLoop";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
 import { sanitizeDisplayText } from "../services/redaction";
@@ -18,9 +22,15 @@ export type AgentRunPanelProps = {
   onDraftVerificationFix: () => void;
   proposalHistory?: ProposalHistory;
   verificationFixDraft?: GuidedFixLoopDraftState;
+  oneStepLoopState?: ControlledOneStepAgentLoopState;
+  oneStepReadRequest?: ControlledAgentFileReadRequestResult;
+  oneStepEditRequest?: ControlledAgentEditRequestResult;
+  oneStepCommandRunRequest?: ControlledAgentCommandRunRequestResult;
+  onStartOneStepRun?: () => void;
+  onStopOneStepRun?: () => void;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, onStartOneStepRun, onStopOneStepRun }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -70,6 +80,13 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const showPlanPreview = Boolean(textDetail(details.planPreviewTitle) || textDetail(details.planPreviewSummary) || planPreviewSteps.length > 0 || planPreviewRisks.length > 0 || planPreviewExpectedTouchedFiles.length > 0 || planPreviewVerificationSuggestions.length > 0);
   const showProposalReviewMetadata = Boolean(textDetail(details.proposalPlanSummary) || proposalPlanSteps.length > 0 || proposalRisks.length > 0 || proposalVerificationSuggestions.length > 0);
   const checkpointRollbackCopy = checkpointRollbackStatusCopy(details);
+  const showOneStepLoop = Boolean(oneStepLoopState);
+  const oneStepReadReady = oneStepReadRequest?.state === "ready";
+  const oneStepEditReady = oneStepEditRequest?.state === "ready";
+  const oneStepCommandReady = oneStepCommandRunRequest?.state === "ready";
+  const oneStepActive = Boolean(oneStepLoopState && oneStepLoopState.phase !== "idle" && oneStepLoopState.phase !== "completed" && oneStepLoopState.phase !== "failed" && oneStepLoopState.phase !== "stopped");
+  const canStartOneStep = host === "vscode" && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
+  const canStopOneStep = Boolean(onStopOneStepRun) && oneStepActive;
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -128,6 +145,35 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           {checkpointDecision.details.verificationExitCode !== undefined && <span>Verification exit code: {String(checkpointDecision.details.verificationExitCode)}</span>}
           {checkpointDecision.diagnostics.length > 0 && <span className="subtle">Decision diagnostics: {checkpointDecision.diagnostics.map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span>}
           <span className="subtle">Continue means keep working in the current checkpoint by explicit user choice only. Review rollback opens the existing review-only path when available. Start separate manual run is guidance only and creates nothing.</span>
+        </div>
+      )}
+      {showOneStepLoop && oneStepLoopState && (
+        <div className={`readiness-card ${canStartOneStep || oneStepLoopState.phase === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="S86 one-step Agent Run">
+          <div className="row">
+            <strong>S86 one-step Agent Run</strong>
+            <span className={host === "vscode" ? "badge ok" : "badge warn"}>VS Code-only</span>
+            <span className="badge">explicit Start/Stop</span>
+            <span className="badge">sanitized metadata</span>
+          </div>
+          <span>{sanitizeDisplayText(oneStepLoopState.summary)}</span>
+          <div className="agent-progress-grid" aria-label="S86 one-step readiness fields">
+            <span>Phase: {oneStepLoopState.phase.replace(/_/g, " ")}</span>
+            <span>Read request: {oneStepReadReady ? "ready" : oneStepReadRequest?.state ?? "missing"}</span>
+            <span>Edit request: {oneStepEditReady ? "ready" : oneStepEditRequest?.state ?? "missing"}</span>
+            <span>Verification request: {oneStepCommandReady ? "ready" : oneStepCommandRunRequest?.state ?? "missing"}</span>
+            <span>Loop steps used: {oneStepLoopState.counters.loopSteps}/{oneStepLoopState.budgets.maxLoopSteps}</span>
+            <span>Reads used: {oneStepLoopState.counters.fileReads}/{oneStepLoopState.budgets.maxFileReads}</span>
+            <span>Verification runs: {oneStepLoopState.counters.verificationRuns}/{oneStepLoopState.budgets.maxVerificationRuns}</span>
+            <span>Repair attempts: {oneStepLoopState.counters.repairAttempts}/{oneStepLoopState.budgets.maxRepairAttempts}</span>
+          </div>
+          {oneStepLoopState.stop && <span>Stop reason: {sanitizeDisplayText(oneStepLoopState.stop.reason.replace(/_/g, " "))}</span>}
+          {host !== "vscode" && <span className="subtle">One-step controlled run Start is disabled outside VS Code and posts no bridge request.</span>}
+          {host === "vscode" && !canStartOneStep && !oneStepActive && <span className="subtle">Start needs ready controlled read, edit, and allowlisted verification request metadata.</span>}
+          <span className="subtle">Start sequences exactly one bounded read, one sanitized model-step metadata transition, one bounded edit request, and one allowlisted controlled verification request. Stop clears GUI-local pending correlations only.</span>
+          <div className="row" role="group" aria-label="S86 one-step Agent Run actions">
+            <button type="button" onClick={onStartOneStepRun} disabled={!canStartOneStep}>Start one-step Agent Run</button>
+            <button type="button" className="secondary-button" onClick={onStopOneStepRun} disabled={!canStopOneStep}>Stop one-step Agent Run</button>
+          </div>
         </div>
       )}
       {view.diagnostics.length > 0 && (

@@ -51,6 +51,7 @@ import { buildControlledAgentProgressReport } from "./services/controlledAgentPr
 import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
 import { evaluateControlledAgentRuntimeSession } from "./services/controlledAgentRuntimeSession";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./services/controlledAgentRunState";
+import { createControlledOneStepAgentLoopState, reduceControlledOneStepAgentLoopState, type ControlledOneStepAgentLoopState } from "./services/controlledOneStepAgentLoop";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
 
@@ -450,6 +451,13 @@ export function App() {
   const controlledEditCompletedRequestIdRef = useRef<string | null>(null);
   const controlledCommandRunCorrelationRef = useRef<ControlledAgentCommandRunRequestCorrelation | null>(null);
   const controlledCommandRunCompletedRequestIdRef = useRef<string | null>(null);
+  const oneStepFileReadRequestIdRef = useRef<string | null>(null);
+  const oneStepEditRequestIdRef = useRef<string | null>(null);
+  const oneStepCommandRunRequestIdRef = useRef<string | null>(null);
+  const oneStepFileReadRequestRef = useRef<ReturnType<typeof buildControlledAgentFileReadRequest> | null>(null);
+  const oneStepEditRequestRef = useRef<ReturnType<typeof buildControlledAgentEditRequest> | null>(null);
+  const oneStepCommandRunRequestRef = useRef<ReturnType<typeof buildControlledAgentCommandRunRequest> | null>(null);
+  const oneStepLoopRunCounterRef = useRef(0);
   const completedIdeActionRequestChatsRef = useRef<Map<string, string>>(new Map());
   const completedApplyRequestChatsRef = useRef<Map<string, string>>(new Map());
   const ideActionCounterRef = useRef(0);
@@ -468,6 +476,7 @@ export function App() {
   const [controlledCommandRunResultMetadata, setControlledCommandRunResultMetadata] = useState<unknown>(null);
   const [pendingControlledCommandRunRequestId, setPendingControlledCommandRunRequestId] = useState<string | null>(null);
   const [controlledCommandRunNote, setControlledCommandRunNote] = useState<string | null>(null);
+  const [oneStepLoopState, setOneStepLoopState] = useState<ControlledOneStepAgentLoopState>(() => createControlledOneStepAgentLoopState());
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -723,6 +732,14 @@ export function App() {
     requestSeed: "panel",
     jetbrainsFileReadSupported: false,
   }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  const oneStepControlledAgentFileReadRequest = useMemo(() => buildControlledAgentFileReadRequest({
+    host: bridgeHost,
+    runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
+    workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
+    workspaceRelativePath: "docs/architecture/013-agent-readiness-milestone.md",
+    requestSeed: "s86-one-step",
+    jetbrainsFileReadSupported: false,
+  }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
   const effectiveControlledEditMetadata = controlledEditResultMetadata ?? controlledAgentEditExecutorMetadata;
   const controlledAgentEditRequest = useMemo(() => buildControlledAgentEditRequest({
     host: bridgeHost,
@@ -730,6 +747,14 @@ export function App() {
     workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
     plannedEditMetadata: controlledAgentEditExecutorMetadata,
     requestSeed: "panel",
+    jetbrainsEditSupported: false,
+  }), [bridgeHost, controlledAgentEditExecutorMetadata, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  const oneStepControlledAgentEditRequest = useMemo(() => buildControlledAgentEditRequest({
+    host: bridgeHost,
+    runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
+    workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
+    plannedEditMetadata: controlledAgentEditExecutorMetadata,
+    requestSeed: "s86-one-step",
     jetbrainsEditSupported: false,
   }), [bridgeHost, controlledAgentEditExecutorMetadata, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
   const controlledAgentVerificationCommandId = agentRunInput?.boundedLoop && isRecord(agentRunInput.boundedLoop) ? verificationCommandIdOrUndefined(isRecord(agentRunInput.boundedLoop.verification) ? agentRunInput.boundedLoop.verification.commandId : undefined) : undefined;
@@ -747,9 +772,27 @@ export function App() {
     userConfirmed: true,
     requestSeed: agentRunInput?.applyRequest?.requestId ?? agentRunInput?.proposal?.id ?? "agent-run-verification",
   }), [agentRunInput, bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata, controlledAgentVerificationCommandId]);
+  const oneStepControlledAgentCommandRunRequest = useMemo(() => buildControlledAgentCommandRunRequest({
+    host: bridgeHost,
+    runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
+    workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
+    plannedCommandRunMetadata: {
+      runId: oneStepControlledAgentEditRequest.correlation?.runId,
+      workspaceReadinessId: oneStepControlledAgentEditRequest.correlation?.workspaceReadinessId,
+      commandId: "repository-check",
+      userConfirmed: true,
+    },
+    commandId: "repository-check",
+    userConfirmed: true,
+    requestSeed: "s86-one-step",
+  }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata, oneStepControlledAgentEditRequest.correlation?.runId, oneStepControlledAgentEditRequest.correlation?.workspaceReadinessId]);
+  oneStepFileReadRequestRef.current = oneStepControlledAgentFileReadRequest;
+  oneStepEditRequestRef.current = oneStepControlledAgentEditRequest;
+  oneStepCommandRunRequestRef.current = oneStepControlledAgentCommandRunRequest;
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
   const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || effectiveControlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined;
+  const showOneStepAgentRunPanel = oneStepLoopState.phase !== "idle" || (bridgeHost === "vscode" && oneStepControlledAgentFileReadRequest.state === "ready" && oneStepControlledAgentEditRequest.state === "ready" && oneStepControlledAgentCommandRunRequest.state === "ready");
   const controlledAgentProgressReport = useMemo(() => buildControlledAgentProgressReport({
     runState: controlledAgentRunState,
     controlledAgentFileRead: effectiveControlledAgentFileReadMetadata,
@@ -841,6 +884,7 @@ export function App() {
   const clearControlledFileReadState = useCallback((note: string | null = null) => {
     controlledFileReadCorrelationRef.current = null;
     controlledFileReadCompletedRequestIdRef.current = null;
+    oneStepFileReadRequestIdRef.current = null;
     setPendingControlledFileReadRequestId(null);
     setControlledFileReadResultMetadata(null);
     setControlledFileReadNote(note);
@@ -849,6 +893,7 @@ export function App() {
   const clearControlledEditState = useCallback((note: string | null = null) => {
     controlledEditCorrelationRef.current = null;
     controlledEditCompletedRequestIdRef.current = null;
+    oneStepEditRequestIdRef.current = null;
     setPendingControlledEditRequestId(null);
     setControlledEditResultMetadata(null);
     setControlledEditNote(note);
@@ -857,6 +902,7 @@ export function App() {
   const clearControlledCommandRunState = useCallback((note: string | null = null) => {
     controlledCommandRunCorrelationRef.current = null;
     controlledCommandRunCompletedRequestIdRef.current = null;
+    oneStepCommandRunRequestIdRef.current = null;
     agentRunVerificationCorrelationRef.current = null;
     agentRunVerificationChatIdRef.current = null;
     setPendingControlledCommandRunRequestId(null);
@@ -867,6 +913,7 @@ export function App() {
   const stopPendingControlledCommandRunState = useCallback((note: string) => {
     controlledCommandRunCorrelationRef.current = null;
     controlledCommandRunCompletedRequestIdRef.current = null;
+    oneStepCommandRunRequestIdRef.current = null;
     agentRunVerificationCorrelationRef.current = null;
     agentRunVerificationChatIdRef.current = null;
     setPendingControlledCommandRunRequestId(null);
@@ -880,6 +927,7 @@ export function App() {
 
   const stopControlledAgentRun = useCallback(() => {
     stopPendingControlledCommandRunState("Controlled Agent Run verification stopped in the GUI. Stale host results will be ignored.");
+    setOneStepLoopState((current) => current.phase === "idle" || current.phase === "completed" || current.phase === "failed" || current.phase === "stopped" ? current : reduceControlledOneStepAgentLoopState(current, { type: "stop", summary: "One-step run stopped in the GUI. Stale host results will be ignored." }));
     setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", reason: "user_stop", summary: "Controlled run stopped from the S76 skeleton UI." }));
   }, [stopPendingControlledCommandRunState]);
 
@@ -898,6 +946,7 @@ export function App() {
       return;
     }
     controlledFileReadCorrelationRef.current = null;
+    oneStepFileReadRequestIdRef.current = null;
     setPendingControlledFileReadRequestId(null);
     setControlledFileReadNote("Cleared pending controlled read state in the GUI only. No host-side cancellation was requested.");
   }, []);
@@ -907,6 +956,7 @@ export function App() {
       return;
     }
     controlledEditCorrelationRef.current = null;
+    oneStepEditRequestIdRef.current = null;
     setPendingControlledEditRequestId(null);
     setControlledEditNote("Cleared pending controlled edit state in the GUI only. No host-side cancellation was requested.");
   }, []);
@@ -916,6 +966,7 @@ export function App() {
       return;
     }
     controlledCommandRunCorrelationRef.current = null;
+    oneStepCommandRunRequestIdRef.current = null;
     agentRunVerificationCorrelationRef.current = null;
     agentRunVerificationChatIdRef.current = null;
     setPendingControlledCommandRunRequestId(null);
@@ -1048,7 +1099,14 @@ export function App() {
         setTimeline((current) => [`Runtime lifecycle status received: ${payload.lifecycle}`, ...current].slice(0, 80));
         appendTrace({ family: "host.runtimeStatus", title: "Runtime lifecycle status received", status: payload.lifecycle === "connected" ? "succeeded" : payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch" ? "failed" : "info", summary: `Host reported runtime ${payload.lifecycle}.`, details: { lifecycle: payload.lifecycle, tokenState: payload.tokenState, authority: payload.authority } });
         if (payload.lifecycle === "disconnected" || payload.lifecycle === "stopped" || payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch") {
+          controlledFileReadCorrelationRef.current = null;
+          controlledEditCorrelationRef.current = null;
+          oneStepFileReadRequestIdRef.current = null;
+          oneStepEditRequestIdRef.current = null;
           stopPendingControlledCommandRunState("Runtime disconnected or blocked controlled verification. Stale host results will be ignored; no auto-retry was started.");
+          setPendingControlledFileReadRequestId(null);
+          setPendingControlledEditRequestId(null);
+          setOneStepLoopState((current) => current.phase === "idle" || current.phase === "completed" || current.phase === "failed" || current.phase === "stopped" ? current : reduceControlledOneStepAgentLoopState(current, { type: "runtime_disconnect", summary: "One-step run stopped because runtime lifecycle became unavailable." }));
           setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", reason: "partial_execution_stopped", summary: "Controlled run stopped because runtime lifecycle became unavailable." }));
         }
       } else if (message.type === "host.controlledAgentFileReadResult") {
@@ -1063,17 +1121,24 @@ export function App() {
           return;
         }
         const correlation = correlateControlledAgentFileReadResult({ current, hostMessage: message });
+        const oneStepPendingRead = oneStepFileReadRequestIdRef.current === requestId;
         if (correlation.state === "accepted" && correlation.fileRead) {
           controlledFileReadCompletedRequestIdRef.current = requestId;
           controlledFileReadCorrelationRef.current = null;
+          oneStepFileReadRequestIdRef.current = null;
           setPendingControlledFileReadRequestId(null);
           setControlledFileReadResultMetadata(message.payload);
           setControlledFileReadNote(`Controlled read result accepted: ${correlation.fileRead.state}.`);
           appendTrace({ family: correlation.fileRead.state === "blocked" ? "controlledAgent.fileReadBlocked" : "controlledAgent.fileReadResult", title: "Controlled file read result received", status: correlation.fileRead.state === "blocked" ? "failed" : "succeeded", summary: correlation.fileRead.summary, requestId, details: correlation.details });
+          if (oneStepPendingRead) {
+            setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(reduceControlledOneStepAgentLoopState(currentLoop, { type: "read", metadata: message.payload }), { type: "model_step", metadata: { state: "completed", stepCount: 1, sanitizedOnly: true, modelProposalAllowed: true, providerPayloadStored: false, providerResponseStored: false, summary: "Sanitized one-step proposal metadata recorded." } }));
+            postOneStepEditRequest();
+          }
           return;
         }
         if (correlation.state === "duplicate") {
           controlledFileReadCorrelationRef.current = null;
+          oneStepFileReadRequestIdRef.current = null;
           setPendingControlledFileReadRequestId(null);
           setControlledFileReadNote("Ignored duplicate controlled read result.");
           return;
@@ -1083,7 +1148,11 @@ export function App() {
           return;
         }
         controlledFileReadCorrelationRef.current = null;
+        oneStepFileReadRequestIdRef.current = null;
         setPendingControlledFileReadRequestId(null);
+        if (oneStepPendingRead) {
+          setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "read", metadata: message.payload }));
+        }
         setControlledFileReadNote(correlation.diagnostics[0]?.message ?? "Controlled read result was blocked.");
       } else if (message.type === "host.controlledAgentEditResult") {
         const requestId = message.requestId ?? "unknown";
@@ -1097,17 +1166,26 @@ export function App() {
           return;
         }
         const correlation = correlateControlledAgentEditResult({ current, hostMessage: message });
+        const oneStepPendingEdit = oneStepEditRequestIdRef.current === requestId;
         if (correlation.state === "accepted" && correlation.edit) {
           controlledEditCompletedRequestIdRef.current = requestId;
           controlledEditCorrelationRef.current = null;
+          oneStepEditRequestIdRef.current = null;
           setPendingControlledEditRequestId(null);
           setControlledEditResultMetadata(message.payload);
           setControlledEditNote(`Controlled edit result accepted: ${correlation.edit.state}.`);
           appendTrace({ family: correlation.edit.state === "applied" ? "controlledAgent.editResult" : "controlledAgent.editBlocked", title: "Controlled edit result received", status: correlation.edit.state === "applied" ? "succeeded" : "failed", summary: correlation.edit.summary, requestId, details: correlation.details });
+          if (oneStepPendingEdit) {
+            setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "edit", metadata: controlledEditResultToOneStepMetadata(message.payload) }));
+            if (correlation.edit.state === "applied") {
+              postOneStepCommandRunRequest();
+            }
+          }
           return;
         }
         if (correlation.state === "duplicate") {
           controlledEditCorrelationRef.current = null;
+          oneStepEditRequestIdRef.current = null;
           setPendingControlledEditRequestId(null);
           setControlledEditNote("Ignored duplicate controlled edit result.");
           return;
@@ -1117,7 +1195,11 @@ export function App() {
           return;
         }
         controlledEditCorrelationRef.current = null;
+        oneStepEditRequestIdRef.current = null;
         setPendingControlledEditRequestId(null);
+        if (oneStepPendingEdit) {
+          setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "edit", metadata: controlledEditResultToOneStepMetadata(message.payload) }));
+        }
         setControlledEditNote(correlation.diagnostics[0]?.message ?? "Controlled edit result was blocked.");
       } else if (message.type === "host.controlledAgentCommandRunResult") {
         const requestId = message.requestId ?? "unknown";
@@ -1131,35 +1213,46 @@ export function App() {
           return;
         }
         const correlation = correlateControlledAgentCommandRunResult({ current, hostMessage: message });
+        const oneStepPendingCommand = oneStepCommandRunRequestIdRef.current === requestId;
         if (correlation.state === "accepted" && correlation.commandRun) {
-          setControlledCommandRunResultMetadata(controlledCommandRunResultToRunnerMetadata(current, correlation.commandRun));
-          setControlledCommandRunNote(`Controlled verification result accepted: ${correlation.commandRun.status}.`);
-          if (correlation.commandRun.status === "running") {
-            setAgentRunVerificationProgress({ status: "running", summary: correlation.commandRun.message });
-            appendTrace({ family: "controlledAgent.commandRunning", title: "Controlled Agent Run verification running", status: "in_progress", summary: correlation.commandRun.message, requestId, details: correlation.details });
+          const commandRun = correlation.commandRun;
+          const commandRunMetadata = controlledCommandRunResultToRunnerMetadata(current, commandRun);
+          setControlledCommandRunResultMetadata(commandRunMetadata);
+          setControlledCommandRunNote(`Controlled verification result accepted: ${commandRun.status}.`);
+          if (commandRun.status === "running") {
+            setAgentRunVerificationProgress({ status: "running", summary: commandRun.message });
+            if (oneStepPendingCommand) {
+              setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: commandRunMetadata }));
+            }
+            appendTrace({ family: "controlledAgent.commandRunning", title: "Controlled Agent Run verification running", status: "in_progress", summary: commandRun.message, requestId, details: correlation.details });
             return;
           }
           controlledCommandRunCompletedRequestIdRef.current = requestId;
           controlledCommandRunCorrelationRef.current = null;
+          oneStepCommandRunRequestIdRef.current = null;
           agentRunVerificationCorrelationRef.current = null;
           agentRunVerificationChatIdRef.current = null;
           setPendingControlledCommandRunRequestId(null);
           setAgentRunVerificationProgress(null);
           const verificationResult = {
-            status: correlation.commandRun.status === "succeeded" ? "succeeded" as const : "failed" as const,
-            exitCode: typeof correlation.commandRun.exitCode === "number" ? correlation.commandRun.exitCode : undefined,
-            durationMs: correlation.commandRun.durationMs,
-            outputTail: correlation.commandRun.outputTail,
+            status: commandRun.status === "succeeded" ? "succeeded" as const : "failed" as const,
+            exitCode: typeof commandRun.exitCode === "number" ? commandRun.exitCode : undefined,
+            durationMs: commandRun.durationMs,
+            outputTail: commandRun.outputTail,
           };
           agentRunVerificationResultRef.current = verificationResult;
           setAgentRunVerificationResult(verificationResult);
           const reportInput = { ...(agentRunInputRef.current ?? {}), verificationResult, verificationProgress: undefined, rollback: undefined };
           const report = createAgentRunReport(reportInput);
           appendTrace({ family: verificationResult.status === "succeeded" ? "agentRun.completed" : "agentRun.verificationResult", title: report.title, status: report.status === "succeeded" ? "succeeded" : "failed", summary: report.summary, requestId, details: createAgentRunTraceDetails(reportInput) });
+          if (oneStepPendingCommand) {
+            setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: commandRunMetadata }));
+          }
           return;
         }
         if (correlation.state === "duplicate") {
           controlledCommandRunCorrelationRef.current = null;
+          oneStepCommandRunRequestIdRef.current = null;
           agentRunVerificationCorrelationRef.current = null;
           agentRunVerificationChatIdRef.current = null;
           setPendingControlledCommandRunRequestId(null);
@@ -1171,9 +1264,13 @@ export function App() {
           return;
         }
         controlledCommandRunCorrelationRef.current = null;
+        oneStepCommandRunRequestIdRef.current = null;
         agentRunVerificationCorrelationRef.current = null;
         agentRunVerificationChatIdRef.current = null;
         setPendingControlledCommandRunRequestId(null);
+        if (oneStepPendingCommand) {
+          setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: message.payload }));
+        }
         setControlledCommandRunNote(correlation.diagnostics[0]?.message ?? "Controlled verification result was blocked.");
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
@@ -2234,6 +2331,89 @@ export function App() {
     appendTrace({ family: "controlledAgent.commandPlanned", title: "Controlled Agent Run verification requested", status: "pending", summary: "User clicked explicit controlled Agent Run verification.", requestId: controlledAgentCommandRunRequest.bridgeRequest.requestId, details: controlledAgentCommandRunRequest.details });
   }, [addTimeline, agentRunInput, appendTrace, bridgeHost, controlledAgentCommandRunRequest, pendingControlledCommandRunRequestId]);
 
+  const postOneStepEditRequest = useCallback(() => {
+    const request = oneStepEditRequestRef.current;
+    if (!request || request.state !== "ready" || !request.bridgeRequest || !request.correlation || controlledEditCorrelationRef.current || pendingControlledEditRequestId) {
+      setControlledEditNote(request?.diagnostics[0]?.message ?? "One-step controlled edit request is not ready.");
+      setOneStepLoopState((current) => reduceControlledOneStepAgentLoopState(current, { type: "edit", metadata: undefined }));
+      return;
+    }
+    controlledEditCorrelationRef.current = request.correlation;
+    controlledEditCompletedRequestIdRef.current = null;
+    oneStepEditRequestIdRef.current = request.bridgeRequest.requestId;
+    setPendingControlledEditRequestId(request.bridgeRequest.requestId);
+    setControlledEditResultMetadata(null);
+    setControlledEditNote("One-step controlled edit request posted after explicit Start.");
+    bridgeAdapterRef.current?.post(request.bridgeRequest);
+    addTimeline(`S86 one-step controlled edit requested ${request.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.editPending", title: "S86 one-step controlled edit requested", status: "pending", summary: "One-step run posted one bounded controlled edit request.", requestId: request.bridgeRequest.requestId, details: request.details });
+  }, [addTimeline, appendTrace, pendingControlledEditRequestId]);
+
+  const postOneStepCommandRunRequest = useCallback(() => {
+    const request = oneStepCommandRunRequestRef.current;
+    if (!request || request.state !== "ready" || !request.bridgeRequest || !request.correlation || controlledCommandRunCorrelationRef.current || pendingControlledCommandRunRequestId) {
+      setControlledCommandRunNote(request?.diagnostics[0]?.message ?? "One-step controlled verification request is not ready.");
+      setOneStepLoopState((current) => reduceControlledOneStepAgentLoopState(current, { type: "verification", metadata: undefined }));
+      return;
+    }
+    controlledCommandRunCorrelationRef.current = request.correlation;
+    controlledCommandRunCompletedRequestIdRef.current = null;
+    oneStepCommandRunRequestIdRef.current = request.bridgeRequest.requestId;
+    setPendingControlledCommandRunRequestId(request.bridgeRequest.requestId);
+    setControlledCommandRunResultMetadata(null);
+    setControlledCommandRunNote("One-step controlled verification request posted after bounded edit success.");
+    bridgeAdapterRef.current?.post(request.bridgeRequest);
+    addTimeline(`S86 one-step controlled verification requested ${request.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.commandPlanned", title: "S86 one-step controlled verification requested", status: "pending", summary: "One-step run posted one allowlisted controlled verification request.", requestId: request.bridgeRequest.requestId, details: request.details });
+  }, [addTimeline, appendTrace, pendingControlledCommandRunRequestId]);
+
+  const startOneStepAgentRun = useCallback(() => {
+    const readRequest = oneStepFileReadRequestRef.current;
+    const editRequest = oneStepEditRequestRef.current;
+    const commandRequest = oneStepCommandRunRequestRef.current;
+    if (bridgeHost !== "vscode" || !readRequest || !editRequest || !commandRequest || readRequest.state !== "ready" || editRequest.state !== "ready" || commandRequest.state !== "ready" || !readRequest.bridgeRequest || !readRequest.correlation || controlledFileReadCorrelationRef.current || controlledEditCorrelationRef.current || controlledCommandRunCorrelationRef.current || pendingControlledFileReadRequestId || pendingControlledEditRequestId || pendingControlledCommandRunRequestId) {
+      setControlledFileReadNote("S86 one-step Start requires VS Code and ready controlled read, edit, and verification metadata.");
+      return;
+    }
+    oneStepLoopRunCounterRef.current += 1;
+    oneStepFileReadRequestIdRef.current = readRequest.bridgeRequest.requestId;
+    oneStepEditRequestIdRef.current = null;
+    oneStepCommandRunRequestIdRef.current = null;
+    controlledFileReadCorrelationRef.current = readRequest.correlation;
+    controlledFileReadCompletedRequestIdRef.current = null;
+    setPendingControlledFileReadRequestId(readRequest.bridgeRequest.requestId);
+    setControlledFileReadResultMetadata(null);
+    setControlledEditResultMetadata(null);
+    setControlledCommandRunResultMetadata(null);
+    setControlledFileReadNote("S86 one-step controlled read request posted after explicit Start.");
+    setControlledEditNote(null);
+    setControlledCommandRunNote(null);
+    let next = createControlledOneStepAgentLoopState();
+    next = reduceControlledOneStepAgentLoopState(next, { type: "start", metadata: { source: "gui", confirmedBy: "user", assistantMinted: false, explicitUserStart: true, requestId: `s86-one-step-${oneStepLoopRunCounterRef.current}`, summary: "Explicit S86 one-step Agent Run start recorded." } });
+    setOneStepLoopState(next);
+    bridgeAdapterRef.current?.post(readRequest.bridgeRequest);
+    addTimeline(`S86 one-step controlled read requested ${readRequest.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.fileReadPlanned", title: `S86 one-step controlled read requested ${oneStepLoopRunCounterRef.current}`, status: "pending", summary: "User clicked Start one-step Agent Run; one bounded read was posted.", requestId: readRequest.bridgeRequest.requestId, details: readRequest.details });
+  }, [addTimeline, appendTrace, bridgeHost, pendingControlledCommandRunRequestId, pendingControlledEditRequestId, pendingControlledFileReadRequestId]);
+
+  const stopOneStepAgentRun = useCallback(() => {
+    controlledFileReadCorrelationRef.current = null;
+    controlledEditCorrelationRef.current = null;
+    controlledCommandRunCorrelationRef.current = null;
+    oneStepFileReadRequestIdRef.current = null;
+    oneStepEditRequestIdRef.current = null;
+    oneStepCommandRunRequestIdRef.current = null;
+    agentRunVerificationCorrelationRef.current = null;
+    agentRunVerificationChatIdRef.current = null;
+    setPendingControlledFileReadRequestId(null);
+    setPendingControlledEditRequestId(null);
+    setPendingControlledCommandRunRequestId(null);
+    setControlledFileReadNote("S86 one-step run stopped in the GUI. Stale read results will be ignored.");
+    setControlledEditNote("S86 one-step run stopped in the GUI. Stale edit results will be ignored.");
+    setControlledCommandRunNote("S86 one-step run stopped in the GUI. Stale verification results will be ignored.");
+    setOneStepLoopState((current) => reduceControlledOneStepAgentLoopState(current, { type: "stop", summary: "One-step run stopped in the GUI. Stale host results will be ignored." }));
+  }, []);
+
   const submitControlledFileRead = useCallback(() => {
     if (controlledAgentFileReadRequest.state !== "ready" || !controlledAgentFileReadRequest.bridgeRequest || !controlledAgentFileReadRequest.correlation || pendingControlledFileReadRequestId) {
       setControlledFileReadNote(controlledAgentFileReadRequest.diagnostics[0]?.message ?? "Controlled read request is not ready.");
@@ -3048,7 +3228,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} />
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
@@ -3303,6 +3483,39 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function controlledEditResultToOneStepMetadata(payload: unknown): unknown {
+  if (!isRecord(payload)) {
+    return payload;
+  }
+  const edits = Array.isArray(payload.edits) ? payload.edits.map((edit) => {
+    if (!isRecord(edit)) {
+      return edit;
+    }
+    return {
+      operation: edit.operation,
+      workspaceRelativePath: edit.workspaceRelativePath,
+      fileLabel: edit.fileLabel,
+      expectedContentHash: edit.expectedContentHash,
+      startLine: edit.startLine,
+      endLine: edit.endLine,
+      replacementByteCount: edit.replacementByteCount,
+      sanitizedSummary: edit.sanitizedSummary,
+    };
+  }) : payload.edits;
+  return {
+    type: payload.type,
+    schemaVersion: payload.schemaVersion,
+    state: payload.state,
+    runId: payload.runId,
+    workspaceReadinessId: payload.workspaceReadinessId,
+    requestId: payload.requestId,
+    requestIdMintedBy: payload.requestIdMintedBy,
+    userConfirmed: payload.userConfirmed,
+    limits: payload.limits,
+    edits,
+  };
 }
 
 function controlledCommandRunResultToRunnerMetadata(correlation: ControlledAgentCommandRunRequestCorrelation, result: ControlledAgentCommandRunResultSummary): Record<string, unknown> {

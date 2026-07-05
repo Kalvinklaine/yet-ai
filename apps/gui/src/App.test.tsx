@@ -8156,6 +8156,63 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
+  it("S86 one-step Start sequences read edit and controlled verification, while Stop ignores stale read", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }),
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("S86 one-step Agent Run");
+    expect(buttonWithin(panel, "Start one-step Agent Run").disabled).toBe(false);
+    await act(async () => {
+      buttonWithin(panel, "Start one-step Agent Run").click();
+    });
+
+    const readRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    expect(readRequest).toBeDefined();
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+
+    const readResult = controlledReadHostMessage(readRequest.requestId, readRequest.payload);
+    await dispatchHostControlledFileReadResult(readResult.requestId, readResult.payload);
+    const editRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentEditRequest")?.[0] as { requestId: string; payload: Record<string, any> };
+    expect(editRequest).toBeDefined();
+
+    const editResult = controlledEditHostMessage(editRequest.requestId, editRequest.payload);
+    await dispatchHostControlledEditResult(editResult.requestId, editResult.payload);
+    const commandRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentCommandRunRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    expect(commandRequest).toBeDefined();
+    expect(commandRequest.payload).toMatchObject({ commandId: "repository-check", userConfirmed: true, requestIdMintedBy: "gui" });
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
+
+    const commandResult = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload);
+    await dispatchHostControlledCommandRunResult(commandResult.requestId, commandResult.payload);
+    expect(agentRunPanel().textContent).toContain("Phase: completed");
+
+    postMessage.mockClear();
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Start one-step Agent Run").click();
+    });
+    const stoppedReadRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Stop one-step Agent Run").click();
+    });
+    const staleRead = controlledReadHostMessage(stoppedReadRequest.requestId, stoppedReadRequest.payload);
+    await dispatchHostControlledFileReadResult(staleRead.requestId, staleRead.payload);
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest")).toHaveLength(1);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
+    expect(agentRunPanel().textContent).toContain("Phase: stopped");
+  });
+
   it("Agent Run apply can post then controlled verification uses S85 command-run path", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
