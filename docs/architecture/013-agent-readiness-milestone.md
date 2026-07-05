@@ -48,8 +48,9 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S83 real bounded controlled file-read execution | Experimental manual-only | S83 adds one explicit user-clicked and correlated controlled workspace text-read request path, with real execution in the VS Code host only. Browser remains unsupported and JetBrains fails closed/unsupported. It adds no hidden/background reads, search, indexing, provider/model call, edit/write/apply, verification execution, shell/git/package/network/tool authority, raw-body persistence, or autonomy. S84 remains required for real bounded edit execution; S86 remains the earliest honest one-step controlled-autonomy milestone. |
 | S84 real bounded controlled replacement edit execution | Experimental manual-only | S84 adds real bounded controlled replacement edit execution for existing workspace-relative text files through explicit GUI request/click/correlation and expected `sha256:` content hash checks. VS Code is the real executor; browser remains unsupported and JetBrains fails closed with `edit_disabled`. It adds no create/delete/rename/move/chmod/binary/symlink edits, hidden/background edits, provider/model call, verification execution, shell/git/package/network/tool authority, raw file body/diff/replacement persistence, or autonomy. S85 remains required for real allowlisted verification execution, and S86 remains the earliest honest one-step controlled-autonomy milestone. |
 | S85 real allowlisted controlled verification execution | Experimental manual-only | S85 adds real allowlisted controlled Agent Run verification execution in VS Code only through explicit user click and `gui.controlledAgentCommandRunRequest` / `host.controlledAgentCommandRunResult`. The GUI request is GUI-minted, correlated to controlled runtime/workspace/readiness/run metadata, and carries one fixed allowlisted `commandId` with bounded timeout/output-tail limits and no command string, args, cwd, env, shell, git, network, provider/tool, file read/write, hidden search/indexing, package install, auto-run, auto-verify, or auto-fix authority. Browser is unsupported and JetBrains remains fail-closed/unsupported for controlled verification execution. Results are sanitized tail-only metadata. S85 adds no repair, retry, rollback, provider/model loop, arbitrary command execution, production autonomy, or real-provider CI; S86 remains the earliest honest one-step controlled-autonomy milestone. |
+| S86 one-step controlled loop | Experimental controlled-autonomy preview | S86 is the first intentionally named one-step experimental controlled-autonomy milestone. Its contract is metadata-only and starts only from explicit user confirmation, then records at most one bounded read, one sanitized proposal step, one bounded replacement-edit metadata step, one allowlisted verification metadata step, and a terminal report. It is not production autonomy and grants no auto-repair, free-form command, hidden read/search/indexing, raw prompt/file/diff/output persistence, unbounded edit, git, package, network, provider, or tool authority. |
 | Multi-step execution | Blocked/deferred | There is no implemented runner that executes a plan across multiple steps. S61 is only inert metadata. |
-| Controlled autonomy | Blocked/deferred | No autonomous loop is implemented. Any future controlled-autonomy work must pass the future eligibility gates below before design or implementation. |
+| Controlled autonomy beyond the S86 one-step preview | Blocked/deferred | Broader autonomous loops remain unimplemented. Any future controlled-autonomy work beyond the S86 one-step experimental preview must pass the future eligibility gates below before design or implementation. |
 | Auto-repair / auto-retry / auto-rollback | Blocked/deferred | Failed verification can stop and may produce a draft-only prompt. The product must not claim automatic repair, retry, verification, or rollback. |
 | Background reads or indexing | Blocked/deferred | Agent Run has no authority to scan workspaces, read hidden files, index in the background, or gather context without explicit user selection. |
 | Provider/tool calling | Blocked/deferred | Agent Run does not grant provider tool calls, local tools, shell, git, MCP, task execution, package installs, network actions, or arbitrary runtime commands. |
@@ -352,6 +353,20 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandR
 ```
 
 S86 remains the earliest honest one-step controlled-autonomy milestone, and only after bounded read, edit, verification, loop, reporting, and safety gates are intentionally wired and verified.
+
+## Sprint 86 one-step controlled loop contract status
+
+Sprint 86 is the first one-step experimental controlled-autonomy milestone. The S86 contract and fixtures describe explicit user start metadata, one bounded explicit file-read metadata step, one sanitized proposal-step metadata record, one bounded replacement-edit metadata record, one allowlisted verification metadata record, and one sanitized terminal report.
+
+S86 is not production autonomy. It must not be described as broad multi-step execution, background agent behavior, real-provider CI, marketplace readiness, or release readiness. It grants no automatic repair, free-form command execution, hidden read/search/indexing, raw prompt/file/diff/command/output persistence, unbounded edit authority, create/delete/rename/move authority, git/package/network/provider/tool authority, shell access, rollback execution, or task-board mutation.
+
+The S86 contract fixture gate is:
+
+```sh
+npm run validate:contracts
+```
+
+This gate validates metadata fixtures only. It does not run a real provider loop or prove production autonomy.
 
 ## Blocked and deferred capabilities
 

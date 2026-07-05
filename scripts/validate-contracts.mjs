@@ -134,6 +134,12 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-run-state.schema.json"
   ]),
   ...[
+    "controlled-agent-one-step-loop-completed.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-one-step-loop.schema.json"
+  ]),
+  ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
     "tool-authority-policy-shell-deny.json"
@@ -1159,6 +1165,17 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-run-state.schema.json"
+  ]),
+  ...[
+    "controlled-agent-one-step-loop-auto-repair.json",
+    "controlled-agent-one-step-loop-freeform-command.json",
+    "controlled-agent-one-step-loop-hidden-read-search.json",
+    "controlled-agent-one-step-loop-raw-prompt-diff-output.json",
+    "controlled-agent-one-step-loop-unbounded-edit.json",
+    "controlled-agent-one-step-loop-git-network-tool-package-authority.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-one-step-loop.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",

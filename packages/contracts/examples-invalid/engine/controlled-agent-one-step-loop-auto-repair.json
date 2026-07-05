@@ -1,0 +1,133 @@
+{
+  "kind": "controlled_agent_one_step_loop",
+  "version": "2026-07-05",
+  "authority": "one_step_loop_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "freeformCommandAllowed": false,
+  "autoRepairAllowed": true,
+  "workspace": {
+    "controlledWorkspaceId": "cw-s86-demo",
+    "runId": "run-s86-one-step",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "privatePathExposed": false,
+    "workspaceLabel": "S86 demo worktree"
+  },
+  "start": {
+    "requestId": "s86-start-001",
+    "source": "gui",
+    "confirmedBy": "user",
+    "assistantMinted": false,
+    "explicitUserStart": true,
+    "startedAt": "2026-07-05T00:00:00Z",
+    "summary": "User chose one step review"
+  },
+  "phase": "completed",
+  "status": "completed",
+  "budgets": {
+    "maxLoopSteps": 1,
+    "maxFileReads": 1,
+    "maxReadBytes": 8192,
+    "maxTouchedFiles": 1,
+    "maxEditBytes": 12000,
+    "maxVerificationRuns": 1,
+    "maxRuntimeSeconds": 300
+  },
+  "counters": {
+    "loopSteps": 1,
+    "fileReads": 1,
+    "filesTouched": 1,
+    "editBytes": 96,
+    "verificationRuns": 1,
+    "userTurns": 2
+  },
+  "policyFlags": {
+    "metadataOnly": true,
+    "boundedFileReadAllowed": true,
+    "singleProposalStepAllowed": true,
+    "boundedEditAllowed": true,
+    "allowlistedVerificationAllowed": true,
+    "freeformCommandAllowed": false,
+    "arbitraryShellAllowed": false,
+    "hiddenReadAllowed": false,
+    "searchAllowed": false,
+    "indexingAllowed": false,
+    "createAllowed": false,
+    "deleteAllowed": false,
+    "renameAllowed": false,
+    "moveAllowed": false,
+    "gitAllowed": false,
+    "packageInstallAllowed": false,
+    "networkAllowed": false,
+    "providerAuthorityAllowed": false,
+    "toolAuthorityAllowed": false,
+    "rawPromptPersistenceAllowed": false,
+    "rawFilePersistenceAllowed": false,
+    "rawDiffPersistenceAllowed": false,
+    "rawCommandPersistenceAllowed": false,
+    "rawOutputPersistenceAllowed": false,
+    "autoRepairAllowed": true
+  },
+  "steps": {
+    "boundedRead": {
+      "state": "completed",
+      "workspaceRelativePath": "docs/architecture/013-agent-readiness-milestone.md",
+      "singleExplicitFile": true,
+      "textOnly": true,
+      "recursive": false,
+      "globAllowed": false,
+      "regexAllowed": false,
+      "indexingAllowed": false,
+      "byteCount": 4096,
+      "lineCount": 120,
+      "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "summary": "One file excerpt metadata noted"
+    },
+    "proposal": {
+      "state": "completed",
+      "stepCount": 1,
+      "sanitizedOnly": true,
+      "providerPayloadStored": false,
+      "providerResponseStored": false,
+      "summary": "One safe proposal summary recorded"
+    },
+    "boundedEdit": {
+      "state": "completed",
+      "operation": "replace",
+      "workspaceRelativePath": "docs/architecture/013-agent-readiness-milestone.md",
+      "expectedContentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "replacementByteCount": 96,
+      "createAllowed": false,
+      "deleteAllowed": false,
+      "renameAllowed": false,
+      "moveAllowed": false,
+      "rawDiffStored": false,
+      "summary": "Existing note was updated by replacement metadata"
+    },
+    "verification": {
+      "state": "completed",
+      "commandId": "repository-check",
+      "allowlistedCommandIdOnly": true,
+      "freeformCommandAllowed": false,
+      "tailOnly": true,
+      "exitCode": 0,
+      "durationMs": 4200,
+      "resultHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "rawOutputStored": false,
+      "summary": "Repository check completed with safe tail evidence"
+    }
+  },
+  "terminalReport": {
+    "state": "completed",
+    "sanitizedOnly": true,
+    "rawPromptStored": false,
+    "rawFileStored": false,
+    "rawDiffStored": false,
+    "rawCommandStored": false,
+    "rawOutputStored": false,
+    "finishedAt": "2026-07-05T00:05:00Z",
+    "summary": "One step cycle completed with safe metadata"
+  }
+}
