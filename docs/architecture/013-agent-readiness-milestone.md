@@ -361,13 +361,21 @@ Sprint 86 is the first one-step experimental controlled-autonomy milestone. The 
 
 S86 is not production autonomy. It must not be described as broad multi-step execution, background agent behavior, real-provider CI, marketplace readiness, or release readiness. It grants no automatic repair, free-form command execution, hidden read/search/indexing, raw prompt/file/diff/command/output persistence, unbounded edit authority, create/delete/rename/move authority, git/package/network/provider/tool authority, shell access, rollback execution, or task-board mutation.
 
-The S86 contract fixture gate is:
+The focused S86 one-step controlled loop smoke is:
+
+```sh
+npm run smoke:controlled-agent-one-step-loop
+```
+
+The smoke is deterministic local/mock evidence over the GUI one-step loop service. It proves one explicit Start can advance through one bounded read, one sanitized proposal step, one bounded replacement-edit metadata step, one allowlisted verification metadata step, and one sanitized terminal report. It also proves missing Start, blocked read, unsafe proposal metadata, explicit Stop, runtime disconnect, and repair attempts fail closed without widening authority.
+
+The S86 contract fixture gate remains:
 
 ```sh
 npm run validate:contracts
 ```
 
-This gate validates metadata fixtures only. It does not run a real provider loop or prove production autonomy.
+These gates validate metadata fixtures and deterministic one-step state only. They do not run a real provider loop, execute broad workspace actions, enable arbitrary shell, read hidden workspace data, mutate broadly, persist raw payloads, run a repair loop, or prove production autonomy.
 
 ## Sprint 87 bounded repair loop contract status
 

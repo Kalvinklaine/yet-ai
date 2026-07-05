@@ -270,6 +270,14 @@ S85 enables real allowlisted controlled Agent Run verification execution in VS C
 
 S85 does not implement repair, retry, rollback, a provider/model loop, arbitrary shell execution, model-selected command text, task-board mutation, production autonomy, marketplace readiness, release readiness, or real-provider CI. S86 remains the earliest honest one-step controlled-autonomy milestone, and only after bounded read, edit, verification, loop, reporting, and safety gates are intentionally wired and verified.
 
+For the S86 one-step experimental controlled loop smoke, run:
+
+```sh
+npm run smoke:controlled-agent-one-step-loop
+```
+
+S86 is the first intentionally named one-step controlled-autonomy dev-preview milestone, but only in the narrow experimental sense: one explicit Start can advance deterministic/mock metadata through one bounded read, one sanitized proposal step, one bounded replacement-edit metadata step, one allowlisted verification metadata step, and one sanitized terminal report. The smoke proves missing Start, blocked read, unsafe proposal metadata, explicit Stop, runtime disconnect, and repair attempts fail closed. It is not production autonomy, not multi-step execution, not real-provider CI, not marketplace or release readiness, and not a broad agent runtime. It grants no arbitrary shell, hidden reads/search/indexing, broad mutation, create/delete/rename/move edits, git/package/network/tool authority, provider tool calling, raw prompt/file/diff/command/output persistence, automatic repair, automatic retry, automatic rollback, task-board mutation, browser or JetBrains execution authority, or model-selected commands.
+
 For the S89 controlled resilience smoke, run:
 
 ```sh

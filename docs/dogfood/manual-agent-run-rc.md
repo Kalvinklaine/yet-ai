@@ -274,6 +274,18 @@ npm run validate:contracts && cd apps/gui && npm test -- controlledAgentCommandR
 
 Manual RC notes may record only sanitized explicit-click verification request/result status, command id labels, exit status, duration/count/hash/truncation metadata, and unsupported-host state. Do not paste raw commands, args, cwd/env, stdout/stderr logs, private paths, secrets, provider/tool payloads, bridge payloads, or browser-storage dumps. Do not report S85 as arbitrary shell access, model-selected commands, package/git/network/provider/tool execution, automatic verification, automatic repair/retry/rollback, production autonomy, marketplace readiness, release readiness, or real-provider CI. S86 remains the earliest honest one-step controlled-autonomy milestone.
 
+## S86 one-step controlled loop note
+
+S86 is the first experimental one-step controlled-autonomy dev-preview milestone. In manual RC language, treat it as narrow one-step metadata evidence only: one explicit Start may lead through one bounded read, one sanitized proposal step, one bounded replacement-edit metadata step, one allowlisted verification metadata step, and one sanitized terminal report. It is not production autonomy, not multi-step execution, not real-provider CI, not marketplace or release readiness, and not a broad agent runtime.
+
+The exact focused S86 smoke is:
+
+```sh
+npm run smoke:controlled-agent-one-step-loop
+```
+
+Manual RC notes may record only sanitized one-step status, counters, bounded path labels, command id labels, stop reason, and terminal report metadata. Do not paste raw prompts, provider responses, file bodies, diffs, replacement text, command strings, cwd/env values, stdout/stderr dumps, private paths, secrets, bridge payloads, browser-storage dumps, or raw local evidence. Do not report S86 as arbitrary shell access, hidden reads/search/indexing, broad mutation, create/delete/rename/move support, git/package/network/tool authority, provider tool calling, automatic repair/retry/rollback, browser or JetBrains execution authority, task-board mutation, production autonomy, marketplace readiness, release readiness, or real-provider CI.
+
 ## Manual RC run checklist
 
 1. Start from a clean local checkout or sanitized dev-preview artifact label.
