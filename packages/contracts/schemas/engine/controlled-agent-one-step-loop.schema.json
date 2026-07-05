@@ -1,0 +1,389 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-one-step-loop.schema.json",
+  "title": "Controlled Agent One Step Loop Metadata",
+  "description": "Strict metadata-only Sprint 86 one-step controlled-agent loop contract. It records explicit user start, bounded single-file read metadata, one sanitized proposal step, bounded replacement-edit metadata, allowlisted verification metadata, and a terminal report while granting no arbitrary shell, hidden read, search, indexing, create, delete, rename, move, git, package, network, tool, raw payload persistence, or repair authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "agentStartAllowed",
+    "freeformCommandAllowed",
+    "autoRepairAllowed",
+    "workspace",
+    "start",
+    "phase",
+    "status",
+    "budgets",
+    "counters",
+    "policyFlags",
+    "steps",
+    "terminalReport"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "controlled_agent_one_step_loop"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-07-05"
+    },
+    "authority": {
+      "type": "string",
+      "const": "one_step_loop_metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "agentStartAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "freeformCommandAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "autoRepairAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "start": {
+      "$ref": "#/$defs/start"
+    },
+    "phase": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "user_started",
+        "bounded_read",
+        "proposal_step",
+        "bounded_edit",
+        "allowlisted_verification",
+        "terminal_report",
+        "blocked",
+        "failed",
+        "completed"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["idle", "running", "waiting_for_user", "blocked", "failed", "completed"]
+    },
+    "budgets": {
+      "$ref": "#/$defs/budgets"
+    },
+    "counters": {
+      "$ref": "#/$defs/counters"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    },
+    "steps": {
+      "$ref": "#/$defs/steps"
+    },
+    "terminalReport": {
+      "$ref": "#/$defs/terminalReport"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Dd][Ii][Ff][Ff]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr](?:[-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]))?|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee][-_ ]?[Ii][Nn][Ss][Tt][Aa][Ll][Ll]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Cc][Rr][Ee][Aa][Tt][Ee]|[Dd][Ee][Ll][Ee][Tt][Ee]|[Rr][Ee][Nn][Aa][Mm][Ee]|[Mm][Oo][Vv][Ee]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Tt][Aa][Rr][Tt]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 100 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 240 }
+      ]
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "workspaceRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlledWorkspaceId", "runId", "workspaceMode", "host", "privatePathExposed"],
+      "properties": {
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "runId": { "$ref": "#/$defs/safeId" },
+        "workspaceMode": {
+          "type": "string",
+          "enum": ["disposable", "worktree", "existing"]
+        },
+        "host": {
+          "type": "string",
+          "enum": ["vscode", "jetbrains"]
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "workspaceLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "start": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "source", "confirmedBy", "assistantMinted", "explicitUserStart", "startedAt"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "source": {
+          "type": "string",
+          "enum": ["gui", "host"]
+        },
+        "confirmedBy": {
+          "type": "string",
+          "const": "user"
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "explicitUserStart": {
+          "type": "boolean",
+          "const": true
+        },
+        "startedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "budgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxLoopSteps",
+        "maxFileReads",
+        "maxReadBytes",
+        "maxTouchedFiles",
+        "maxEditBytes",
+        "maxVerificationRuns",
+        "maxRuntimeSeconds"
+      ],
+      "properties": {
+        "maxLoopSteps": { "type": "integer", "minimum": 1, "maximum": 1 },
+        "maxFileReads": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "maxReadBytes": { "type": "integer", "minimum": 0, "maximum": 8192 },
+        "maxTouchedFiles": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "maxEditBytes": { "type": "integer", "minimum": 0, "maximum": 24000 },
+        "maxVerificationRuns": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "maxRuntimeSeconds": { "type": "integer", "minimum": 1, "maximum": 900 }
+      }
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["loopSteps", "fileReads", "filesTouched", "editBytes", "verificationRuns", "userTurns"],
+      "properties": {
+        "loopSteps": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "fileReads": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "filesTouched": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "editBytes": { "type": "integer", "minimum": 0, "maximum": 24000 },
+        "verificationRuns": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "userTurns": { "type": "integer", "minimum": 0, "maximum": 8 }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadataOnly",
+        "boundedFileReadAllowed",
+        "singleProposalStepAllowed",
+        "boundedEditAllowed",
+        "allowlistedVerificationAllowed",
+        "freeformCommandAllowed",
+        "arbitraryShellAllowed",
+        "hiddenReadAllowed",
+        "searchAllowed",
+        "indexingAllowed",
+        "createAllowed",
+        "deleteAllowed",
+        "renameAllowed",
+        "moveAllowed",
+        "gitAllowed",
+        "packageInstallAllowed",
+        "networkAllowed",
+        "providerAuthorityAllowed",
+        "toolAuthorityAllowed",
+        "rawPromptPersistenceAllowed",
+        "rawFilePersistenceAllowed",
+        "rawDiffPersistenceAllowed",
+        "rawCommandPersistenceAllowed",
+        "rawOutputPersistenceAllowed",
+        "autoRepairAllowed"
+      ],
+      "properties": {
+        "metadataOnly": { "type": "boolean", "const": true },
+        "boundedFileReadAllowed": { "type": "boolean" },
+        "singleProposalStepAllowed": { "type": "boolean" },
+        "boundedEditAllowed": { "type": "boolean" },
+        "allowlistedVerificationAllowed": { "type": "boolean" },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "arbitraryShellAllowed": { "type": "boolean", "const": false },
+        "hiddenReadAllowed": { "type": "boolean", "const": false },
+        "searchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "createAllowed": { "type": "boolean", "const": false },
+        "deleteAllowed": { "type": "boolean", "const": false },
+        "renameAllowed": { "type": "boolean", "const": false },
+        "moveAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "packageInstallAllowed": { "type": "boolean", "const": false },
+        "networkAllowed": { "type": "boolean", "const": false },
+        "providerAuthorityAllowed": { "type": "boolean", "const": false },
+        "toolAuthorityAllowed": { "type": "boolean", "const": false },
+        "rawPromptPersistenceAllowed": { "type": "boolean", "const": false },
+        "rawFilePersistenceAllowed": { "type": "boolean", "const": false },
+        "rawDiffPersistenceAllowed": { "type": "boolean", "const": false },
+        "rawCommandPersistenceAllowed": { "type": "boolean", "const": false },
+        "rawOutputPersistenceAllowed": { "type": "boolean", "const": false },
+        "autoRepairAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "steps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["boundedRead", "proposal", "boundedEdit", "verification"],
+      "properties": {
+        "boundedRead": { "$ref": "#/$defs/boundedReadStep" },
+        "proposal": { "$ref": "#/$defs/proposalStep" },
+        "boundedEdit": { "$ref": "#/$defs/boundedEditStep" },
+        "verification": { "$ref": "#/$defs/verificationStep" }
+      }
+    },
+    "stepState": {
+      "type": "string",
+      "enum": ["not_started", "ready", "completed", "skipped", "blocked", "failed"]
+    },
+    "boundedReadStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "singleExplicitFile", "textOnly", "recursive", "globAllowed", "regexAllowed", "indexingAllowed", "summary"],
+      "properties": {
+        "state": { "$ref": "#/$defs/stepState" },
+        "workspaceRelativePath": { "$ref": "#/$defs/workspaceRelativePath" },
+        "singleExplicitFile": { "type": "boolean", "const": true },
+        "textOnly": { "type": "boolean", "const": true },
+        "recursive": { "type": "boolean", "const": false },
+        "globAllowed": { "type": "boolean", "const": false },
+        "regexAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 8192 },
+        "lineCount": { "type": "integer", "minimum": 0, "maximum": 240 },
+        "contentHash": { "$ref": "#/$defs/safeHash" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "proposalStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "stepCount", "sanitizedOnly", "providerPayloadStored", "providerResponseStored", "summary"],
+      "properties": {
+        "state": { "$ref": "#/$defs/stepState" },
+        "stepCount": { "type": "integer", "minimum": 0, "maximum": 1 },
+        "sanitizedOnly": { "type": "boolean", "const": true },
+        "providerPayloadStored": { "type": "boolean", "const": false },
+        "providerResponseStored": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "boundedEditStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "operation", "createAllowed", "deleteAllowed", "renameAllowed", "moveAllowed", "rawDiffStored", "summary"],
+      "properties": {
+        "state": { "$ref": "#/$defs/stepState" },
+        "operation": {
+          "type": "string",
+          "const": "replace"
+        },
+        "workspaceRelativePath": { "$ref": "#/$defs/workspaceRelativePath" },
+        "expectedContentHash": { "$ref": "#/$defs/safeHash" },
+        "replacementByteCount": { "type": "integer", "minimum": 0, "maximum": 24000 },
+        "createAllowed": { "type": "boolean", "const": false },
+        "deleteAllowed": { "type": "boolean", "const": false },
+        "renameAllowed": { "type": "boolean", "const": false },
+        "moveAllowed": { "type": "boolean", "const": false },
+        "rawDiffStored": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "verificationStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "commandId", "allowlistedCommandIdOnly", "freeformCommandAllowed", "tailOnly", "rawOutputStored", "summary"],
+      "properties": {
+        "state": { "$ref": "#/$defs/stepState" },
+        "commandId": {
+          "type": "string",
+          "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"]
+        },
+        "allowlistedCommandIdOnly": { "type": "boolean", "const": true },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "tailOnly": { "type": "boolean", "const": true },
+        "exitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 1800000 },
+        "resultHash": { "$ref": "#/$defs/safeHash" },
+        "rawOutputStored": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "terminalReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "sanitizedOnly", "rawPromptStored", "rawFileStored", "rawDiffStored", "rawCommandStored", "rawOutputStored", "summary"],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": ["not_ready", "ready", "blocked", "failed", "completed"]
+        },
+        "sanitizedOnly": { "type": "boolean", "const": true },
+        "rawPromptStored": { "type": "boolean", "const": false },
+        "rawFileStored": { "type": "boolean", "const": false },
+        "rawDiffStored": { "type": "boolean", "const": false },
+        "rawCommandStored": { "type": "boolean", "const": false },
+        "rawOutputStored": { "type": "boolean", "const": false },
+        "finishedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    }
+  }
+}
