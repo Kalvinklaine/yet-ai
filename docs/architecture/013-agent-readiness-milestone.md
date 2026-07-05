@@ -456,6 +456,28 @@ The readiness smoke includes `npm run audit:controlled-autonomy-wording`, and th
 npm run check
 ```
 
+## Sprint 90 final closure status
+
+Sprint 90 closes as `partial` after the final controlled-autonomy readiness gate passed on 2026-07-05. The closure approves only an experimental controlled local agent dev-preview for narrow local/mock and explicit-user-start evidence. It does not approve production autonomy, broad workspace automation, real-provider CI, release evidence, marketplace evidence, browser controlled execution parity, JetBrains controlled execution parity, or any authority beyond the already documented S86-S89 boundaries.
+
+The exact final closure commands were:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- AgentRunPanel ControlledAgentRunPanel controlledRepairLoop controlledOneStepAgentLoop App && npm run typecheck && npm run build
+npm run smoke:controlled-agent-one-step-loop
+npm run smoke:controlled-agent-repair-loop
+npm run smoke:controlled-agent-dogfood-useful
+npm run smoke:controlled-agent-dogfood
+npm run smoke:controlled-agent-resilience
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+All final closure commands passed. The closure records evidence only: bounded one-step loop, one-attempt repair eligibility, useful dogfood fixture validation, resilience fail-closed behavior, public wording safety, repository validation, and clean working-tree checks. S90 adds no production autonomy, broad workspace authority, hidden reads/search/indexing, free-form shell/git/package/network/provider-tool authority, automatic repair/retry/rollback, raw payload persistence, or real-provider CI claim.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

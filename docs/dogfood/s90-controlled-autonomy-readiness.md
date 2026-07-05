@@ -65,6 +65,28 @@ Remaining limitations:
 
 ## Verification
 
+## Final S90 closure status
+
+Final S90 closure status: `partial`, with all final local/mock closure gates passing on 2026-07-05. This closes S90 only as an experimental controlled local agent dev-preview readiness milestone for narrow local/mock and explicit-user-start evidence. It does not approve production autonomy, broad workspace automation, real-provider CI, release evidence, marketplace evidence, browser controlled execution parity, or JetBrains controlled execution parity.
+
+The exact final closure commands were:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- AgentRunPanel ControlledAgentRunPanel controlledRepairLoop controlledOneStepAgentLoop App && npm run typecheck && npm run build
+npm run smoke:controlled-agent-one-step-loop
+npm run smoke:controlled-agent-repair-loop
+npm run smoke:controlled-agent-dogfood-useful
+npm run smoke:controlled-agent-dogfood
+npm run smoke:controlled-agent-resilience
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+All commands above passed for the closure audit. No new authority was added; the evidence remains deterministic local/mock verification plus existing VS Code-only implemented controlled execution slices documented in the matrix.
+
 For this S90 documentation and readiness audit gate, run the exact acceptance chain:
 
 ```sh
