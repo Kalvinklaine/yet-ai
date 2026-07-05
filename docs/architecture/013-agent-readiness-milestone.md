@@ -478,6 +478,14 @@ git diff --check && git status --short
 
 All final closure commands passed. The closure records evidence only: bounded one-step loop, one-attempt repair eligibility, useful dogfood fixture validation, resilience fail-closed behavior, public wording safety, repository validation, and clean working-tree checks. S90 adds no production autonomy, broad workspace authority, hidden reads/search/indexing, free-form shell/git/package/network/provider-tool authority, automatic repair/retry/rollback, raw payload persistence, or real-provider CI claim.
 
+## Sprint 91 controlled local agent dev-preview target
+
+Sprint 91 uses [`../dogfood/s91-controlled-agent-dev-preview.md`](../dogfood/s91-controlled-agent-dev-preview.md) to align the next dev-preview slice with the S90 `partial` decision. The target is more useful VS Code-first UX and reporting after explicit Start, with explicit Stop still user-owned, bounded read/edit/allowlisted-verification phases, at most one user-confirmed repair attempt, and sanitized progress/final reports.
+
+S91 does not change the S90 approval boundary. It remains an experimental controlled local agent dev-preview for narrow local/mock and explicit-user-start evidence only. It is not production autonomy, not broad workspace automation, not real-provider CI, not release or marketplace evidence, and not cross-host complete. Browser remains preview-only/unsupported for trusted workspace execution, JetBrains remains fail-closed/unsupported for controlled execution parity, and VS Code remains the primary dev-preview host for implemented controlled execution slices.
+
+S91 adds no hidden reads/search/indexing, no arbitrary shell or free-form commands, no git/package/network/provider-tool authority, no broad mutation, no automatic repair beyond the single user-confirmed repair attempt, no automatic retry/rollback, no raw prompt/file/diff/command/output/private-path/secret persistence, and no production or publication claim.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
