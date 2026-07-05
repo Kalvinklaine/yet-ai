@@ -368,6 +368,27 @@ npm run validate:contracts
 
 This gate validates metadata fixtures only. It does not run a real provider loop or prove production autonomy.
 
+## Sprint 89 cross-host controlled autonomy availability
+
+Sprint 89 clarifies cross-host availability for the controlled local-agent path. This is an availability and unsupported-state contract only; it does not add new execution authority.
+
+| Host surface | Controlled workspace/read/edit metadata | Controlled verification execution | One-step controlled loop availability | Required unsupported-state behavior |
+| --- | --- | --- | --- | --- |
+| Browser / standalone GUI | Preview/display only | Unsupported | Preview-only metadata and local orchestration labels only | Must stay visibly unsupported, must not post controlled read/edit/command bridge requests, and must not imply a trusted workspace host. |
+| VS Code | Supported for the implemented explicit controlled paths | Supported for S85 allowlisted command-id requests after explicit user click | Eligible controlled execution host for S86/S89 once required metadata is present | Must use GUI-minted correlated requests and sanitized host results; no legacy Agent Run verification request is posted from the controlled path. |
+| JetBrains | Hosted GUI and manual controls may render; controlled execution slices may remain unsupported where not implemented | Unsupported/fail-closed for S85 controlled verification | Fail-closed until a future card implements and verifies parity | Must show unsupported/fail-closed copy, disable controlled verification controls, and post no command-run bridge request. |
+
+The availability rule is intentionally conservative: unsupported hosts fail closed in GUI and contract tests instead of silently widening authority. Browser remains preview-only because it has no trusted workspace host. JetBrains may keep hosted GUI/manual parity evidence but must not claim controlled execution parity until a later implementation and verification gate proves it. VS Code remains the only current real controlled verification executor.
+
+The S89 focused availability checks are:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- bridgeAdapter App && npm run typecheck
+```
+
+These checks are local/mock evidence only. They do not call providers, require hosted Yet AI services, grant browser workspace authority, or implement JetBrains controlled verification execution.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

@@ -8210,6 +8210,61 @@ describe("edit proposal preview", () => {
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
   });
 
+  it("keeps browser Agent Run controlled autonomy preview-only with no controlled command request", async () => {
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }),
+      chats: [chatSummary("chat-001", "Browser Agent Run availability", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Browser Agent Run availability", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("browser preview only");
+    expect(panel.textContent).toContain("Browser preview stays preview-only");
+    expect(panel.textContent).toContain("Browser preview stays inert and posts no privileged action.");
+    expect(buttonWithin(panel, "Manually apply reviewed patch").disabled).toBe(true);
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
+  });
+
+  it("keeps JetBrains Agent Run controlled verification fail-closed after apply", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    const proposal = safeEditProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }),
+      chats: [chatSummary("chat-001", "JetBrains Agent Run availability", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "JetBrains Agent Run availability", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) },
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postIntellijMessage.mockClear();
+
+    await act(async () => {
+      buttonWithin(agentRunPanel(), "Manually apply reviewed patch").click();
+    });
+    const applyCall = postIntellijMessage.mock.calls.find(([message]) => message.type === "gui.applyWorkspaceEditRequest")?.[0];
+    expect(applyCall).toBeDefined();
+    await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "JetBrains apply result metadata.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
+
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("jetbrains explicit controls");
+    expect(panel.textContent).toContain("Manual state: Ready for controlled verification");
+    expect(panel.textContent).toContain("S85 controlled verification unsupported here");
+    expect(panel.textContent).toContain("VS Code-only in S85");
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
+  });
+
   it("Agent Run apply failure is actionable and does not auto retry", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
