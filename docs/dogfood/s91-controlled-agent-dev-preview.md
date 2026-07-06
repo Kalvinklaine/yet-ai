@@ -158,3 +158,31 @@ git diff --check && git status --short
 ```
 
 All final gate commands passed for S92. Keep this command list together when repeating the final audit so later evidence cannot quietly skip the wording, smoke, repository, or clean-tree checks.
+
+## S93 final dogfood fixture audit
+
+S93 is complete as a safe manual dogfood runbook and deterministic fixture-audit milestone for the controlled local agent dev-preview. The completed S93 evidence is intentionally narrow:
+
+- this runbook records the VS Code-first manual path for explicit Start and Stop, one bounded selected workspace-relative text read, one bounded replacement edit to an existing safe text file, one allowlisted verification command id, and at most one user-confirmed repair attempt;
+- deterministic fixtures cover success, verification-failure repair, user stop, runtime disconnect, Browser unsupported, and JetBrains partial/fail-closed scenarios with sanitized labels and counters only;
+- `npm run smoke:controlled-agent-dev-preview` includes the S93 fixture smoke alongside S90 readiness, S92 sanitized report evidence, and wording safety gates;
+- Browser remains preview-only/unsupported for trusted workspace execution, JetBrains remains partial/fail-closed for controlled execution parity, and VS Code remains the primary dev-preview host for implemented controlled execution slices;
+- dogfood notes and tracked evidence must continue to omit raw prompts, provider responses, file bodies, diffs, replacement text, command strings, cwd/env values, output dumps, bridge payloads, private paths, secrets, and arbitrary user text.
+
+S93 does not widen authority. It is documentation, sanitized fixture metadata, and local/mock smoke evidence only, not production autonomy, not broad workspace automation, not release evidence, not marketplace evidence, not real-provider CI, and not cross-host completion. It adds no hidden reads/search/indexing, arbitrary shell, free-form commands, git/package/network/provider-tool authority, broad mutation, automatic repair, automatic retry, automatic rollback, raw payload persistence, runtime/bridge/storage authority, provider/tool behavior, or task-board mutation.
+
+The final S93 gate is:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- controlledAgentDevPreviewReport AgentRunPanel ControlledAgentRunPanel controlledOneStepAgentLoop controlledRepairLoop App
+cd apps/gui && npm run typecheck
+cd apps/gui && npm run build
+npm run smoke:controlled-agent-dev-preview
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+All final gate commands passed for S93. Keep this command list together when repeating the final audit so later evidence cannot quietly skip contract validation, GUI coverage, build, smoke, wording, repository, whitespace, or clean-tree checks.

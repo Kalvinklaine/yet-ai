@@ -574,6 +574,28 @@ npm run smoke:controlled-agent-dev-preview
 
 That smoke does not change the runbook boundary. It does not call providers, require hosted services, use credentials, prove production autonomy, prove release readiness, publish marketplace artifacts, or complete browser/JetBrains controlled execution parity.
 
+## Sprint 93 final dogfood fixture audit status
+
+Sprint 93 closes as a controlled local agent dev-preview dogfood runbook and fixture-audit milestone after the final S93 gate passed. The completion record is intentionally narrow: the VS Code-first manual runbook remains the human dogfood path, deterministic fixtures validate success, verification-failure repair, user stop, runtime disconnect, browser unsupported, and JetBrains partial/fail-closed scenarios, and the aggregate dev-preview smoke records S91/S92/S93 local/mock evidence together.
+
+S93 evidence is documentation, sanitized fixture metadata, and local/mock smoke output only. It records explicit user Start/Stop, one bounded selected workspace-relative text read, one bounded replacement edit to an existing safe text file, one allowlisted verification command id, at most one user-confirmed repair attempt, host limitation labels, bounded counters, and safe final-report status labels. It does not add runtime authority, bridge authority, storage authority, provider/tool behavior, real-provider CI, production autonomy, release evidence, marketplace evidence, browser trusted workspace execution, JetBrains controlled execution parity, broad workspace authority, hidden read/search/indexing, arbitrary command execution, shell/git/package/network authority, automatic repair/retry/rollback, raw payload persistence, or task-board mutation.
+
+The exact S93 final audit gate is:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- controlledAgentDevPreviewReport AgentRunPanel ControlledAgentRunPanel controlledOneStepAgentLoop controlledRepairLoop App
+cd apps/gui && npm run typecheck
+cd apps/gui && npm run build
+npm run smoke:controlled-agent-dev-preview
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+All S93 final gate commands passed. The clean-tree check is part of the gate so fixture/runbook completion cannot quietly skip wording, smoke, repository, whitespace, or status evidence.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
