@@ -645,6 +645,30 @@ git diff --check && git status --short
 
 All final through-S94 gate commands passed. The clean-tree check completed with no tracked changes after the closure commit. The evidence remains deterministic local/mock and documentation evidence only: no provider calls, hosted Yet AI services, credentials in automation, real-provider CI, release evidence, marketplace evidence, browser trusted workspace execution, JetBrains controlled execution parity, broad workspace authority, hidden reads/search/indexing, arbitrary command execution, shell/git/package/network/provider-tool authority, automatic repair/retry/rollback, raw payload persistence, or task-board mutation is added or approved.
 
+## Sprint 96 one-step useful-run docs contract
+
+Sprint 96 defines the next useful controlled local agent dev-preview target as a documentation contract only. The target remains VS Code-first and explicit-control: the user clicks **Start**, the run performs one bounded controlled read of one selected safe workspace-relative text file, records one bounded replacement edit to an existing safe text file, runs one allowlisted verification command id, and ends with one sanitized terminal report.
+
+The S96 target flow is intentionally one-step:
+
+1. **Explicit Start**: no run begins until the user starts it in the controlled dev-preview surface.
+2. **One bounded controlled read**: at most one selected safe workspace-relative text file is read under byte, line, and body limits.
+3. **One bounded replacement edit**: at most one existing safe text file receives a bounded replacement edit through the controlled edit path and correlation metadata.
+4. **One allowlisted verification**: at most one fixed command id such as `repository-check`, `gui-app-tests`, or `engine-chat-tests` is requested through the controlled verification path, with sanitized tail-only result metadata.
+5. **Sanitized terminal report**: the final state records phase labels, host labels, safe file labels, command-id labels, counters, stop or failure reasons, and short safe summaries only.
+
+S96 does not change runtime authority. It does not add production autonomy, multi-step autonomous execution, hidden reads, background reads, search, indexing, arbitrary shell, free-form command text, git, package, network, provider-tool authority, broad mutation, create/delete/rename/move edits, automatic repair, automatic retry, automatic rollback, raw prompt/file/diff/replacement/command/output persistence, task-board mutation, browser trusted workspace execution, JetBrains controlled execution parity, real-provider CI, release evidence, or marketplace evidence.
+
+Host limitations stay explicit. VS Code is the first controlled dev-preview host for the useful-run target. Browser remains preview-only/unsupported for trusted workspace execution and must not post controlled read, edit, or command requests. JetBrains may keep hosted GUI/manual parity and fail-closed copy, but it must not be described as controlled execution parity until a later verified card changes that status.
+
+The S96 documentation gate is:
+
+```sh
+npm run audit:controlled-autonomy-wording && npm run check && git diff --check && git status --short
+```
+
+This gate validates wording hygiene, repository documentation checks, whitespace hygiene, and tracked status only. It does not run providers, require hosted services, publish artifacts, prove production autonomy, prove release readiness, or complete cross-host parity.
+
 
 ## Blocked and deferred capabilities
 

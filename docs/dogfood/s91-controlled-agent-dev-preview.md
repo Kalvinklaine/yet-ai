@@ -148,6 +148,28 @@ npm run check
 git diff --check && git status --short
 ```
 
+## S96 one-step useful-run contract
+
+S96 keeps this runbook VS Code-first and experimental. It refreshes the useful-run target without adding runtime authority: the controlled dev-preview run is one explicit **Start** followed by one bounded controlled read, one bounded replacement edit, one allowlisted verification, and one sanitized terminal report.
+
+The S96 target sequence is:
+
+1. The user clicks **Start** in VS Code. No background run, auto-start, hidden task start, browser start, or JetBrains controlled execution parity is implied.
+2. The run uses one bounded read of one selected safe workspace-relative text file. It must not search, index, recursively discover files, read hidden files, gather multiple files, or attach unreviewed context.
+3. The run records one bounded replacement edit to one existing safe text file. It must not create, delete, rename, move, chmod, patch broadly, edit generated/dependency/binary/symlink files, or persist raw file bodies, diffs, or replacement text.
+4. The run requests one allowlisted verification command id such as `repository-check`, `gui-app-tests`, or `engine-chat-tests`. It must not accept free-form command text, args, cwd, env, shell snippets, git, package, network, provider-tool calls, model-selected commands, or full output persistence.
+5. The run stops with one sanitized terminal report containing only safe phase labels, host limitation labels, workspace-relative file labels, command-id labels, bounded counters, status, stop/failure reason, and short safe summaries.
+
+S96 non-goals are part of the contract. This runbook must not describe production autonomy, release evidence, marketplace evidence, real-provider CI, multi-step autonomous execution, arbitrary shell, hidden reads/search/indexing, broad workspace mutation, automatic repair, automatic retry, automatic rollback, task-board mutation, browser trusted workspace execution, or JetBrains controlled execution parity as available.
+
+Host limitations remain unchanged: VS Code is the target useful-run host for this dev-preview contract; Browser/standalone GUI is preview-only and unsupported for trusted workspace execution; JetBrains remains partial/fail-closed until a later verified parity card changes that status.
+
+The S96 documentation gate is:
+
+```sh
+npm run audit:controlled-autonomy-wording && npm run check && git diff --check && git status --short
+```
+
 ## Verification
 
 The final S91 gate was:
