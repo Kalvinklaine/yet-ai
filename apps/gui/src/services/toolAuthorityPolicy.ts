@@ -110,6 +110,7 @@ export type ToolAuthorityPolicyEvaluation = {
   details: Record<string, string | boolean | string[]>;
 };
 export type ControlledHostCapabilitiesDisplayInput = {
+  protocolVersion?: string;
   hostSurface?: string;
   authority?: string;
   capabilities?: Record<string, unknown>;
@@ -254,8 +255,9 @@ export function evaluateHostCapabilityMetadata(hostSurface: ToolAuthorityPolicyH
 
 export function createControlledHostCapabilityMatrixDisplay(input: ControlledHostCapabilitiesDisplayInput | undefined, hostSurface: ToolAuthorityPolicyHostSurface): ControlledHostCapabilityMatrixDisplay {
   const fallback = evaluateHostCapabilityMetadata(hostSurface);
-  const safeLabels = isPlainObject(input?.safeLabels) ? input.safeLabels : undefined;
-  const capabilities = isPlainObject(input?.capabilities) ? input.capabilities : undefined;
+  const validMetadata = isControlledHostCapabilitiesDisplayInput(input, hostSurface);
+  const safeLabels = validMetadata && isPlainObject(input.safeLabels) ? input.safeLabels : undefined;
+  const capabilities = validMetadata && isPlainObject(input.capabilities) ? input.capabilities : undefined;
   const hostLabel = sanitizeBoundedText(typeof safeLabels?.host === "string" ? safeLabels.host : hostCapabilityHostLabel(hostSurface), 80, hostCapabilityHostLabel(hostSurface));
   const supportLabel = sanitizeBoundedText(typeof safeLabels?.support === "string" ? safeLabels.support : String(fallback.details.capabilityStatus ?? "metadata only"), 140, "metadata only");
   const statusLabels = [
@@ -278,11 +280,17 @@ export function createControlledHostCapabilityMatrixDisplay(input: ControlledHos
     reasonLabels,
     authorityLabels: [
       "Metadata only",
-      `Authority: ${input?.authority === "metadata_only" ? "metadata only" : "display only"}`,
+      `Authority: ${validMetadata && input.authority === "metadata_only" ? "metadata only" : "display only"}`,
       "Does not grant Send, apply, verification, file read, edit, shell, git, provider, tool, repair, or one-step Start authority",
     ],
     summary: sanitizeBoundedText(fallback.summary, 360, "Host capability metadata is display evidence only."),
   };
+}
+
+function isControlledHostCapabilitiesDisplayInput(input: ControlledHostCapabilitiesDisplayInput | undefined, hostSurface: ToolAuthorityPolicyHostSurface): input is ControlledHostCapabilitiesDisplayInput {
+  return input?.protocolVersion === "controlled_host_capabilities_v2" &&
+    input.hostSurface === hostSurface &&
+    input.authority === "metadata_only";
 }
 
 function hostCapabilityHostLabel(hostSurface: ToolAuthorityPolicyHostSurface): string {

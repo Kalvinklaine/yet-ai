@@ -167,6 +167,7 @@ describe("toolAuthorityPolicy", () => {
 
   it("formats controlled host capability v2 metadata into safe display labels only", () => {
     const display = createControlledHostCapabilityMatrixDisplay({
+      protocolVersion: "controlled_host_capabilities_v2",
       hostSurface: "vscode",
       authority: "metadata_only",
       capabilities: {
@@ -196,6 +197,34 @@ describe("toolAuthorityPolicy", () => {
     expect(display.limitLabels).toContain("maxReadBytes: 8192");
     expect(display.reasonLabels).toContain("Reason explicit user gesture required");
     expect(display.authorityLabels.join(" ")).toContain("Does not grant Send, apply, verification");
+  });
+
+  it("falls back to current host matrix when capability metadata is missing v2 authority or host match", () => {
+    const display = createControlledHostCapabilityMatrixDisplay({
+      protocolVersion: "controlled_host_capabilities_v2",
+      hostSurface: "vscode",
+      authority: "metadata_only",
+      capabilities: {
+        controlledStart: "supported",
+        controlledRead: "supported",
+        controlledEdit: "supported",
+        controlledVerification: "supported",
+        controlledRepair: "supported",
+      },
+      safeLabels: { host: "VS Code host", support: "Supported claim" },
+    }, "jetbrains");
+
+    expect(display.allowedToExecute).toBe(false);
+    expect(display.hostLabel).toBe("JetBrains host");
+    expect(display.supportLabel).toBe("partial_fail_closed_metadata_only");
+    expect(display.statusLabels).toEqual([
+      "Start: unsupported fail-closed",
+      "Read: unsupported fail-closed",
+      "Edit: unsupported fail-closed",
+      "Verification: unsupported fail-closed",
+      "Repair: unsupported fail-closed",
+    ]);
+    expect(display.authorityLabels).toContain("Authority: display only");
   });
 
   it("denies assistant-provided capability claims even when they mimic host support", () => {
