@@ -1,0 +1,58 @@
+{
+  "fixtureVersion": 1,
+  "scenarioId": "vscode-runtime-disconnect",
+  "scenarioKind": "runtime-disconnect",
+  "host": "vscode",
+  "startCondition": {
+    "status": "explicit-user-start",
+    "surface": "controlled-dev-preview",
+    "workspaceTrust": "trusted-local-workspace",
+    "hostReadiness": "ready-then-disconnected"
+  },
+  "boundedReadMetadata": {
+    "status": "completed-before-disconnect",
+    "fileLabel": "src/disconnect-safe.ts",
+    "workspaceRelativePath": "src/disconnect-safe.ts",
+    "byteLimit": 4096,
+    "lineLimit": 80,
+    "contentCaptured": false,
+    "hashLabel": "sha256:fixture-read-d"
+  },
+  "boundedEditMetadata": {
+    "status": "blocked-by-runtime-disconnect",
+    "fileLabel": "src/disconnect-safe.ts",
+    "workspaceRelativePath": "src/disconnect-safe.ts",
+    "editKind": "none",
+    "filesTouched": 0,
+    "replacementCaptured": false
+  },
+  "verificationMetadata": {
+    "status": "blocked-by-runtime-disconnect",
+    "commandId": "repository-check",
+    "resultLabel": "omitted-after-disconnect",
+    "outputCaptured": false,
+    "exitCodeLabel": "none"
+  },
+  "repairMetadata": {
+    "status": "blocked-by-runtime-disconnect",
+    "attemptsUsed": 0,
+    "attemptLimit": 1,
+    "userConfirmed": false
+  },
+  "finalReportStatus": {
+    "status": "blocked",
+    "summaryLabel": "Runtime disconnect made the run terminal and closed later bounded steps.",
+    "safeEvidenceCount": 3
+  },
+  "limitations": [
+    "Disconnected runtime state requires manual reconnection and a fresh explicit start.",
+    "Stale edit, verification, or repair metadata is ignored.",
+    "The fixture records disconnect labels only."
+  ],
+  "nonGoalClaims": [
+    "No background reconnection claim.",
+    "No unattended continuation claim.",
+    "No broad workspace claim.",
+    "No production use claim."
+  ]
+}

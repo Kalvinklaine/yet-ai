@@ -7,6 +7,7 @@ const validators = [
   ["scripts/check-agent-readiness-docs.mjs"],
   ["scripts/audit-controlled-autonomy-wording.mjs"],
   ["scripts/validate-contracts.mjs"],
+  ["scripts/validate-controlled-agent-dev-preview-fixtures.mjs"],
   ["scripts/smoke-sandbox-checkpoint.mjs"],
   ["scripts/validate-ide-artifact-contract.mjs"],
   ["scripts/validate-ide-artifact-workflow.mjs"],

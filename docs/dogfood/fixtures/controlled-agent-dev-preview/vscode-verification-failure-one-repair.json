@@ -1,0 +1,63 @@
+{
+  "fixtureVersion": 1,
+  "scenarioId": "vscode-verification-failure-one-repair",
+  "scenarioKind": "verification-failure-repair",
+  "host": "vscode",
+  "startCondition": {
+    "status": "explicit-user-start",
+    "surface": "controlled-dev-preview",
+    "workspaceTrust": "trusted-local-workspace",
+    "hostReadiness": "ready"
+  },
+  "boundedReadMetadata": {
+    "status": "completed",
+    "fileLabel": "src/safe-status.ts",
+    "workspaceRelativePath": "src/safe-status.ts",
+    "byteLimit": 4096,
+    "lineLimit": 80,
+    "contentCaptured": false,
+    "hashLabel": "sha256:fixture-read-b"
+  },
+  "boundedEditMetadata": {
+    "status": "completed",
+    "fileLabel": "src/safe-status.ts",
+    "workspaceRelativePath": "src/safe-status.ts",
+    "editKind": "single-existing-text-replacement",
+    "filesTouched": 1,
+    "replacementCaptured": false,
+    "preEditHashLabel": "sha256:fixture-read-b",
+    "postEditHashLabel": "sha256:fixture-edit-b"
+  },
+  "verificationMetadata": {
+    "status": "failed",
+    "commandId": "gui-app-tests",
+    "resultLabel": "allowlisted-verification-failed",
+    "outputCaptured": false,
+    "exitCodeLabel": "nonzero"
+  },
+  "repairMetadata": {
+    "status": "used",
+    "attemptsUsed": 1,
+    "attemptLimit": 1,
+    "userConfirmed": true,
+    "repairReadLabel": "same-safe-file",
+    "repairEditLabel": "single-existing-text-replacement",
+    "finalVerificationLabel": "allowlisted-verification-passed-after-repair"
+  },
+  "finalReportStatus": {
+    "status": "completed-after-repair",
+    "summaryLabel": "Verification failed once, then one user-confirmed repair attempt completed with sanitized metadata.",
+    "safeEvidenceCount": 7
+  },
+  "limitations": [
+    "Repair is capped at one user-confirmed attempt.",
+    "The fixture stores status labels only.",
+    "Manual follow-up is required after any further failure."
+  ],
+  "nonGoalClaims": [
+    "No repeated repair claim.",
+    "No unattended retry claim.",
+    "No broad workspace claim.",
+    "No production use claim."
+  ]
+}

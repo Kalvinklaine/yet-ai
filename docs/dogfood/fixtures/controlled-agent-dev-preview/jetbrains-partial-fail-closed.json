@@ -1,0 +1,58 @@
+{
+  "fixtureVersion": 1,
+  "scenarioId": "jetbrains-partial-fail-closed",
+  "scenarioKind": "jetbrains-partial-fail-closed",
+  "host": "jetbrains",
+  "startCondition": {
+    "status": "partial-host-fail-closed",
+    "surface": "controlled-dev-preview-report-only",
+    "workspaceTrust": "not-verified-for-controlled-execution",
+    "hostReadiness": "partial"
+  },
+  "boundedReadMetadata": {
+    "status": "fail-closed-on-host",
+    "fileLabel": "none",
+    "workspaceRelativePath": "none",
+    "byteLimit": 0,
+    "lineLimit": 0,
+    "contentCaptured": false,
+    "hashLabel": "none"
+  },
+  "boundedEditMetadata": {
+    "status": "fail-closed-on-host",
+    "fileLabel": "none",
+    "workspaceRelativePath": "none",
+    "editKind": "none",
+    "filesTouched": 0,
+    "replacementCaptured": false
+  },
+  "verificationMetadata": {
+    "status": "fail-closed-on-host",
+    "commandId": "repository-check",
+    "resultLabel": "partial-host-no-controlled-execution",
+    "outputCaptured": false,
+    "exitCodeLabel": "none"
+  },
+  "repairMetadata": {
+    "status": "fail-closed-on-host",
+    "attemptsUsed": 0,
+    "attemptLimit": 1,
+    "userConfirmed": false
+  },
+  "finalReportStatus": {
+    "status": "blocked",
+    "summaryLabel": "JetBrains remains partial and fail-closed for controlled execution in this VS Code-first preview.",
+    "safeEvidenceCount": 2
+  },
+  "limitations": [
+    "JetBrains may show manual parity surfaces only.",
+    "Controlled execution stays fail-closed until separately verified.",
+    "The fixture records host limitation labels only."
+  ],
+  "nonGoalClaims": [
+    "No JetBrains execution parity claim.",
+    "No cross-host parity claim.",
+    "No broad workspace claim.",
+    "No production use claim."
+  ]
+}

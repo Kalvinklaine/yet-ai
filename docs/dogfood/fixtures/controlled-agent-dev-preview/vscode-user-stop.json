@@ -1,0 +1,58 @@
+{
+  "fixtureVersion": 1,
+  "scenarioId": "vscode-user-stop",
+  "scenarioKind": "user-stop",
+  "host": "vscode",
+  "startCondition": {
+    "status": "explicit-user-start",
+    "surface": "controlled-dev-preview",
+    "workspaceTrust": "trusted-local-workspace",
+    "hostReadiness": "ready"
+  },
+  "boundedReadMetadata": {
+    "status": "completed-before-stop",
+    "fileLabel": "docs/stop-safe.md",
+    "workspaceRelativePath": "docs/stop-safe.md",
+    "byteLimit": 4096,
+    "lineLimit": 80,
+    "contentCaptured": false,
+    "hashLabel": "sha256:fixture-read-c"
+  },
+  "boundedEditMetadata": {
+    "status": "not-started-after-stop",
+    "fileLabel": "none",
+    "workspaceRelativePath": "none",
+    "editKind": "none",
+    "filesTouched": 0,
+    "replacementCaptured": false
+  },
+  "verificationMetadata": {
+    "status": "not-started-after-stop",
+    "commandId": "repository-check",
+    "resultLabel": "omitted-after-user-stop",
+    "outputCaptured": false,
+    "exitCodeLabel": "none"
+  },
+  "repairMetadata": {
+    "status": "blocked-by-user-stop",
+    "attemptsUsed": 0,
+    "attemptLimit": 1,
+    "userConfirmed": false
+  },
+  "finalReportStatus": {
+    "status": "stopped",
+    "summaryLabel": "User stop ended the dev-preview and later bounded steps stayed closed.",
+    "safeEvidenceCount": 3
+  },
+  "limitations": [
+    "Stopped runs require a fresh explicit start before any next step.",
+    "No edit or verification metadata may be accepted after stop.",
+    "The fixture records stop labels only."
+  ],
+  "nonGoalClaims": [
+    "No background continuation claim.",
+    "No unattended recovery claim.",
+    "No broad workspace claim.",
+    "No production use claim."
+  ]
+}

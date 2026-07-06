@@ -1,0 +1,60 @@
+{
+  "fixtureVersion": 1,
+  "scenarioId": "vscode-success-bounded-read-edit-verify",
+  "scenarioKind": "success",
+  "host": "vscode",
+  "startCondition": {
+    "status": "explicit-user-start",
+    "surface": "controlled-dev-preview",
+    "workspaceTrust": "trusted-local-workspace",
+    "hostReadiness": "ready"
+  },
+  "boundedReadMetadata": {
+    "status": "completed",
+    "fileLabel": "docs/safe-copy.md",
+    "workspaceRelativePath": "docs/safe-copy.md",
+    "byteLimit": 4096,
+    "lineLimit": 80,
+    "contentCaptured": false,
+    "hashLabel": "sha256:fixture-read-a"
+  },
+  "boundedEditMetadata": {
+    "status": "completed",
+    "fileLabel": "docs/safe-copy.md",
+    "workspaceRelativePath": "docs/safe-copy.md",
+    "editKind": "single-existing-text-replacement",
+    "filesTouched": 1,
+    "replacementCaptured": false,
+    "preEditHashLabel": "sha256:fixture-read-a",
+    "postEditHashLabel": "sha256:fixture-edit-a"
+  },
+  "verificationMetadata": {
+    "status": "succeeded",
+    "commandId": "repository-check",
+    "resultLabel": "allowlisted-verification-passed",
+    "outputCaptured": false,
+    "exitCodeLabel": "zero"
+  },
+  "repairMetadata": {
+    "status": "unused",
+    "attemptsUsed": 0,
+    "attemptLimit": 1,
+    "userConfirmed": false
+  },
+  "finalReportStatus": {
+    "status": "completed",
+    "summaryLabel": "Bounded read, edit, and verification completed with sanitized metadata.",
+    "safeEvidenceCount": 5
+  },
+  "limitations": [
+    "VS Code is the only host represented by this completed local scenario.",
+    "The fixture records labels and counters only.",
+    "A new user start is required for another run."
+  ],
+  "nonGoalClaims": [
+    "No production use claim.",
+    "No broad workspace claim.",
+    "No cross-host parity claim.",
+    "No release evidence claim."
+  ]
+}

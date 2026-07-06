@@ -1,0 +1,58 @@
+{
+  "fixtureVersion": 1,
+  "scenarioId": "browser-unsupported",
+  "scenarioKind": "browser-unsupported",
+  "host": "browser",
+  "startCondition": {
+    "status": "unsupported-host",
+    "surface": "controlled-dev-preview-report-only",
+    "workspaceTrust": "not-applicable",
+    "hostReadiness": "unsupported"
+  },
+  "boundedReadMetadata": {
+    "status": "not-available-on-host",
+    "fileLabel": "none",
+    "workspaceRelativePath": "none",
+    "byteLimit": 0,
+    "lineLimit": 0,
+    "contentCaptured": false,
+    "hashLabel": "none"
+  },
+  "boundedEditMetadata": {
+    "status": "not-available-on-host",
+    "fileLabel": "none",
+    "workspaceRelativePath": "none",
+    "editKind": "none",
+    "filesTouched": 0,
+    "replacementCaptured": false
+  },
+  "verificationMetadata": {
+    "status": "not-available-on-host",
+    "commandId": "repository-check",
+    "resultLabel": "unsupported-host",
+    "outputCaptured": false,
+    "exitCodeLabel": "none"
+  },
+  "repairMetadata": {
+    "status": "not-available-on-host",
+    "attemptsUsed": 0,
+    "attemptLimit": 1,
+    "userConfirmed": false
+  },
+  "finalReportStatus": {
+    "status": "blocked",
+    "summaryLabel": "Browser can render sanitized preview metadata but cannot start trusted local execution.",
+    "safeEvidenceCount": 2
+  },
+  "limitations": [
+    "Browser is preview-only for this fixture set.",
+    "Trusted local execution stays unsupported on this host.",
+    "The report remains display-only metadata."
+  ],
+  "nonGoalClaims": [
+    "No Browser execution parity claim.",
+    "No cross-host parity claim.",
+    "No broad workspace claim.",
+    "No production use claim."
+  ]
+}
