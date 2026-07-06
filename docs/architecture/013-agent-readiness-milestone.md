@@ -486,6 +486,28 @@ S91 does not change the S90 approval boundary. It remains an experimental contro
 
 S91 adds no hidden reads/search/indexing, no arbitrary shell or free-form commands, no git/package/network/provider-tool authority, no broad mutation, no automatic repair beyond the single user-confirmed repair attempt, no automatic retry/rollback, no raw prompt/file/diff/command/output/private-path/secret persistence, and no production or publication claim.
 
+## Sprint 91 final dev-preview status
+
+Sprint 91 closes as a controlled local agent dev-preview status and reporting milestone after the final S91 gate passed. The completion status records bounded evidence for a more useful VS Code-first dev-preview: explicit Start/Stop UX, pure sanitized status aggregation, bounded read/edit/allowlisted-verification capability labels, one user-confirmed repair-attempt label, host limitation labels, and sanitized progress/final-report copy.
+
+The S91 evidence remains local/mock and explicit-user-start only. The integrated GUI status is display/status wiring over already-scoped controlled Agent Run metadata; it does not add bridge authority, runtime authority, provider/tool behavior, background execution, hidden workspace context gathering, broader mutation, or any new trusted host capability. Browser remains preview-only and unsupported for trusted workspace execution. JetBrains remains fail-closed/unsupported for controlled execution parity until a later verified card changes that status. VS Code remains the primary dev-preview host for the implemented controlled execution slices.
+
+S91 does not change the S90 `partial` decision and does not approve production autonomy, broad workspace automation, release evidence, marketplace evidence, cross-host completion, or real-provider CI. It adds no hidden reads/search/indexing, arbitrary shell, free-form commands, git/package/network/provider-tool authority, create/delete/rename/move/patch authority, automatic repair beyond the single user-confirmed repair attempt, automatic retry, automatic rollback, raw payload persistence, task-board mutation, hosted backend requirement, cloud workspace requirement, or production/publication claim.
+
+The exact S91 final gate is:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- controlledAgentDevPreviewStatus AgentRunPanel ControlledAgentRunPanel controlledOneStepAgentLoop controlledRepairLoop App && npm run typecheck && npm run build
+npm run smoke:controlled-agent-dev-preview
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+All S91 final gate commands passed. The completion record is documentation and local/mock verification evidence only; it is not production autonomy, not broad workspace authority, not real-provider CI, not release evidence, not marketplace evidence, and not cross-host parity approval.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

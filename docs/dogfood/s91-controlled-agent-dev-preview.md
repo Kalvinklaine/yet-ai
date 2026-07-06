@@ -45,16 +45,31 @@ S91 documentation and UX should make reports useful without exposing raw data. A
 
 The report must keep S90 partial approval clear: this is narrow local/mock and explicit-user-start evidence for continued dev-preview hardening only.
 
+## Final status
+
+S91 is complete as a dev-preview status and reporting audit. The completed evidence is intentionally narrow:
+
+- the GUI uses pure sanitized status evaluation for the controlled local agent dev-preview;
+- Agent Run and Controlled Agent Run panels show honest Start/Stop, bounded read/edit/verification, one repair-attempt, host limitation, and sanitized report labels;
+- Browser stays preview-only and unsupported for trusted workspace execution;
+- JetBrains stays fail-closed/unsupported for controlled execution parity;
+- VS Code remains the primary dev-preview host for the implemented controlled execution slices;
+- public wording keeps the S90 `partial` decision visible.
+
+This completion does not widen authority. It is local/mock and explicit-user-start evidence only, not production autonomy, not broad workspace automation, not release evidence, not marketplace evidence, not real-provider CI, and not cross-host completion.
+
 ## Verification
 
-For S91 controlled dev-preview documentation updates, run:
+The final S91 gate is:
 
 ```sh
-npm run audit:controlled-autonomy-wording && npm run check
-```
-
-Before sharing the branch, also run:
-
-```sh
+npm run validate:contracts
+cd apps/gui && npm test -- controlledAgentDevPreviewStatus AgentRunPanel ControlledAgentRunPanel controlledOneStepAgentLoop controlledRepairLoop App && npm run typecheck && npm run build
+npm run smoke:controlled-agent-dev-preview
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
 git diff --check && git status --short
 ```
+
+All final gate commands passed for S91. Keep this command list together when repeating the final audit so later evidence cannot quietly skip the wording, smoke, repository, or clean-tree checks.
