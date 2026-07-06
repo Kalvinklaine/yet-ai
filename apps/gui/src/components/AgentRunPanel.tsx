@@ -231,15 +231,15 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         </div>
       )}
       {showOneStepLoop && oneStepLoopState && (
-        <div className={`readiness-card ${canStartOneStep || oneStepLoopState.phase === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="S86 one-step Agent Run">
+        <div className={`readiness-card ${canStartOneStep || oneStepLoopState.phase === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="S96 useful one-step Agent Run">
           <div className="row">
-            <strong>S86 one-step Agent Run</strong>
+            <strong>S96 useful one-step Agent Run</strong>
             <span className={host === "vscode" ? "badge ok" : "badge warn"}>VS Code-only</span>
             <span className="badge">explicit Start/Stop</span>
             <span className="badge">sanitized metadata</span>
           </div>
           <span>{sanitizeDisplayText(oneStepLoopState.summary)}</span>
-          <div className="agent-progress-grid" aria-label="S86 one-step readiness fields">
+          <div className="agent-progress-grid" aria-label="S96 useful one-step readiness fields">
             <span>Phase: {oneStepLoopState.phase.replace(/_/g, " ")}</span>
             <span>Read request: {oneStepReadReady ? "ready" : oneStepReadRequest?.state ?? "missing"}</span>
             <span>Edit request: {oneStepEditReady ? "ready" : oneStepEditRequest?.state ?? "missing"}</span>
@@ -251,9 +251,9 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           </div>
           {oneStepLoopState.stop && <span>Stop reason: {sanitizeDisplayText(oneStepLoopState.stop.reason.replace(/_/g, " "))}</span>}
           {host !== "vscode" && <span className="subtle">One-step controlled run Start is disabled outside VS Code and posts no bridge request.</span>}
-          {host === "vscode" && !canStartOneStep && !oneStepActive && <span className="subtle">Start needs ready controlled read, edit, and allowlisted verification request metadata.</span>}
-          <span className="subtle">Start sequences exactly one bounded read, one sanitized model-step metadata transition, one bounded edit request, and one allowlisted controlled verification request. Stop clears GUI-local pending correlations only.</span>
-          <div className="row" role="group" aria-label="S86 one-step Agent Run actions">
+          {host === "vscode" && !canStartOneStep && !oneStepActive && <span className="subtle">Start needs ready VS Code host, runtime, workspace, controlled read, controlled edit, and allowlisted verification request metadata.</span>}
+          <span className="subtle">Start sequences exactly one bounded read, one sanitized model-step metadata transition, one bounded edit request, and one allowlisted controlled verification request after the explicit click. Stop clears GUI-local pending correlations only so stale host results are ignored.</span>
+          <div className="row" role="group" aria-label="S96 useful one-step Agent Run actions">
             <button type="button" onClick={onStartOneStepRun} disabled={!canStartOneStep}>Start one-step Agent Run</button>
             <button type="button" className="secondary-button" onClick={onStopOneStepRun} disabled={!canStopOneStep}>Stop one-step Agent Run</button>
           </div>

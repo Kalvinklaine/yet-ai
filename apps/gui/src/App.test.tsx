@@ -8161,7 +8161,7 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
-  it("S86 one-step Start sequences read edit and controlled verification, while Stop ignores stale read", async () => {
+  it("S96 one-step Start sequences read edit and controlled verification, while Stop ignores stale read", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     mockRuntimeResponses({
@@ -8175,7 +8175,7 @@ describe("edit proposal preview", () => {
     postMessage.mockClear();
 
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("S86 one-step Agent Run");
+    expect(panel.textContent).toContain("S96 useful one-step Agent Run");
     expect(buttonWithin(panel, "Start one-step Agent Run").disabled).toBe(false);
     await act(async () => {
       buttonWithin(panel, "Start one-step Agent Run").click();
@@ -8216,6 +8216,42 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest")).toHaveLength(1);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
     expect(agentRunPanel().textContent).toContain("Phase: stopped");
+  });
+
+  it("S96 one-step Start stays visible but fail-closed for unsupported hosts", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }),
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(agentRunPanel().textContent).toContain("S96 useful one-step Agent Run");
+    expect(agentRunPanel().textContent).toContain("browser preview only");
+    expect(agentRunPanel().textContent).toContain("One-step controlled run Start is disabled outside VS Code and posts no bridge request.");
+    expect(buttonWithin(agentRunPanel(), "Start one-step Agent Run").disabled).toBe(true);
+
+    act(() => root?.unmount());
+    root = undefined;
+    container?.remove();
+    container = undefined;
+
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }),
+    });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(agentRunPanel().textContent).toContain("S96 useful one-step Agent Run");
+    expect(agentRunPanel().textContent).toContain("JetBrains partial/fail-closed");
+    expect(buttonWithin(agentRunPanel(), "Start one-step Agent Run").disabled).toBe(true);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
   });
 
   it("Agent Run apply can post then controlled verification uses S85 command-run path", async () => {

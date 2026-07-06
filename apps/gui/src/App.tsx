@@ -753,7 +753,7 @@ export function App() {
     host: bridgeHost,
     runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
     workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
-    plannedEditMetadata: controlledAgentEditExecutorMetadata,
+    plannedEditMetadata: oneStepEditMetadata(controlledAgentEditExecutorMetadata, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata),
     requestSeed: "s86-one-step",
     jetbrainsEditSupported: false,
   }), [bridgeHost, controlledAgentEditExecutorMetadata, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
@@ -792,7 +792,8 @@ export function App() {
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
   const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || effectiveControlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined;
-  const showOneStepAgentRunPanel = oneStepLoopState.phase !== "idle" || (bridgeHost === "vscode" && oneStepControlledAgentFileReadRequest.state === "ready" && oneStepControlledAgentEditRequest.state === "ready" && oneStepControlledAgentCommandRunRequest.state === "ready");
+  const hasOneStepControlledMetadata = controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined;
+  const showOneStepAgentRunPanel = oneStepLoopState.phase !== "idle" || (bridgeHost === "vscode" && oneStepControlledAgentFileReadRequest.state === "ready" && oneStepControlledAgentEditRequest.state === "ready" && oneStepControlledAgentCommandRunRequest.state === "ready") || (hasOneStepControlledMetadata && (oneStepControlledAgentFileReadRequest.state === "unsupported" || oneStepControlledAgentEditRequest.state === "unsupported" || oneStepControlledAgentCommandRunRequest.state === "unsupported"));
   const controlledAgentProgressReport = useMemo(() => buildControlledAgentProgressReport({
     runState: controlledAgentRunState,
     controlledAgentFileRead: effectiveControlledAgentFileReadMetadata,
@@ -3516,6 +3517,18 @@ function controlledEditResultToOneStepMetadata(payload: unknown): unknown {
     limits: payload.limits,
     edits,
   };
+}
+
+function oneStepEditMetadata(editMetadata: unknown, runtimeSessionMetadata: unknown, workspaceReadinessMetadata: unknown): unknown {
+  if (!isRecord(editMetadata)) {
+    return editMetadata;
+  }
+  const runtimeWorkspace = isRecord(runtimeSessionMetadata) && isRecord(runtimeSessionMetadata.workspace) ? runtimeSessionMetadata.workspace : undefined;
+  const runtimeSession = isRecord(runtimeSessionMetadata) && isRecord(runtimeSessionMetadata.session) ? runtimeSessionMetadata.session : undefined;
+  const workspaceReadinessIsolation = isRecord(workspaceReadinessMetadata) && isRecord(workspaceReadinessMetadata.isolation) ? workspaceReadinessMetadata.isolation : undefined;
+  const runId = typeof runtimeSession?.sessionId === "string" ? runtimeSession.sessionId : editMetadata.runId;
+  const workspaceReadinessId = typeof runtimeWorkspace?.readinessId === "string" ? runtimeWorkspace.readinessId : typeof workspaceReadinessIsolation?.readinessId === "string" ? workspaceReadinessIsolation.readinessId : editMetadata.workspaceReadinessId;
+  return { ...editMetadata, runId, workspaceReadinessId };
 }
 
 function controlledCommandRunResultToRunnerMetadata(correlation: ControlledAgentCommandRunRequestCorrelation, result: ControlledAgentCommandRunResultSummary): Record<string, unknown> {

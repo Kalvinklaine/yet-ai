@@ -239,7 +239,7 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("One repair attempt: blocked");
     expect(panelText()).toContain("no production autonomy");
 
-    expect(panelText()).toContain("S86 one-step Agent Run");
+    expect(panelText()).toContain("S96 useful one-step Agent Run");
     expect(panelText()).toContain("VS Code-only");
     expect(panelText()).toContain("explicit Start/Stop");
     expect(panelText()).toContain("Read request: ready");
@@ -293,7 +293,7 @@ describe("AgentRunPanel", () => {
       oneStepCommandRunRequest: readyOneStepRequest,
     });
 
-    expect(panelText()).toContain("Start needs ready controlled read, edit, and allowlisted verification request metadata.");
+    expect(panelText()).toContain("Start needs ready VS Code host, runtime, workspace, controlled read, controlled edit, and allowlisted verification request metadata.");
     expect(panelText()).toContain("Edit request: blocked");
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
   });
