@@ -144,6 +144,18 @@ const failedOneStepLoop = {
 
 const readyOneStepRequest = { state: "ready", diagnostics: [], details: {}, authority: {} } as any;
 const blockedOneStepRequest = { state: "blocked", diagnostics: [{ code: "blocked", message: "not ready" }], details: {}, authority: {} } as any;
+const capabilityMatrixFixture = {
+  allowedToExecute: false,
+  hostLabel: "VS Code host",
+  supportLabel: "Controlled dev-preview path ready",
+  statusLabels: ["Start: supported metadata only", "Read: supported metadata only", "Edit: supported metadata only", "Verification: supported metadata only", "Repair: unsupported fail-closed"],
+  correlationLabels: ["Requires request id"],
+  limitLabels: ["maxReadBytes: 8192"],
+  reasonLabels: ["Reason metadata only"],
+  authorityLabels: ["Metadata only"],
+  summary: "Display evidence only.",
+} as const;
+
 
 const readyInput: AgentRunInput = {
   goal: { id: "goal-1", title: "Add safe panel", summary: "Add safe panel" },
@@ -216,6 +228,17 @@ describe("AgentRunPanel", () => {
     expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
     expect(findButton("Manually run allowlisted verification").disabled).toBe(true);
     expect(findButton("Manually review rollback").disabled).toBe(true);
+  });
+
+  it("renders host capability v2 matrix as display-only labels", () => {
+    renderPanel(undefined, { controlledHostCapabilityMatrix: capabilityMatrixFixture });
+
+    expect(panelText()).toContain("Host capability v2 matrix");
+    expect(panelText()).toContain("allowed to execute: false");
+    expect(panelText()).toContain("Host: VS Code host · Controlled dev-preview path ready");
+    expect(panelText()).toContain("Capabilities: Start: supported metadata only · Read: supported metadata only · Edit: supported metadata only · Verification: supported metadata only · Repair: unsupported fail-closed");
+    expect(panelText()).toContain("Dev-preview labels are display evidence only and do not grant controlled Start, read, edit, verification, repair, shell, git, provider, tool, or workspace authority.");
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
   });
 
   it("renders explicit S86 one-step Start and Stop controls", () => {
@@ -1064,6 +1087,7 @@ type PanelTestProps = {
   onConfirmRepairAttempt?: () => void;
   onStartOneStepRun?: () => void;
   onStopOneStepRun?: () => void;
+  controlledHostCapabilityMatrix?: any;
 };
 
 function renderPanel(input: unknown, props: PanelTestProps = {}) {
@@ -1099,6 +1123,7 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onConfirmRepairAttempt={props.onConfirmRepairAttempt}
         onStartOneStepRun={props.onStartOneStepRun}
         onStopOneStepRun={props.onStopOneStepRun}
+        controlledHostCapabilityMatrix={props.controlledHostCapabilityMatrix}
       />,
     );
   });

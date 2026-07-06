@@ -5,6 +5,7 @@ import type { ControlledAgentProgressReport } from "../services/controlledAgentP
 import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledAgentDevPreviewStatus";
 import type { ControlledLocalAgentMvpReport } from "../services/controlledLocalAgentMvp";
 import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
+import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
 
 export type ControlledAgentRunPanelProps = {
@@ -12,10 +13,11 @@ export type ControlledAgentRunPanelProps = {
   progressReport?: ControlledAgentProgressReport;
   mvpReport?: ControlledLocalAgentMvpReport;
   host?: BridgeHost | "unknown";
+  capabilityMatrix?: ControlledHostCapabilityMatrixDisplay;
   onStop: () => void;
 };
 
-export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host = "unknown", onStop }: ControlledAgentRunPanelProps) {
+export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host = "unknown", capabilityMatrix, onStop }: ControlledAgentRunPanelProps) {
   const phaseLabel = sanitizeDisplayText(state.phase.replace(/_/g, " "));
   const stopReason = state.stop?.reason ? sanitizeDisplayText(state.stop.reason.replace(/_/g, " ")) : "none";
   const currentStep = currentStepLabel(state);
@@ -77,6 +79,19 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         <span className={state.stopped ? "badge warn" : "badge ok"}>{phaseLabel}</span>
       </div>
       <span>{sanitizeDisplayText(state.summary)}</span>
+      {capabilityMatrix && (
+        <section className="readiness-card warn stack" role="status" aria-label="Controlled run host capability matrix">
+          <div className="row">
+            <strong>Host capability v2 matrix</strong>
+            <span className="badge">metadata only</span>
+            <span className="badge">allowed to execute: {String(capabilityMatrix.allowedToExecute)}</span>
+          </div>
+          <span>Host: {capabilityMatrix.hostLabel} · {capabilityMatrix.supportLabel}</span>
+          <span>Capabilities: {capabilityMatrix.statusLabels.join(" · ")}</span>
+          {capabilityMatrix.reasonLabels.length > 0 && <span>Reasons: {capabilityMatrix.reasonLabels.join(" · ")}</span>}
+          <span className="subtle">These labels are safe display evidence only; unsupported hosts remain disabled and fail-closed.</span>
+        </section>
+      )}
       <section className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">
           <strong>Dev-preview readiness</strong>

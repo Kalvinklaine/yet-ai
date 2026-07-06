@@ -11,6 +11,7 @@ import type { ControlledOneStepAgentLoopState } from "../services/controlledOneS
 import type { ControlledAgentRepairLoopEvaluation } from "../services/controlledAgentRepairLoop";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
+import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
 
 export type AgentRunPanelProps = {
@@ -36,9 +37,10 @@ export type AgentRunPanelProps = {
   onConfirmRepairAttempt?: () => void;
   onStartOneStepRun?: () => void;
   onStopOneStepRun?: () => void;
+  controlledHostCapabilityMatrix?: ControlledHostCapabilityMatrixDisplay;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -148,6 +150,18 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       </div>
       <span>{sanitizeDisplayText(view.summary)}</span>
       <strong>{readinessExplanation(view.state, details)}</strong>
+      {controlledHostCapabilityMatrix && (
+        <div className="readiness-card warn stack" role="status" aria-label="Agent Run host capability matrix">
+          <div className="row">
+            <strong>Host capability v2 matrix</strong>
+            <span className="badge">metadata only</span>
+            <span className="badge">allowed to execute: {String(controlledHostCapabilityMatrix.allowedToExecute)}</span>
+          </div>
+          <span>Host: {controlledHostCapabilityMatrix.hostLabel} · {controlledHostCapabilityMatrix.supportLabel}</span>
+          <span>Capabilities: {controlledHostCapabilityMatrix.statusLabels.join(" · ")}</span>
+          <span className="subtle">Dev-preview labels are display evidence only and do not grant controlled Start, read, edit, verification, repair, shell, git, provider, tool, or workspace authority.</span>
+        </div>
+      )}
       {(showOneStepLoop || showRepairLoop) && (      <div className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">
           <strong>S91 controlled dev-preview status</strong>

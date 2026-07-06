@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createControlledHostCapabilityMatrixDisplay,
   evaluateHostCapabilityMetadata,
   evaluateToolAuthorityPolicy,
   summarizeToolAuthorityPolicyEvaluation,
@@ -162,6 +163,39 @@ describe("toolAuthorityPolicy", () => {
       controlledRead: "supported_bounded_single_file",
       controlledVerification: "supported_allowlisted_command_id",
     });
+  });
+
+  it("formats controlled host capability v2 metadata into safe display labels only", () => {
+    const display = createControlledHostCapabilityMatrixDisplay({
+      hostSurface: "vscode",
+      authority: "metadata_only",
+      capabilities: {
+        controlledStart: "supported",
+        controlledRead: "supported",
+        controlledEdit: "supported",
+        controlledVerification: "supported",
+        controlledRepair: "unsupported",
+      },
+      correlationRequirements: ["request_id", "runtime_session_id", "explicit_user_gesture"],
+      limits: { maxReadBytes: 8192, maxEditFiles: 1, maxRepairAttempts: 0 },
+      reasonCodes: ["metadata_only", "explicit_user_gesture_required"],
+      safeLabels: { host: "VS Code host", support: "Controlled dev-preview path ready" },
+    }, "vscode");
+
+    expect(display.allowedToExecute).toBe(false);
+    expect(display.hostLabel).toBe("VS Code host");
+    expect(display.supportLabel).toBe("Controlled dev-preview path ready");
+    expect(display.statusLabels).toEqual([
+      "Start: supported metadata only",
+      "Read: supported metadata only",
+      "Edit: supported metadata only",
+      "Verification: supported metadata only",
+      "Repair: unsupported fail-closed",
+    ]);
+    expect(display.correlationLabels).toContain("Requires explicit user gesture");
+    expect(display.limitLabels).toContain("maxReadBytes: 8192");
+    expect(display.reasonLabels).toContain("Reason explicit user gesture required");
+    expect(display.authorityLabels.join(" ")).toContain("Does not grant Send, apply, verification");
   });
 
   it("denies assistant-provided capability claims even when they mimic host support", () => {

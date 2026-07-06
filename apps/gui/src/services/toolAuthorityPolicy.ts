@@ -109,6 +109,28 @@ export type ToolAuthorityPolicyEvaluation = {
   diagnostics: ToolAuthorityPolicyDiagnostic[];
   details: Record<string, string | boolean | string[]>;
 };
+export type ControlledHostCapabilitiesDisplayInput = {
+  hostSurface?: string;
+  authority?: string;
+  capabilities?: Record<string, unknown>;
+  correlationRequirements?: unknown;
+  limits?: Record<string, unknown>;
+  reasonCodes?: unknown;
+  safeLabels?: Record<string, unknown>;
+};
+
+export type ControlledHostCapabilityMatrixDisplay = {
+  allowedToExecute: false;
+  hostLabel: string;
+  supportLabel: string;
+  statusLabels: string[];
+  correlationLabels: string[];
+  limitLabels: string[];
+  reasonLabels: string[];
+  authorityLabels: string[];
+  summary: string;
+};
+
 
 const capabilitySet = new Set<unknown>(toolAuthorityPolicyCapabilities);
 const riskSet = new Set<unknown>(toolAuthorityPolicyRiskKinds);
@@ -228,6 +250,94 @@ export function evaluateHostCapabilityMetadata(hostSurface: ToolAuthorityPolicyH
       displayOnly: true,
     }),
   };
+}
+
+export function createControlledHostCapabilityMatrixDisplay(input: ControlledHostCapabilitiesDisplayInput | undefined, hostSurface: ToolAuthorityPolicyHostSurface): ControlledHostCapabilityMatrixDisplay {
+  const fallback = evaluateHostCapabilityMetadata(hostSurface);
+  const safeLabels = isPlainObject(input?.safeLabels) ? input.safeLabels : undefined;
+  const capabilities = isPlainObject(input?.capabilities) ? input.capabilities : undefined;
+  const hostLabel = sanitizeBoundedText(typeof safeLabels?.host === "string" ? safeLabels.host : hostCapabilityHostLabel(hostSurface), 80, hostCapabilityHostLabel(hostSurface));
+  const supportLabel = sanitizeBoundedText(typeof safeLabels?.support === "string" ? safeLabels.support : String(fallback.details.capabilityStatus ?? "metadata only"), 140, "metadata only");
+  const statusLabels = [
+    `Start: ${capabilityDisplayLabel(capabilities?.controlledStart ?? fallback.details.controlledStart)}`,
+    `Read: ${capabilityDisplayLabel(capabilities?.controlledRead ?? fallback.details.controlledRead)}`,
+    `Edit: ${capabilityDisplayLabel(capabilities?.controlledEdit ?? fallback.details.controlledEdit)}`,
+    `Verification: ${capabilityDisplayLabel(capabilities?.controlledVerification ?? fallback.details.controlledVerification)}`,
+    `Repair: ${capabilityDisplayLabel(capabilities?.controlledRepair ?? "unsupported")}`,
+  ];
+  const correlationLabels = safeStringArray(input?.correlationRequirements, 8, 80).map((item) => `Requires ${item.replace(/_/g, " ")}`);
+  const reasonLabels = safeStringArray(input?.reasonCodes, 8, 80).map((item) => `Reason ${item.replace(/_/g, " ")}`);
+  const limitLabels = controlledHostCapabilityLimitLabels(input?.limits);
+  return {
+    allowedToExecute: false,
+    hostLabel,
+    supportLabel,
+    statusLabels,
+    correlationLabels,
+    limitLabels,
+    reasonLabels,
+    authorityLabels: [
+      "Metadata only",
+      `Authority: ${input?.authority === "metadata_only" ? "metadata only" : "display only"}`,
+      "Does not grant Send, apply, verification, file read, edit, shell, git, provider, tool, repair, or one-step Start authority",
+    ],
+    summary: sanitizeBoundedText(fallback.summary, 360, "Host capability metadata is display evidence only."),
+  };
+}
+
+function hostCapabilityHostLabel(hostSurface: ToolAuthorityPolicyHostSurface): string {
+  if (hostSurface === "vscode") {
+    return "VS Code host";
+  }
+  if (hostSurface === "jetbrains") {
+    return "JetBrains host";
+  }
+  if (hostSurface === "browser") {
+    return "Browser preview host";
+  }
+  return "Unknown host";
+}
+
+function capabilityDisplayLabel(value: unknown): string {
+  if (typeof value !== "string") {
+    return "unknown";
+  }
+  if (value === "supported" || value.startsWith("supported")) {
+    return "supported metadata only";
+  }
+  if (value === "preview_only" || value.startsWith("preview_only")) {
+    return "preview only";
+  }
+  if (value === "unsupported" || value.startsWith("unsupported")) {
+    return "unsupported fail-closed";
+  }
+  if (value === "disabled") {
+    return "disabled fail-closed";
+  }
+  if (value === "degraded") {
+    return "degraded metadata only";
+  }
+  return sanitizeBoundedText(value.replace(/_/g, " "), 80, "unknown");
+}
+
+function safeStringArray(value: unknown, maxItems: number, maxLength: number): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string").map((item) => sanitizeBoundedText(item, maxLength, "metadata")).filter(Boolean).slice(0, maxItems);
+}
+
+function controlledHostCapabilityLimitLabels(value: unknown): string[] {
+  if (!isPlainObject(value)) {
+    return [];
+  }
+  const labels: string[] = [];
+  for (const [key, item] of Object.entries(value)) {
+    if (typeof item === "number" && Number.isFinite(item)) {
+      labels.push(`${sanitizeBoundedText(key, 80, "limit")}: ${item}`);
+    }
+  }
+  return labels.slice(0, 8);
 }
 
 function hostCapabilityMatrix(hostSurface: ToolAuthorityPolicyHostSurface): {

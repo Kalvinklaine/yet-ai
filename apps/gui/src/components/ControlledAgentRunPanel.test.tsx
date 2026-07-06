@@ -76,6 +76,18 @@ describe("ControlledAgentRunPanel", () => {
     expect(findButton("Stop controlled run").disabled).toBe(false);
   });
 
+  it("renders controlled run host capability v2 matrix as metadata only", () => {
+    renderPanelWithMatrix(readyState(), "jetbrains");
+
+    const text = panelText();
+    expect(text).toContain("Host capability v2 matrix");
+    expect(text).toContain("allowed to execute: false");
+    expect(text).toContain("Host: JetBrains host · Partial fail-closed metadata only");
+    expect(text).toContain("Capabilities: Start: unsupported fail-closed · Read: unsupported fail-closed · Edit: unsupported fail-closed · Verification: unsupported fail-closed · Repair: unsupported fail-closed");
+    expect(text).toContain("These labels are safe display evidence only; unsupported hosts remain disabled and fail-closed.");
+    expect(findButton("Start controlled dev-preview").disabled).toBe(true);
+  });
+
   it("renders sanitized controlled dev-preview reports for active and terminal run states", () => {
     const active = reduceControlledAgentRunState(readyState(), { type: "workspace_ready" });
     const completed = reduceControlledAgentRunState(readyState(), { type: "complete", summary: "Completed with metadata only." });
@@ -198,6 +210,30 @@ function renderPanel(state: ControlledAgentRunState, host: "browser" | "vscode" 
   root = createRoot(container);
   act(() => {
     root?.render(<ControlledAgentRunPanel state={state} host={host} onStop={stopSpy} />);
+  });
+}
+
+function renderPanelWithMatrix(state: ControlledAgentRunState, host: "browser" | "vscode" | "jetbrains" | "unknown" = "unknown") {
+  if (root) {
+    act(() => root?.unmount());
+  }
+  root = undefined;
+  container?.remove();
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() => {
+    root?.render(<ControlledAgentRunPanel state={state} host={host} capabilityMatrix={{
+      allowedToExecute: false,
+      hostLabel: "JetBrains host",
+      supportLabel: "Partial fail-closed metadata only",
+      statusLabels: ["Start: unsupported fail-closed", "Read: unsupported fail-closed", "Edit: unsupported fail-closed", "Verification: unsupported fail-closed", "Repair: unsupported fail-closed"],
+      correlationLabels: [],
+      limitLabels: [],
+      reasonLabels: ["Reason jetbrains parity not verified"],
+      authorityLabels: ["Metadata only"],
+      summary: "Display evidence only.",
+    }} onStop={stopSpy} />);
   });
 }
 

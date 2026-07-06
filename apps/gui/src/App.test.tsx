@@ -277,6 +277,7 @@ describe("runtime refresh feedback", () => {
     renderApp();
     await flushAsync();
 
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", controlledCapabilities: controlledHostCapabilitiesFixture() });
     await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "connected", diagnosis: "runtime connected and host supports controlled actions", nextAction: "Use explicit controls when ready." }));
     await flushAsync();
 
@@ -286,6 +287,10 @@ describe("runtime refresh feedback", () => {
     expect(text).toContain("allowed to execute: false");
     expect(text).toContain("Host/plugin support signals are display evidence only; they never enable Send, apply, verification, or IDE actions.");
     expect(text).toContain("Controlled host matrix: preview_only_unsupported · read unsupported_no_trusted_workspace_host · edit unsupported_no_trusted_workspace_host · verification unsupported_no_trusted_workspace_host.");
+    expect(text).toContain("Controlled capabilities v2: VS Code host · Controlled dev-preview path ready · allowed to execute: false.");
+    expect(text).toContain("Safe capability labels: Start: supported metadata only · Read: supported metadata only · Edit: supported metadata only · Verification: supported metadata only · Repair: unsupported fail-closed.");
+    expect(text).toContain("Correlation requirements: Requires request id · Requires runtime session id · Requires explicit user gesture.");
+    expect(text).toContain("Reason labels: Reason metadata only · Reason explicit user gesture required.");
     expect(findButton("Send").disabled).toBe(true);
     expect(findButton("Repository check").disabled).toBe(true);
     expect(findButton("GUI app tests").disabled).toBe(true);
@@ -10691,7 +10696,54 @@ describe("edit proposal preview", () => {
   });
 });
 
-async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: string }) {
+function controlledHostCapabilitiesFixture() {
+  return {
+    protocolVersion: "controlled_host_capabilities_v2",
+    hostSurface: "vscode",
+    authority: "metadata_only",
+    capabilities: {
+      controlledStart: "supported",
+      controlledRead: "supported",
+      controlledEdit: "supported",
+      controlledVerification: "supported",
+      controlledRepair: "unsupported",
+    },
+    correlationRequirements: ["request_id", "runtime_session_id", "explicit_user_gesture"],
+    authorityFlags: {
+      metadataOnly: true,
+      controlledRead: false,
+      controlledEdit: false,
+      controlledVerification: false,
+      controlledStart: false,
+      repair: false,
+      shell: false,
+      git: false,
+      packageInstall: false,
+      network: false,
+      provider: false,
+      tool: false,
+      hiddenSearch: false,
+      indexing: false,
+      autoApply: false,
+      autoRun: false,
+      autoFix: false,
+    },
+    limits: {
+      maxReadBytes: 8192,
+      maxReadLines: 240,
+      maxEditFiles: 1,
+      maxEditOperations: 4,
+      maxPatchBytes: 12000,
+      maxVerificationOutputBytes: 12000,
+      maxVerificationOutputLines: 240,
+      maxRepairAttempts: 0,
+    },
+    reasonCodes: ["metadata_only", "explicit_user_gesture_required"],
+    safeLabels: { host: "VS Code host", support: "Controlled dev-preview path ready" },
+  };
+}
+
+async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: string; controlledCapabilities?: Record<string, unknown> }) {
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {

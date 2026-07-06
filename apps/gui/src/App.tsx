@@ -41,7 +41,7 @@ import { appendCodingSessionTraceEntry, type CodingSessionTraceDraft, type Codin
 import { createProposalHistory, type ProposalHistoryEntryInput } from "./services/proposalHistory";
 import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, createSessionMemoryLabel, createTaskMemoryLabel, type CodingTaskSessionSnapshot } from "./services/codingTaskSession";
 import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory, type TaskMemorySuggestion } from "./services/taskMemorySuggestions";
-import { evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
+import { createControlledHostCapabilityMatrixDisplay, evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
 import { buildControlledAgentFileReadRequest, correlateControlledAgentFileReadResult, type ControlledAgentFileReadRequestCorrelation } from "./services/controlledAgentFileReadRequest";
 import { buildControlledAgentEditRequest, correlateControlledAgentEditResult, type ControlledAgentEditRequestCorrelation } from "./services/controlledAgentEditRequest";
@@ -372,6 +372,7 @@ export function App() {
   const [codingSessionTrace, setCodingSessionTrace] = useState<CodingSessionTraceEntry[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
+  const [controlledHostCapabilities, setControlledHostCapabilities] = useState<HostReadyPayload["controlledCapabilities"] | undefined>(undefined);
   const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string; excerpt?: ActiveFileExcerptAttachment } | null>(null);
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
   const [attachedContextAcknowledged, setAttachedContextAcknowledged] = useState(false);
@@ -1067,6 +1068,7 @@ export function App() {
       return;
     }
     const hostRuntimeUrl = payload.runtimeUrl;
+    setControlledHostCapabilities(payload.controlledCapabilities);
     const currentBaseUrl = settingsRef.current.baseUrl;
     const nextToken = payload.sessionToken !== undefined
       ? payload.sessionToken
@@ -3059,6 +3061,7 @@ export function App() {
 
   const hostedWebview = bridgeHost === "vscode" || bridgeHost === "jetbrains";
   const hostCapabilityEvaluation = useMemo(() => evaluateHostCapabilityMetadata(bridgeHost), [bridgeHost]);
+  const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, bridgeHost), [bridgeHost, controlledHostCapabilities]);
 
   return (
     <main className={`app-shell host-${bridgeHost}`}>
@@ -3095,6 +3098,11 @@ export function App() {
         </div>
         <span className="subtle">Host/plugin support signals are display evidence only; they never enable Send, apply, verification, or IDE actions.</span>
         <span className="subtle">Controlled host matrix: {String(hostCapabilityEvaluation.details.controlledStart)} · read {String(hostCapabilityEvaluation.details.controlledRead)} · edit {String(hostCapabilityEvaluation.details.controlledEdit)} · verification {String(hostCapabilityEvaluation.details.controlledVerification)}.</span>
+        {controlledHostCapabilities && <span className="subtle">Controlled capabilities v2: {controlledHostCapabilityMatrix.hostLabel} · {controlledHostCapabilityMatrix.supportLabel} · allowed to execute: {String(controlledHostCapabilityMatrix.allowedToExecute)}.</span>}
+        {controlledHostCapabilities && <span className="subtle">Safe capability labels: {controlledHostCapabilityMatrix.statusLabels.join(" · ")}.</span>}
+        {controlledHostCapabilities && controlledHostCapabilityMatrix.correlationLabels.length > 0 && <span className="subtle">Correlation requirements: {controlledHostCapabilityMatrix.correlationLabels.join(" · ")}.</span>}
+        {controlledHostCapabilities && controlledHostCapabilityMatrix.limitLabels.length > 0 && <span className="subtle">Bounded limits: {controlledHostCapabilityMatrix.limitLabels.join(" · ")}.</span>}
+        {controlledHostCapabilities && controlledHostCapabilityMatrix.reasonLabels.length > 0 && <span className="subtle">Reason labels: {controlledHostCapabilityMatrix.reasonLabels.join(" · ")}.</span>}
       </section>}
 
       <CodingSessionTracePanel entries={tracePanelEntries} />
@@ -3230,8 +3238,8 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} />
-                {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} onStop={stopControlledAgentRun} />}
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} />
+                {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} capabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
                 {(controlledAgentEditExecutorMetadata !== undefined || controlledAgentEditRequest.state !== "blocked") && <ControlledAgentEditPanel metadata={effectiveControlledEditMetadata} request={controlledAgentEditRequest} pendingRequestId={pendingControlledEditRequestId} note={controlledEditNote} onRequest={submitControlledEdit} onClearPending={clearPendingControlledEditState} />}
