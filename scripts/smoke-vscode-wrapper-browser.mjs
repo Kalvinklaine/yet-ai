@@ -892,22 +892,64 @@ async function clickButtonWithDomFallback(locator, label) {
 async function clickSendButtonWithActionability(page, label) {
   const sendButton = page.getByRole("button", { name: "Send", exact: true }).last();
   await sendButton.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
-  const state = await sendButton.evaluate((button) => {
-    if (!(button instanceof HTMLElement)) return { ok: false, reason: "send button is not an HTMLElement" };
+  const before = await describeControl(sendButton);
+  if (!before.ok || before.disabled) failures.push(`${label}: Send is not hit-testable/enabled before click (${JSON.stringify(before)}).`);
+  try {
+    await sendButton.click({ timeout: 5000 });
+  } catch (error) {
+    const after = await describeControl(sendButton);
+    throw new Error(`${label}: Send click failed on ${process.platform}/${process.arch}. ${await controlDiagnostic(page, { before, after, clickError: messageOf(error) })}`);
+  }
+}
+
+async function describeControl(locator) {
+  return locator.evaluate((button) => {
+    if (!(button instanceof HTMLElement)) return { ok: false, reason: "control is not an HTMLElement" };
     const rect = button.getBoundingClientRect();
     const x = rect.left + rect.width / 2;
     const y = rect.top + rect.height / 2;
     const top = document.elementFromPoint(x, y);
+    const style = window.getComputedStyle(button);
     return {
-      ok: top === button || button.contains(top),
-      disabled: button instanceof HTMLButtonElement ? button.disabled : undefined,
+      ok: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.pointerEvents !== "none" && !button.hasAttribute("disabled") && (top === button || button.contains(top)),
+      text: button.innerText?.trim().slice(0, 120),
+      disabled: button instanceof HTMLButtonElement ? button.disabled : button.hasAttribute("disabled"),
+      ariaDisabled: button.getAttribute("aria-disabled"),
       rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height },
+      viewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY },
+      pointerEvents: style.pointerEvents,
+      visibility: style.visibility,
+      display: style.display,
       topTag: top?.tagName,
       topText: top?.textContent?.trim().slice(0, 80),
+      topClass: top instanceof HTMLElement ? String(top.className).slice(0, 160) : undefined,
     };
   }).catch((error) => ({ ok: false, reason: messageOf(error) }));
-  if (!state.ok || state.disabled) failures.push(`${label}: Send is not hit-testable/enabled before click (${JSON.stringify(state)}).`);
-  await sendButton.click({ timeout: 5000 });
+}
+
+async function controlDiagnostic(page, details) {
+  const pageState = await page.evaluate(() => {
+    const composer = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
+    const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
+    return {
+      hostClass: document.querySelector("main.app-shell")?.className ?? null,
+      viewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY },
+      send: send instanceof HTMLElement ? elementState(send) : null,
+      composer: composer instanceof HTMLTextAreaElement ? { value: composer.value.slice(0, 500), ...elementState(composer) } : null,
+      bodySnippet: document.body.innerText.replace(/\s+/g, " ").slice(0, 1200),
+    };
+    function elementState(element) {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return {
+        visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
+        disabled: element.hasAttribute("disabled"),
+        ariaDisabled: element.getAttribute("aria-disabled"),
+        rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height },
+      };
+    }
+  }).catch((error) => ({ pageDiagnosticError: messageOf(error) }));
+  return sanitizeEvidenceText(JSON.stringify({ details, pageState })).slice(0, 2200);
 }
 
 async function dispatchHostMessage(page, message) {
@@ -1390,6 +1432,7 @@ function sanitizeEvidenceText(text) {
     .replaceAll(activeContextSelection, "[redacted-active-selection]")
     .replaceAll(liveContextSelection, "[redacted-live-selection]")
     .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]")
     .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
 }
 
@@ -1410,6 +1453,6 @@ function messageOf(error) {
 
 function reportFailures() {
   console.error("VS Code wrapper browser smoke failed:");
-  for (const failure of failures) console.error(`- ${redactSecrets(failure)}`);
+  for (const failure of failures) console.error(`- ${sanitizeEvidenceText(failure)}`);
   process.exit(1);
 }

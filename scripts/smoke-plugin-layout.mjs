@@ -81,14 +81,14 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await assertActionable(closeChatsButton, `${name} Chats drawer Close button`);
   await closeChatsButton.click();
 
-  await clickActionableButton(page, explainSelectionButton, `${name} Explain selection button`);
+  await clickActionableButton(page, explainSelectionButton, `${name} Explain selection button`, { viewportName: name, controlLabel: "Explain selection" });
   await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await clickActionableButton(page, page.getByRole("button", { name: "Send", exact: true }), `${name} Send button after Coding Actions prompt`, { viewportName: name, controlLabel: "Send" });
   await expectVisibleText(page, "Explain the selected code", `${name} sent coding-action prompt`);
 
   const textarea = page.getByPlaceholder("Ask about the current file, selection, or project...");
   await textarea.fill(`Follow-up from ${name}`);
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await clickActionableButton(page, page.getByRole("button", { name: "Send", exact: true }), `${name} Send button after follow-up prompt`, { viewportName: name, controlLabel: "Send" });
   await expectVisibleText(page, `Follow-up from ${name}`, `${name} user follow-up`);
 
   const metrics = await collectLayoutMetrics(page, { width, height, name, host });
@@ -134,14 +134,17 @@ async function buttonActionability(locator, label) {
   return { ok: true, label, reason: "ready", actionable };
 }
 
-async function clickActionableButton(page, locator, label) {
+async function clickActionableButton(page, locator, label, options = {}) {
+  const viewportName = options.viewportName ?? label;
   const result = await buttonActionability(locator, label);
-  if (!result.ok) await failViewport(page, label, result.reason, result);
+  if (!result.ok) await failViewport(page, viewportName, `${label} ${result.reason}`, result);
   try {
     await locator.click({ timeout: 5000 });
   } catch (error) {
     const fallbackReady = await describeActionability(locator);
-    if (!fallbackReady.ok) throw error;
+    if (!fallbackReady.ok) {
+      await failViewport(page, viewportName, `${label} Playwright click failed and hit-test no longer passed: ${error instanceof Error ? error.message : String(error)}`, { ...result, fallbackReady });
+    }
     console.warn(`${label} Playwright click was flaky; used DOM click after enabled hit-test passed.`);
     await locator.evaluate((element) => element.click());
   }
@@ -159,14 +162,32 @@ async function contextDiagnostic(page, actionability) {
     const composer = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
     const bridgePosts = Array.isArray(window.__yetAiBridgePosts) ? window.__yetAiBridgePosts.slice(-8) : [];
     return {
+      hostClass: document.querySelector("main.app-shell")?.className ?? null,
+      viewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY },
+      activeElement: elementSummary(document.activeElement),
       actionability: actionabilityInput ?? null,
       explainButton: buttonState(explainButton),
       sendButton: buttonState(sendButton),
       contextText: context instanceof HTMLElement ? context.innerText.replace(/\s+/g, " ").slice(0, 700) : null,
-      composerValue: composer instanceof HTMLTextAreaElement ? composer.value : null,
-      bridgePosts,
+      composerValue: composer instanceof HTMLTextAreaElement ? composer.value.slice(0, 500) : null,
+      composerState: composer instanceof HTMLTextAreaElement ? elementState(composer) : null,
+      bridgePosts: bridgePosts.map((message) => ({ type: message?.type, version: message?.version, requestId: message?.requestId, payloadKeys: Object.keys(message?.payload ?? {}) })),
       bodySnippet: document.body.innerText.replace(/\s+/g, " ").slice(0, 1200),
     };
+    function elementSummary(element) {
+      if (!(element instanceof HTMLElement)) return null;
+      return { tag: element.tagName, text: element.innerText?.trim().slice(0, 120), className: String(element.className).slice(0, 160) };
+    }
+    function elementState(element) {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return {
+        visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
+        disabled: element.hasAttribute("disabled"),
+        ariaDisabled: element.getAttribute("aria-disabled"),
+        rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      };
+    }
     function buttonState(button) {
       if (!(button instanceof HTMLButtonElement)) return null;
       const rect = button.getBoundingClientRect();
@@ -376,7 +397,7 @@ function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayNa
 async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
 async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
 async function expectComposerValue(page, text, label) { const ok = await page.getByPlaceholder("Ask about the current file, selection, or project...").evaluate((element, expected) => element instanceof HTMLTextAreaElement && element.value.includes(expected), text).catch(() => false); assert(ok, `Missing ${label} in composer: ${text}`); }
-function sanitizeEvidenceText(text) { return text.replaceAll(runtimeSessionValue, "[redacted-runtime-token]").replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]").replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
+function sanitizeEvidenceText(text) { return text.replaceAll(runtimeSessionValue, "[redacted-runtime-token]").replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]").replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "[redacted-email]").replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]").replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
 function empty(response, status) { response.writeHead(status, corsHeaders()); response.end(); }
 function json(response, status, payload) { response.writeHead(status, corsHeaders({ "content-type": "application/json" })); response.end(JSON.stringify(payload)); }
 function corsHeaders(extra = {}) { return { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", ...extra }; }

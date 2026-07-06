@@ -838,13 +838,71 @@ async function clickSendButtonWithActionability(frameLocator, label) {
 }
 
 async function clickControlWithActionability(locator, label, { assertHitTest = false } = {}) {
-  await locator.waitFor({ state: "visible", timeout: 5000 });
+  await locator.waitFor({ state: "visible", timeout: 5000 }).catch(async (error) => {
+    throw new Error(`${label}: control did not become visible. ${await frameControlDiagnostic(locator, { waitError: messageOf(error) })}`);
+  });
   await centerInNearestScrollContainer(locator);
-  if (assertHitTest) {
-    await assertElementReceivesPointerAtCenter(locator, label);
+  const before = await describeFrameControl(locator);
+  if (assertHitTest && !before.ok) {
+    throw new Error(`${label}: control failed required hit-test before click. ${await frameControlDiagnostic(locator, { before })}`);
   }
-  await locator.click({ trial: true });
-  await locator.click();
+  try {
+    await locator.click({ trial: true, timeout: 5000 });
+    await locator.click({ timeout: 5000 });
+  } catch (error) {
+    const after = await describeFrameControl(locator);
+    throw new Error(`${label}: Playwright click failed on ${process.platform}/${process.arch}. ${await frameControlDiagnostic(locator, { before, after, clickError: messageOf(error) })}`);
+  }
+}
+
+async function describeFrameControl(locator) {
+  return locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const top = document.elementFromPoint(x, y);
+    return {
+      ok: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.pointerEvents !== "none" && !element.hasAttribute("disabled") && (top === element || element.contains(top)),
+      text: element.innerText?.trim().slice(0, 120),
+      disabled: element.hasAttribute("disabled"),
+      ariaDisabled: element.getAttribute("aria-disabled"),
+      rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height },
+      viewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY },
+      pointerEvents: style.pointerEvents,
+      visibility: style.visibility,
+      display: style.display,
+      topTag: top?.tagName,
+      topText: top?.textContent?.trim().slice(0, 120),
+      topClass: top instanceof HTMLElement ? String(top.className).slice(0, 160) : undefined,
+    };
+  }).catch((error) => ({ ok: false, reason: messageOf(error) }));
+}
+
+async function frameControlDiagnostic(locator, details) {
+  const pageState = await locator.page().evaluate(() => {
+    const composer = document.querySelector("iframe[title='Yet AI GUI']")?.contentDocument?.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
+    const body = document.querySelector("iframe[title='Yet AI GUI']")?.contentDocument?.body;
+    return {
+      outerViewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY },
+      iframe: elementState(document.querySelector("iframe[title='Yet AI GUI']")),
+      composer: composer instanceof HTMLTextAreaElement ? { value: composer.value.slice(0, 500), ...elementState(composer) } : null,
+      bodySnippet: body instanceof HTMLElement ? body.innerText.replace(/\s+/g, " ").slice(0, 1200) : null,
+    };
+    function elementState(element) {
+      if (!(element instanceof HTMLElement)) return null;
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element);
+      return {
+        visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
+        disabled: element.hasAttribute("disabled"),
+        ariaDisabled: element.getAttribute("aria-disabled"),
+        rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height },
+      };
+    }
+  }).catch((error) => ({ pageDiagnosticError: messageOf(error) }));
+  return sanitizeEvidenceText(JSON.stringify({ details, pageState })).slice(0, 2200);
 }
 
 async function runDemoModeFirstMessageScenario(page, frameLocator) {
@@ -3116,6 +3174,7 @@ function sanitizeEvidenceText(text) {
     .replaceAll(oauthSentinels.apiKey, "[redacted-api-key]")
     .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]")
     .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]")
     .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
 }
 
@@ -3152,6 +3211,10 @@ function formatRuntimeRequestLog(entries) {
 
 function deepEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function messageOf(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function reportFailures() {
