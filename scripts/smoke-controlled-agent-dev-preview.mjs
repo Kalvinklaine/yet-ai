@@ -20,6 +20,11 @@ const steps = [
     coverage: "pure sanitized report metadata over supplied local/mock status, one-step, repair, and run evidence only",
   },
   {
+    label: "S93 controlled dev-preview dogfood fixtures",
+    scriptName: "smoke:controlled-agent-dev-preview-fixtures",
+    coverage: "fail-closed deterministic fixture validation with bounded sanitized summary only",
+  },
+  {
     label: "S91 public wording guard",
     scriptName: "audit:controlled-autonomy-wording",
     coverage: "public wording remains bounded for the experimental controlled local agent dev-preview",
@@ -45,7 +50,7 @@ for (const step of steps) {
 
 console.log("\nControlled agent dev-preview smoke passed.");
 console.log(`Passed ${passed.length} local/mock gates: ${passed.join(", ")}.`);
-console.log("Sanitized summary: S91/S92 dev-preview evidence is limited to existing bounded local/mock readiness, pure sanitized report metadata, and wording gates.");
+console.log("Sanitized summary: S91/S92/S93 dev-preview evidence is limited to existing bounded local/mock readiness, pure sanitized report metadata, fail-closed fixture metadata, and wording gates.");
 console.log("This is not production autonomy, release evidence, marketplace evidence, real-provider CI, hosted-backend evidence, cloud-workspace evidence, or broad workspace authority.");
 
 function runStep(step) {
