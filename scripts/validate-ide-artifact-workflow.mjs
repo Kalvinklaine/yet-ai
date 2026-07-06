@@ -31,6 +31,10 @@ const browserSmokeCommands = [
   "npm run smoke:jetbrains-gui-browser",
   "npm run smoke:jetbrains-wrapper-browser",
 ];
+const delegatedInstalledPluginVisualCommands = [
+  "npm run smoke:vscode-wrapper-browser",
+  "npm run smoke:jetbrains-wrapper-browser",
+];
 
 const workflow = await readFile(workflowPath, "utf8");
 const failures = [];
@@ -69,6 +73,11 @@ if (buildJob !== undefined) {
   assertSetEquals(names, githubIdeWorkflowMatrixUploadArtifactNames, "Matrix job upload artifact names must be only the VS Code unzip-first and JetBrains direct-install public families.");
   for (const command of requiredPreUploadSmokeCommands) {
     assert(commandRunExists(buildRunCommands, command), `Build job must run ${command} from an actual run step before uploading artifacts.`);
+  }
+  const installedPluginVisualIndex = commandRunIndex(buildRunCommands, "npm run smoke:installed-plugin-chat-visual");
+  for (const command of delegatedInstalledPluginVisualCommands) {
+    assert(commandRunIndex(buildRunCommands, command) === -1, `Build job must not duplicate ${command}; npm run smoke:installed-plugin-chat-visual delegates to it.`);
+    assert(installedPluginVisualIndex !== -1, `Build job must keep npm run smoke:installed-plugin-chat-visual so delegated ${command} coverage still runs.`);
   }
   assert(commandRunExists(buildRunCommands, "npm run smoke:jetbrains-bundled-runtime"), "Build job must run npm run smoke:jetbrains-bundled-runtime from an actual run step before uploading artifacts.");
   assert(commandRunExists(buildRunCommands, "npm run artifact:github-summary"), "Build job must write the expected public artifact summary with npm run artifact:github-summary from an actual run step.");
