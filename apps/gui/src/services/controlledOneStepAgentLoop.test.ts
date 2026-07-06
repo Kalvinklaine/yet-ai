@@ -11,6 +11,30 @@ function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
+function alignRunCorrelation(value: Record<string, any>): Record<string, any> {
+  if (value.workspace) {
+    value.workspace.runId = "run-s96-loop";
+    value.workspace.controlledWorkspaceId = "workspace-s96-loop";
+  }
+  if ("runId" in value) value.runId = "run-s96-loop";
+  return value;
+}
+
+function cloneRead(overrides: Record<string, unknown> = {}): Record<string, any> {
+  const read = alignRunCorrelation(clone(fileReadSuccess) as Record<string, any>);
+  Object.assign(read, overrides);
+  return read;
+}
+
+function cloneBlockedRead(): Record<string, any> {
+  return alignRunCorrelation(clone(fileReadBlocked) as Record<string, any>);
+}
+
+function cloneCommand<T>(fixture: T, overrides: Record<string, unknown> = {}): Record<string, any> {
+  const command = alignRunCorrelation(clone(fixture) as Record<string, any>);
+  Object.assign(command, overrides);
+  return command;
+}
 function start(state = createControlledOneStepAgentLoopState()): ControlledOneStepAgentLoopState {
   return reduceControlledOneStepAgentLoopState(state, {
     type: "start",
@@ -19,7 +43,7 @@ function start(state = createControlledOneStepAgentLoopState()): ControlledOneSt
       confirmedBy: "user",
       assistantMinted: false,
       explicitUserStart: true,
-      requestId: "s86-start-test",
+      requestId: "s96-start-test",
       summary: "User started one step",
     },
   });
@@ -38,18 +62,22 @@ function proposal(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
-function appliedEdit(): Record<string, unknown> {
-  const edit = clone(editPlanned) as Record<string, unknown>;
+function plannedEdit(): Record<string, any> {
+  return alignRunCorrelation(clone(editPlanned) as Record<string, any>);
+}
+
+function appliedEdit(): Record<string, any> {
+  const edit = plannedEdit();
   edit.state = "applied";
   return edit;
 }
 
 function successRun(): ControlledOneStepAgentLoopState {
   const afterStart = start();
-  const afterRead = reduceControlledOneStepAgentLoopState(afterStart, { type: "read", metadata: clone(fileReadSuccess) });
+  const afterRead = reduceControlledOneStepAgentLoopState(afterStart, { type: "read", metadata: cloneRead() });
   const afterProposal = reduceControlledOneStepAgentLoopState(afterRead, { type: "model_step", metadata: proposal() });
   const afterEdit = reduceControlledOneStepAgentLoopState(afterProposal, { type: "edit", metadata: appliedEdit() });
-  return reduceControlledOneStepAgentLoopState(afterEdit, { type: "verification", metadata: clone(commandSucceeded) });
+  return reduceControlledOneStepAgentLoopState(afterEdit, { type: "verification", metadata: cloneCommand(commandSucceeded) });
 }
 
 function authorityValues(result: ControlledOneStepAgentLoopState): boolean[] {
@@ -74,7 +102,7 @@ function authorityValues(result: ControlledOneStepAgentLoopState): boolean[] {
 describe("controlledOneStepAgentLoop", () => {
   it("requires explicit user start before recording any loop evidence", () => {
     const idle = createControlledOneStepAgentLoopState();
-    const blocked = reduceControlledOneStepAgentLoopState(idle, { type: "read", metadata: clone(fileReadSuccess) });
+    const blocked = reduceControlledOneStepAgentLoopState(idle, { type: "read", metadata: cloneRead() });
 
     expect(idle.phase).toBe("idle");
     expect(blocked.phase).toBe("failed");
@@ -94,8 +122,24 @@ describe("controlledOneStepAgentLoop", () => {
     expect(authorityValues(completed).every((value) => value === false)).toBe(true);
   });
 
+  it("carries sanitized correlation across the ordered happy path", () => {
+    const completed = successRun();
+
+    expect(completed.correlation).toMatchObject({
+      startRequestId: "s96-start-test",
+      readRequestId: "gui-s74-read-success",
+      editRequestId: "edit-s81-c1",
+      verificationRequestId: "request-s75-succeeded",
+      runId: "run-s96-loop",
+      controlledWorkspaceId: "workspace-s96-loop",
+      commandId: "repository-check",
+      staleOrDuplicateEvents: 0,
+    });
+    expect(JSON.stringify(completed)).not.toContain("/Users/");
+  });
+
   it("stops when bounded read evidence is blocked", () => {
-    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: clone(fileReadBlocked) });
+    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: cloneBlockedRead() });
 
     expect(afterRead.phase).toBe("failed");
     expect(afterRead.stop?.reason).toBe("read_blocked");
@@ -103,7 +147,7 @@ describe("controlledOneStepAgentLoop", () => {
   });
 
   it("fails closed on unsafe proposal metadata without preserving raw provider details", () => {
-    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: clone(fileReadSuccess) });
+    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: cloneRead() });
     const unsafe = reduceControlledOneStepAgentLoopState(afterRead, {
       type: "model_step",
       metadata: proposal({ providerResponseStored: true, rawPrompt: "raw provider response from /Users/example" }),
@@ -116,17 +160,58 @@ describe("controlledOneStepAgentLoop", () => {
   });
 
   it("records safe planned edit as edit_ready before applied edit evidence", () => {
-    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: clone(fileReadSuccess) });
+    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: cloneRead() });
     const afterProposal = reduceControlledOneStepAgentLoopState(afterRead, { type: "model_step", metadata: proposal() });
-    const ready = reduceControlledOneStepAgentLoopState(afterProposal, { type: "edit", metadata: clone(editPlanned) });
+    const ready = reduceControlledOneStepAgentLoopState(afterProposal, { type: "edit", metadata: plannedEdit() });
 
     expect(ready.phase).toBe("edit_ready");
     expect(ready.counters.filesTouched).toBe(1);
     expect(ready.counters.editBytes).toBe(128);
   });
 
+  it("ignores duplicate start read model and applied edit metadata with visible diagnostics", () => {
+    const afterStart = start();
+    const duplicateStart = reduceControlledOneStepAgentLoopState(afterStart, {
+      type: "start",
+      metadata: { source: "gui", confirmedBy: "user", assistantMinted: false, explicitUserStart: true, requestId: "s96-start-test" },
+    });
+    const afterRead = reduceControlledOneStepAgentLoopState(duplicateStart, { type: "read", metadata: cloneRead() });
+    const duplicateRead = reduceControlledOneStepAgentLoopState(afterRead, { type: "read", metadata: cloneRead() });
+    const afterProposal = reduceControlledOneStepAgentLoopState(duplicateRead, { type: "model_step", metadata: proposal() });
+    const duplicateProposal = reduceControlledOneStepAgentLoopState(afterProposal, { type: "model_step", metadata: proposal() });
+    const afterEdit = reduceControlledOneStepAgentLoopState(duplicateProposal, { type: "edit", metadata: appliedEdit() });
+    const duplicateEdit = reduceControlledOneStepAgentLoopState(afterEdit, { type: "edit", metadata: appliedEdit() });
+
+    expect(duplicateStart.phase).toBe("start_requested");
+    expect(duplicateRead.phase).toBe("read_context");
+    expect(duplicateProposal.phase).toBe("model_step_pending");
+    expect(duplicateEdit.phase).toBe("edit_applied");
+    expect(duplicateEdit.correlation.staleOrDuplicateEvents).toBe(4);
+    expect(duplicateEdit.diagnostics.map((item) => item.code)).toContain("duplicate_result");
+  });
+
+  it("fails closed on stale run correlation", () => {
+    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: cloneRead() });
+    const afterProposal = reduceControlledOneStepAgentLoopState(afterRead, { type: "model_step", metadata: proposal() });
+    const stale = appliedEdit();
+    stale.runId = "run-s96-stale";
+    const failed = reduceControlledOneStepAgentLoopState(afterProposal, { type: "edit", metadata: stale });
+
+    expect(failed.phase).toBe("failed");
+    expect(failed.stop?.reason).toBe("stale_result");
+    expect(failed.diagnostics.map((item) => item.code)).toContain("stale_result");
+  });
+
+  it("fails closed on out-of-order verification result", () => {
+    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: cloneRead() });
+    const outOfOrder = reduceControlledOneStepAgentLoopState(afterRead, { type: "verification", metadata: cloneCommand(commandSucceeded) });
+
+    expect(outOfOrder.phase).toBe("failed");
+    expect(outOfOrder.stop?.reason).toBe("invalid_transition");
+  });
+
   it("stops when edit evidence fails validation", () => {
-    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: clone(fileReadSuccess) });
+    const afterRead = reduceControlledOneStepAgentLoopState(start(), { type: "read", metadata: cloneRead() });
     const afterProposal = reduceControlledOneStepAgentLoopState(afterRead, { type: "model_step", metadata: proposal() });
     const failed = reduceControlledOneStepAgentLoopState(afterProposal, { type: "edit", metadata: { ...appliedEdit(), rawDiff: "raw diff" } });
 
@@ -136,10 +221,10 @@ describe("controlledOneStepAgentLoop", () => {
 
   it("stops when allowlisted verification fails", () => {
     const afterStart = start();
-    const afterRead = reduceControlledOneStepAgentLoopState(afterStart, { type: "read", metadata: clone(fileReadSuccess) });
+    const afterRead = reduceControlledOneStepAgentLoopState(afterStart, { type: "read", metadata: cloneRead() });
     const afterProposal = reduceControlledOneStepAgentLoopState(afterRead, { type: "model_step", metadata: proposal() });
     const afterEdit = reduceControlledOneStepAgentLoopState(afterProposal, { type: "edit", metadata: appliedEdit() });
-    const failed = reduceControlledOneStepAgentLoopState(afterEdit, { type: "verification", metadata: clone(commandFailed) });
+    const failed = reduceControlledOneStepAgentLoopState(afterEdit, { type: "verification", metadata: cloneCommand(commandFailed) });
 
     expect(failed.phase).toBe("failed");
     expect(failed.stop?.reason).toBe("verification_failed");
@@ -159,6 +244,8 @@ describe("controlledOneStepAgentLoop", () => {
     expect(disconnected.phase).toBe("stopped");
     expect(disconnected.stop?.reason).toBe("runtime_disconnected");
     expect(disconnected.enabled).toBe(false);
+    const afterDisconnect = reduceControlledOneStepAgentLoopState(disconnected, { type: "read", metadata: cloneRead() });
+    expect(afterDisconnect).toBe(disconnected);
 
     const repair = reduceControlledOneStepAgentLoopState(start(), { type: "repair" });
     expect(repair.phase).toBe("failed");
@@ -167,10 +254,10 @@ describe("controlledOneStepAgentLoop", () => {
 
   it("maps verification timeout evidence to timeout stop reason", () => {
     const afterStart = start();
-    const afterRead = reduceControlledOneStepAgentLoopState(afterStart, { type: "read", metadata: clone(fileReadSuccess) });
+    const afterRead = reduceControlledOneStepAgentLoopState(afterStart, { type: "read", metadata: cloneRead() });
     const afterProposal = reduceControlledOneStepAgentLoopState(afterRead, { type: "model_step", metadata: proposal() });
     const afterEdit = reduceControlledOneStepAgentLoopState(afterProposal, { type: "edit", metadata: appliedEdit() });
-    const timedOut = reduceControlledOneStepAgentLoopState(afterEdit, { type: "verification", metadata: clone(commandTimedOut) });
+    const timedOut = reduceControlledOneStepAgentLoopState(afterEdit, { type: "verification", metadata: cloneCommand(commandTimedOut) });
 
     expect(timedOut.phase).toBe("failed");
     expect(timedOut.stop?.reason).toBe("timeout");
@@ -179,9 +266,9 @@ describe("controlledOneStepAgentLoop", () => {
   it("enforces one-step budgets and keeps terminal state terminal", () => {
     const tinyStart = reduceControlledOneStepAgentLoopState(createControlledOneStepAgentLoopState(), {
       type: "start",
-      metadata: { source: "gui", confirmedBy: "user", assistantMinted: false, explicitUserStart: true, requestId: "s86-small", budgets: { maxReadBytes: 1 } },
+      metadata: { source: "gui", confirmedBy: "user", assistantMinted: false, explicitUserStart: true, requestId: "s96-small", budgets: { maxReadBytes: 1 } },
     });
-    const overBudget = reduceControlledOneStepAgentLoopState(tinyStart, { type: "read", metadata: clone(fileReadSuccess) });
+    const overBudget = reduceControlledOneStepAgentLoopState(tinyStart, { type: "read", metadata: cloneRead() });
     const unchanged = reduceControlledOneStepAgentLoopState(overBudget, { type: "stop" });
 
     expect(overBudget.stop?.reason).toBe("budget_exceeded");
