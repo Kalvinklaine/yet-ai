@@ -74,11 +74,19 @@ S91 is complete as a dev-preview status and reporting audit. The completed evide
 - VS Code remains the primary dev-preview host for the implemented controlled execution slices;
 - public wording keeps the S90 `partial` decision visible.
 
+Sprint 92 is also complete as a sanitized report evidence audit. The completed S92 evidence is intentionally narrower still:
+
+- `controlledAgentDevPreviewReport` is a pure report aggregator over supplied status, one-step, repair, run, counter, limitation, and evidence metadata only;
+- Agent Run and Controlled Agent Run panels render report labels derived from existing GUI props/state only, with no new bridge, runtime, storage, provider, command, or host authority;
+- report evidence is sanitized metadata only: fixed labels, bounded counters, host limitation labels, one-step and repair state labels, safe evidence summaries, and fixed safety-boundary copy;
+- raw-looking evidence is omitted instead of echoed, including raw prompts, provider responses, file bodies, diffs, replacement text, command strings, cwd/env, output dumps, bridge payloads, private paths, secrets, and arbitrary user text;
+- Browser stays preview-only/unsupported, JetBrains stays fail-closed/unsupported, and VS Code remains the primary dev-preview host for implemented controlled execution slices.
+
 This completion does not widen authority. It is local/mock and explicit-user-start evidence only, not production autonomy, not broad workspace automation, not release evidence, not marketplace evidence, not real-provider CI, and not cross-host completion.
 
 ## Verification
 
-The final S91 gate is:
+The final S91 gate was:
 
 ```sh
 npm run validate:contracts
@@ -90,4 +98,20 @@ npm run check
 git diff --check && git status --short
 ```
 
-All final gate commands passed for S91. Keep this command list together when repeating the final audit so later evidence cannot quietly skip the wording, smoke, repository, or clean-tree checks.
+All final gate commands passed for S91.
+
+The final S92 gate is:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- controlledAgentDevPreviewReport controlledAgentDevPreviewStatus AgentRunPanel ControlledAgentRunPanel controlledOneStepAgentLoop controlledAgentRepairLoop App
+cd apps/gui && npm run typecheck
+cd apps/gui && npm run build
+npm run smoke:controlled-agent-dev-preview
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+All final gate commands passed for S92. Keep this command list together when repeating the final audit so later evidence cannot quietly skip the wording, smoke, repository, or clean-tree checks.

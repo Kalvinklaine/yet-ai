@@ -526,6 +526,30 @@ npm run smoke:controlled-agent-dev-preview
 
 This evidence is local/mock only. It does not call providers, network, package installation, git, free-form shell, runtime authority, bridge authority, storage authority, real IDE execution, or broad workspace actions. It does not change the S90 `partial` decision and does not approve production autonomy, broad workspace automation, real-provider CI, release evidence, marketplace evidence, cross-host completion, or any authority beyond the S91 VS Code-first dev-preview boundary. Browser remains preview-only/unsupported for trusted workspace execution, and JetBrains remains partial/fail-closed until later verified work changes that status.
 
+## Sprint 92 final sanitized report audit status
+
+Sprint 92 closes as a sanitized controlled local agent dev-preview report milestone after the final S92 gate passed. The completed evidence is intentionally narrow: a pure `controlledAgentDevPreviewReport` aggregator, Agent Run and Controlled Agent Run display wiring derived only from existing GUI props/state, focused component coverage, a deterministic local/mock report smoke, the aggregate dev-preview smoke, public wording audit, repository validation, and clean working-tree checks.
+
+The S92 report evidence is sanitized metadata only. Reports may include fixed status labels, host labels, limitation labels, bounded counters, one-step and repair state labels, safe evidence summaries, and fixed safety-boundary text. Reports must omit raw-looking evidence rather than echoing it; raw prompts, provider responses, file bodies, diffs, replacement text, command strings, cwd/env, output dumps, bridge payloads, private paths, secrets, and arbitrary user text remain outside report metadata.
+
+S92 does not change the S90 `partial` decision and does not widen the S91 VS Code-first dev-preview boundary. It does not add bridge authority, runtime authority, storage authority, provider/tool behavior, real IDE execution, background execution, hidden workspace context gathering, broad workspace automation, production autonomy, real-provider CI, release evidence, marketplace evidence, browser trusted workspace execution, or JetBrains controlled execution parity. Browser remains preview-only/unsupported for trusted workspace execution, JetBrains remains fail-closed/unsupported for controlled execution parity, and VS Code remains the primary dev-preview host for implemented controlled execution slices.
+
+The exact S92 final gate is:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- controlledAgentDevPreviewReport controlledAgentDevPreviewStatus AgentRunPanel ControlledAgentRunPanel controlledOneStepAgentLoop controlledAgentRepairLoop App
+cd apps/gui && npm run typecheck
+cd apps/gui && npm run build
+npm run smoke:controlled-agent-dev-preview
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+All S92 final gate commands passed. This completion record is documentation and local/mock verification evidence only; it is not production autonomy, not broad workspace authority, not real-provider CI, not release evidence, not marketplace evidence, and not cross-host parity approval.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
