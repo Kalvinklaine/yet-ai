@@ -598,9 +598,32 @@ All S93 final gate commands passed. The clean-tree check is part of the gate so 
 
 ## Sprint 94 cross-IDE dev-preview limitation audit
 
-Sprint 94 starts by keeping cross-host limitation copy aligned across Browser, VS Code, and JetBrains UI/docs. VS Code is the supported controlled local agent dev-preview path for explicit user-controlled slices. Browser remains preview-only and unsupported for privileged controlled actions because it has no trusted workspace host. JetBrains remains partial/fail-closed where controlled execution gaps remain until a later verified parity card changes that status.
+Sprint 94 keeps cross-host limitation copy aligned across Browser, VS Code, and JetBrains UI/docs. VS Code is the supported controlled local agent dev-preview path for explicit user-controlled slices. Browser remains preview-only and unsupported for privileged controlled actions because it has no trusted workspace host. JetBrains remains partial/fail-closed where controlled execution gaps remain until a later verified parity card changes that status.
 
 This audit is copy and documentation alignment only. It adds no bridge authority, runtime authority, storage authority, provider/tool behavior, real-provider CI, production autonomy, release evidence, marketplace evidence, browser trusted workspace execution, JetBrains controlled execution parity, broad workspace authority, hidden read/search/indexing, arbitrary command execution, shell/git/package/network authority, automatic repair/retry/rollback, raw payload persistence, or task-board mutation.
+
+## Sprint 94 final S91-S94 roadmap closure
+
+Sprint 94 closes the S91-S94 roadmap as documentation and wording-audit evidence only. The closure preserves the S90 `partial` decision: the approved scope remains an experimental controlled local agent dev-preview for narrow local/mock evidence and explicit user-started VS Code-first dogfood. It is still not production autonomy, not broad workspace automation, not release evidence, not marketplace evidence, not real-provider CI, and not cross-host completion.
+
+The final S91-S94 status is:
+
+- **S91 status service, UI, and audit**: complete as sanitized status/reporting UX over already-scoped controlled Agent Run metadata. It records explicit Start/Stop labels, bounded read/edit/allowlisted-verification phase labels, one user-confirmed repair-attempt label, host limitations, and sanitized progress/final-report copy without adding bridge, runtime, storage, provider/tool, or host authority.
+- **S92 sanitized dev-preview report**: complete as a pure report aggregator and UI display path over supplied safe metadata. It emits fixed labels, bounded counters, host limitation labels, safety-boundary text, and safe evidence summaries while omitting raw-looking prompts, provider responses, file bodies, diffs, replacement text, command strings, cwd/env values, output dumps, bridge payloads, private paths, secrets, and arbitrary user text.
+- **S93 dogfood fixtures, smoke, and runbook**: complete as VS Code-first manual runbook plus deterministic local/mock fixture evidence for success, verification-failure repair, user stop, runtime disconnect, Browser unsupported, and JetBrains partial/fail-closed scenarios. The runbook remains explicit-user-start and explicit-user-stop evidence only.
+- **S94 wording, limitation, and verification audit**: complete as cross-IDE limitation copy alignment and expanded public wording protection. VS Code is described as the supported explicit-control dev-preview path, Browser as preview-only/unsupported for privileged controlled actions, and JetBrains as partial/fail-closed where controlled gaps remain.
+
+All S91-S94 evidence is local/mock or documentation evidence. It does not call providers, require hosted Yet AI services, use credentials in automation, prove real-provider CI, publish artifacts, prove signing or notarization, prove release readiness, prove marketplace readiness, complete Browser or JetBrains controlled execution parity, or approve any authority beyond the S90/S91 bounded dev-preview envelope.
+
+The S94 documentation closure gate is:
+
+```sh
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+This gate keeps public wording hygiene, docs index validation, repository checks, whitespace hygiene, and tracked status visible for the final S91-S94 closure.
 
 ## Blocked and deferred capabilities
 

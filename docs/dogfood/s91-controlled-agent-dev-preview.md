@@ -127,6 +127,27 @@ Sprint 92 is also complete as a sanitized report evidence audit. The completed S
 
 This completion does not widen authority. It is local/mock and explicit-user-start evidence only, not production autonomy, not broad workspace automation, not release evidence, not marketplace evidence, not real-provider CI, and not cross-host completion.
 
+## S94 final S91-S94 roadmap closure
+
+S94 closes the S91-S94 controlled local agent dev-preview roadmap as docs and wording-audit evidence only. The closure keeps the S90 `partial` decision visible: the path remains an experimental controlled local agent dev-preview for narrow local/mock and explicit-user-start evidence. It is not production autonomy, not broad workspace automation, not release evidence, not marketplace evidence, not real-provider CI, and not cross-host completion.
+
+Final S91-S94 status:
+
+- S91 status service/UI/audit is complete for sanitized dev-preview status labels, explicit Start/Stop copy, bounded read/edit/allowlisted-verification labels, one user-confirmed repair-attempt label, host limitation labels, and safe progress/final report copy.
+- S92 sanitized dev-preview report is complete as pure local/mock report metadata over supplied status, one-step, repair, run, counter, limitation, and evidence inputs; raw-looking evidence is omitted rather than echoed.
+- S93 runbook, fixture metadata, and aggregate smoke evidence are complete for VS Code-first manual dogfood, success, verification-failure repair, user stop, runtime disconnect, Browser unsupported, and JetBrains partial/fail-closed scenarios.
+- S94 wording/limitation/verification audit is complete for cross-IDE copy alignment: VS Code is the supported explicit-control dev-preview path, Browser is preview-only/unsupported for privileged controlled actions, and JetBrains is partial/fail-closed where controlled gaps remain.
+
+This closure does not widen authority. It adds no bridge, runtime, storage, provider/tool, shell/git/package/network, broad workspace, task-board, browser trusted workspace execution, JetBrains controlled parity, production, release, marketplace, or real-provider CI evidence. Tracked dogfood and docs evidence must continue to omit raw prompts, provider responses, file bodies, diffs, replacement text, command strings, cwd/env values, output dumps, bridge payloads, private paths, secrets, and arbitrary user text.
+
+The final S94 documentation closure gate is:
+
+```sh
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
 ## Verification
 
 The final S91 gate was:
