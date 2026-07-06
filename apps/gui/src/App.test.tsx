@@ -790,9 +790,12 @@ describe("runtime refresh feedback", () => {
     await flushAsync();
 
     const panel = container?.querySelector("[data-testid='controlled-agent-run-panel']");
-    expect(panel?.textContent).toContain("Controlled agent run skeleton");
-    expect(panel?.textContent).toContain("S76 preview only");
+    expect(panel?.textContent).toContain("S91 controlled agent dev-preview");
+    expect(panel?.textContent).toContain("dev-preview, not production autonomy");
     expect(panel?.textContent).toContain("GUI-local state");
+    expect(panel?.textContent).toContain("Dev-preview readiness");
+    expect(panel?.textContent).toContain("Host: vscode");
+    expect(panel?.textContent).toContain("Browser unsupported; JetBrains partial/fail-closed");
     expect(panel?.textContent).toContain("Phase: planning");
     expect(panel?.textContent).toContain("Current step: Review sanitized plan metadata");
     expect(panel?.textContent).toContain("Stop reason: none");

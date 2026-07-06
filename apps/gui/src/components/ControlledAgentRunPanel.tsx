@@ -1,5 +1,7 @@
 import { useMemo } from "react";
+import type { BridgeHost } from "../bridge/bridgeAdapter";
 import type { ControlledAgentProgressReport } from "../services/controlledAgentProgressReport";
+import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledAgentDevPreviewStatus";
 import type { ControlledLocalAgentMvpReport } from "../services/controlledLocalAgentMvp";
 import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
 import { sanitizeDisplayText } from "../services/redaction";
@@ -8,10 +10,11 @@ export type ControlledAgentRunPanelProps = {
   state: ControlledAgentRunState;
   progressReport?: ControlledAgentProgressReport;
   mvpReport?: ControlledLocalAgentMvpReport;
+  host?: BridgeHost | "unknown";
   onStop: () => void;
 };
 
-export function ControlledAgentRunPanel({ state, progressReport, mvpReport, onStop }: ControlledAgentRunPanelProps) {
+export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host = "unknown", onStop }: ControlledAgentRunPanelProps) {
   const phaseLabel = sanitizeDisplayText(state.phase.replace(/_/g, " "));
   const stopReason = state.stop?.reason ? sanitizeDisplayText(state.stop.reason.replace(/_/g, " ")) : "none";
   const currentStep = currentStepLabel(state);
@@ -26,18 +29,39 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, onSt
   const mvpDiagnostics = mvpReport?.diagnostics.slice(0, 6) ?? [];
   const runtimeSessionDiagnostics = mvpReport?.runtimeSession.diagnostics.slice(0, 6) ?? [];
   const stopDisabled = state.stopped || state.phase === "idle" || state.phase === "opt_in_required" || state.phase === "blocked" || state.phase === "failed" || state.phase === "completed";
+  const devPreviewStatus = evaluateControlledAgentDevPreviewStatus({
+    host,
+    workspaceReady: state.phase !== "idle" && state.phase !== "opt_in_required" && state.phase !== "blocked",
+    runtimeReady: mvpReport?.runtimeSession.present === true || state.enabled,
+    oneStepReady: state.counters.fileReadsUsed > 0 || state.phase === "reading_context" || state.phase === "planning" || state.phase === "waiting_for_user" || state.phase === "running_verification" || state.phase === "completed",
+    verificationReady: state.counters.verificationRuns > 0 || state.phase === "running_verification" || state.phase === "completed",
+    repairReady: state.limits.maxRepairAttempts > 0,
+    stopped: state.stopped,
+    runtimeDisconnected: mvpReport?.runtimeSession.status === "blocked",
+  });
 
   return (
     <section className={`readiness-card ${state.stopped ? "warn" : "ready"} controlled-agent-run-panel stack`} aria-label="Controlled agent run skeleton" data-testid="controlled-agent-run-panel">
       <div className="row">
-        <strong>Controlled agent run skeleton</strong>
-        <span className="badge warn">S76 preview only</span>
+        <strong>S91 controlled agent dev-preview</strong>
+        <span className="badge warn">dev-preview, not production autonomy</span>
         <span className="badge">GUI-local state</span>
-        <span className="badge">metadata only</span>
+        <span className="badge">sanitized metadata only</span>
         <span className={state.stopped ? "badge warn" : "badge ok"}>{phaseLabel}</span>
       </div>
       <span>{sanitizeDisplayText(state.summary)}</span>
-      <span className="subtle">Preview-only skeleton: this panel cannot start agents, read files, write files, run commands, call providers, apply edits, use git, post bridge messages, or write browser storage.</span>
+      <section className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
+        <div className="row">
+          <strong>Dev-preview readiness</strong>
+          <span className={devPreviewStatus.state === "ready" ? "badge ok" : "badge warn"}>{devPreviewStatus.state}</span>
+          <span className="badge">explicit Start/Stop</span>
+          <span className="badge">one repair attempt max</span>
+        </div>
+        <span>{devPreviewStatus.summary}</span>
+        <span>Host: {devPreviewStatus.host} · Bounded read/edit: {devPreviewStatus.capabilities.boundedRead && devPreviewStatus.capabilities.boundedEdit ? "ready" : "blocked"} · Allowlisted verification: {devPreviewStatus.capabilities.allowlistedVerification ? "ready" : "blocked"} · One bounded repair: {devPreviewStatus.capabilities.boundedRepair ? "ready" : "blocked"} · Sanitized report: ready</span>
+        <span>Limitations: {devPreviewStatus.limitations.join(" · ")}</span>
+      </section>
+      <span className="subtle">S91 dev-preview: explicit user Start/Stop only, bounded read/edit/verify only, one user-confirmed repair attempt, sanitized reports only. Browser unsupported; JetBrains partial/fail-closed.</span>
       {progressReport && <section className={`readiness-card ${progressReport.status === "blocked" || progressReport.status === "failed" || progressReport.status === "stopped" ? "warn" : "ready"} stack`} aria-label="Controlled progress report metadata">
         <div className="row">
           <strong>Progress report</strong>
@@ -137,6 +161,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, onSt
       {state.stop && <div className="readiness-card warn" role="status" aria-label="Controlled run stop reason"><strong>Stop reason</strong><span>{stopReason}: {sanitizeDisplayText(state.stop.message)}</span><span>Recoverable: {String(state.stop.recoverable)}</span></div>}
       {diagnostics.length > 0 && <div className="readiness-card warn" role="status" aria-label="Controlled run diagnostics"><strong>Diagnostics</strong>{diagnostics.map((diagnostic, index) => <span key={`${index}:${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}</div>}
       <div className="row">
+        <button type="button" className="secondary-button" disabled={true}>Start controlled dev-preview</button>
         <button type="button" className="danger-button" onClick={onStop} disabled={stopDisabled}>Stop controlled run</button>
         <span className="subtle">Stop updates GUI-local React state only. No runtime, bridge, storage, provider, command, file, process, or git request is sent.</span>
       </div>

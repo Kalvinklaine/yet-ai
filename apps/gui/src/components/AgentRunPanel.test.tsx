@@ -211,6 +211,14 @@ describe("AgentRunPanel", () => {
       onStopOneStepRun,
     });
 
+    expect(panelText()).toContain("S91 controlled dev-preview status");
+    expect(panelText()).toContain("Controlled agent dev-preview is partially ready and still missing bounded capability metadata.");
+    expect(panelText()).toContain("Host: vscode");
+    expect(panelText()).toContain("Explicit start: ready");
+    expect(panelText()).toContain("Allowlisted verification: ready");
+    expect(panelText()).toContain("One repair attempt: blocked");
+    expect(panelText()).toContain("no production autonomy");
+
     expect(panelText()).toContain("S86 one-step Agent Run");
     expect(panelText()).toContain("VS Code-only");
     expect(panelText()).toContain("explicit Start/Stop");

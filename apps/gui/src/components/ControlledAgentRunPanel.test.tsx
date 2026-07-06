@@ -11,6 +11,7 @@ let runState: ControlledAgentRunState;
 const stopSpy = vi.fn();
 
 const forbiddenButtons = ["Start Agent", "Run Agent", "Prepare Run", "Read Files", "Run command", "Apply", "Verify", "Provider"];
+const forbiddenRaw = "access_token=" + "s".repeat(64);
 
 afterEach(() => {
   if (root) {
@@ -25,13 +26,22 @@ afterEach(() => {
 });
 
 describe("ControlledAgentRunPanel", () => {
-  it("renders skeleton state, limits, counters, current step, and stop without execution controls", () => {
+  it("renders dev-preview state, limits, counters, current step, and stop without execution controls", () => {
     renderPanel(readyState());
 
     const text = panelText();
-    expect(text).toContain("Controlled agent run skeleton");
-    expect(text).toContain("S76 preview only");
+    expect(text).toContain("S91 controlled agent dev-preview");
+    expect(text).toContain("dev-preview, not production autonomy");
     expect(text).toContain("GUI-local state");
+    expect(text).toContain("Dev-preview readiness");
+    expect(text).toContain("Controlled agent dev-preview is blocked until required local readiness returns.");
+    expect(text).toContain("Host: unknown");
+    expect(text).toContain("Bounded read/edit: blocked");
+    expect(text).toContain("Allowlisted verification: blocked");
+    expect(text).toContain("One bounded repair: blocked");
+    expect(text).toContain("Sanitized report: ready");
+    expect(text).toContain("explicit user Start/Stop only");
+    expect(text).toContain("Browser unsupported; JetBrains partial/fail-closed");
     expect(text).toContain("Phase: workspace ready");
     expect(text).toContain("Current step: Review plan");
     expect(text).toContain("Stop reason: none");
@@ -40,12 +50,41 @@ describe("ControlledAgentRunPanel", () => {
     expect(text).toContain("Execution allowed: false");
     expect(text).toContain("Agent start allowed: false");
     expect(text).toContain("Can run commands: false");
+    expect(buttonTexts()).toContain("Start controlled dev-preview");
     expect(buttonTexts()).toContain("Stop controlled run");
     for (const label of forbiddenButtons) {
       expect(buttonTexts()).not.toContain(label);
     }
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
+  });
+
+  it("renders VS Code ready dev-preview status without enabling start authority", () => {
+    const state = readyState();
+    renderPanel({ ...state, counters: { ...state.counters, fileReadsUsed: 1, verificationRuns: 1 } }, "vscode");
+
+    const text = panelText();
+    expect(text).toContain("Controlled agent dev-preview is ready for explicit VS Code user start.");
+    expect(text).toContain("Host: vscode");
+    expect(text).toContain("Bounded read/edit: ready");
+    expect(text).toContain("Allowlisted verification: ready");
+    expect(text).toContain("One bounded repair: ready");
+    expect(text).toContain("Limitations: No current dev-preview limitations were reported.");
+    expect(findButton("Start controlled dev-preview").disabled).toBe(true);
+    expect(findButton("Stop controlled run").disabled).toBe(false);
+  });
+
+  it("renders browser and JetBrains limitations explicitly", () => {
+    renderPanel(readyState(), "browser");
+    expect(panelText()).toContain("Controlled agent dev-preview is not supported in the browser host.");
+    expect(panelText()).toContain("Browser preview cannot start the controlled local agent dev-preview.");
+    expect(panelText()).toContain("Host: browser");
+
+    renderPanel(readyState(), "jetbrains");
+    expect(panelText()).toContain("Controlled agent dev-preview is partially available for JetBrains metadata only.");
+    expect(panelText()).toContain("JetBrains host support is partial in this VS Code-first dev-preview.");
+    expect(panelText()).toContain("Host: jetbrains");
+    expect(findButton("Start controlled dev-preview").disabled).toBe(true);
   });
 
   it("stop updates GUI-local reducer state only and exposes stop reason", () => {
@@ -67,8 +106,7 @@ describe("ControlledAgentRunPanel", () => {
   });
 
   it("sanitizes unsafe initialization metadata without leaking raw values", () => {
-    const rawSecret = "access_token=" + "s".repeat(64);
-    renderPanel(initializeControlledAgentRunState({ readiness: { ...worktreeReadiness, summary: rawSecret, rawCommand: "npm test" }, userOptIn: { source: "user", confirmed: true } }));
+    renderPanel(initializeControlledAgentRunState({ readiness: { ...worktreeReadiness, summary: forbiddenRaw, rawCommand: "npm test" }, userOptIn: { source: "user", confirmed: true } }));
 
     const text = panelText();
     expect(text).toContain("Phase: blocked");
@@ -103,12 +141,17 @@ function renderInteractivePanel() {
   });
 }
 
-function renderPanel(state: ControlledAgentRunState) {
+function renderPanel(state: ControlledAgentRunState, host: "browser" | "vscode" | "jetbrains" | "unknown" = "unknown") {
+  if (root) {
+    act(() => root?.unmount());
+  }
+  root = undefined;
+  container?.remove();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
   act(() => {
-    root?.render(<ControlledAgentRunPanel state={state} onStop={stopSpy} />);
+    root?.render(<ControlledAgentRunPanel state={state} host={host} onStop={stopSpy} />);
   });
 }
 

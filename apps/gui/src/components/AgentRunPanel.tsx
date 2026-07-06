@@ -3,6 +3,7 @@ import { buildAgentRunApplyRiskSummary } from "../services/agentRunApplyRisk";
 import { buildAgentRunCheckpointDecision, type AgentRunCheckpointDecisionSummary } from "../services/agentRunCheckpointDecision";
 import { evaluateAgentRunState, type AgentRunInput } from "../services/agentRunState";
 import type { ControlledAgentCommandRunRequestResult } from "../services/controlledAgentCommandRunRequest";
+import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledAgentDevPreviewStatus";
 import type { ControlledAgentEditRequestResult } from "../services/controlledAgentEditRequest";
 import type { ControlledAgentFileReadRequestResult } from "../services/controlledAgentFileReadRequest";
 import type { ControlledOneStepAgentLoopState } from "../services/controlledOneStepAgentLoop";
@@ -97,6 +98,15 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const repairEligibleState = repairLoop?.state === "eligible" || repairLoop?.state === "proposal_ready";
   const repairActionPending = pendingRepairEdit || pendingRepairVerification;
   const canConfirmRepair = Boolean(onConfirmRepairAttempt) && repairEligibleState && repairLoop?.canAttemptRepair === true && repairDraftReady && !repairActionPending;
+  const devPreviewStatus = evaluateControlledAgentDevPreviewStatus({
+    host,
+    workspaceReady: supported,
+    runtimeReady: supported,
+    oneStepReady: oneStepReadReady && oneStepEditReady,
+    verificationReady: oneStepCommandReady,
+    repairReady: Boolean(repairLoop && repairLoop.state !== "disabled"),
+    stopped: oneStepLoopState?.phase === "stopped",
+  });
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -107,6 +117,19 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       </div>
       <span>{sanitizeDisplayText(view.summary)}</span>
       <strong>{readinessExplanation(view.state, details)}</strong>
+      {(showOneStepLoop || showRepairLoop) && (      <div className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
+        <div className="row">
+          <strong>S91 controlled dev-preview status</strong>
+          <span className={devPreviewStatus.state === "ready" ? "badge ok" : "badge warn"}>{devPreviewStatus.state}</span>
+          <span className="badge">explicit Start/Stop</span>
+          <span className="badge">sanitized report</span>
+        </div>
+        <span>{devPreviewStatus.summary}</span>
+        <span>Host: {devPreviewStatus.host} · Explicit start: {devPreviewStatus.capabilities.explicitStart ? "ready" : "blocked"} · Bounded read/edit: {devPreviewStatus.capabilities.boundedRead && devPreviewStatus.capabilities.boundedEdit ? "ready" : "blocked"} · Allowlisted verification: {devPreviewStatus.capabilities.allowlistedVerification ? "ready" : "blocked"} · One repair attempt: {devPreviewStatus.capabilities.boundedRepair ? "ready" : "blocked"} · Sanitized report: ready</span>
+        <span>Limitations: {devPreviewStatus.limitations.join(" · ")}</span>
+        <span className="subtle">Dev-preview only: no production autonomy, sanitized reports only, no raw output.</span>
+      </div>
+      )}
       <div className={`readiness-card ${view.nextUserAction === "confirm_apply" || view.nextUserAction === "confirm_verification" || view.state === "verified" ? "ready" : "warn"}`} role="status" aria-label="Agent Run next manual step">
         <strong>Next manual step</strong>
         <span>{nextStepCopy}</span>
