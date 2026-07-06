@@ -10,7 +10,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const indexPath = path.join(distRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "plugin-layout");
-const runtimeToken = `plugin-layout-token-${randomUUID()}`;
+const runtimeSessionValue = `pl-${randomUUID()}`;
 const failures = [];
 let guiServer;
 let runtimeServer;
@@ -61,12 +61,13 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   }, host);
   await page.goto(`http://127.0.0.1:${guiServer.port}/index.html`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
+  await waitForGuiReady(page, name);
   await dispatchHostReady(page);
   await page.waitForFunction(() => document.body.innerText.includes("ready to chat") || document.body.innerText.includes("Ready to send"), undefined, { timeout: 20_000 }).catch(() => failures.push(`Missing ${name} runtime ready state`));
   await page.waitForFunction(() => document.querySelector(".chat-scroll-region"), undefined, { timeout: 10_000 }).catch(() => failures.push(`Missing ${name} chat scroll region`));
-  await page.waitForTimeout(0);
   await injectActiveEditorContext(page, host);
   await expectVisibleText(page, "Active editor context", `${name} active editor context`);
+  const explainSelectionButton = page.getByRole("button", { name: "Explain selection", exact: true });
   await page.waitForFunction(() => {
     const button = document.querySelector("button[title='Explain what the attached selected code does.']");
     return button instanceof HTMLButtonElement && !button.disabled;
@@ -74,14 +75,20 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
     const diagnostic = await page.evaluate(() => document.body.innerText);
     failures.push(`${name} Coding Actions did not become ready: ${sanitizeEvidenceText(diagnostic).slice(0, 500)}`);
   });
+  await explainSelectionButton.scrollIntoViewIfNeeded();
+  await assertActionable(explainSelectionButton, `${name} Explain selection button`);
 
-  await assertActionable(page.getByRole("button", { name: "Chats", exact: true }), `${name} Chats button`);
-  await page.getByRole("button", { name: "Chats", exact: true }).click();
+  const chatsButton = page.getByRole("button", { name: "Chats", exact: true });
+  await chatsButton.scrollIntoViewIfNeeded();
+  await assertActionable(chatsButton, `${name} Chats button`);
+  await chatsButton.click();
   assert(await page.locator(".conversations-drawer.open").isVisible().catch(() => false), `${name} Chats drawer did not open`);
   const closeChatsButton = page.locator(".conversations-drawer.open").getByRole("button", { name: "Close", exact: true });
+  await closeChatsButton.scrollIntoViewIfNeeded();
   await assertActionable(closeChatsButton, `${name} Chats drawer Close button`);
   await closeChatsButton.click();
 
+  await explainSelectionButton.scrollIntoViewIfNeeded();
   await page.getByRole("button", { name: "Explain selection", exact: true }).click();
   await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
   await page.getByRole("button", { name: "Send", exact: true }).click();
@@ -186,10 +193,14 @@ async function saveEvidence(page, name, metrics) {
   return { screenshotPath, domPath, metricsPath };
 }
 
+async function waitForGuiReady(page, name) {
+  await page.waitForFunction(() => Array.isArray(window.__yetAiBridgePosts) && window.__yetAiBridgePosts.some((message) => message?.type === "gui.ready"), undefined, { timeout: 5000 }).catch(() => failures.push(`Missing ${name} GUI bridge ready post`));
+}
+
 async function dispatchHostReady(page) {
   await page.evaluate((payload) => {
     window.dispatchEvent(new MessageEvent("message", { data: { version: "2026-05-15", type: "host.ready", payload } }));
-  }, { runtimeUrl: `http://127.0.0.1:${runtimeServer.port}`, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false });
+  }, { runtimeUrl: `http://127.0.0.1:${runtimeServer.port}`, sessionToken: runtimeSessionValue, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false });
 }
 
 async function injectActiveEditorContext(page, host) {
@@ -288,7 +299,7 @@ function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayNa
 async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
 async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
 async function expectComposerValue(page, text, label) { const ok = await page.getByPlaceholder("Ask about the current file, selection, or project...").evaluate((element, expected) => element instanceof HTMLTextAreaElement && element.value.includes(expected), text).catch(() => false); assert(ok, `Missing ${label} in composer: ${text}`); }
-function sanitizeEvidenceText(text) { return text.replaceAll(runtimeToken, "[redacted-runtime-token]").replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]").replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
+function sanitizeEvidenceText(text) { return text.replaceAll(runtimeSessionValue, "[redacted-runtime-token]").replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]").replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
 function empty(response, status) { response.writeHead(status, corsHeaders()); response.end(); }
 function json(response, status, payload) { response.writeHead(status, corsHeaders({ "content-type": "application/json" })); response.end(JSON.stringify(payload)); }
 function corsHeaders(extra = {}) { return { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", ...extra }; }
