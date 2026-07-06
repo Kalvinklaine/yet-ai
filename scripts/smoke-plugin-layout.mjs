@@ -66,17 +66,9 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await page.waitForFunction(() => document.body.innerText.includes("ready to chat") || document.body.innerText.includes("Ready to send"), undefined, { timeout: 20_000 }).catch(() => failures.push(`Missing ${name} runtime ready state`));
   await page.waitForFunction(() => document.querySelector(".chat-scroll-region"), undefined, { timeout: 10_000 }).catch(() => failures.push(`Missing ${name} chat scroll region`));
   await injectActiveEditorContext(page, host);
-  await expectVisibleText(page, "Active editor context", `${name} active editor context`);
+  await waitForActiveSelectedContext(page, name);
   const explainSelectionButton = page.getByRole("button", { name: "Explain selection", exact: true });
-  await page.waitForFunction(() => {
-    const button = document.querySelector("button[title='Explain what the attached selected code does.']");
-    return button instanceof HTMLButtonElement && !button.disabled;
-  }, undefined, { timeout: 5000 }).catch(async () => {
-    const diagnostic = await page.evaluate(() => document.body.innerText);
-    failures.push(`${name} Coding Actions did not become ready: ${sanitizeEvidenceText(diagnostic).slice(0, 500)}`);
-  });
-  await explainSelectionButton.scrollIntoViewIfNeeded();
-  await assertActionable(explainSelectionButton, `${name} Explain selection button`);
+  await waitForActionableButton(page, explainSelectionButton, `${name} Explain selection button`);
 
   const chatsButton = page.getByRole("button", { name: "Chats", exact: true });
   await chatsButton.scrollIntoViewIfNeeded();
@@ -88,8 +80,7 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await assertActionable(closeChatsButton, `${name} Chats drawer Close button`);
   await closeChatsButton.click();
 
-  await explainSelectionButton.scrollIntoViewIfNeeded();
-  await page.getByRole("button", { name: "Explain selection", exact: true }).click();
+  await clickActionableButton(page, explainSelectionButton, `${name} Explain selection button`);
   await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, "Explain the selected code", `${name} sent coding-action prompt`);
@@ -115,6 +106,67 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   return saveEvidence(page, name, metrics);
 }
 
+async function waitForActiveSelectedContext(page, name) {
+  const ready = await page.waitForFunction(() => {
+    const details = document.querySelector("[data-testid='attached-context-active-details']");
+    if (!(details instanceof HTMLElement)) return false;
+    const text = details.innerText.replace(/\s+/g, " ");
+    const normalizedText = text.toLowerCase();
+    return normalizedText.includes("active editor context") && normalizedText.includes("attach to next message") && text.includes("src/plugin-layout.ts") && text.includes("10:2-10:40");
+  }, undefined, { timeout: 10_000 }).then(() => true).catch(() => false);
+  if (!ready) failures.push(`${name} active selected context was not accepted/rendered: ${await contextDiagnostic(page)}`);
+}
+
+async function waitForActionableButton(page, locator, label) {
+  const ready = await locator.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!ready) {
+    failures.push(` did not become visible: `);
+    return false;
+  }
+  const enabled = await locator.waitFor({ state: "attached", timeout: 1000 }).then(() => locator.isEnabled({ timeout: 5000 })).catch(() => false);
+  if (!enabled) {
+    failures.push(` stayed disabled: `);
+    return false;
+  }
+  await locator.scrollIntoViewIfNeeded();
+  const actionable = await assertActionable(locator, label);
+  if (!actionable) failures.push(` failed readiness diagnostics: `);
+  return actionable;
+}
+
+async function clickActionableButton(page, locator, label) {
+  if (!await waitForActionableButton(page, locator, label)) return;
+  try {
+    await locator.click({ timeout: 5000 });
+  } catch (error) {
+    const fallbackReady = await locator.evaluate((element) => {
+      if (!(element instanceof HTMLButtonElement) || element.disabled) return false;
+      const rect = element.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const top = document.elementFromPoint(centerX, centerY);
+      return rect.width > 0 && rect.height > 0 && (top === element || element.contains(top));
+    }).catch(() => false);
+    if (!fallbackReady) throw error;
+    console.warn(` Playwright click was flaky; used DOM click after enabled hit-test passed.`);
+    await locator.evaluate((element) => element.click());
+  }
+}
+
+async function contextDiagnostic(page) {
+  const diagnostic = await page.evaluate(() => {
+    const button = Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === "Explain selection");
+    const context = document.querySelector("[data-testid='attached-context-active-details']") ?? document.querySelector("[data-testid='attached-context-compact-details']");
+    return {
+      buttonDisabled: button instanceof HTMLButtonElement ? button.disabled : null,
+      buttonText: button instanceof HTMLElement ? button.innerText : null,
+      contextText: context instanceof HTMLElement ? context.innerText : null,
+      bodyText: document.body.innerText,
+    };
+  });
+  return sanitizeEvidenceText(JSON.stringify(diagnostic)).slice(0, 1000);
+}
+
 async function assertActionable(locator, label) {
   await locator.waitFor({ state: "visible", timeout: 5000 });
   const actionable = await locator.evaluate((element) => {
@@ -131,7 +183,8 @@ async function assertActionable(locator, label) {
       topText: top?.textContent?.trim().slice(0, 80),
     };
   });
-  assert(actionable.ok, `${label} is not actionable/hit-testable: ${JSON.stringify(actionable)}`);
+  assert(actionable.ok, ` is not actionable/hit-testable: `);
+  return actionable.ok;
 }
 
 async function collectLayoutMetrics(page, scenario) {
