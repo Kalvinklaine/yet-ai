@@ -596,6 +596,12 @@ git diff --check && git status --short
 
 All S93 final gate commands passed. The clean-tree check is part of the gate so fixture/runbook completion cannot quietly skip wording, smoke, repository, whitespace, or status evidence.
 
+## Sprint 94 cross-IDE dev-preview limitation audit
+
+Sprint 94 starts by keeping cross-host limitation copy aligned across Browser, VS Code, and JetBrains UI/docs. VS Code is the supported controlled local agent dev-preview path for explicit user-controlled slices. Browser remains preview-only and unsupported for privileged controlled actions because it has no trusted workspace host. JetBrains remains partial/fail-closed where controlled execution gaps remain until a later verified parity card changes that status.
+
+This audit is copy and documentation alignment only. It adds no bridge authority, runtime authority, storage authority, provider/tool behavior, real-provider CI, production autonomy, release evidence, marketplace evidence, browser trusted workspace execution, JetBrains controlled execution parity, broad workspace authority, hidden read/search/indexing, arbitrary command execution, shell/git/package/network authority, automatic repair/retry/rollback, raw payload persistence, or task-board mutation.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

@@ -72,7 +72,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
       <div className="row">
         <strong>S91 controlled agent dev-preview</strong>
         <span className="badge warn">dev-preview, not production autonomy</span>
-        <span className="badge">GUI-local state</span>
+        <span className="badge">VS Code supported path</span>
         <span className="badge">sanitized metadata only</span>
         <span className={state.stopped ? "badge warn" : "badge ok"}>{phaseLabel}</span>
       </div>
@@ -105,7 +105,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         {devPreviewReport.evidence.length > 0 && <span>Evidence: {devPreviewReport.evidence.map((item) => `${sanitizeDisplayText(item.label)} — ${sanitizeDisplayText(item.summary)}`).join(" · ")}</span>}
         <span className="subtle">Safety boundaries: {devPreviewReport.safetyBoundaryLabels.join(" · ")}</span>
       </section>
-      <span className="subtle">S91 dev-preview: explicit user Start/Stop only, bounded read/edit/verify only, one user-confirmed repair attempt, sanitized reports only. Browser unsupported; JetBrains partial/fail-closed.</span>
+      <span className="subtle">S91 dev-preview: VS Code is the supported explicit-control path. Browser is preview-only and unsupported for privileged controlled actions. JetBrains stays partial/fail-closed where controlled gaps remain. Sanitized reports only.</span>
       {progressReport && <section className={`readiness-card ${progressReport.status === "blocked" || progressReport.status === "failed" || progressReport.status === "stopped" ? "warn" : "ready"} stack`} aria-label="Controlled progress report metadata">
         <div className="row">
           <strong>Progress report</strong>

@@ -792,10 +792,12 @@ describe("runtime refresh feedback", () => {
     const panel = container?.querySelector("[data-testid='controlled-agent-run-panel']");
     expect(panel?.textContent).toContain("S91 controlled agent dev-preview");
     expect(panel?.textContent).toContain("dev-preview, not production autonomy");
-    expect(panel?.textContent).toContain("GUI-local state");
+    expect(panel?.textContent).toContain("VS Code supported path");
     expect(panel?.textContent).toContain("Dev-preview readiness");
     expect(panel?.textContent).toContain("Host: vscode");
-    expect(panel?.textContent).toContain("Browser unsupported; JetBrains partial/fail-closed");
+    expect(panel?.textContent).toContain("VS Code is the supported explicit-control path");
+    expect(panel?.textContent).toContain("Browser is preview-only and unsupported for privileged controlled actions");
+    expect(panel?.textContent).toContain("JetBrains stays partial/fail-closed where controlled gaps remain");
     expect(panel?.textContent).toContain("Phase: planning");
     expect(panel?.textContent).toContain("Current step: Review sanitized plan metadata");
     expect(panel?.textContent).toContain("Stop reason: none");
@@ -8316,7 +8318,7 @@ describe("edit proposal preview", () => {
     await dispatchHostApplyResult(applyCall.requestId, { status: "applied", message: "JetBrains apply result metadata.", cloudRequired: false, appliedEditCount: 1, affectedFiles: ["src/example.ts"] });
 
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("jetbrains explicit controls");
+    expect(panel.textContent).toContain("JetBrains partial/fail-closed");
     expect(panel.textContent).toContain("Manual state: Ready for controlled verification");
     expect(panel.textContent).toContain("S85 controlled verification unsupported here");
     expect(panel.textContent).toContain("VS Code-only in S85");

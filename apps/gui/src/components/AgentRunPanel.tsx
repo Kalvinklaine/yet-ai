@@ -143,7 +143,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
       <div className="row">
         <strong>Agent Run · dev-preview, not autonomy</strong>
-        <span className={`badge ${supported ? "ok" : "warn"}`}>{supported ? `${host} explicit controls` : "browser preview only"}</span>
+        <span className={`badge ${host === "vscode" ? "ok" : "warn"}`}>{host === "vscode" ? "VS Code explicit controls" : host === "jetbrains" ? "JetBrains partial/fail-closed" : "browser preview only"}</span>
         <span className={`badge ${view.stopped ? "warn" : view.enabled ? "ok" : ""}`}>{agentRunStateLabel(view.state, details)}</span>
       </div>
       <span>{sanitizeDisplayText(view.summary)}</span>

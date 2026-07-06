@@ -282,6 +282,7 @@ describe("AgentRunPanel", () => {
     });
 
     expect(panelText()).toContain("One-step controlled run Start is disabled outside VS Code and posts no bridge request.");
+    expect(panelText()).toContain("JetBrains partial/fail-closed");
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
 
     renderPanel(undefined, {
@@ -514,6 +515,7 @@ describe("AgentRunPanel", () => {
     renderPanel(readyInput, { host: "vscode" });
 
     expect(panelText()).toContain("Manual state: Ready for manual apply");
+    expect(panelText()).toContain("VS Code explicit controls");
     expect(panelText()).toContain("Goal summary: Add safe panel");
     expect(panelText()).toContain("Ready for manual apply. Review the proposal and click Manually apply reviewed patch only when you choose to continue.");
     expect(panelText()).toContain("Review the sanitized proposal summary; apply only if you choose to continue.");

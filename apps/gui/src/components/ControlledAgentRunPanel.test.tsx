@@ -32,7 +32,7 @@ describe("ControlledAgentRunPanel", () => {
     const text = panelText();
     expect(text).toContain("S91 controlled agent dev-preview");
     expect(text).toContain("dev-preview, not production autonomy");
-    expect(text).toContain("GUI-local state");
+    expect(text).toContain("VS Code supported path");
     expect(text).toContain("Dev-preview readiness");
     expect(text).toContain("Controlled agent dev-preview is blocked until required local readiness returns.");
     expect(text).toContain("Host: unknown");
@@ -40,8 +40,10 @@ describe("ControlledAgentRunPanel", () => {
     expect(text).toContain("Allowlisted verification: blocked");
     expect(text).toContain("One bounded repair: blocked");
     expect(text).toContain("Sanitized report: ready");
-    expect(text).toContain("explicit user Start/Stop only");
-    expect(text).toContain("Browser unsupported; JetBrains partial/fail-closed");
+    expect(text).toContain("explicit Start/Stop");
+    expect(text).toContain("VS Code is the supported explicit-control path");
+    expect(text).toContain("Browser is preview-only and unsupported for privileged controlled actions");
+    expect(text).toContain("JetBrains stays partial/fail-closed where controlled gaps remain");
     expect(text).toContain("Phase: workspace ready");
     expect(text).toContain("Current step: Review plan");
     expect(text).toContain("Stop reason: none");
