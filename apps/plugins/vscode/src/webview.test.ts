@@ -10,6 +10,9 @@ async function main(): Promise<void> {
   const originalLoad = moduleWithLoad._load;
   const fakeVscode = {
     Uri: {
+      parse(value: string) {
+        return { toString: () => value };
+      },
       joinPath(base: { fsPath: string; path?: string }, ...segments: string[]) {
         const joined = [base.fsPath, ...segments].join("/");
         return { fsPath: joined, path: joined, toString: () => joined };
@@ -37,6 +40,7 @@ async function main(): Promise<void> {
     assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-1", latestHostReadyRequestId: "ready-2" }), false);
     assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: undefined, latestHostReadyRequestId: undefined }), false);
     assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-1", latestHostReadyRequestId: "ready-1" }), true);
+    assertHostReadyIncludesMetadataOnlyCapabilities(webview);
     assertVerificationRequestsRejectWithoutExecution(webview);
     await assertVerificationHandlerRejectsWithoutExecution(webview);
     assertIframeValidatorRejectsVerificationRequests(webview);
@@ -46,6 +50,36 @@ async function main(): Promise<void> {
   } finally {
     moduleWithLoad._load = originalLoad;
   }
+}
+
+function assertHostReadyIncludesMetadataOnlyCapabilities(webview: typeof import("./webview")): void {
+  const hostReady = webview.createHostReady(
+    {
+      product: { id: "yet-ai", displayName: "Yet AI" },
+      engine: { binaryName: "yet-lsp" },
+      gui: { npmPackage: "@yet-ai/gui" },
+      vscode: { publisher: "yet-ai-placeholder", name: "yet-ai", displayName: "Yet AI", configurationPrefix: "yetai", commandPrefix: "yetaicmd", activityBarId: "yet-ai-toolbox-pane" },
+    } as never,
+    { runtimeUrl: "http://127.0.0.1:8001", sessionToken: "safeLocalSessionValue" } as never,
+    "ready-with-capabilities",
+  );
+  const capabilities = hostReady.payload?.controlledCapabilities as Record<string, any> | undefined;
+  assert.equal(capabilities?.protocolVersion, "controlled_host_capabilities_v2");
+  assert.equal(capabilities?.hostSurface, "vscode");
+  assert.equal(capabilities?.authority, "metadata_only");
+  assert.equal(capabilities?.capabilities?.controlledRead, "supported");
+  assert.equal(capabilities?.capabilities?.controlledEdit, "supported");
+  assert.equal(capabilities?.capabilities?.controlledVerification, "supported");
+  assert.equal(capabilities?.authorityFlags?.metadataOnly, true);
+  assert.equal(capabilities?.authorityFlags?.controlledRead, false);
+  assert.equal(capabilities?.authorityFlags?.controlledEdit, false);
+  assert.equal(capabilities?.authorityFlags?.controlledVerification, false);
+  assert.equal(capabilities?.authorityFlags?.shell, false);
+  assert.equal(capabilities?.authorityFlags?.autoRun, false);
+  assert.equal(capabilities?.correlationRequirements.includes("host_ready_request_id"), true);
+  const serialized = JSON.stringify(capabilities);
+  assert.equal(serialized.includes("safeLocalSessionValue"), false);
+  assert.equal(serialized.includes("/Users"), false);
 }
 
 function assertVerificationRequestsRejectWithoutExecution(webview: typeof import("./webview")): void {

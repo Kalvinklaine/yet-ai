@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isGuiMessage, isHostMessage, isHostRuntimeStatusPayload, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
+import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isControlledHostCapabilitiesPayload, isGuiMessage, isHostMessage, isHostRuntimeStatusPayload, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
 import guiReadyWithFrameNonceMessage from "../../../../packages/contracts/examples/bridge/gui-ready-with-frame-nonce.json";
 import guiUnloadedMessage from "../../../../packages/contracts/examples/bridge/gui-unloaded-message.json";
@@ -1156,6 +1156,8 @@ describe("bridgeAdapter", () => {
 
   it("accepts current non-privileged host messages", () => {
     expect(isHostMessage(hostReady())).toBe(true);
+    expect(isHostMessage(hostReady({ controlledCapabilities: controlledCapabilities() }))).toBe(true);
+    expect(isControlledHostCapabilitiesPayload(controlledCapabilities())).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand" })).toBe(true);
     expect(isHostMessage({ version: bridgeVersion, type: "host.openedFromCommand", payload: {} })).toBe(true);
     expect(isHostMessage(contextSnapshot())).toBe(true);
@@ -1227,6 +1229,9 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { cloudRequired: "false" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { cloudRequired: true } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { unknown: true } })).toBe(false);
+    expect(isHostMessage(hostReady({ controlledCapabilities: { ...controlledCapabilities(), authority: "run_command" } }))).toBe(false);
+    expect(isHostMessage(hostReady({ controlledCapabilities: { ...controlledCapabilities(), authorityFlags: { ...controlledCapabilityAuthorityFlags(), controlledEdit: true } } }))).toBe(false);
+    expect(isHostMessage(hostReady({ controlledCapabilities: { ...controlledCapabilities(), safeLabels: { host: "VS Code", support: "Use /Users/private/path" } } }))).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: {}, extra: true })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "ftp://127.0.0.1:8765" } })).toBe(false);
     expect(isHostMessage({ version: bridgeVersion, type: "host.ready", payload: { runtimeUrl: "https://example.com:8765" } })).toBe(false);
@@ -1392,6 +1397,69 @@ function controlledCommandRunPolicyFlags() {
     autoRunAllowed: false,
     autoVerifyAllowed: false,
     autoFixAllowed: false,
+  };
+}
+
+function controlledCapabilities(overrides: Record<string, unknown> = {}) {
+  return {
+    protocolVersion: "controlled_host_capabilities_v2",
+    hostSurface: "vscode",
+    authority: "metadata_only",
+    capabilities: {
+      controlledStart: "supported",
+      controlledRead: "supported",
+      controlledEdit: "supported",
+      controlledVerification: "supported",
+      controlledRepair: "disabled",
+    },
+    correlationRequirements: [
+      "request_id",
+      "run_id",
+      "runtime_session_id",
+      "controlled_workspace_id",
+      "workspace_readiness_id",
+      "host_ready_request_id",
+      "explicit_user_gesture",
+    ],
+    authorityFlags: controlledCapabilityAuthorityFlags(),
+    limits: {
+      maxReadBytes: 8192,
+      maxReadLines: 240,
+      maxEditFiles: 4,
+      maxEditOperations: 16,
+      maxPatchBytes: 12000,
+      maxVerificationOutputBytes: 20000,
+      maxVerificationOutputLines: 400,
+      maxRepairAttempts: 0,
+    },
+    reasonCodes: ["vscode_controlled_dev_preview_metadata"],
+    safeLabels: {
+      host: "VS Code",
+      support: "VS Code supports bounded controlled paths after explicit user action and host validation.",
+    },
+    ...overrides,
+  };
+}
+
+function controlledCapabilityAuthorityFlags() {
+  return {
+    metadataOnly: true,
+    controlledRead: false,
+    controlledEdit: false,
+    controlledVerification: false,
+    controlledStart: false,
+    repair: false,
+    shell: false,
+    git: false,
+    packageInstall: false,
+    network: false,
+    provider: false,
+    tool: false,
+    hiddenSearch: false,
+    indexing: false,
+    autoApply: false,
+    autoRun: false,
+    autoFix: false,
   };
 }
 

@@ -147,7 +147,40 @@ export type HostReadyPayload = {
   productId?: string;
   displayName?: string;
   cloudRequired?: boolean;
+  controlledCapabilities?: ControlledHostCapabilitiesPayload;
 };
+
+export type ControlledHostCapabilitiesPayload = {
+  protocolVersion: "controlled_host_capabilities_v2";
+  hostSurface: BridgeHost;
+  authority: "metadata_only";
+  capabilities: {
+    controlledStart: ControlledHostCapabilityStatus;
+    controlledRead: ControlledHostCapabilityStatus;
+    controlledEdit: ControlledHostCapabilityStatus;
+    controlledVerification: ControlledHostCapabilityStatus;
+    controlledRepair: ControlledHostCapabilityStatus;
+  };
+  correlationRequirements: string[];
+  authorityFlags: Record<string, boolean>;
+  limits: {
+    maxReadBytes: number;
+    maxReadLines: number;
+    maxEditFiles: number;
+    maxEditOperations: number;
+    maxPatchBytes: number;
+    maxVerificationOutputBytes: number;
+    maxVerificationOutputLines: number;
+    maxRepairAttempts: number;
+  };
+  reasonCodes: string[];
+  safeLabels: {
+    host: string;
+    support: string;
+  };
+};
+
+type ControlledHostCapabilityStatus = "supported" | "preview_only" | "unsupported" | "disabled" | "degraded" | "unknown";
 
 export type HostContextSnapshotPayload = {
   kind: "active_editor";
@@ -501,7 +534,7 @@ export function isHostMessage(value: unknown): value is HostMessage {
 }
 
 export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired", "controlledCapabilities"])) {
     return false;
   }
   return (
@@ -509,8 +542,74 @@ export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
     optionalSessionToken(value.sessionToken) &&
     optionalProductId(value.productId) &&
     optionalDisplayName(value.displayName) &&
-    (value.cloudRequired === undefined || value.cloudRequired === false)
+    (value.cloudRequired === undefined || value.cloudRequired === false) &&
+    isOptionalControlledHostCapabilities(value.controlledCapabilities)
   );
+}
+
+function isOptionalControlledHostCapabilities(value: unknown): value is ControlledHostCapabilitiesPayload | undefined {
+  return value === undefined || isControlledHostCapabilitiesPayload(value);
+}
+
+export function isControlledHostCapabilitiesPayload(value: unknown): value is ControlledHostCapabilitiesPayload {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["protocolVersion", "hostSurface", "authority", "capabilities", "correlationRequirements", "authorityFlags", "limits", "reasonCodes", "safeLabels"])) {
+    return false;
+  }
+  return value.protocolVersion === "controlled_host_capabilities_v2" &&
+    optionalRuntimeSurface(value.hostSurface) &&
+    value.authority === "metadata_only" &&
+    isControlledHostCapabilityStatuses(value.capabilities) &&
+    isControlledHostCorrelationRequirements(value.correlationRequirements) &&
+    isControlledHostAuthorityFlags(value.authorityFlags) &&
+    isControlledHostCapabilityLimits(value.limits) &&
+    isSafeReasonCodes(value.reasonCodes) &&
+    isControlledHostSafeLabels(value.safeLabels);
+}
+
+function isControlledHostCapabilityStatuses(value: unknown): boolean {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["controlledStart", "controlledRead", "controlledEdit", "controlledVerification", "controlledRepair"])) {
+    return false;
+  }
+  return isControlledHostCapabilityStatus(value.controlledStart) &&
+    isControlledHostCapabilityStatus(value.controlledRead) &&
+    isControlledHostCapabilityStatus(value.controlledEdit) &&
+    isControlledHostCapabilityStatus(value.controlledVerification) &&
+    isControlledHostCapabilityStatus(value.controlledRepair);
+}
+
+function isControlledHostCapabilityStatus(value: unknown): value is ControlledHostCapabilityStatus {
+  return value === "supported" || value === "preview_only" || value === "unsupported" || value === "disabled" || value === "degraded" || value === "unknown";
+}
+
+function isControlledHostCorrelationRequirements(value: unknown): boolean {
+  const allowed = ["request_id", "run_id", "runtime_session_id", "controlled_workspace_id", "workspace_readiness_id", "host_ready_request_id", "explicit_user_gesture", "operation_kind", "capability_snapshot_id"];
+  return Array.isArray(value) && value.length >= 1 && value.length <= allowed.length && value.every((item) => typeof item === "string" && allowed.includes(item)) && new Set(value).size === value.length;
+}
+
+function isControlledHostAuthorityFlags(value: unknown): boolean {
+  const allowedTrue = new Set(["metadataOnly"]);
+  const allowedKeys = ["metadataOnly", "controlledRead", "controlledEdit", "controlledVerification", "controlledStart", "repair", "shell", "git", "packageInstall", "network", "provider", "tool", "hiddenSearch", "indexing", "autoApply", "autoRun", "autoFix"];
+  return isPlainObject(value) && hasOnlyKeys(value, allowedKeys) && allowedKeys.every((key) => typeof value[key] === "boolean") && Object.entries(value).every(([key, flag]) => allowedTrue.has(key) ? flag === true : flag === false);
+}
+
+function isControlledHostCapabilityLimits(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["maxReadBytes", "maxReadLines", "maxEditFiles", "maxEditOperations", "maxPatchBytes", "maxVerificationOutputBytes", "maxVerificationOutputLines", "maxRepairAttempts"]) &&
+    optionalBoundedInteger(value.maxReadBytes, 1, 8192) && value.maxReadBytes !== undefined &&
+    optionalBoundedInteger(value.maxReadLines, 1, 240) && value.maxReadLines !== undefined &&
+    optionalBoundedInteger(value.maxEditFiles, 1, 4) && value.maxEditFiles !== undefined &&
+    optionalBoundedInteger(value.maxEditOperations, 1, 16) && value.maxEditOperations !== undefined &&
+    optionalBoundedInteger(value.maxPatchBytes, 1, 12000) && value.maxPatchBytes !== undefined &&
+    optionalBoundedInteger(value.maxVerificationOutputBytes, 1, 20000) && value.maxVerificationOutputBytes !== undefined &&
+    optionalBoundedInteger(value.maxVerificationOutputLines, 1, 400) && value.maxVerificationOutputLines !== undefined &&
+    optionalBoundedInteger(value.maxRepairAttempts, 0, 1) && value.maxRepairAttempts !== undefined;
+}
+
+function isSafeReasonCodes(value: unknown): boolean {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 8 && value.every((item) => typeof item === "string" && /^[a-z][a-z0-9_]{0,79}$/.test(item) && !unsafeDisplayText(item) && !hasKeyLikeSecretText(item));
+}
+
+function isControlledHostSafeLabels(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["host", "support"]) && safeMessage(value.host) && safeMessage(value.support);
 }
 
 export function isHostRuntimeStatusPayload(value: unknown): value is HostRuntimeStatusPayload {

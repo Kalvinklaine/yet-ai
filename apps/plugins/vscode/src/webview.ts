@@ -18,6 +18,38 @@ type RuntimeStatusLaunchMode = "auto" | "connect" | "launch" | "preview" | "manu
 type RuntimeStatusTokenState = "unknown" | "not_required" | "absent" | "present" | "mismatch" | "invalid";
 type RuntimeStatusProcessState = "unknown" | "not_owned" | "checking" | "starting" | "running" | "exited" | "stopped" | "failed";
 
+type ControlledCapabilityMetadata = {
+  protocolVersion: "controlled_host_capabilities_v2";
+  hostSurface: "vscode";
+  authority: "metadata_only";
+  capabilities: {
+    controlledStart: ControlledCapabilityStatus;
+    controlledRead: ControlledCapabilityStatus;
+    controlledEdit: ControlledCapabilityStatus;
+    controlledVerification: ControlledCapabilityStatus;
+    controlledRepair: ControlledCapabilityStatus;
+  };
+  correlationRequirements: string[];
+  authorityFlags: Record<string, boolean>;
+  limits: {
+    maxReadBytes: number;
+    maxReadLines: number;
+    maxEditFiles: number;
+    maxEditOperations: number;
+    maxPatchBytes: number;
+    maxVerificationOutputBytes: number;
+    maxVerificationOutputLines: number;
+    maxRepairAttempts: number;
+  };
+  reasonCodes: string[];
+  safeLabels: {
+    host: "VS Code";
+    support: string;
+  };
+};
+
+type ControlledCapabilityStatus = "supported" | "disabled";
+
 type RuntimeStatusInput = {
   lifecycle: RuntimeStatusLifecycle;
   launchMode?: RuntimeStatusLaunchMode;
@@ -363,6 +395,7 @@ export function createHostReady(
   requestId: string | undefined,
 ): HostMessage {
   validateRuntimeUrl(connection.runtimeUrl, `${configurationPrefix}.runtimeUrl`);
+  const controlledCapabilities = createVsCodeControlledCapabilityMetadata();
   if (connection.sessionToken !== undefined && !isBridgeSafeSessionToken(connection.sessionToken)) {
     console.log("Yet AI refused unsafe host.ready session token");
     return {
@@ -374,6 +407,7 @@ export function createHostReady(
         displayName: identity.product.displayName,
         runtimeUrl: connection.runtimeUrl,
         cloudRequired: false,
+        controlledCapabilities,
       },
     };
   }
@@ -387,6 +421,65 @@ export function createHostReady(
       runtimeUrl: connection.runtimeUrl,
       sessionToken: connection.sessionToken,
       cloudRequired: false,
+      controlledCapabilities,
+    },
+  };
+}
+
+export function createVsCodeControlledCapabilityMetadata(): ControlledCapabilityMetadata {
+  return {
+    protocolVersion: "controlled_host_capabilities_v2",
+    hostSurface: "vscode",
+    authority: "metadata_only",
+    capabilities: {
+      controlledStart: "supported",
+      controlledRead: "supported",
+      controlledEdit: "supported",
+      controlledVerification: "supported",
+      controlledRepair: "disabled",
+    },
+    correlationRequirements: [
+      "request_id",
+      "run_id",
+      "runtime_session_id",
+      "controlled_workspace_id",
+      "workspace_readiness_id",
+      "host_ready_request_id",
+      "explicit_user_gesture",
+    ],
+    authorityFlags: {
+      metadataOnly: true,
+      controlledRead: false,
+      controlledEdit: false,
+      controlledVerification: false,
+      controlledStart: false,
+      repair: false,
+      shell: false,
+      git: false,
+      packageInstall: false,
+      network: false,
+      provider: false,
+      tool: false,
+      hiddenSearch: false,
+      indexing: false,
+      autoApply: false,
+      autoRun: false,
+      autoFix: false,
+    },
+    limits: {
+      maxReadBytes: 8192,
+      maxReadLines: 240,
+      maxEditFiles: 4,
+      maxEditOperations: 16,
+      maxPatchBytes: 12000,
+      maxVerificationOutputBytes: 20000,
+      maxVerificationOutputLines: 400,
+      maxRepairAttempts: 0,
+    },
+    reasonCodes: ["vscode_controlled_dev_preview_metadata"],
+    safeLabels: {
+      host: "VS Code",
+      support: "VS Code supports bounded controlled read, edit, and allowlisted verification only after explicit user action and host validation.",
     },
   };
 }
