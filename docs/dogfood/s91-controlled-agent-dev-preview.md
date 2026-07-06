@@ -33,6 +33,49 @@ S91 must not add or imply:
 | VS Code | Primary dev-preview host for the implemented explicit controlled read, edit, allowlisted verification, one-step loop, and one repair-attempt UX. |
 | JetBrains | Hosted GUI/manual parity may remain visible, but controlled execution stays fail-closed/unsupported until future verified work changes that status. |
 
+## Safe manual dogfood checklist
+
+Use this checklist for S93 dev-preview dogfood runs. It is a manual local dev-preview runbook for VS Code-first validation only. It does not turn the S90 `partial` decision into production autonomy, release evidence, marketplace evidence, real-provider CI, or cross-host completion.
+
+### Prerequisites
+
+- Work from a disposable or otherwise safe local checkout/worktree with no secret-bearing target files selected.
+- Use the VS Code host for any trusted workspace execution. Browser/standalone GUI is preview-only and unsupported for controlled read, edit, or command execution. JetBrains may render hosted/manual parity surfaces, but controlled execution remains partial/fail-closed unless a later verified card changes that status.
+- Keep local-first BYOK boundaries intact: the run must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, marketplace publication, or real-provider CI. If a real local provider is used manually, keep credentials local and do not paste secrets or raw provider output into dogfood notes.
+- Choose one small existing safe workspace-relative text file and one allowlisted verification command id. Do not select hidden, generated, dependency, binary, symlink, secret-like, private-path, or broad workspace targets.
+- Decide the expected bounded replacement before starting. Do not use this checklist for create, delete, rename, move, patch, generated-file, dependency-file, broad mutation, shell, git, package, network, provider-tool, or model-selected command experiments.
+- Keep dogfood notes sanitized: record labels, counters, statuses, command ids, and short safe summaries only. Do not record raw prompts, file bodies, diffs, replacement text, command strings, cwd/env values, output dumps, bridge payloads, private paths, secrets, or arbitrary user text.
+
+### VS Code-first manual path
+
+1. Open the controlled dev-preview surface in VS Code and confirm the host copy says VS Code is the primary dev-preview host while Browser is unsupported and JetBrains is partial/fail-closed.
+2. Confirm Start is visible but not already running. The user must click **Start** explicitly; there is no auto-start, hidden background run, or model-selected task start.
+3. After **Start**, confirm the bounded read phase means exactly one selected safe workspace-relative text read under byte, line, and body limits. It must not mean workspace search, indexing, recursive discovery, hidden reads, or multiple-file context gathering.
+4. Confirm the bounded edit phase means at most one bounded replacement edit to the selected existing safe text file after explicit user-controlled flow/correlation. It must not mean create/delete/rename/move/chmod, broad apply, patch authority, generated/dependency edits, or raw diff/replacement persistence.
+5. Confirm the verification phase means exactly one allowlisted command id such as `repository-check`, `gui-app-tests`, or `engine-chat-tests`, with bounded tail metadata. It must not mean free-form shell, args/cwd/env input, git/package/network authority, model-selected commands, full output persistence, or automatic verification outside the explicit flow.
+6. Confirm **Stop** remains visible while running. Clicking **Stop** must end the current run or leave it in a fail-closed stopped state with sanitized status only; it must not trigger rollback, retry, repair, or another run automatically.
+7. If verification fails and the UI offers repair, confirm it means at most one user-confirmed repair attempt. The attempt budget is one; there is no automatic repair, second repair, automatic retry, automatic rollback, broad mutation, or follow-up send.
+8. Review the progress/final report. It should contain sanitized phase labels, host/limitation labels, safe file labels, command-id labels, bounded counters, stop reasons, repair-attempt state, and short safe summaries only.
+9. Save any dogfood observation outside tracked public docs unless a task explicitly asks for a sanitized tracked excerpt.
+
+### Local smoke commands
+
+For this dev-preview documentation/runbook path, run the wording and repository gates from the repository root:
+
+```sh
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+When repeating the broader controlled dev-preview evidence bundle, use:
+
+```sh
+npm run smoke:controlled-agent-dev-preview
+```
+
+That aggregate smoke is deterministic local/mock evidence only. It includes bounded sanitized status/report/fixture gates and does not call providers, require hosted services, use credentials, execute real-provider CI, publish artifacts, prove release readiness, or approve production autonomy.
+
 ## Useful-reporting focus
 
 S91 documentation and UX should make reports useful without exposing raw data. A good S91 report answers:

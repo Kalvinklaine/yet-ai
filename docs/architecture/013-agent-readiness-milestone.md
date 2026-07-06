@@ -550,6 +550,30 @@ git diff --check && git status --short
 
 All S92 final gate commands passed. This completion record is documentation and local/mock verification evidence only; it is not production autonomy, not broad workspace authority, not real-provider CI, not release evidence, not marketplace evidence, and not cross-host parity approval.
 
+## Sprint 93 dev-preview dogfood runbook status
+
+Sprint 93 keeps the S90 `partial` decision visible and adds a safe manual dogfood runbook for the controlled local agent dev-preview in [`../dogfood/s91-controlled-agent-dev-preview.md`](../dogfood/s91-controlled-agent-dev-preview.md). The runbook is VS Code-first because VS Code is the current primary trusted host for implemented controlled execution slices. Browser remains preview-only and unsupported for controlled workspace execution. JetBrains remains partial/fail-closed for controlled execution parity until a later verified card changes that status.
+
+The runbook describes prerequisites and a manual checklist for explicit **Start** and **Stop**, one bounded selected workspace-relative text read, one bounded replacement edit to an existing safe text file, one allowlisted verification command id, and at most one user-confirmed repair attempt after a failed verification. It defines what each sequence step means and what it does not mean: no hidden reads, search, indexing, broad mutation, create/delete/rename/move, free-form shell, git, package, network, provider-tool authority, model-selected commands, automatic repair, automatic retry, automatic rollback, raw payload persistence, task-board mutation, production autonomy, release evidence, marketplace evidence, or real-provider CI.
+
+The local-first BYOK boundary remains unchanged. Controlled dev-preview dogfood must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, cloud workspace, marketplace publication, production login, signing, notarization, or real-provider CI. Manual local provider use remains optional and local-only; dogfood notes must keep credentials, raw prompts, file bodies, diffs, replacement text, command strings, cwd/env values, output dumps, bridge payloads, private paths, secrets, and arbitrary user text out of tracked evidence.
+
+The S93 documentation/runbook verification gate is:
+
+```sh
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+The broader controlled dev-preview smoke remains available as explicit local/mock evidence:
+
+```sh
+npm run smoke:controlled-agent-dev-preview
+```
+
+That smoke does not change the runbook boundary. It does not call providers, require hosted services, use credentials, prove production autonomy, prove release readiness, publish marketplace artifacts, or complete browser/JetBrains controlled execution parity.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
