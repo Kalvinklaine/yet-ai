@@ -66,9 +66,10 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await page.waitForFunction(() => document.body.innerText.includes("ready to chat") || document.body.innerText.includes("Ready to send"), undefined, { timeout: 20_000 }).catch(() => failures.push(`Missing ${name} runtime ready state`));
   await page.waitForFunction(() => document.querySelector(".chat-scroll-region"), undefined, { timeout: 10_000 }).catch(() => failures.push(`Missing ${name} chat scroll region`));
   await injectActiveEditorContext(page, host);
-  await waitForActiveSelectedContext(page, name);
+  const contextReady = await waitForActiveSelectedContext(page);
+  if (!contextReady) await failViewport(page, name, "active selected context was not accepted before Coding Actions checks");
   const explainSelectionButton = page.getByRole("button", { name: "Explain selection", exact: true });
-  await waitForActionableButton(page, explainSelectionButton, `${name} Explain selection button`);
+  await requireActionableButton(page, explainSelectionButton, `${name} Explain selection button`, name);
 
   const chatsButton = page.getByRole("button", { name: "Chats", exact: true });
   await chatsButton.scrollIntoViewIfNeeded();
@@ -106,70 +107,92 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   return saveEvidence(page, name, metrics);
 }
 
-async function waitForActiveSelectedContext(page, name) {
-  const ready = await page.waitForFunction(() => {
+async function waitForActiveSelectedContext(page) {
+  return page.waitForFunction(() => {
     const details = document.querySelector("[data-testid='attached-context-active-details']");
     if (!(details instanceof HTMLElement)) return false;
     const text = details.innerText.replace(/\s+/g, " ");
     const normalizedText = text.toLowerCase();
     return normalizedText.includes("active editor context") && normalizedText.includes("attach to next message") && text.includes("src/plugin-layout.ts") && text.includes("10:2-10:40");
   }, undefined, { timeout: 10_000 }).then(() => true).catch(() => false);
-  if (!ready) failures.push(`${name} active selected context was not accepted/rendered: ${await contextDiagnostic(page)}`);
 }
 
-async function waitForActionableButton(page, locator, label) {
-  const ready = await locator.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
-  if (!ready) {
-    failures.push(` did not become visible: `);
-    return false;
-  }
+async function requireActionableButton(page, locator, label, viewportName) {
+  const result = await buttonActionability(locator, label);
+  if (!result.ok) await failViewport(page, viewportName, `${label} ${result.reason}`, result);
+  return result;
+}
+
+async function buttonActionability(locator, label) {
+  const visible = await locator.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!visible) return { ok: false, label, reason: "did not become visible" };
   const enabled = await locator.waitFor({ state: "attached", timeout: 1000 }).then(() => locator.isEnabled({ timeout: 5000 })).catch(() => false);
-  if (!enabled) {
-    failures.push(` stayed disabled: `);
-    return false;
-  }
+  if (!enabled) return { ok: false, label, reason: "stayed disabled" };
   await locator.scrollIntoViewIfNeeded();
-  const actionable = await assertActionable(locator, label);
-  if (!actionable) failures.push(` failed readiness diagnostics: `);
-  return actionable;
+  const actionable = await describeActionability(locator);
+  if (!actionable.ok) return { ok: false, label, reason: "is not actionable/hit-testable", actionable };
+  return { ok: true, label, reason: "ready", actionable };
 }
 
 async function clickActionableButton(page, locator, label) {
-  if (!await waitForActionableButton(page, locator, label)) return;
+  const result = await buttonActionability(locator, label);
+  if (!result.ok) await failViewport(page, label, result.reason, result);
   try {
     await locator.click({ timeout: 5000 });
   } catch (error) {
-    const fallbackReady = await locator.evaluate((element) => {
-      if (!(element instanceof HTMLButtonElement) || element.disabled) return false;
-      const rect = element.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
-      const top = document.elementFromPoint(centerX, centerY);
-      return rect.width > 0 && rect.height > 0 && (top === element || element.contains(top));
-    }).catch(() => false);
-    if (!fallbackReady) throw error;
-    console.warn(` Playwright click was flaky; used DOM click after enabled hit-test passed.`);
+    const fallbackReady = await describeActionability(locator);
+    if (!fallbackReady.ok) throw error;
+    console.warn(`${label} Playwright click was flaky; used DOM click after enabled hit-test passed.`);
     await locator.evaluate((element) => element.click());
   }
 }
 
-async function contextDiagnostic(page) {
-  const diagnostic = await page.evaluate(() => {
-    const button = Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === "Explain selection");
+async function failViewport(page, name, reason, actionability) {
+  throw new Error(`${name} ${reason}: ${await contextDiagnostic(page, actionability)}`);
+}
+
+async function contextDiagnostic(page, actionability) {
+  const diagnostic = await page.evaluate((actionabilityInput) => {
+    const explainButton = Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === "Explain selection");
+    const sendButton = Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === "Send");
     const context = document.querySelector("[data-testid='attached-context-active-details']") ?? document.querySelector("[data-testid='attached-context-compact-details']");
+    const composer = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
+    const bridgePosts = Array.isArray(window.__yetAiBridgePosts) ? window.__yetAiBridgePosts.slice(-8) : [];
     return {
-      buttonDisabled: button instanceof HTMLButtonElement ? button.disabled : null,
-      buttonText: button instanceof HTMLElement ? button.innerText : null,
-      contextText: context instanceof HTMLElement ? context.innerText : null,
-      bodyText: document.body.innerText,
+      actionability: actionabilityInput ?? null,
+      explainButton: buttonState(explainButton),
+      sendButton: buttonState(sendButton),
+      contextText: context instanceof HTMLElement ? context.innerText.replace(/\s+/g, " ").slice(0, 700) : null,
+      composerValue: composer instanceof HTMLTextAreaElement ? composer.value : null,
+      bridgePosts,
+      bodySnippet: document.body.innerText.replace(/\s+/g, " ").slice(0, 1200),
     };
-  });
-  return sanitizeEvidenceText(JSON.stringify(diagnostic)).slice(0, 1000);
+    function buttonState(button) {
+      if (!(button instanceof HTMLButtonElement)) return null;
+      const rect = button.getBoundingClientRect();
+      const style = window.getComputedStyle(button);
+      return {
+        text: button.innerText,
+        disabled: button.disabled,
+        ariaDisabled: button.getAttribute("aria-disabled"),
+        title: button.title,
+        visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
+        rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      };
+    }
+  }, actionability ?? null);
+  return sanitizeEvidenceText(JSON.stringify(diagnostic)).slice(0, 2200);
 }
 
 async function assertActionable(locator, label) {
   await locator.waitFor({ state: "visible", timeout: 5000 });
-  const actionable = await locator.evaluate((element) => {
+  const actionable = await describeActionability(locator);
+  assert(actionable.ok, `${label} is not actionable/hit-testable: ${JSON.stringify(actionable)}`);
+  return actionable.ok;
+}
+
+async function describeActionability(locator) {
+  return locator.evaluate((element) => {
     if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
     const rect = element.getBoundingClientRect();
     const style = window.getComputedStyle(element);
@@ -179,12 +202,13 @@ async function assertActionable(locator, label) {
     return {
       ok: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.pointerEvents !== "none" && !element.hasAttribute("disabled") && (top === element || element.contains(top)),
       rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      visibility: style.visibility,
+      pointerEvents: style.pointerEvents,
+      disabled: element.hasAttribute("disabled"),
       topTag: top?.tagName,
       topText: top?.textContent?.trim().slice(0, 80),
     };
-  });
-  assert(actionable.ok, ` is not actionable/hit-testable: `);
-  return actionable.ok;
+  }).catch((error) => ({ ok: false, reason: error instanceof Error ? error.message : String(error) }));
 }
 
 async function collectLayoutMetrics(page, scenario) {
