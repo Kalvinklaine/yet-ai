@@ -625,6 +625,27 @@ git diff --check && git status --short
 
 This gate keeps public wording hygiene, docs index validation, repository checks, whitespace hygiene, and tracked status visible for the final S91-S94 closure.
 
+## Sprint 94-C4 final through-S94 verification status
+
+Sprint 94-C4 closes the S91-S94 controlled local agent dev-preview sequence after the final through-S94 verification gate passed on 2026-07-06. This is a verification and documentation closure only; it does not widen the S90 `partial` decision or the S91 VS Code-first dev-preview boundary.
+
+The final through-S94 gate was:
+
+```sh
+npm run validate:contracts
+cd apps/gui && npm test -- controlledAgentDevPreviewStatus controlledAgentDevPreviewReport AgentRunPanel ControlledAgentRunPanel controlledOneStepAgentLoop controlledRepairLoop App
+cd apps/gui && npm run typecheck
+cd apps/gui && npm run build
+npm run smoke:controlled-agent-dev-preview
+npm run smoke:controlled-autonomy-readiness
+npm run audit:controlled-autonomy-wording
+npm run check
+git diff --check && git status --short
+```
+
+All final through-S94 gate commands passed. The clean-tree check completed with no tracked changes after the closure commit. The evidence remains deterministic local/mock and documentation evidence only: no provider calls, hosted Yet AI services, credentials in automation, real-provider CI, release evidence, marketplace evidence, browser trusted workspace execution, JetBrains controlled execution parity, broad workspace authority, hidden reads/search/indexing, arbitrary command execution, shell/git/package/network/provider-tool authority, automatic repair/retry/rollback, raw payload persistence, or task-board mutation is added or approved.
+
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:
