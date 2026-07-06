@@ -122,6 +122,26 @@ const activeOneStepLoop = {
   counters: { ...idleOneStepLoop.counters, fileReads: 1, readBytes: 120 },
 } as const;
 
+const completedOneStepLoop = {
+  ...activeOneStepLoop,
+  phase: "completed",
+  summary: "One-step controlled loop completed.",
+  counters: { ...activeOneStepLoop.counters, loopSteps: 1, filesTouched: 1, verificationRuns: 1 },
+} as const;
+
+const stoppedOneStepLoop = {
+  ...activeOneStepLoop,
+  phase: "stopped",
+  summary: "One-step controlled loop stopped.",
+  stop: { reason: "user_stop", recoverable: true, message: "Stopped after explicit user request." },
+} as const;
+
+const failedOneStepLoop = {
+  ...activeOneStepLoop,
+  phase: "failed",
+  summary: "One-step controlled loop failed closed.",
+} as const;
+
 const readyOneStepRequest = { state: "ready", diagnostics: [], details: {}, authority: {} } as any;
 const blockedOneStepRequest = { state: "blocked", diagnostics: [{ code: "blocked", message: "not ready" }], details: {}, authority: {} } as any;
 
@@ -274,6 +294,63 @@ describe("AgentRunPanel", () => {
 
     expect(panelText()).toContain("Start needs ready controlled read, edit, and allowlisted verification request metadata.");
     expect(panelText()).toContain("Edit request: blocked");
+    expect(findButton("Start one-step Agent Run").disabled).toBe(true);
+  });
+
+  it("renders sanitized controlled dev-preview reports for active and terminal one-step states", () => {
+    const onStartOneStepRun = vi.fn();
+    const onStopOneStepRun = vi.fn();
+    for (const [loop, label] of [[activeOneStepLoop, "Running after explicit user start"], [completedOneStepLoop, "Completed with sanitized evidence"], [stoppedOneStepLoop, "Stopped by explicit boundary"], [failedOneStepLoop, "Failed closed"]] as const) {
+      renderPanel(undefined, {
+        host: "vscode",
+        oneStepLoopState: loop,
+        oneStepReadRequest: readyOneStepRequest,
+        oneStepEditRequest: readyOneStepRequest,
+        oneStepCommandRunRequest: readyOneStepRequest,
+        onStartOneStepRun,
+        onStopOneStepRun,
+      });
+
+      expect(panelText()).toContain("Controlled dev-preview report");
+      expect(panelText()).toContain(label);
+      expect(panelText()).toContain("Host: VS Code host");
+      expect(panelText()).toContain("Explicit user start required");
+      expect(panelText()).toContain("Sanitized display-only report");
+      expect(panelText()).toContain("Report counter fileReads: 1");
+      expect(panelText()).toContain("Evidence: Status evidence:");
+      expect(panelText()).toContain("Raw file bodies, diffs, command output, provider payloads, private paths, and secrets are omitted.");
+    }
+    expect(actionButtonLabels()).toEqual(["Start one-step Agent Run", "Stop one-step Agent Run", "Manually apply reviewed patch", "Manually run allowlisted verification", "Manually review rollback"]);
+  });
+
+  it("keeps controlled dev-preview report limitations visible and unsafe report data omitted", () => {
+    const secret = "sk-" + "z".repeat(40);
+    renderPanel(undefined, {
+      host: "browser",
+      oneStepLoopState: { ...activeOneStepLoop, summary: `Unsafe ${secret} /Users/alice/private.ts` },
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+    });
+
+    expect(panelText()).toContain("Host: Browser preview host");
+    expect(panelText()).toContain("Blocked until local readiness returns");
+    expect(panelText()).toContain("Browser preview cannot start the controlled local agent dev-preview.");
+    expect(panelText()).toContain("Evidence: Status evidence: read_context — Sanitized evidence summary was unavailable.");
+    expect(panelText()).not.toContain(secret);
+    expect(panelText()).not.toContain("/Users/alice");
+
+    renderPanel(undefined, {
+      host: "jetbrains",
+      oneStepLoopState: activeOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+    });
+
+    expect(panelText()).toContain("Host: JetBrains host");
+    expect(panelText()).toContain("Blocked until local readiness returns");
+    expect(panelText()).toContain("JetBrains support is partial and fail-closed in this VS Code-first dev-preview.");
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
   });
 

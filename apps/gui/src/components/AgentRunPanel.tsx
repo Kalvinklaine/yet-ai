@@ -3,6 +3,7 @@ import { buildAgentRunApplyRiskSummary } from "../services/agentRunApplyRisk";
 import { buildAgentRunCheckpointDecision, type AgentRunCheckpointDecisionSummary } from "../services/agentRunCheckpointDecision";
 import { evaluateAgentRunState, type AgentRunInput } from "../services/agentRunState";
 import type { ControlledAgentCommandRunRequestResult } from "../services/controlledAgentCommandRunRequest";
+import { createControlledAgentDevPreviewReport } from "../services/controlledAgentDevPreviewReport";
 import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledAgentDevPreviewStatus";
 import type { ControlledAgentEditRequestResult } from "../services/controlledAgentEditRequest";
 import type { ControlledAgentFileReadRequestResult } from "../services/controlledAgentFileReadRequest";
@@ -107,6 +108,36 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
     repairReady: Boolean(repairLoop && repairLoop.state !== "disabled"),
     stopped: oneStepLoopState?.phase === "stopped",
   });
+  const devPreviewReport = showOneStepLoop || showRepairLoop ? createControlledAgentDevPreviewReport({
+    host,
+    status: oneStepLoopState ? controlledReportStatusFromOneStep(oneStepLoopState.phase) : repairLoop?.state === "eligible" || repairLoop?.state === "proposal_ready" ? "failed" : "blocked",
+    capabilities: {
+      explicit_start: host === "vscode" && Boolean(onStartOneStepRun),
+      bounded_read: oneStepReadReady,
+      bounded_edit: oneStepEditReady,
+      allowlisted_verification: oneStepCommandReady,
+      bounded_repair: Boolean(repairLoop && repairLoop.state !== "disabled"),
+      sanitized_report: true,
+    },
+    counters: oneStepLoopState ? {
+      loopSteps: oneStepLoopState.counters.loopSteps,
+      fileReads: oneStepLoopState.counters.fileReads,
+      filesTouched: oneStepLoopState.counters.filesTouched,
+      verificationRuns: oneStepLoopState.counters.verificationRuns,
+      repairAttempts: oneStepLoopState.counters.repairAttempts,
+      userTurns: oneStepLoopState.counters.userTurns,
+      runtimeSeconds: oneStepLoopState.counters.runtimeSeconds,
+    } : repairLoop ? {
+      verificationRuns: repairLoop.verificationRuns,
+      repairAttempts: repairLoop.attemptCount,
+      userTurns: repairLoop.userTurns,
+    } : {},
+    currentUserAction: oneStepLoopState?.phase === "stopped" ? "stop" : oneStepActive ? "wait" : oneStepLoopState?.phase === "completed" ? "review" : "start",
+    limitations: host === "browser" ? ["browser_unsupported"] : host === "jetbrains" ? ["jetbrains_partial"] : [],
+    evidence: [
+      { kind: "status", status: oneStepLoopState?.phase ?? repairLoop?.state ?? "blocked", summary: oneStepLoopState?.summary ?? controlledReportEvidenceSummary(oneStepLoopState?.phase, repairLoop?.state) },
+    ],
+  }) : undefined;
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -129,6 +160,25 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         <span>Limitations: {devPreviewStatus.limitations.join(" · ")}</span>
         <span className="subtle">Dev-preview only: no production autonomy, sanitized reports only, no raw output.</span>
       </div>
+      )}
+      {devPreviewReport && (
+        <div className={`readiness-card ${devPreviewReport.status === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled dev-preview report">
+          <div className="row">
+            <strong>Controlled dev-preview report</strong>
+            <span className={devPreviewReport.status === "completed" ? "badge ok" : "badge warn"}>{devPreviewReport.statusLabel}</span>
+            <span className="badge">metadata only</span>
+            <span className="badge">display only</span>
+          </div>
+          <span>Host: {devPreviewReport.hostLabel}</span>
+          <span>Current user action: {devPreviewReport.currentUserActionLabel}</span>
+          <span>Capabilities: {devPreviewReport.capabilityLabels.join(" · ")}</span>
+          <div className="agent-progress-grid" aria-label="Controlled dev-preview report counters">
+            {Object.entries(devPreviewReport.counters).map(([key, value]) => <span key={key}>Report counter {sanitizeDisplayText(key)}: {value}</span>)}
+          </div>
+          <span>Limitations: {devPreviewReport.limitationLabels.join(" · ")}</span>
+          {devPreviewReport.evidence.length > 0 && <span>Evidence: {devPreviewReport.evidence.map((item) => `${sanitizeDisplayText(item.label)} — ${sanitizeDisplayText(item.summary)}`).join(" · ")}</span>}
+          <span className="subtle">Safety boundaries: {devPreviewReport.safetyBoundaryLabels.join(" · ")}</span>
+        </div>
       )}
       <div className={`readiness-card ${view.nextUserAction === "confirm_apply" || view.nextUserAction === "confirm_verification" || view.state === "verified" ? "ready" : "warn"}`} role="status" aria-label="Agent Run next manual step">
         <strong>Next manual step</strong>
@@ -344,6 +394,23 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
 
 function checkpointDecisionTone(decision: AgentRunCheckpointDecisionSummary): "ready" | "warn" {
   return decision.status === "continue_available" ? "ready" : "warn";
+}
+
+function controlledReportStatusFromOneStep(phase: ControlledOneStepAgentLoopState["phase"]): string {
+  if (phase === "completed") return "completed";
+  if (phase === "stopped") return "stopped";
+  if (phase === "failed") return "failed";
+  if (phase === "idle") return "ready";
+  return "running";
+}
+
+function controlledReportEvidenceSummary(phase: ControlledOneStepAgentLoopState["phase"] | undefined, repairState: ControlledAgentRepairLoopEvaluation["state"] | undefined): string {
+  if (phase === "completed") return "Controlled one-step run completed with sanitized metadata.";
+  if (phase === "stopped") return "Controlled one-step run stopped after explicit user boundary.";
+  if (phase === "failed") return "Controlled one-step run failed closed with sanitized metadata.";
+  if (phase) return "Controlled one-step run is active with bounded metadata.";
+  if (repairState === "eligible" || repairState === "proposal_ready") return "Controlled repair metadata is available after failed verification.";
+  return "Controlled dev-preview prerequisites are blocked or unavailable.";
 }
 
 function checkpointDecisionSummaryCopy(decision: AgentRunCheckpointDecisionSummary): string {

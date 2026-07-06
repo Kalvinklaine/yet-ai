@@ -74,6 +74,37 @@ describe("ControlledAgentRunPanel", () => {
     expect(findButton("Stop controlled run").disabled).toBe(false);
   });
 
+  it("renders sanitized controlled dev-preview reports for active and terminal run states", () => {
+    const active = reduceControlledAgentRunState(readyState(), { type: "workspace_ready" });
+    const completed = reduceControlledAgentRunState(readyState(), { type: "complete", summary: "Completed with metadata only." });
+    const stopped = reduceControlledAgentRunState(readyState(), { type: "stop", reason: "user_stop", summary: "Stopped after explicit user request." });
+    const failed = failedState();
+
+    for (const [state, label] of [[active, "Running after explicit user start"], [completed, "Completed with sanitized evidence"], [stopped, "Stopped by explicit boundary"], [failed, "Failed closed"]] as const) {
+      renderPanel(state, "vscode");
+      const text = panelText();
+      expect(text).toContain("Controlled dev-preview report");
+      expect(text).toContain(label);
+      expect(text).toContain("Host: VS Code host");
+      expect(text).toContain("Report counter loopSteps:");
+      expect(text).toContain("Evidence:");
+      expect(text).toContain("Sanitized display-only report");
+      expect(text).toContain("Raw file bodies, diffs, command output, provider payloads, private paths, and secrets are omitted.");
+      expect(findButton("Start controlled dev-preview").disabled).toBe(true);
+    }
+  });
+
+  it("omits unsafe controlled dev-preview report evidence", () => {
+    const secret = "sk-" + "q".repeat(40);
+    renderPanel({ ...readyState(), summary: `Unsafe ${secret} /Users/alice/private.ts` }, "vscode");
+
+    const text = panelText();
+    expect(text).toContain("Controlled dev-preview report");
+    expect(text).toContain("Sanitized evidence summary was unavailable.");
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain("/Users/alice");
+  });
+
   it("renders browser and JetBrains limitations explicitly", () => {
     renderPanel(readyState(), "browser");
     expect(panelText()).toContain("Controlled agent dev-preview is not supported in the browser host.");
@@ -124,6 +155,19 @@ function readyState() {
     userOptIn: { source: "user", confirmed: true, requestId: "s76-panel-test" },
     limits: { maxSteps: 4, maxFileReads: 2, maxReadBytes: 4096, maxTouchedFiles: 2, maxPatchBytes: 2048, maxRuntimeSeconds: 60, maxRepairAttempts: 1 },
   });
+}
+
+function failedState() {
+  return {
+    ...readyState(),
+    phase: "failed" as const,
+    stopped: true,
+    enabled: false,
+    summary: "Verification failed without raw output.",
+    nextUserAction: "review_failure" as const,
+    stop: { reason: "verification_failed" as const, recoverable: true, message: "Verification failed without raw output." },
+    diagnostics: [{ code: "invalid_authority" as const, message: "Verification failed without raw output." }],
+  };
 }
 
 function renderInteractivePanel() {

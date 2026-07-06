@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import type { BridgeHost } from "../bridge/bridgeAdapter";
+import { createControlledAgentDevPreviewReport } from "../services/controlledAgentDevPreviewReport";
 import type { ControlledAgentProgressReport } from "../services/controlledAgentProgressReport";
 import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledAgentDevPreviewStatus";
 import type { ControlledLocalAgentMvpReport } from "../services/controlledLocalAgentMvp";
@@ -39,6 +40,32 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
     stopped: state.stopped,
     runtimeDisconnected: mvpReport?.runtimeSession.status === "blocked",
   });
+  const devPreviewReport = createControlledAgentDevPreviewReport({
+    host,
+    status: controlledReportStatusFromRunPhase(state.phase),
+    capabilities: {
+      explicit_start: host === "vscode" && state.enabled,
+      bounded_read: state.counters.fileReadsUsed > 0 || state.phase === "reading_context" || state.phase === "planning" || state.phase === "waiting_for_user" || state.phase === "running_verification" || state.phase === "completed",
+      bounded_edit: state.counters.filesTouched > 0 || state.phase === "waiting_for_user" || state.phase === "completed",
+      allowlisted_verification: state.counters.verificationRuns > 0 || state.phase === "running_verification" || state.phase === "completed",
+      bounded_repair: state.limits.maxRepairAttempts > 0,
+      sanitized_report: true,
+    },
+    counters: {
+      loopSteps: state.counters.stepsCompleted,
+      fileReads: state.counters.fileReadsUsed,
+      filesTouched: state.counters.filesTouched,
+      verificationRuns: state.counters.verificationRuns,
+      repairAttempts: state.counters.repairAttempts,
+      userTurns: state.counters.userTurns,
+      runtimeSeconds: state.counters.runtimeSeconds,
+    },
+    currentUserAction: state.phase === "completed" ? "review" : state.phase === "stopped" ? "stop" : state.phase === "failed" || state.phase === "blocked" ? "retry" : state.phase === "idle" || state.phase === "opt_in_required" ? "none" : "wait",
+    limitations: host === "browser" ? ["browser_unsupported"] : host === "jetbrains" ? ["jetbrains_partial"] : [],
+    evidence: [
+      { kind: state.phase === "stopped" ? "stop" : "status", status: state.phase, summary: state.summary },
+    ],
+  });
 
   return (
     <section className={`readiness-card ${state.stopped ? "warn" : "ready"} controlled-agent-run-panel stack`} aria-label="Controlled agent run skeleton" data-testid="controlled-agent-run-panel">
@@ -60,6 +87,23 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         <span>{devPreviewStatus.summary}</span>
         <span>Host: {devPreviewStatus.host} · Bounded read/edit: {devPreviewStatus.capabilities.boundedRead && devPreviewStatus.capabilities.boundedEdit ? "ready" : "blocked"} · Allowlisted verification: {devPreviewStatus.capabilities.allowlistedVerification ? "ready" : "blocked"} · One bounded repair: {devPreviewStatus.capabilities.boundedRepair ? "ready" : "blocked"} · Sanitized report: ready</span>
         <span>Limitations: {devPreviewStatus.limitations.join(" · ")}</span>
+      </section>
+      <section className={`readiness-card ${devPreviewReport.status === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled dev-preview report">
+        <div className="row">
+          <strong>Controlled dev-preview report</strong>
+          <span className={devPreviewReport.status === "completed" ? "badge ok" : "badge warn"}>{devPreviewReport.statusLabel}</span>
+          <span className="badge">metadata only</span>
+          <span className="badge">display only</span>
+        </div>
+        <span>Host: {devPreviewReport.hostLabel}</span>
+        <span>Current user action: {devPreviewReport.currentUserActionLabel}</span>
+        <span>Capabilities: {devPreviewReport.capabilityLabels.join(" · ")}</span>
+        <div className="agent-progress-grid" aria-label="Controlled dev-preview report counters">
+          {Object.entries(devPreviewReport.counters).map(([key, value]) => <span key={key}>Report counter {sanitizeDisplayText(key)}: {value}</span>)}
+        </div>
+        <span>Limitations: {devPreviewReport.limitationLabels.join(" · ")}</span>
+        {devPreviewReport.evidence.length > 0 && <span>Evidence: {devPreviewReport.evidence.map((item) => `${sanitizeDisplayText(item.label)} — ${sanitizeDisplayText(item.summary)}`).join(" · ")}</span>}
+        <span className="subtle">Safety boundaries: {devPreviewReport.safetyBoundaryLabels.join(" · ")}</span>
       </section>
       <span className="subtle">S91 dev-preview: explicit user Start/Stop only, bounded read/edit/verify only, one user-confirmed repair attempt, sanitized reports only. Browser unsupported; JetBrains partial/fail-closed.</span>
       {progressReport && <section className={`readiness-card ${progressReport.status === "blocked" || progressReport.status === "failed" || progressReport.status === "stopped" ? "warn" : "ready"} stack`} aria-label="Controlled progress report metadata">
@@ -181,4 +225,12 @@ function currentStepLabel(state: ControlledAgentRunState): string {
   if (state.phase === "completed") return "Review completion metadata";
   if (state.phase === "opt_in_required") return "Review opt-in requirement";
   return "Idle";
+}
+
+function controlledReportStatusFromRunPhase(phase: ControlledAgentRunState["phase"]): string {
+  if (phase === "completed") return "completed";
+  if (phase === "stopped") return "stopped";
+  if (phase === "failed") return "failed";
+  if (phase === "blocked" || phase === "idle" || phase === "opt_in_required") return "blocked";
+  return "running";
 }
