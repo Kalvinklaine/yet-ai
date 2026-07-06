@@ -117,7 +117,7 @@ const allowedCounters: Array<keyof ControlledAgentDevPreviewReportCounters> = ["
 const capabilityOrder: ControlledAgentDevPreviewCapability[] = ["explicit_start", "bounded_read", "bounded_edit", "allowlisted_verification", "bounded_repair", "sanitized_report"];
 const defaultBoundaries = ["local_first", "explicit_user_start", "metadata_only", "bounded_work", "no_raw_secrets"];
 const unsafeKeyPattern = /(?:command|cmd|args|cwd|env|shell|git|network|provider|tool|package|raw|fileBody|fileContents|prompt|diff|patch|privatePath|path|token|secret|password|cookie|authorization)/i;
-const unsafeTextPattern = /authorization|bearer|api[_-]?key|access[_-]?token|secret|password|cookie|raw[_ -]?(?:file|prompt|command|output|log|diff|patch)|file[_ -]?(?:body|content)|provider(?:[_ -]?(?:payload|response))?|\bcommand\b|\bcwd\b|\benv\b|\bgit\b|\btool\b|network|sk-(?:proj-)?[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/)/i;
+const unsafeTextPattern = /authorization|bearer|api[_-]?key|access[_-]?token|secret|password|cookie|raw[_ -]?(?:file|prompt|command|output|log|diff|patch)|file[_ -]?(?:body|content)|provider(?:[_ -]?(?:payload|response))?|\bcommand\b|\bcwd\b|\benv\b|\bgit\b|\btool\b|\bnpm\s+run\b|network|sk-(?:proj-)?[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/)/i;
 
 export function createControlledAgentDevPreviewReport(input: unknown): ControlledAgentDevPreviewReport {
   const metadata = isPlainObject(input) ? (input as ControlledAgentDevPreviewReportInput) : {};

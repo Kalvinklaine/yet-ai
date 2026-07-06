@@ -508,6 +508,24 @@ git diff --check && git status --short
 
 All S91 final gate commands passed. The completion record is documentation and local/mock verification evidence only; it is not production autonomy, not broad workspace authority, not real-provider CI, not release evidence, not marketplace evidence, and not cross-host parity approval.
 
+## Sprint 92 sanitized dev-preview report evidence
+
+Sprint 92 adds focused deterministic smoke evidence for the controlled local agent dev-preview report service. The report service is a pure sanitized aggregator over supplied host/status, one-step, repair, run, counter, limitation, and evidence metadata. It emits fixed labels, bounded counters, host limitation labels, and safety boundary labels, while omitting or replacing raw-looking report evidence.
+
+The focused S92 report smoke is:
+
+```sh
+npm run smoke:controlled-agent-dev-preview-report
+```
+
+The aggregate dev-preview smoke includes this report gate:
+
+```sh
+npm run smoke:controlled-agent-dev-preview
+```
+
+This evidence is local/mock only. It does not call providers, network, package installation, git, free-form shell, runtime authority, bridge authority, storage authority, real IDE execution, or broad workspace actions. It does not change the S90 `partial` decision and does not approve production autonomy, broad workspace automation, real-provider CI, release evidence, marketplace evidence, cross-host completion, or any authority beyond the S91 VS Code-first dev-preview boundary. Browser remains preview-only/unsupported for trusted workspace execution, and JetBrains remains partial/fail-closed until later verified work changes that status.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

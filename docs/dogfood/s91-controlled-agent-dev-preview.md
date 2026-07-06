@@ -45,6 +45,24 @@ S91 documentation and UX should make reports useful without exposing raw data. A
 
 The report must keep S90 partial approval clear: this is narrow local/mock and explicit-user-start evidence for continued dev-preview hardening only.
 
+## S92 sanitized report evidence
+
+S92 adds deterministic local/mock evidence for the sanitized dev-preview report service. The focused smoke is:
+
+```sh
+npm run smoke:controlled-agent-dev-preview-report
+```
+
+The root dev-preview smoke includes that focused report gate:
+
+```sh
+npm run smoke:controlled-agent-dev-preview
+```
+
+This S92 evidence is intentionally narrow. It exercises pure report formatting over supplied status, one-step, repair, and run metadata only. It does not call providers, network, package installation, git, free-form shell, runtime authority, bridge authority, storage authority, real IDE execution, or broad workspace actions. It proves sanitized report labels, bounded counters, host limitations, fixed safety boundaries, and raw-looking evidence omission only.
+
+S92 does not change the S90 `partial` decision and does not expand S91 authority. It is not production autonomy, not real-provider CI, not release evidence, not marketplace evidence, and not broad workspace authority.
+
 ## Final status
 
 S91 is complete as a dev-preview status and reporting audit. The completed evidence is intentionally narrow:
