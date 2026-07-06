@@ -157,10 +157,10 @@ export function buildControlledAgentEditRequest(input: unknown): ControlledAgent
   const host = metadata.host;
   if (host === "browser") {
     diagnostics.push(diagnostic("browser_host", "Browser preview cannot post controlled edit requests."));
-  } else if (host !== "vscode" && host !== "jetbrains") {
+  } else if (host === "jetbrains") {
+    diagnostics.push(diagnostic("unsupported_host", "JetBrains controlled edit remains fail-closed until verified parity support exists."));
+  } else if (host !== "vscode") {
     diagnostics.push(diagnostic("unsupported_host", "Controlled edit requests require a supported IDE host."));
-  } else if (host === "jetbrains" && metadata.jetbrainsEditSupported !== true) {
-    diagnostics.push(diagnostic("unsupported_host", "JetBrains controlled edit bridge support is not available."));
   }
 
   const runtime = evaluateControlledAgentRuntimeSession(metadata.runtimeSessionMetadata);

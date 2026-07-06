@@ -158,16 +158,16 @@ describe("controlledAgentEditRequest", () => {
     expect(noAuthority(result).every((value) => value === false)).toBe(true);
   });
 
-  it("builds a JetBrains request only when edit bridge support is available", () => {
+  it("keeps JetBrains controlled edit fail-closed even with ready-looking metadata", () => {
     const jetbrainsRuntime = runtime();
     jetbrainsRuntime.host.kind = "jetbrains";
-    const ready = buildControlledAgentEditRequest(requestInput({ host: "jetbrains", runtimeSessionMetadata: jetbrainsRuntime, jetbrainsEditSupported: true }));
-    const unsupported = buildControlledAgentEditRequest(requestInput({ host: "jetbrains", runtimeSessionMetadata: jetbrainsRuntime, jetbrainsEditSupported: false }));
+    const result = buildControlledAgentEditRequest(requestInput({ host: "jetbrains", runtimeSessionMetadata: jetbrainsRuntime, jetbrainsEditSupported: true }));
 
-    expect(ready.state).toBe("ready");
-    expect(ready.bridgeRequest?.type).toBe("gui.controlledAgentEditRequest");
-    expect(unsupported.state).toBe("unsupported");
-    expect(unsupported.diagnostics.map((item) => item.code)).toContain("unsupported_host");
+    expect(result.state).toBe("unsupported");
+    expect(result.bridgeRequest).toBeUndefined();
+    expect(result.correlation).toBeUndefined();
+    expect(result.diagnostics.map((item) => item.code)).toContain("unsupported_host");
+    expect(output(result)).toContain("JetBrains controlled edit remains fail-closed");
   });
 
   it("blocks assistant-minted or unconfirmed metadata", () => {

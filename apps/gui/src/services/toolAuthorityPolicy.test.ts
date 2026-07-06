@@ -135,6 +135,35 @@ describe("toolAuthorityPolicy", () => {
     expect(summary).toContain("cannot enable Send, apply, verification, or IDE actions");
   });
 
+  it("reports browser preview-only and JetBrains fail-closed host matrix states", () => {
+    const browser = evaluateHostCapabilityMetadata("browser");
+    const jetbrains = evaluateHostCapabilityMetadata("jetbrains");
+    const vscode = evaluateHostCapabilityMetadata("vscode");
+
+    expect(browser.allowedToExecute).toBe(false);
+    expect(browser.details).toMatchObject({
+      capabilityStatus: "preview_only_metadata_only",
+      controlledRead: "unsupported_no_trusted_workspace_host",
+      controlledEdit: "unsupported_no_trusted_workspace_host",
+      controlledVerification: "unsupported_no_trusted_workspace_host",
+    });
+    expect(jetbrains.allowedToExecute).toBe(false);
+    expect(jetbrains.details).toMatchObject({
+      capabilityStatus: "partial_fail_closed_metadata_only",
+      controlledStart: "unsupported_fail_closed",
+      controlledRead: "unsupported_fail_closed",
+      controlledEdit: "unsupported_fail_closed",
+      controlledVerification: "unsupported_fail_closed",
+      unsupportedReason: "jetbrains_parity_not_verified",
+    });
+    expect(vscode.allowedToExecute).toBe(false);
+    expect(vscode.details).toMatchObject({
+      capabilityStatus: "supported_metadata_only",
+      controlledRead: "supported_bounded_single_file",
+      controlledVerification: "supported_allowlisted_command_id",
+    });
+  });
+
   it("denies assistant-provided capability claims even when they mimic host support", () => {
     const result = evaluateToolAuthorityPolicy({
       ...metadataPolicy,

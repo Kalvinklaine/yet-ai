@@ -3094,6 +3094,7 @@ export function App() {
           <span className="badge">allowed to execute: {String(hostCapabilityEvaluation.allowedToExecute)}</span>
         </div>
         <span className="subtle">Host/plugin support signals are display evidence only; they never enable Send, apply, verification, or IDE actions.</span>
+        <span className="subtle">Controlled host matrix: {String(hostCapabilityEvaluation.details.controlledStart)} · read {String(hostCapabilityEvaluation.details.controlledRead)} · edit {String(hostCapabilityEvaluation.details.controlledEdit)} · verification {String(hostCapabilityEvaluation.details.controlledVerification)}.</span>
       </section>}
 
       <CodingSessionTracePanel entries={tracePanelEntries} />

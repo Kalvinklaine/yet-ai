@@ -164,6 +164,18 @@ describe("controlledAgentCommandRunRequest", () => {
     expect(assistant.diagnostics.map((item) => item.code)).toContain("assistant_authority_blocked");
   });
 
+  it("keeps JetBrains controlled verification fail-closed even with ready-looking metadata", () => {
+    const jetbrainsRuntime = runtime();
+    jetbrainsRuntime.host.kind = "jetbrains";
+    const result = buildControlledAgentCommandRunRequest(requestInput({ host: "jetbrains", runtimeSessionMetadata: jetbrainsRuntime }));
+
+    expect(result.state).toBe("unsupported");
+    expect(result.bridgeRequest).toBeUndefined();
+    expect(result.correlation).toBeUndefined();
+    expect(result.diagnostics.map((item) => item.code)).toContain("unsupported_host");
+    expect(output(result)).toContain("JetBrains controlled verification remains fail-closed");
+  });
+
   it("rejects raw, private, or privileged metadata without echoing unsafe values", () => {
     const result = buildControlledAgentCommandRunRequest(requestInput({ rawOutput: "SECRET_SENTINEL", plannedCommandRunMetadata: { commandId: "gui-app-tests", userConfirmed: true, cwd: "/Users/alice/project" } }));
     const rendered = output(result);

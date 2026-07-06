@@ -285,6 +285,7 @@ describe("runtime refresh feedback", () => {
     expect(text).toContain("metadata only");
     expect(text).toContain("allowed to execute: false");
     expect(text).toContain("Host/plugin support signals are display evidence only; they never enable Send, apply, verification, or IDE actions.");
+    expect(text).toContain("Controlled host matrix: preview_only_unsupported · read unsupported_no_trusted_workspace_host · edit unsupported_no_trusted_workspace_host · verification unsupported_no_trusted_workspace_host.");
     expect(findButton("Send").disabled).toBe(true);
     expect(findButton("Repository check").disabled).toBe(true);
     expect(findButton("GUI app tests").disabled).toBe(true);
@@ -8252,6 +8253,10 @@ describe("edit proposal preview", () => {
     expect(agentRunPanel().textContent).toContain("JetBrains partial/fail-closed");
     expect(buttonWithin(agentRunPanel(), "Start one-step Agent Run").disabled).toBe(true);
     expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ surface: "jetbrains" }));
+    await flushAsync();
+    expect(document.body.textContent ?? "").toContain("Controlled host matrix: unsupported_fail_closed · read unsupported_fail_closed · edit unsupported_fail_closed · verification unsupported_fail_closed.");
   });
 
   it("Agent Run apply can post then controlled verification uses S85 command-run path", async () => {

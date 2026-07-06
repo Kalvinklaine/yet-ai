@@ -131,10 +131,10 @@ export function buildControlledAgentFileReadRequest(input: unknown): ControlledA
   const host = metadata.host;
   if (host === "browser") {
     diagnostics.push(diagnostic("browser_host", "Browser preview cannot post controlled file read requests."));
-  } else if (host !== "vscode" && host !== "jetbrains") {
+  } else if (host === "jetbrains") {
+    diagnostics.push(diagnostic("unsupported_host", "JetBrains controlled file read remains fail-closed until verified parity support exists."));
+  } else if (host !== "vscode") {
     diagnostics.push(diagnostic("unsupported_host", "Controlled file read requests require a supported IDE host."));
-  } else if (host === "jetbrains" && metadata.jetbrainsFileReadSupported === false) {
-    diagnostics.push(diagnostic("unsupported_host", "JetBrains controlled file read bridge support is not available."));
   }
 
   const runtime = evaluateControlledAgentRuntimeSession(metadata.runtimeSessionMetadata);

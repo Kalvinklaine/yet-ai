@@ -195,13 +195,14 @@ export function summarizeToolAuthorityPolicyEvaluation(evaluation: ToolAuthority
 }
 
 export function evaluateHostCapabilityMetadata(hostSurface: ToolAuthorityPolicyHostSurface): ToolAuthorityPolicyEvaluation {
-  return evaluateToolAuthorityPolicy({
+  const matrix = hostCapabilityMatrix(hostSurface);
+  const evaluation = evaluateToolAuthorityPolicy({
     kind: "tool_authority_policy",
     version: "2026-06-21",
     mode: "design_gate",
     defaultDecision: "deny",
     cloudRequired: false,
-    summary: "Known host/plugin capability metadata is display evidence only. It cannot enable Send, apply, verification, or IDE actions without explicit user action, strict schema validation, trusted GUI/host request correlation, and host policy confirmation.",
+    summary: matrix.summary,
     capability: "read_only_context_navigation",
     source: {
       origin: "host",
@@ -213,6 +214,78 @@ export function evaluateHostCapabilityMetadata(hostSurface: ToolAuthorityPolicyH
     decision: "metadata_only",
     traceLabel: "Host capability metadata",
   } satisfies ToolAuthorityPolicyRecord);
+  return {
+    ...evaluation,
+    details: sanitizeDetails({
+      ...evaluation.details,
+      capabilityStatus: matrix.capabilityStatus,
+      controlledStart: matrix.controlledStart,
+      controlledRead: matrix.controlledRead,
+      controlledEdit: matrix.controlledEdit,
+      controlledVerification: matrix.controlledVerification,
+      oneStepLoop: matrix.oneStepLoop,
+      unsupportedReason: matrix.unsupportedReason,
+      displayOnly: true,
+    }),
+  };
+}
+
+function hostCapabilityMatrix(hostSurface: ToolAuthorityPolicyHostSurface): {
+  summary: string;
+  capabilityStatus: string;
+  controlledStart: string;
+  controlledRead: string;
+  controlledEdit: string;
+  controlledVerification: string;
+  oneStepLoop: string;
+  unsupportedReason: string;
+} {
+  if (hostSurface === "vscode") {
+    return {
+      summary: "VS Code host capability metadata is display evidence only. Supported labels describe the bounded dev-preview path, but they cannot enable Send, apply, verification, or IDE actions without explicit user action, strict schema validation, trusted GUI/host request correlation, and host policy confirmation.",
+      capabilityStatus: "supported_metadata_only",
+      controlledStart: "supported_after_explicit_user_start",
+      controlledRead: "supported_bounded_single_file",
+      controlledEdit: "supported_bounded_replacement_edit",
+      controlledVerification: "supported_allowlisted_command_id",
+      oneStepLoop: "supported_bounded_dev_preview",
+      unsupportedReason: "none",
+    };
+  }
+  if (hostSurface === "jetbrains") {
+    return {
+      summary: "JetBrains host capability metadata is display evidence only. JetBrains controlled execution remains partial and fail-closed for controlled read, edit, verification, and one-step Start until a future verified parity card adds support.",
+      capabilityStatus: "partial_fail_closed_metadata_only",
+      controlledStart: "unsupported_fail_closed",
+      controlledRead: "unsupported_fail_closed",
+      controlledEdit: "unsupported_fail_closed",
+      controlledVerification: "unsupported_fail_closed",
+      oneStepLoop: "unsupported_fail_closed",
+      unsupportedReason: "jetbrains_parity_not_verified",
+    };
+  }
+  if (hostSurface === "browser") {
+    return {
+      summary: "Browser host capability metadata is preview-only display evidence. Browser standalone mode can chat through a configured loopback runtime, but trusted workspace read, edit, verification, and controlled Start require an IDE host.",
+      capabilityStatus: "preview_only_metadata_only",
+      controlledStart: "preview_only_unsupported",
+      controlledRead: "unsupported_no_trusted_workspace_host",
+      controlledEdit: "unsupported_no_trusted_workspace_host",
+      controlledVerification: "unsupported_no_trusted_workspace_host",
+      oneStepLoop: "preview_only_unsupported",
+      unsupportedReason: "browser_no_trusted_workspace_host",
+    };
+  }
+  return {
+    summary: "Host capability metadata is display evidence only. Unknown or runtime-only surfaces do not grant GUI authority for controlled workspace execution.",
+    capabilityStatus: "unknown_fail_closed_metadata_only",
+    controlledStart: "unsupported_fail_closed",
+    controlledRead: "unsupported_fail_closed",
+    controlledEdit: "unsupported_fail_closed",
+    controlledVerification: "unsupported_fail_closed",
+    oneStepLoop: "unsupported_fail_closed",
+    unsupportedReason: "unknown_host_surface",
+  };
 }
 
 function parseToolAuthorityPolicy(input: unknown, diagnostics: ToolAuthorityPolicyDiagnostic[]): ToolAuthorityPolicyRecord | undefined {
