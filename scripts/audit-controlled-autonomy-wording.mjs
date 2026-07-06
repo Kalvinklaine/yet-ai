@@ -10,6 +10,7 @@ const docsAllowlist = [
   "docs/architecture/011-sandbox-agent-prerequisites.md",
   "docs/architecture/012-coding-session-trace.md",
   "docs/architecture/013-agent-readiness-milestone.md",
+  "docs/architecture/014-controlled-run-history.md",
   "docs/dogfood/agent-run-one-step.md",
   "docs/dogfood/manual-agent-run-rc.md",
   "docs/dogfood/one-step-agent-run.md",
