@@ -47,6 +47,7 @@ Additional local evidence templates live under `docs/dogfood/`, including the re
   The S49-C5 final product safety audit closes the S45-S49 trail with no blocking findings: App, AgentRunPanel, bridge guards, Agent Run services, bounded patch/evaluation, edit proposals, smokes, and docs preserve manual Send/Apply/Verify, GUI-owned or host-owned correlation, command-id-only verification, sanitized in-memory trace/report output, and local-first BYOK boundaries.
 - `architecture/013-agent-readiness-milestone.md` — S64 conservative Agent Run readiness taxonomy, current browser/VS Code/JetBrains/manual-flow status matrix, blocked/deferred capabilities, and future controlled-autonomy eligibility gates.
   It also records S71 multi-step task timeline status as read-only sanitized metadata UX only, with no execution engine, autonomy, raw-data persistence, or browser-storage persistence.
+- `architecture/016-controlled-host-capabilities.md` — S103 controlled host capability negotiation v2 design for Browser, VS Code, and JetBrains. It defines sanitized non-authority capability metadata, fail-closed defaults, correlation requirements, unsupported-state copy, and host-owned authority boundaries for the VS Code-first controlled dev-preview path while keeping Browser preview-only, JetBrains honest/fail-closed, and production autonomy unclaimed.
 
 ## Current login-first milestone status
 
