@@ -38,6 +38,7 @@
     "smoke:controlled-autonomy-readiness": "node scripts/smoke-controlled-autonomy-readiness.mjs",
     "smoke:controlled-agent-dev-preview": "node scripts/smoke-controlled-agent-dev-preview.mjs",
     "smoke:controlled-agent-s96-useful-run": "node scripts/smoke-controlled-agent-s96-useful-run.mjs",
+    "smoke:controlled-run-explicit-context": "node scripts/smoke-controlled-run-explicit-context.mjs",
     "smoke:controlled-agent-dev-preview-fixtures": "node scripts/smoke-controlled-agent-dev-preview-fixtures.mjs",
     "smoke:controlled-agent-dev-preview-report": "node scripts/smoke-controlled-agent-dev-preview-report.mjs",
     "smoke:controlled-agent-runtime-session": "node scripts/smoke-controlled-agent-runtime-session.mjs",
