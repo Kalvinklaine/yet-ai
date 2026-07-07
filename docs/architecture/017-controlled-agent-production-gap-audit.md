@@ -39,6 +39,96 @@ Minimum entry shape for future evidence:
 | Real-provider dogfood | Manual local BYOK dogfood may exist, but it is not automated real-provider CI and must not expose credentials or raw provider responses. | Sanitized manual dogfood reports across provider families and local runtimes; provider error/fallback matrix; cost and rate-limit guidance; no hosted Yet AI backend/account/gateway requirement; no secrets or raw prompts/responses in tracked evidence; explicit statement that manual BYOK evidence complements but does not replace deterministic tests. |
 | Observability | Existing trace/report work is sanitized metadata only. Production-like operations need enough diagnostics for support without raw leakage. | Event taxonomy for run lifecycle, authority decisions, host capability decisions, provider interactions, failures, recovery, exports, and package/runtime diagnostics; bounded metrics; redaction tests; correlation-id policy; local log retention controls; sanitized export validator; support triage checklist. |
 
+## Security and authority production gaps
+
+This section records the Sprint 107 security/authority audit detail. It is not an approval gate. Each item below is a gap statement plus the evidence that must exist before any later production-like decision can be considered.
+
+### Threat model gaps
+
+The current threat model is incomplete for the controlled-agent path. A future review must cover at least these abuse cases:
+
+- Malicious or confused model output attempts to mint capability metadata, request ids, file paths, command ids, provider calls, tool calls, memory writes, exports, or host actions.
+- A compromised or stale GUI frame replays old run ids, readiness ids, host-ready generations, bridge payloads, or terminal results.
+- A provider response includes prompt injection that asks for hidden reads, broad edits, free-form shell use, raw secret disclosure, raw file body persistence, or unbounded retry behavior.
+- Local runtime endpoints, packaged wrapper ports, plugin webviews, and report/export surfaces receive malformed or cross-origin messages.
+- Dependency, package, update, or artifact tampering changes bridge schemas, safe labels, command ids, packaged runtime bits, or generated GUI/plugin assets.
+- Support or diagnostic workflows accidentally capture private paths, raw prompts, file bodies, diffs, command material, provider payloads, tokens, cookies, or bridge payloads.
+
+Required evidence before a production-like decision: a reviewed threat model with owner, date, affected host/runtime/provider/storage surfaces, mitigations, residual risks, and tests or manual checks for every abuse case above.
+
+### Authority boundaries and registry gaps
+
+The implemented controlled slices remain deliberately narrow. Today, the trustworthy boundary is explicit user action plus host-owned validation; capability metadata is display and prerequisite data only. It never grants read, edit, verification, provider, tool, memory, export, shell, git, package, network, or release authority. Browser remains preview-only for trusted workspace execution, VS Code is the first dev-preview host for implemented bounded paths, and JetBrains must remain fail-closed until a future verified parity card changes the boundary.
+
+A future authority registry must enumerate:
+
+- Allowed read authority: exact host surface, one selected safe workspace-relative text target, size/line limits, path validation, correlation fields, sanitized result shape, and unsupported cases.
+- Allowed edit authority: existing-file replacement only, safe workspace-relative target, pre-edit hash requirement, bounded replacement limits, user-visible review, result correlation, and unsupported mutation types.
+- Allowed verification authority: fixed command-id list, explicit user click, timeout/output-tail bounds, no command strings, no cwd/env/args authority, no shell expansion, and no model-selected command path.
+- Provider authority: which code owns provider selection and credentials, what proposal material may be sent, how BYOK remains local-first, and which provider/tool calls remain unsupported.
+- Memory, run history, report, export, and observability authority: what sanitized fields may be written, retained, deleted, or exported, and which raw fields are forbidden.
+- Host actions and unsupported operations: open/reveal/context preview actions, start/stop boundaries, repair eligibility, rollback review, package/update operations, and every unsupported privileged action.
+
+Required evidence before a production-like decision: a single source-of-truth authority registry linked from this audit, contract fixtures for safe and unsafe messages, host fail-closed tests for Browser and JetBrains, VS Code execution-path tests for each allowed slice, and proof that unsupported hosts cannot produce privileged bridge requests.
+
+### Secrets, provider data, and credential handling gaps
+
+The local-first BYOK contract requires provider settings and credentials to remain local-only. GUI-facing save flows must not persist or echo raw provider secrets after save, and tracked evidence must not include secrets or raw provider payloads. The production gap is that the current audit does not yet link a complete credential-flow proof across GUI, engine, plugin, local runtime, logs, crash reports, exports, and packaged wrappers.
+
+Required evidence before a production-like decision:
+
+- Secret inventory for provider keys, session tokens, cookies, local runtime tokens, plugin settings, environment variables, OS keychain entries, logs, reports, and exports.
+- Tests or manual review proving raw secrets are redacted from GUI responses, bridge messages, local storage, run history, traces, reports, exports, CI logs, package manifests, and support bundles.
+- Credential lifecycle policy for creation, storage, rotation, deletion, migration, and failure recovery.
+- Manual BYOK dogfood template that records provider family, local runtime family, errors, cost/rate-limit notes, and redaction status without raw prompts, responses, credentials, or private paths.
+
+### Persistence, privacy, and export gaps
+
+Sanitized metadata is the intended persistence boundary, but future run history, memory integration, task queues, trace export, support bundles, and packaged diagnostics increase privacy scope. The current evidence is not enough to prove raw-data exclusion or deletion behavior across browser storage, GUI state, engine storage, plugin settings, runtime logs, memory files, package artifacts, and exported reports.
+
+Required evidence before a production-like decision:
+
+- Storage inventory by component, field name, retention duration, deletion control, migration path, and whether the field is sanitized metadata or forbidden raw data.
+- Tests for raw prompt, raw response, file body, diff, replacement text, command material, output dump, bridge payload, private path, token, cookie, and secret exclusion.
+- Export validator for trace/report/support bundles with fixed redaction rules and failing fixtures for unsafe payloads.
+- User controls for clearing local history, reports, exports, and memory surfaces, with documented limits for files managed outside Yet AI.
+
+### Host capability and CI evidence gaps
+
+Host capability negotiation v2 is a design record and safe-label contract, not executable authority. Production-like confidence requires evidence that GUI labels, bridge contracts, plugin hosts, local runtime readiness, and CI gates agree on the same fail-closed behavior.
+
+Required evidence before a production-like decision:
+
+- Capability snapshot contract tests for supported, preview-only, unsupported, disabled, degraded, unknown, stale, malformed, and mismatched states.
+- Cross-host smoke or contract evidence that Browser cannot start trusted workspace execution, VS Code only enables implemented bounded dev-preview paths after all correlation and readiness checks, and JetBrains remains visibly fail-closed where parity is absent.
+- CI matrix covering wording audit, docs index, contracts, GUI, engine, VS Code plugin, JetBrains plugin, packaging artifacts, generated assets, dependency scanning, and artifact provenance.
+- A quarantine policy for flaky browser/plugin smokes and a rule that manual real-provider BYOK reports complement deterministic checks but do not replace them.
+- Sanitized CI log retention and evidence links that contain no credentials, raw prompts, file bodies, diffs, command material, provider payloads, private paths, or bridge dumps.
+
+### Unsafe operations that remain blocked
+
+The following operations remain blockers unless a later architecture decision, implementation card, and evidence package explicitly narrows and verifies them:
+
+- Browser trusted workspace read, edit, verification, or controlled run start.
+- JetBrains controlled execution parity for read, edit, verification, repair eligibility, or one-step loop.
+- Workspace search, indexing, background context gathering, broad multi-file read, generated/dependency/binary/symlink traversal, or hidden file discovery.
+- File create, delete, rename, move, chmod, patch-format mutation, broad directory mutation, or mutation outside a safe workspace-relative existing text file.
+- Free-form command text, arbitrary command execution, args/cwd/env selection, shell/git/package/network execution, model-selected command ids, provider-tool calls, or local-tool calls.
+- Unbounded retry, repeated repair attempts, unattended rollback, silent checkpoint restore, task-board mutation, release publication, update publication, signing, notarization, marketplace publication, or support escalation without a documented human-owned process.
+- Persistence or export of raw prompts, provider responses, file bodies, diffs, replacements, command material, output dumps, private paths, tokens, cookies, secrets, stack traces, bridge payloads, or provider payloads.
+
+### Remaining production blockers
+
+Security and authority cannot pass a production-like gate until the following blockers are closed or explicitly accepted by dated risk decision:
+
+- Threat model and authority registry are incomplete.
+- Host capability v2 remains a design record without full schema, fixture, and cross-host evidence.
+- Secret-handling, storage inventory, redaction tests, retention/deletion policy, and export validation are incomplete.
+- CI does not yet provide packaged, cross-host, cross-platform, dependency, provenance, long-run, and recovery evidence.
+- Manual real-provider BYOK dogfood is not structured enough to prove provider-family behavior, and it must not become CI approval.
+- Packaging, update, rollback, signing/notarization, marketplace, support, and incident-response gates are incomplete.
+- Observability and support diagnostics are not yet proven useful without raw data leakage.
+
 ## Future evidence checklist
 
 Before any production-like agent decision, create or link evidence for every item below:
