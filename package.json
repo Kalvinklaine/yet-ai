@@ -89,6 +89,7 @@
     "smoke:ide-release-candidate": "node scripts/smoke-ide-release-candidate.mjs",
     "dogfood:ide-report": "node scripts/ide-dogfood-report.mjs",
     "dogfood:real-provider-report": "node scripts/dogfood-real-provider-report.mjs",
+    "dogfood:controlled-beta-report": "node scripts/dogfood-controlled-beta-report.mjs",
     "report:agent-run-rc": "node scripts/dogfood-agent-run-rc-report.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:vscode-wrapper-browser": "node scripts/smoke-vscode-wrapper-browser.mjs",

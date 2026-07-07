@@ -178,6 +178,19 @@ The S96 documentation and smoke gate is:
 npm run smoke:controlled-agent-s96-useful-run && npm run audit:controlled-autonomy-wording && npm run check && git diff --check && git status --short
 ```
 
+## S106 packaged beta dogfood report validator
+
+S106 adds a minimal local validator for sanitized controlled dev-preview beta dogfood notes:
+
+```sh
+npm run dogfood:controlled-beta-report
+```
+
+The helper prints a safe-share template with `--template`, checks a local completed report with `--check path/to/local-report.md`, validates the built-in template with `--check-template`, and runs rejection self-tests with `--self-test`. It is deterministic and local-only. It does not call providers, launch runtimes, run IDEs, publish artifacts, sign packages, upload marketplace entries, require a hosted Yet AI backend, require a Yet AI account, require a managed gateway, require product credits, or prove production autonomy.
+
+The report shape is intentionally narrow: explicit Start/Stop labels, one bounded read label, one bounded replacement metadata label, one allowlisted command-id label, one repair-attempt state, sanitized result status, and safe follow-up summaries. Completed reports must not include secrets, raw prompts, raw file bodies, raw diffs, replacement text, raw commands, stdout/stderr dumps, cwd/env values, private paths, provider payloads, bridge payload dumps, browser-storage dumps, hidden authority claims, hosted backend/account/credit requirements, or production, release, or marketplace claims.
+
+
 ## Verification
 
 The final S91 gate was:
