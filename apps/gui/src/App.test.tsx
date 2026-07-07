@@ -852,6 +852,7 @@ describe("runtime refresh feedback", () => {
   });
 
   it("renders controlled run skeleton and stops with GUI-local state only", async () => {
+    const historySecret = "sk-" + "h".repeat(40);
     const postMessage = vi.fn();
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -874,6 +875,13 @@ describe("runtime refresh feedback", () => {
     expect(panel?.textContent).toContain("Limit maxSteps: 6");
     expect(panel?.textContent).toContain("Counter fileReadsUsed: 1");
     expect(panel?.textContent).toContain("Counter verificationRuns: 1");
+    expect(container?.textContent).toContain("Controlled run history");
+    expect(container?.textContent).toContain("local metadata");
+    expect(container?.textContent).toContain("sanitized labels only");
+    expect(container?.textContent).toContain("controlled-run-planning");
+    expect(container?.textContent).toContain("Summary labels: Allowlisted preset completed successfully");
+    expect(container?.textContent).toContain("Counters: read count 1 · edit count 0 · verification count 1");
+    expect(container?.textContent).toContain("Artifact labels: bounded read metadata · bounded · gui_memory_only");
     expect(panel?.textContent).toContain("Execution allowed: false");
     expect(panel?.textContent).toContain("Agent start allowed: false");
     expect(buttonsNamed("Start Agent")).toHaveLength(0);
@@ -891,6 +899,9 @@ describe("runtime refresh feedback", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledRunRequest" || message.type === "gui.controlledRunStopRequest")).toHaveLength(0);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("controlled_agent_run");
+    expect(container?.textContent).not.toContain(historySecret);
+    expect(container?.textContent).not.toContain("raw prompt");
+    expect(container?.textContent).not.toContain("raw diff");
     expect(browserStorageDump()).not.toContain("Repository validation completed with sanitized metadata");
   });
 

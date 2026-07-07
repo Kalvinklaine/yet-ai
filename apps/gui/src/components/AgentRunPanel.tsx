@@ -9,6 +9,7 @@ import type { ControlledAgentEditRequestResult } from "../services/controlledAge
 import type { ControlledAgentFileReadRequestResult } from "../services/controlledAgentFileReadRequest";
 import type { ControlledOneStepAgentLoopState } from "../services/controlledOneStepAgentLoop";
 import type { ControlledAgentRepairLoopEvaluation } from "../services/controlledAgentRepairLoop";
+import type { ControlledRunHistoryItem } from "../services/controlledRunHistory";
 import type { ControlledRunContextBundle, ControlledRunContextReport } from "../services/controlledRunContext";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
@@ -43,9 +44,10 @@ export type AgentRunPanelProps = {
   controlledRunContextReport?: ControlledRunContextReport;
   includeControlledRunContext?: boolean;
   onIncludeControlledRunContextChange?: (include: boolean) => void;
+  controlledRunHistory?: ControlledRunHistoryItem[];
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [] }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -234,6 +236,33 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span>Limitations: {devPreviewReport.limitationLabels.join(" · ")}</span>
           {devPreviewReport.evidence.length > 0 && <span>Evidence: {devPreviewReport.evidence.map((item) => `${sanitizeDisplayText(item.label)} — ${sanitizeDisplayText(item.summary)}`).join(" · ")}</span>}
           <span className="subtle">Safety boundaries: {devPreviewReport.safetyBoundaryLabels.join(" · ")}</span>
+        </div>
+      )}
+      {controlledRunHistory.length > 0 && (
+        <div className="readiness-card stack" role="status" aria-label="Controlled run local history" data-testid="controlled-run-history-panel">
+          <div className="row">
+            <strong>Controlled run history</strong>
+            <span className="badge">local metadata</span>
+            <span className="badge">sanitized labels only</span>
+            <span className="badge">no persistence</span>
+          </div>
+          <span className="subtle">Read-only GUI history of recent controlled-run metadata. Raw prompts, file bodies, diffs, command strings/output, provider payloads, private paths, and secrets are omitted.</span>
+          {controlledRunHistory.map((item) => (
+            <div className="provider-item stack" key={item.runId}>
+              <div className="row">
+                <strong>{sanitizeDisplayText(item.runId)}</strong>
+                <span className="badge">{sanitizeDisplayText(item.phaseLabel.replace(/_/g, " "))}</span>
+                <span className={item.resultLabel === "succeeded" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(item.resultLabel.replace(/_/g, " "))}</span>
+              </div>
+              <span>Host: {sanitizeDisplayText(item.hostLabel.replace(/_/g, " "))} · Readiness: {item.readinessLabels.map((label) => sanitizeDisplayText(label.replace(/_/g, " "))).join(" · ")}</span>
+              <span>Updated: {sanitizeDisplayText(item.updatedAtLabel)}</span>
+              {item.summaryLabels.length > 0 && <span>Summary labels: {item.summaryLabels.map((label) => sanitizeDisplayText(label)).join(" · ")}</span>}
+              {item.counters.length > 0 && <span>Counters: {item.counters.map((counter) => `${sanitizeDisplayText(counter.name.replace(/_/g, " "))} ${counter.value}`).join(" · ")}</span>}
+              {item.artifactLabels.length > 0 && <span>Artifact labels: {item.artifactLabels.map((artifact) => [sanitizeDisplayText(artifact.label), artifact.checksumLabel ? sanitizeDisplayText(artifact.checksumLabel) : "", artifact.sizeBucketLabel ? sanitizeDisplayText(artifact.sizeBucketLabel) : "", artifact.retentionLabel ? sanitizeDisplayText(artifact.retentionLabel) : ""].filter(Boolean).join(" · ")).join(" | ")}</span>}
+              {item.checksumLabels.length > 0 && <span>Checksum labels: {item.checksumLabels.map((label) => sanitizeDisplayText(label)).join(" · ")}</span>}
+              <span className="subtle">Safety labels: {item.safetyLabels.map((label) => sanitizeDisplayText(label.replace(/_/g, " "))).join(" · ")}</span>
+            </div>
+          ))}
         </div>
       )}
       <div className={`readiness-card ${view.nextUserAction === "confirm_apply" || view.nextUserAction === "confirm_verification" || view.state === "verified" ? "ready" : "warn"}`} role="status" aria-label="Agent Run next manual step">

@@ -6,6 +6,7 @@ import type { AgentRunInput } from "../services/agentRunState";
 import type { VerificationCommandId } from "../bridge/bridgeAdapter";
 import { createProposalHistory, type ProposalHistory } from "../services/proposalHistory";
 import { evaluateControlledAgentRepairLoop } from "../services/controlledAgentRepairLoop";
+import { createControlledRunHistoryItem } from "../services/controlledRunHistory";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -1079,6 +1080,46 @@ describe("AgentRunPanel", () => {
     expect(browserStorageDump()).not.toContain("export const selected");
   });
 
+  it("renders controlled run history from sanitized metadata only", () => {
+    const secret = "sk-" + "h".repeat(40);
+    const historyItem = createControlledRunHistoryItem({
+      runId: "history-run-1",
+      hostLabel: "vscode",
+      readinessLabels: ["opt_in_ready", "workspace_ready", "checkpoint_ready"],
+      phaseLabel: "completed",
+      resultLabel: "succeeded",
+      counters: [
+        { name: "read_count", value: 1 },
+        { name: "edit_count", value: 1 },
+        { name: "verification_count", value: 1 },
+      ],
+      summaryLabels: ["safe completion label", `raw prompt ${secret} /Users/alice/private.ts`],
+      artifactLabels: [{ label: "allowlisted verification metadata", sizeBucketLabel: "bounded_tail", retentionLabel: "gui_memory_only" }],
+      checksumLabels: [`sha256:${"b".repeat(64)}`],
+      rawDiff: `raw diff ${secret} /Users/alice/private.ts`,
+    } as any, () => new Date("2026-07-07T10:00:00.000Z"));
+
+    renderPanel(undefined, { controlledRunHistory: [historyItem] });
+
+    const text = panelText();
+    expect(text).toContain("Controlled run history");
+    expect(text).toContain("local metadata");
+    expect(text).toContain("sanitized labels only");
+    expect(text).toContain("no persistence");
+    expect(text).toContain("history-run-1");
+    expect(text).toContain("completed");
+    expect(text).toContain("unsafe metadata blocked");
+    expect(text).toContain("Summary labels: safe completion label");
+    expect(text).toContain("Counters: read count 1 · edit count 1 · verification count 1");
+    expect(text).toContain("Artifact labels: allowlisted verification metadata · bounded_tail · gui_memory_only");
+    expect(text).toContain("Checksum labels: sha256:[redacted]");
+    expect(text).toContain("unsafe metadata omitted");
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain("/Users/alice");
+    expect(text).not.toContain("raw diff");
+    expect(browserStorageDump()).not.toContain("history-run-1");
+  });
+
   it("does not persist run internals or expose raw unsafe data", () => {
     const secret = "sk-" + "x".repeat(40);
     renderPanel({
@@ -1141,6 +1182,7 @@ type PanelTestProps = {
   controlledRunContextReport?: any;
   includeControlledRunContext?: boolean;
   onIncludeControlledRunContextChange?: (include: boolean) => void;
+  controlledRunHistory?: any;
 };
 
 function renderPanel(input: unknown, props: PanelTestProps = {}) {
@@ -1181,6 +1223,7 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         controlledRunContextReport={props.controlledRunContextReport}
         includeControlledRunContext={props.includeControlledRunContext}
         onIncludeControlledRunContextChange={props.onIncludeControlledRunContextChange}
+        controlledRunHistory={props.controlledRunHistory}
       />,
     );
   });

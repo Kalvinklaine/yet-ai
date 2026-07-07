@@ -54,6 +54,7 @@ import { evaluateControlledAgentRuntimeSession } from "./services/controlledAgen
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./services/controlledAgentRunState";
 import { createControlledOneStepAgentLoopState, reduceControlledOneStepAgentLoopState, type ControlledOneStepAgentLoopState } from "./services/controlledOneStepAgentLoop";
 import { addControlledRunContextItem, buildControlledRunContextReport, createControlledRunContextBundle, validateControlledRunContextItem, type ControlledRunContextBlockedReason, type ControlledRunContextInput } from "./services/controlledRunContext";
+import { appendControlledRunHistoryItem, createControlledRunHistoryItem, type ControlledRunHistoryHostLabel, type ControlledRunHistoryItem, type ControlledRunHistoryPhaseLabel, type ControlledRunHistoryResultLabel } from "./services/controlledRunHistory";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
 
@@ -483,6 +484,7 @@ export function App() {
   const [pendingControlledCommandRunRequestId, setPendingControlledCommandRunRequestId] = useState<string | null>(null);
   const [controlledCommandRunNote, setControlledCommandRunNote] = useState<string | null>(null);
   const [oneStepLoopState, setOneStepLoopState] = useState<ControlledOneStepAgentLoopState>(() => createControlledOneStepAgentLoopState());
+  const [controlledRunHistory, setControlledRunHistory] = useState<ControlledRunHistoryItem[]>([]);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
   settingsRef.current = settings;
@@ -826,6 +828,27 @@ export function App() {
     runtimeSession: controlledAgentRuntimeSessionMetadata,
     progress: controlledAgentProgressReport,
   }), [effectiveControlledAgentCommandRunnerMetadata, controlledAgentEditExecutorMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentProgressReport, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+
+  useEffect(() => {
+    if (controlledAgentRunState.phase === "idle" && oneStepLoopState.phase === "idle") {
+      return;
+    }
+    if (!showControlledAgentRunPanel && !showOneStepAgentRunPanel) {
+      return;
+    }
+    const item = createControlledRunHistoryItem({
+      runId: oneStepLoopState.correlation.runId ?? `controlled-run-${controlledAgentRunState.phase}`,
+      hostLabel: controlledRunHistoryHostLabel(bridgeHost),
+      readinessLabels: controlledRunHistoryReadinessLabels(controlledAgentRunState, oneStepLoopState),
+      phaseLabel: controlledRunHistoryPhaseLabel(controlledAgentRunState, oneStepLoopState),
+      resultLabel: controlledRunHistoryResultLabel(controlledAgentRunState, oneStepLoopState),
+      counters: controlledRunHistoryCounters(controlledAgentRunState, oneStepLoopState),
+      summaryLabels: [controlledAgentRunState.summary, oneStepLoopState.summary],
+      artifactLabels: controlledRunHistoryArtifactLabels(controlledAgentRunState, oneStepLoopState),
+      checksumLabels: controlledRunHistoryChecksumLabels(controlledAgentRunState, oneStepLoopState),
+    });
+    setControlledRunHistory((current) => appendControlledRunHistoryItem(current.filter((existing) => existing.runId !== item.runId), item, 8));
+  }, [bridgeHost, controlledAgentRunState, oneStepLoopState, showControlledAgentRunPanel, showOneStepAgentRunPanel]);
 
   useEffect(() => {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
@@ -3268,7 +3291,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} />
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} capabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
@@ -3527,6 +3550,119 @@ export function App() {
 
 function controlledHostCapabilityDisplayHost(payload: HostReadyPayload["controlledCapabilities"] | undefined, fallback: BridgeHost): BridgeHost {
   return payload?.hostSurface === "vscode" || payload?.hostSurface === "jetbrains" || payload?.hostSurface === "browser" ? payload.hostSurface : fallback;
+}
+
+function controlledRunHistoryHostLabel(host: BridgeHost): ControlledRunHistoryHostLabel {
+  if (host === "vscode") {
+    return "vscode";
+  }
+  if (host === "jetbrains") {
+    return "jetbrains_unsupported";
+  }
+  if (host === "browser") {
+    return "browser_preview_only";
+  }
+  return "unknown_host";
+}
+
+function controlledRunHistoryReadinessLabels(runState: ControlledAgentRunState, oneStepState: ControlledOneStepAgentLoopState) {
+  const labels = [];
+  if (runState.enabled || oneStepState.enabled || oneStepState.phase !== "idle") {
+    labels.push("opt_in_ready", "workspace_ready");
+  }
+  if (runState.phase === "planning" || runState.phase === "waiting_for_user" || runState.phase === "running_verification" || runState.phase === "completed" || oneStepState.phase !== "idle") {
+    labels.push("checkpoint_ready");
+  }
+  if (runState.stop?.recoverable || oneStepState.stop?.recoverable) {
+    labels.push("rollback_plan_ready");
+  }
+  return labels.length > 0 ? labels : ["not_ready"];
+}
+
+function controlledRunHistoryPhaseLabel(runState: ControlledAgentRunState, oneStepState: ControlledOneStepAgentLoopState): ControlledRunHistoryPhaseLabel {
+  if (oneStepState.phase === "completed" || runState.phase === "completed") {
+    return "completed";
+  }
+  if (oneStepState.phase === "failed" || runState.phase === "failed") {
+    return "failed";
+  }
+  if (oneStepState.phase === "stopped" || runState.phase === "stopped") {
+    return "stopped";
+  }
+  if (runState.phase === "blocked") {
+    return "blocked";
+  }
+  if (oneStepState.phase === "verification_requested" || runState.phase === "running_verification") {
+    return "verifying";
+  }
+  if (oneStepState.phase === "edit_ready" || oneStepState.phase === "edit_applied" || runState.phase === "waiting_for_user") {
+    return "editing";
+  }
+  if (oneStepState.phase === "read_context" || runState.phase === "reading_context") {
+    return "reading";
+  }
+  if (oneStepState.phase === "start_requested" || oneStepState.phase === "model_step_pending" || runState.phase === "planning") {
+    return "running";
+  }
+  if (runState.phase === "workspace_ready") {
+    return "ready";
+  }
+  return "queued";
+}
+
+function controlledRunHistoryResultLabel(runState: ControlledAgentRunState, oneStepState: ControlledOneStepAgentLoopState): ControlledRunHistoryResultLabel {
+  const stopReason = oneStepState.stop?.reason ?? runState.stop?.reason;
+  if (stopReason === "user_stop") {
+    return "user_stopped";
+  }
+  if (oneStepState.phase === "completed" || runState.phase === "completed") {
+    return "succeeded";
+  }
+  if (oneStepState.phase === "failed" || runState.phase === "failed" || runState.phase === "blocked") {
+    return "failed";
+  }
+  if (oneStepState.phase === "stopped" || runState.phase === "stopped") {
+    return "user_stopped";
+  }
+  return "pending";
+}
+
+function controlledRunHistoryCounters(runState: ControlledAgentRunState, oneStepState: ControlledOneStepAgentLoopState) {
+  return [
+    { name: "read_count", value: Math.max(runState.counters.fileReadsUsed, oneStepState.counters.fileReads) },
+    { name: "edit_count", value: Math.max(runState.counters.filesTouched, oneStepState.counters.filesTouched) },
+    { name: "verification_count", value: Math.max(runState.counters.verificationRuns, oneStepState.counters.verificationRuns) },
+    { name: "repair_attempt_count", value: Math.max(runState.counters.repairAttempts, oneStepState.counters.repairAttempts) },
+    { name: "duration_bucket", value: Math.max(runState.counters.runtimeSeconds, oneStepState.counters.runtimeSeconds) },
+    { name: "byte_bucket", value: Math.max(runState.counters.readBytesUsed + runState.counters.patchBytesUsed, oneStepState.counters.readBytes + oneStepState.counters.editBytes) },
+  ];
+}
+
+function controlledRunHistoryArtifactLabels(runState: ControlledAgentRunState, oneStepState: ControlledOneStepAgentLoopState) {
+  const labels = [];
+  if (runState.counters.fileReadsUsed > 0 || oneStepState.counters.fileReads > 0) {
+    labels.push({ label: "bounded read metadata", sizeBucketLabel: "bounded", retentionLabel: "gui_memory_only" });
+  }
+  if (runState.counters.filesTouched > 0 || oneStepState.counters.filesTouched > 0) {
+    labels.push({ label: "bounded edit metadata", sizeBucketLabel: "bounded", retentionLabel: "gui_memory_only" });
+  }
+  if (runState.counters.verificationRuns > 0 || oneStepState.counters.verificationRuns > 0) {
+    labels.push({ label: "allowlisted verification metadata", sizeBucketLabel: "bounded_tail", retentionLabel: "gui_memory_only" });
+  }
+  return labels;
+}
+
+function controlledRunHistoryChecksumLabels(runState: ControlledAgentRunState, oneStepState: ControlledOneStepAgentLoopState): string[] {
+  const labels = [];
+  const checkpointHash = typeof runState.details.checkpointHash === "string" ? runState.details.checkpointHash : undefined;
+  const contentHash = typeof oneStepState.details.resultHash === "string" ? oneStepState.details.resultHash : undefined;
+  if (checkpointHash) {
+    labels.push(checkpointHash);
+  }
+  if (contentHash) {
+    labels.push(contentHash);
+  }
+  return labels;
 }
 
 type ControlledRunContextSelection = {
