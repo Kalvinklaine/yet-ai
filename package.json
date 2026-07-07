@@ -41,6 +41,7 @@
     "smoke:controlled-run-explicit-context": "node scripts/smoke-controlled-run-explicit-context.mjs",
     "smoke:controlled-agent-dev-preview-fixtures": "node scripts/smoke-controlled-agent-dev-preview-fixtures.mjs",
     "smoke:controlled-agent-dev-preview-report": "node scripts/smoke-controlled-agent-dev-preview-report.mjs",
+    "smoke:controlled-agent-dev-preview-recovery": "node scripts/smoke-controlled-agent-dev-preview-recovery.mjs",
     "smoke:controlled-agent-runtime-session": "node scripts/smoke-controlled-agent-runtime-session.mjs",
     "smoke:controlled-agent-run-state": "node scripts/smoke-controlled-agent-run-state.mjs",
     "smoke:controlled-agent-progress-report": "node scripts/smoke-controlled-agent-progress-report.mjs",
