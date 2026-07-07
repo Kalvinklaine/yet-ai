@@ -8,6 +8,8 @@ A controlled agent may prepare a review-only plan for a small multi-file change 
 
 The schema is `packages/contracts/schemas/engine/controlled-agent-multifile-patch-plan.schema.json`.
 
+The S116 bridge contract for a future explicit apply path extends `packages/contracts/schemas/bridge/gui-message.schema.json` with `gui.controlledAgentMultifileApplyRequest` and `packages/contracts/schemas/bridge/host-message.schema.json` with `host.controlledAgentMultifileApplyResult`. This is still contract, documentation, and fixture work only: it does not add a VS Code executor, GUI apply button, Browser execution, JetBrains execution, runtime mutation, provider call, command execution, or storage of raw replacements/diffs/file bodies.
+
 Valid examples live under `packages/contracts/examples/engine/controlled-agent-multifile-patch-plan-*.json`.
 
 Invalid examples live under `packages/contracts/examples-invalid/engine/controlled-agent-multifile-patch-plan-*.json`.
@@ -59,8 +61,16 @@ This contract does not grant apply authority. In particular, it forbids:
 
 S115 review UI should treat this as display-only review metadata. S116 VS Code explicit apply must require a separate user gesture and host-owned validation of current hashes/ranges before any replacement happens.
 
+## S116 bridge apply boundary
+
+A future apply request must be GUI/user-minted, explicitly confirmed, and correlated to a reviewed multi-file patch plan id. The request may name only existing workspace-relative text files, expected pre-edit and range hashes, replacement content hashes, bounded line ranges, replacement byte counts, per-edit sanitized summaries, and max file/edit/byte budgets. It must not carry replacement text, raw diffs, file bodies, commands, provider fields, tool fields, create/delete/rename/move authority, dependency/generated/hidden/private paths, or assistant-minted apply ids.
+
+Initial execution is explicitly VS Code-only. Browser is unsupported and non-executing. JetBrains must fail closed unless a future parity card defines and verifies equivalent bounded execution. The S116 host result is sanitized per file with statuses, counts, hashes, and safe summaries only; it must not persist or return raw replacement text, raw diffs, or file bodies. This contract does not grant implementation authority yet.
+
 ## Fixture coverage
 
 Valid fixtures cover a two-file, two-edit review plan with expected hashes, bounded ranges, byte counts, summaries, risk labels, and all deny-by-default policy flags.
 
 Invalid fixtures reject broad mutation, raw replacement bodies, create/delete/rename operations, absolute/private paths, dependency paths, generated paths, assistant-minted apply, missing pre-edit hashes, over-budget file or replacement byte metadata, and command/provider/tool fields.
+
+S116 bridge fixtures add a valid GUI multi-file apply request and sanitized host result. Invalid bridge fixtures reject raw replacement bodies/diffs, create/delete/rename-shaped edits, private/absolute/traversal paths, dependency/generated/hidden files, missing hashes, over-budget values, assistant-minted ids, Browser and JetBrains execution overclaims, and command/provider/tool fields.

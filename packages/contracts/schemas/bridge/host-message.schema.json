@@ -26,6 +26,7 @@
         "host.runtimeStatus",
         "host.controlledAgentFileReadResult",
         "host.controlledAgentEditResult",
+        "host.controlledAgentMultifileApplyResult",
         "host.controlledAgentCommandRunResult",
         "host.controlledAgentLexicalSearchResult"
       ]
@@ -2645,6 +2646,134 @@
         }
       ]
     },
+    "controlledAgentMultifileApplyLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxFiles", "maxEdits", "maxReplacementBytesPerEdit", "maxTotalReplacementBytes"],
+      "properties": {
+        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 4 },
+        "maxEdits": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "maxReplacementBytesPerEdit": { "type": "integer", "minimum": 1, "maximum": 12000 },
+        "maxTotalReplacementBytes": { "type": "integer", "minimum": 1, "maximum": 48000 }
+      }
+    },
+    "controlledAgentMultifileApplyResultEdit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "editId", "operation", "workspaceRelativePath", "fileLabel", "status", "expectedPreEditHash",
+        "expectedRangeHash", "replacementContentHash", "actualPostEditHash", "startLine", "endLine",
+        "replacementByteCount", "sanitizedSummary"
+      ],
+      "properties": {
+        "editId": { "$ref": "#/$defs/safeId" },
+        "operation": { "type": "string", "const": "replace" },
+        "workspaceRelativePath": { "$ref": "#/$defs/controlledAgentEditPath" },
+        "fileLabel": { "$ref": "#/$defs/controlledAgentEditSafeLabel" },
+        "status": { "type": "string", "enum": ["applied", "blocked", "failed", "skipped"] },
+        "expectedPreEditHash": { "$ref": "#/$defs/safeHash" },
+        "expectedRangeHash": { "$ref": "#/$defs/safeHash" },
+        "replacementContentHash": { "$ref": "#/$defs/safeHash" },
+        "actualPostEditHash": { "$ref": "#/$defs/safeHash" },
+        "startLine": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "endLine": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "replacementByteCount": { "type": "integer", "minimum": 0, "maximum": 12000 },
+        "sanitizedSummary": { "$ref": "#/$defs/controlledAgentEditSafeSummary" },
+        "blockedReason": {
+          "type": "string",
+          "enum": ["apply_disabled", "policy_denied", "unsupported_host", "unsafe_path", "outside_workspace", "hidden_path", "dependency_path", "generated_path", "unsupported_operation", "missing_expected_hash", "hash_mismatch", "unconfirmed_request", "assistant_minted", "budget_exceeded", "line_range_invalid"]
+        }
+      },
+      "allOf": [
+        { "properties": { "endLine": { "type": "integer", "minimum": { "$data": "1/startLine" } } } }
+      ]
+    },
+    "controlledAgentMultifileApplyPolicyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "vscodeExecutionOnly", "browserSupported", "jetbrainsSupported", "existingTextFilesOnly",
+        "boundedReplacementOnly", "rawReplacementIncluded", "rawDiffIncluded", "fileBodyIncluded",
+        "createAllowed", "deleteAllowed", "renameAllowed", "moveAllowed", "dependencyEditAllowed",
+        "generatedEditAllowed", "hiddenPathAllowed", "commandAllowed", "providerAllowed", "toolAllowed",
+        "automaticApplyAllowed"
+      ],
+      "properties": {
+        "vscodeExecutionOnly": { "type": "boolean", "const": true },
+        "browserSupported": { "type": "boolean", "const": false },
+        "jetbrainsSupported": { "type": "boolean", "const": false },
+        "existingTextFilesOnly": { "type": "boolean", "const": true },
+        "boundedReplacementOnly": { "type": "boolean", "const": true },
+        "rawReplacementIncluded": { "type": "boolean", "const": false },
+        "rawDiffIncluded": { "type": "boolean", "const": false },
+        "fileBodyIncluded": { "type": "boolean", "const": false },
+        "createAllowed": { "type": "boolean", "const": false },
+        "deleteAllowed": { "type": "boolean", "const": false },
+        "renameAllowed": { "type": "boolean", "const": false },
+        "moveAllowed": { "type": "boolean", "const": false },
+        "dependencyEditAllowed": { "type": "boolean", "const": false },
+        "generatedEditAllowed": { "type": "boolean", "const": false },
+        "hiddenPathAllowed": { "type": "boolean", "const": false },
+        "commandAllowed": { "type": "boolean", "const": false },
+        "providerAllowed": { "type": "boolean", "const": false },
+        "toolAllowed": { "type": "boolean", "const": false },
+        "automaticApplyAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "controlledAgentMultifileApplyResultDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "cloudRequired", "privatePathExposed", "rawReplacementIncluded", "rawDiffIncluded", "fileBodyIncluded", "message", "appliedFileCount", "appliedEditCount", "blockedFileCount", "failedEditCount"],
+      "properties": {
+        "status": { "type": "string", "enum": ["applied", "blocked", "failed", "partial"] },
+        "cloudRequired": { "type": "boolean", "const": false },
+        "privatePathExposed": { "type": "boolean", "const": false },
+        "rawReplacementIncluded": { "type": "boolean", "const": false },
+        "rawDiffIncluded": { "type": "boolean", "const": false },
+        "fileBodyIncluded": { "type": "boolean", "const": false },
+        "message": { "$ref": "#/$defs/controlledAgentEditSafeSummary" },
+        "appliedFileCount": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "appliedEditCount": { "type": "integer", "minimum": 0, "maximum": 12 },
+        "blockedFileCount": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "failedEditCount": { "type": "integer", "minimum": 0, "maximum": 12 },
+        "affectedFiles": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/controlledAgentEditPath" } },
+        "blockedReason": {
+          "type": "string",
+          "enum": ["apply_disabled", "policy_denied", "unsupported_host", "unsafe_path", "outside_workspace", "hidden_path", "dependency_path", "generated_path", "unsupported_operation", "missing_expected_hash", "hash_mismatch", "unconfirmed_request", "assistant_minted", "budget_exceeded", "line_range_invalid"]
+        }
+      }
+    },
+    "controlledAgentMultifileApplyResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type", "schemaVersion", "state", "authority", "cloudRequired", "controlledWorkspaceId",
+        "runId", "workspaceReadinessId", "requestId", "requestIdMintedBy", "userConfirmed",
+        "patchPlanId", "limits", "edits", "policyFlags", "result"
+      ],
+      "properties": {
+        "type": { "type": "string", "const": "controlled_agent_multifile_apply" },
+        "schemaVersion": { "type": "string", "const": "2026-07-07" },
+        "state": { "type": "string", "enum": ["applied", "blocked", "failed", "partial"] },
+        "authority": { "type": "string", "const": "vscode_bounded_multifile_replacement_apply" },
+        "cloudRequired": { "type": "boolean", "const": false },
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "runId": { "$ref": "#/$defs/safeId" },
+        "runtimeSessionId": { "$ref": "#/$defs/safeId" },
+        "workspaceReadinessId": { "$ref": "#/$defs/safeId" },
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "requestIdMintedBy": { "type": "string", "const": "gui" },
+        "userConfirmed": { "type": "boolean", "const": true },
+        "patchPlanId": { "$ref": "#/$defs/safeId" },
+        "limits": { "$ref": "#/$defs/controlledAgentMultifileApplyLimits" },
+        "edits": { "type": "array", "minItems": 1, "maxItems": 12, "items": { "$ref": "#/$defs/controlledAgentMultifileApplyResultEdit" } },
+        "policyFlags": { "$ref": "#/$defs/controlledAgentMultifileApplyPolicyFlags" },
+        "result": { "$ref": "#/$defs/controlledAgentMultifileApplyResultDetails" }
+      },
+      "allOf": [
+        { "properties": { "result": { "type": "object", "properties": { "status": { "const": { "$data": "2/state" } } } } } }
+      ]
+    },
     "controlledAgentCommandRunOutputTail": {
       "allOf": [
         {
@@ -3835,6 +3964,26 @@
               }
             }
           }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.controlledAgentMultifileApplyResult"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["requestId", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/$defs/requestId" },
+          "payload": { "$ref": "#/$defs/controlledAgentMultifileApplyResultPayload" }
+        },
+        "allOf": [
+          { "properties": { "payload": { "type": "object", "properties": { "requestId": { "const": { "$data": "2/requestId" } } } } } }
         ]
       }
     },

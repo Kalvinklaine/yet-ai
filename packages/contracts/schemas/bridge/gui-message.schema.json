@@ -23,6 +23,7 @@
         "gui.applyWorkspaceEditRequest",
         "gui.controlledAgentFileReadRequest",
         "gui.controlledAgentEditRequest",
+        "gui.controlledAgentMultifileApplyRequest",
         "gui.controlledAgentCommandRunRequest",
         "gui.controlledAgentLexicalSearchRequest"
       ]
@@ -835,6 +836,295 @@
         }
       }
     },
+    "controlledAgentMultifileApplyLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxFiles",
+        "maxEdits",
+        "maxReplacementBytesPerEdit",
+        "maxTotalReplacementBytes"
+      ],
+      "properties": {
+        "maxFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "maxEdits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "maxReplacementBytesPerEdit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12000
+        },
+        "maxTotalReplacementBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 48000
+        }
+      }
+    },
+    "controlledAgentMultifileApplyEdit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "editId",
+        "operation",
+        "workspaceRelativePath",
+        "fileLabel",
+        "existingTextFile",
+        "expectedPreEditHash",
+        "expectedRangeHash",
+        "replacementContentHash",
+        "startLine",
+        "endLine",
+        "replacementByteCount",
+        "sanitizedSummary"
+      ],
+      "properties": {
+        "editId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "operation": {
+          "type": "string",
+          "const": "replace"
+        },
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/controlledAgentEditPath"
+        },
+        "fileLabel": {
+          "$ref": "#/$defs/controlledAgentEditSafeLabel"
+        },
+        "existingTextFile": {
+          "type": "boolean",
+          "const": true
+        },
+        "expectedPreEditHash": {
+          "$ref": "#/$defs/sha256Hash"
+        },
+        "expectedRangeHash": {
+          "$ref": "#/$defs/sha256Hash"
+        },
+        "replacementContentHash": {
+          "$ref": "#/$defs/sha256Hash"
+        },
+        "startLine": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "endLine": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "replacementByteCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12000
+        },
+        "sanitizedSummary": {
+          "$ref": "#/$defs/controlledAgentEditSafeSummary"
+        }
+      },
+      "allOf": [
+        {
+          "properties": {
+            "endLine": {
+              "type": "integer",
+              "minimum": {
+                "$data": "1/startLine"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "controlledAgentMultifileApplyPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host",
+        "browserSupported",
+        "jetbrainsSupported",
+        "vscodeExecutionOnly",
+        "existingTextFilesOnly",
+        "boundedReplacementOnly",
+        "rawReplacementIncluded",
+        "rawDiffIncluded",
+        "fileBodyIncluded",
+        "createAllowed",
+        "deleteAllowed",
+        "renameAllowed",
+        "moveAllowed",
+        "dependencyEditAllowed",
+        "generatedEditAllowed",
+        "hiddenPathAllowed",
+        "commandAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "automaticApplyAllowed"
+      ],
+      "properties": {
+        "host": {
+          "type": "string",
+          "const": "vscode"
+        },
+        "browserSupported": {
+          "type": "boolean",
+          "const": false
+        },
+        "jetbrainsSupported": {
+          "type": "boolean",
+          "const": false
+        },
+        "vscodeExecutionOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "existingTextFilesOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "boundedReplacementOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "rawReplacementIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawDiffIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileBodyIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "createAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "deleteAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "renameAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "moveAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "dependencyEditAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "generatedEditAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "hiddenPathAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "commandAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "automaticApplyAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "controlledAgentMultifileApplyRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "requestIdMintedBy",
+        "source",
+        "assistantMinted",
+        "controlledWorkspaceId",
+        "runId",
+        "workspaceReadinessId",
+        "patchPlanId",
+        "userConfirmed",
+        "confirmationKind",
+        "limits",
+        "policy",
+        "edits"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "const": "gui"
+        },
+        "source": {
+          "type": "string",
+          "const": "gui"
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "controlledWorkspaceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runtimeSessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceReadinessId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "patchPlanId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "userConfirmed": {
+          "type": "boolean",
+          "const": true
+        },
+        "confirmationKind": {
+          "type": "string",
+          "const": "explicit_user_multifile_apply"
+        },
+        "limits": {
+          "$ref": "#/$defs/controlledAgentMultifileApplyLimits"
+        },
+        "policy": {
+          "$ref": "#/$defs/controlledAgentMultifileApplyPolicy"
+        },
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/controlledAgentMultifileApplyEdit"
+          }
+        }
+      }
+    },
     "controlledAgentCommandRunLimits": {
       "type": "object",
       "additionalProperties": false,
@@ -1516,6 +1806,48 @@
           },
           "payload": {
             "$ref": "#/$defs/controlledAgentEditRequestPayload"
+          }
+        },
+        "allOf": [
+          {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "const": {
+                      "$data": "2/requestId"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gui.controlledAgentMultifileApplyRequest"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/controlledAgentMultifileApplyRequestPayload"
           }
         },
         "allOf": [

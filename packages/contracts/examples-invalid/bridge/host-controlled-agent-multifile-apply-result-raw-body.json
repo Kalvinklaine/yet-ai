@@ -1,0 +1,96 @@
+{
+  "version": "2026-05-15",
+  "type": "host.controlledAgentMultifileApplyResult",
+  "requestId": "multifile-apply-s116",
+  "payload": {
+    "type": "controlled_agent_multifile_apply",
+    "schemaVersion": "2026-07-07",
+    "state": "applied",
+    "authority": "vscode_bounded_multifile_replacement_apply",
+    "cloudRequired": false,
+    "controlledWorkspaceId": "workspace-s116",
+    "runId": "run-s116",
+    "runtimeSessionId": "runtime-s116",
+    "workspaceReadinessId": "ready-s116",
+    "requestId": "multifile-apply-s116",
+    "requestIdMintedBy": "gui",
+    "userConfirmed": true,
+    "patchPlanId": "multifile-plan-s114",
+    "limits": {
+      "maxFiles": 2,
+      "maxEdits": 2,
+      "maxReplacementBytesPerEdit": 800,
+      "maxTotalReplacementBytes": 1600
+    },
+    "edits": [
+      {
+        "editId": "edit-one",
+        "operation": "replace",
+        "workspaceRelativePath": "apps/gui/src/App.tsx",
+        "fileLabel": "apps/gui/src/App.tsx",
+        "status": "applied",
+        "expectedPreEditHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "expectedRangeHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "replacementContentHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "actualPostEditHash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+        "startLine": 12,
+        "endLine": 14,
+        "replacementByteCount": 46,
+        "sanitizedSummary": "Update selected UI metadata lines."
+      },
+      {
+        "editId": "edit-two",
+        "operation": "replace",
+        "workspaceRelativePath": "packages/contracts/src/index.ts",
+        "fileLabel": "packages/contracts/src/index.ts",
+        "status": "applied",
+        "expectedPreEditHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expectedRangeHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "replacementContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "actualPostEditHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "startLine": 20,
+        "endLine": 20,
+        "replacementByteCount": 32,
+        "sanitizedSummary": "Refresh selected contract export line."
+      }
+    ],
+    "policyFlags": {
+      "vscodeExecutionOnly": true,
+      "browserSupported": false,
+      "jetbrainsSupported": false,
+      "existingTextFilesOnly": true,
+      "boundedReplacementOnly": true,
+      "rawReplacementIncluded": false,
+      "rawDiffIncluded": false,
+      "fileBodyIncluded": false,
+      "createAllowed": false,
+      "deleteAllowed": false,
+      "renameAllowed": false,
+      "moveAllowed": false,
+      "dependencyEditAllowed": false,
+      "generatedEditAllowed": false,
+      "hiddenPathAllowed": false,
+      "commandAllowed": false,
+      "providerAllowed": false,
+      "toolAllowed": false,
+      "automaticApplyAllowed": false
+    },
+    "result": {
+      "status": "applied",
+      "cloudRequired": false,
+      "privatePathExposed": false,
+      "rawReplacementIncluded": false,
+      "rawDiffIncluded": false,
+      "fileBodyIncluded": true,
+      "message": "Bounded multi-file replacements applied by VS Code host.",
+      "appliedFileCount": 2,
+      "appliedEditCount": 2,
+      "blockedFileCount": 0,
+      "failedEditCount": 0,
+      "affectedFiles": [
+        "apps/gui/src/App.tsx",
+        "packages/contracts/src/index.ts"
+      ]
+    }
+  }
+}

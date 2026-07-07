@@ -1,0 +1,76 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.controlledAgentMultifileApplyRequest",
+  "requestId": "multifile-apply-s116",
+  "payload": {
+    "requestId": "multifile-apply-s116",
+    "requestIdMintedBy": "gui",
+    "source": "gui",
+    "assistantMinted": false,
+    "controlledWorkspaceId": "workspace-s116",
+    "runId": "run-s116",
+    "runtimeSessionId": "runtime-s116",
+    "workspaceReadinessId": "ready-s116",
+    "patchPlanId": "multifile-plan-s114",
+    "userConfirmed": true,
+    "confirmationKind": "explicit_user_multifile_apply",
+    "limits": {
+      "maxFiles": 2,
+      "maxEdits": 2,
+      "maxReplacementBytesPerEdit": 800,
+      "maxTotalReplacementBytes": 1600
+    },
+    "policy": {
+      "host": "vscode",
+      "browserSupported": false,
+      "jetbrainsSupported": false,
+      "vscodeExecutionOnly": true,
+      "existingTextFilesOnly": true,
+      "boundedReplacementOnly": true,
+      "rawReplacementIncluded": false,
+      "rawDiffIncluded": false,
+      "fileBodyIncluded": false,
+      "createAllowed": false,
+      "deleteAllowed": false,
+      "renameAllowed": false,
+      "moveAllowed": false,
+      "dependencyEditAllowed": false,
+      "generatedEditAllowed": false,
+      "hiddenPathAllowed": false,
+      "commandAllowed": false,
+      "providerAllowed": false,
+      "toolAllowed": false,
+      "automaticApplyAllowed": false
+    },
+    "edits": [
+      {
+        "editId": "edit-one",
+        "operation": "replace",
+        "workspaceRelativePath": "apps/gui/generated/api.ts",
+        "fileLabel": "apps/gui/src/App.tsx",
+        "existingTextFile": true,
+        "expectedPreEditHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "expectedRangeHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "replacementContentHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "startLine": 12,
+        "endLine": 14,
+        "replacementByteCount": 46,
+        "sanitizedSummary": "Update selected UI metadata lines."
+      },
+      {
+        "editId": "edit-two",
+        "operation": "replace",
+        "workspaceRelativePath": "packages/contracts/src/index.ts",
+        "fileLabel": "packages/contracts/src/index.ts",
+        "existingTextFile": true,
+        "expectedPreEditHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "expectedRangeHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "replacementContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "startLine": 20,
+        "endLine": 20,
+        "replacementByteCount": 32,
+        "sanitizedSummary": "Refresh selected contract export line."
+      }
+    ]
+  }
+}
