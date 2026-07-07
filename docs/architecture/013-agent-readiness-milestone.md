@@ -678,6 +678,27 @@ npm run smoke:controlled-agent-s96-useful-run && npm run check && git diff --che
 This gate validates the useful-run smoke evidence, repository documentation checks, whitespace hygiene, and tracked status only. It does not run providers, require hosted services, publish artifacts, prove production autonomy, prove release readiness, or complete cross-host parity.
 
 
+
+## Sprint 101 provider-backed controlled proposal contract
+
+Sprint 101 introduces a provider-backed controlled proposal contract as metadata-only review vocabulary for a controlled run. A model/provider may propose only bounded sanitized plan labels, one bounded replacement-edit metadata candidate for an existing safe workspace-relative file, and one allowlisted verification command-id suggestion that still requires explicit user action.
+
+The contract grants no provider tool calling, no raw provider payload persistence, no automatic apply, no automatic verification, no automatic repair, no shell/git/network/package authority, no hidden read/search/indexing authority, no broad workspace mutation, and no runtime or bridge endpoint. Invalid fixtures reject raw provider payload storage, provider tool-call fields or authority flags, and automatic apply/run/verify authority.
+
+The S101 contract fixture gate is:
+
+```sh
+npm run validate:contracts
+```
+
+The documentation wording gate remains:
+
+```sh
+npm run audit:controlled-autonomy-wording && npm run check
+```
+
+These gates validate schemas, examples, invalid examples, wording, and repository checks only. They do not call real providers, execute provider tools, persist raw model responses, apply edits, run verification, read files, search, index, execute shell/git/network/package actions, prove production autonomy, or complete cross-host controlled execution parity.
+
 ## Sprint 104 explicit project memory attachment contract
 
 Sprint 104 defines project memory use for controlled runs as an explicit attachment contract only. A controlled run may use project memory notes only when the user deliberately selects or confirms those notes for that run through the existing project-memory attachment path. Project memory suggestions, labels, search results, run history, traces, capability metadata, or prior sessions must not become hidden runtime context and must not be injected automatically into a controlled run prompt, proposal step, repair attempt, terminal report, or provider request.

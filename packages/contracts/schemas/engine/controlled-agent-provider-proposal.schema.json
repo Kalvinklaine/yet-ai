@@ -1,0 +1,313 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-provider-proposal.schema.json",
+  "title": "Controlled Agent Provider Proposal Metadata",
+  "description": "Strict metadata-only contract for a model/provider-authored controlled-run proposal. It may describe one bounded plan and one bounded replacement-edit metadata candidate, but it grants no provider tool calling, raw provider payload persistence, automatic apply, automatic verification, shell, git, network, package, hidden-read, search, indexing, or autonomous execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "providerToolCallingAllowed",
+    "rawProviderPayloadStored",
+    "automaticApplyAllowed",
+    "automaticRunAllowed",
+    "workspace",
+    "providerProposal",
+    "policyFlags"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "controlled_agent_provider_proposal"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-07-07"
+    },
+    "authority": {
+      "type": "string",
+      "const": "provider_proposal_metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "providerToolCallingAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "rawProviderPayloadStored": {
+      "type": "boolean",
+      "const": false
+    },
+    "automaticApplyAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "automaticRunAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "providerProposal": {
+      "$ref": "#/$defs/providerProposal"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Ff][Ii][Ll][Ee]|[Dd][Ii][Ff][Ff]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr](?:[-_ ]?(?:[Tt][Oo][Oo][Ll]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]))?|[Tt][Oo][Oo][Ll](?:[-_ ]?[Cc][Aa][Ll][Ll])?|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee][-_ ]?[Ii][Nn][Ss][Tt][Aa][Ll][Ll]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Tt][Aa][Rr][Tt]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 100 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 240 }
+      ]
+    },
+    "workspaceRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlledWorkspaceId", "runId", "workspaceMode", "host", "privatePathExposed"],
+      "properties": {
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "runId": { "$ref": "#/$defs/safeId" },
+        "workspaceMode": {
+          "type": "string",
+          "enum": ["disposable", "worktree", "existing"]
+        },
+        "host": {
+          "type": "string",
+          "enum": ["vscode", "jetbrains"]
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "workspaceLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "providerProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposalId",
+        "source",
+        "sanitizedOnly",
+        "rawPayloadStored",
+        "toolCallsIncluded",
+        "automaticActionsIncluded",
+        "plan",
+        "editMetadata",
+        "verificationSuggestion"
+      ],
+      "properties": {
+        "proposalId": { "$ref": "#/$defs/safeId" },
+        "source": {
+          "type": "string",
+          "const": "model"
+        },
+        "sanitizedOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "rawPayloadStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolCallsIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "automaticActionsIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "summary": { "$ref": "#/$defs/safeSummary" },
+        "plan": { "$ref": "#/$defs/planMetadata" },
+        "editMetadata": { "$ref": "#/$defs/editMetadata" },
+        "verificationSuggestion": { "$ref": "#/$defs/verificationSuggestion" }
+      }
+    },
+    "planMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stepCount", "steps"],
+      "properties": {
+        "stepCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/safeLabel" }
+        }
+      }
+    },
+    "editMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operation",
+        "workspaceRelativePath",
+        "expectedContentHash",
+        "startLine",
+        "endLine",
+        "replacementByteCount",
+        "rawReplacementStored",
+        "rawDiffStored",
+        "requiresUserApply"
+      ],
+      "properties": {
+        "operation": {
+          "type": "string",
+          "const": "replace"
+        },
+        "workspaceRelativePath": { "$ref": "#/$defs/workspaceRelativePath" },
+        "fileLabel": { "$ref": "#/$defs/safeLabel" },
+        "expectedContentHash": { "$ref": "#/$defs/safeHash" },
+        "startLine": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "endLine": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "replacementByteCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12000
+        },
+        "rawReplacementStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawDiffStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "requiresUserApply": {
+          "type": "boolean",
+          "const": true
+        },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "verificationSuggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commandId", "allowlistedCommandIdOnly", "freeformCommandAllowed", "requiresUserRun"],
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"]
+        },
+        "allowlistedCommandIdOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "freeformCommandAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "requiresUserRun": {
+          "type": "boolean",
+          "const": true
+        },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadataOnly",
+        "boundedPlanMetadataAllowed",
+        "boundedEditMetadataAllowed",
+        "providerToolCallingAllowed",
+        "rawProviderPayloadPersistenceAllowed",
+        "rawPromptPersistenceAllowed",
+        "rawFilePersistenceAllowed",
+        "rawDiffPersistenceAllowed",
+        "rawCommandPersistenceAllowed",
+        "rawOutputPersistenceAllowed",
+        "automaticApplyAllowed",
+        "automaticRunAllowed",
+        "automaticVerifyAllowed",
+        "automaticRepairAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "networkAllowed",
+        "packageInstallAllowed",
+        "hiddenReadAllowed",
+        "searchAllowed",
+        "indexingAllowed",
+        "toolAuthorityAllowed"
+      ],
+      "properties": {
+        "metadataOnly": { "type": "boolean", "const": true },
+        "boundedPlanMetadataAllowed": { "type": "boolean", "const": true },
+        "boundedEditMetadataAllowed": { "type": "boolean", "const": true },
+        "providerToolCallingAllowed": { "type": "boolean", "const": false },
+        "rawProviderPayloadPersistenceAllowed": { "type": "boolean", "const": false },
+        "rawPromptPersistenceAllowed": { "type": "boolean", "const": false },
+        "rawFilePersistenceAllowed": { "type": "boolean", "const": false },
+        "rawDiffPersistenceAllowed": { "type": "boolean", "const": false },
+        "rawCommandPersistenceAllowed": { "type": "boolean", "const": false },
+        "rawOutputPersistenceAllowed": { "type": "boolean", "const": false },
+        "automaticApplyAllowed": { "type": "boolean", "const": false },
+        "automaticRunAllowed": { "type": "boolean", "const": false },
+        "automaticVerifyAllowed": { "type": "boolean", "const": false },
+        "automaticRepairAllowed": { "type": "boolean", "const": false },
+        "shellAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "networkAllowed": { "type": "boolean", "const": false },
+        "packageInstallAllowed": { "type": "boolean", "const": false },
+        "hiddenReadAllowed": { "type": "boolean", "const": false },
+        "searchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "toolAuthorityAllowed": { "type": "boolean", "const": false }
+      }
+    }
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "kind": "controlled_agent_provider_proposal",
+  "version": "2026-07-07",
+  "authority": "provider_proposal_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "providerToolCallingAllowed": true,
+  "rawProviderPayloadStored": false,
+  "automaticApplyAllowed": false,
+  "automaticRunAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "controlled-workspace-s101",
+    "runId": "controlled-run-s101",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "privatePathExposed": false
+  },
+  "providerProposal": {
+    "proposalId": "proposal-s101",
+    "source": "model",
+    "sanitizedOnly": true,
+    "rawPayloadStored": false,
+    "toolCallsIncluded": true,
+    "automaticActionsIncluded": false,
+    "toolCall": {
+      "name": "read_file",
+      "arguments": {}
+    },
+    "plan": {
+      "stepCount": 1,
+      "steps": ["Prepare one bounded replacement candidate"]
+    },
+    "editMetadata": {
+      "operation": "replace",
+      "workspaceRelativePath": "docs/safe-copy.md",
+      "expectedContentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "startLine": 4,
+      "endLine": 6,
+      "replacementByteCount": 128,
+      "rawReplacementStored": false,
+      "rawDiffStored": false,
+      "requiresUserApply": true
+    },
+    "verificationSuggestion": {
+      "commandId": "repository-check",
+      "allowlistedCommandIdOnly": true,
+      "freeformCommandAllowed": false,
+      "requiresUserRun": true
+    }
+  },
+  "policyFlags": {
+    "metadataOnly": true,
+    "boundedPlanMetadataAllowed": true,
+    "boundedEditMetadataAllowed": true,
+    "providerToolCallingAllowed": true,
+    "rawProviderPayloadPersistenceAllowed": false,
+    "rawPromptPersistenceAllowed": false,
+    "rawFilePersistenceAllowed": false,
+    "rawDiffPersistenceAllowed": false,
+    "rawCommandPersistenceAllowed": false,
+    "rawOutputPersistenceAllowed": false,
+    "automaticApplyAllowed": false,
+    "automaticRunAllowed": false,
+    "automaticVerifyAllowed": false,
+    "automaticRepairAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "networkAllowed": false,
+    "packageInstallAllowed": false,
+    "hiddenReadAllowed": false,
+    "searchAllowed": false,
+    "indexingAllowed": false,
+    "toolAuthorityAllowed": true
+  }
+}
