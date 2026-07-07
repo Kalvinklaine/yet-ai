@@ -105,6 +105,82 @@ function safeEditProposal() {
   };
 }
 
+function controlledProviderProposal() {
+  return {
+    kind: "controlled_agent_provider_proposal",
+    version: "2026-07-07",
+    authority: "provider_proposal_metadata_only",
+    cloudRequired: false,
+    executionAllowed: false,
+    providerToolCallingAllowed: false,
+    rawProviderPayloadStored: false,
+    automaticApplyAllowed: false,
+    automaticRunAllowed: false,
+    workspace: {
+      controlledWorkspaceId: "workspaceModelProposal1",
+      runId: "runModelProposal1",
+      workspaceMode: "worktree",
+      host: "vscode",
+      privatePathExposed: false,
+      workspaceLabel: "Controlled worktree",
+    },
+    providerProposal: {
+      proposalId: "modelProposalModelSmoke1",
+      source: "model",
+      sanitizedOnly: true,
+      rawPayloadStored: false,
+      toolCallsIncluded: false,
+      automaticActionsIncluded: false,
+      summary: "Review sanitized model metadata only.",
+      plan: { stepCount: 2, steps: ["Review bounded metadata", "Wait for manual apply"] },
+      editMetadata: {
+        operation: "replace",
+        workspaceRelativePath: "src/modelProposal.ts",
+        expectedContentHash: `sha256:${"c".repeat(64)}`,
+        startLine: 1,
+        endLine: 1,
+        replacementByteCount: 5,
+        rawReplacementStored: false,
+        rawDiffStored: false,
+        requiresUserApply: true,
+        fileLabel: "Model proposal source",
+        summary: "Replace one visible label after review.",
+      },
+      verificationSuggestion: {
+        commandId: "gui-app-tests",
+        allowlistedCommandIdOnly: true,
+        freeformCommandAllowed: false,
+        requiresUserRun: true,
+        summary: "Run focused GUI tests after manual confirmation.",
+      },
+    },
+    policyFlags: {
+      metadataOnly: true,
+      boundedPlanMetadataAllowed: true,
+      boundedEditMetadataAllowed: true,
+      providerToolCallingAllowed: false,
+      rawProviderPayloadPersistenceAllowed: false,
+      rawPromptPersistenceAllowed: false,
+      rawFilePersistenceAllowed: false,
+      rawDiffPersistenceAllowed: false,
+      rawCommandPersistenceAllowed: false,
+      rawOutputPersistenceAllowed: false,
+      automaticApplyAllowed: false,
+      automaticRunAllowed: false,
+      automaticVerifyAllowed: false,
+      automaticRepairAllowed: false,
+      shellAllowed: false,
+      gitAllowed: false,
+      networkAllowed: false,
+      packageInstallAllowed: false,
+      hiddenReadAllowed: false,
+      searchAllowed: false,
+      indexingAllowed: false,
+      toolAuthorityAllowed: false,
+    },
+  };
+}
+
 function unsafeProposalEnvelope() {
   return {
     type: "gui.applyWorkspaceEditRequest",
@@ -240,6 +316,68 @@ async function runSmoke() {
     assert.equal(valid.agentRunInput.proposal.summary, "Update the visible greeting label after manual review.");
     assert.deepEqual(valid.agentRunInput.proposal.touchedFiles, ["src/modelProposal.ts"]);
 
+    const provider = evaluateAgentRunModelProposal({
+      ...base,
+      latestAssistantMessage: {
+        id: "assistantModelProposalProvider",
+        chatId: base.chatId,
+        role: "assistant",
+        status: "complete",
+        responseToRequestId: base.submittedPromptRequestId,
+        userMessageId: base.latestUserMessageId,
+        runtimeSettingsVersion: base.runtimeSettingsVersion,
+        content: JSON.stringify(controlledProviderProposal()),
+      },
+    });
+    assert.equal(provider.proposalPathState, "proposal_detected", diagnosticText(provider));
+    assert.equal(provider.diagnostics.length, 0);
+    assert.equal(provider.agentRunInput.proposal.id, "modelProposalModelSmoke1");
+    assert.equal(provider.agentRunInput.proposal.summary, "Review sanitized model metadata only.");
+    assert.deepEqual(provider.agentRunInput.proposal.touchedFiles, ["src/modelProposal.ts"]);
+    assert.deepEqual(provider.agentRunInput.proposal.planSteps, ["Review bounded metadata", "Wait for manual apply"]);
+    assert.deepEqual(provider.agentRunInput.proposal.verificationSuggestions, ["GUI app tests"]);
+    assert.equal(provider.agentRunInput.applyRequest, undefined);
+    assert.equal(provider.agentRunInput.verificationRequest, undefined);
+    assert.equal(provider.agentRunInput.applyResult, undefined);
+    assert.equal(provider.agentRunInput.verificationResult, undefined);
+    assert.equal(provider.providerProposalState.proposalId, "modelProposalModelSmoke1");
+    assert.equal(provider.providerProposalState.sourceMessageId, "assistantModelProposalProvider");
+
+    const duplicateProvider = evaluateAgentRunModelProposal({
+      ...base,
+      providerProposalState: provider.providerProposalState,
+      latestAssistantMessage: {
+        id: "assistantModelProposalProvider",
+        chatId: base.chatId,
+        role: "assistant",
+        status: "complete",
+        responseToRequestId: base.submittedPromptRequestId,
+        userMessageId: base.latestUserMessageId,
+        runtimeSettingsVersion: base.runtimeSettingsVersion,
+        content: JSON.stringify(controlledProviderProposal()),
+      },
+    });
+    assert.equal(duplicateProvider.proposalPathState, "stale_response");
+    assert.equal(duplicateProvider.agentRunInput.proposal, undefined);
+    assert.equal(diagnosticText(duplicateProvider).includes("already adopted"), true);
+
+    const unsafeProvider = evaluateAgentRunModelProposal({
+      ...base,
+      latestAssistantMessage: {
+        id: "assistantModelProposalProviderUnsafe",
+        chatId: base.chatId,
+        role: "assistant",
+        status: "complete",
+        responseToRequestId: base.submittedPromptRequestId,
+        userMessageId: base.latestUserMessageId,
+        runtimeSettingsVersion: base.runtimeSettingsVersion,
+        content: JSON.stringify({ ...controlledProviderProposal(), rawProviderPayloadStored: true }),
+      },
+    });
+    assert.equal(unsafeProvider.proposalPathState, "blocked");
+    assert.equal(unsafeProvider.agentRunInput.proposal, undefined);
+    assert.equal(diagnosticText(unsafeProvider).includes("raw"), true);
+
     const readyView = evaluateAgentRunState({
       ...valid.agentRunInput,
       boundedLoop: boundedLoopForProposal(valid.agentRunInput.proposal.id),
@@ -249,7 +387,7 @@ async function runSmoke() {
     assertNoAutonomy(readyView, "valid proposal");
     assert.equal(harness.applyCalls, 0);
     assert.equal(harness.verificationCalls, 0);
-    assertSanitized({ validPath: valid, readyView }, "valid report");
+    assertSanitized({ validPath: valid, providerPath: provider, readyView }, "valid report");
 
     const malformed = evaluateAgentRunModelProposal({
       ...base,

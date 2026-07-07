@@ -16,6 +16,7 @@ const validators = [
   ["scripts/validate-npm-spawn.mjs"],
   ["scripts/validate-icon-assets.mjs"],
   ["scripts/check-gui-asset-freshness.mjs"],
+  ["scripts/smoke-model-proposal-agent-run.mjs"],
   ["scripts/dogfood-real-provider-report.mjs", "--check-template"],
   ["scripts/dogfood-real-provider-report.mjs", "--self-test"],
   ["scripts/dogfood-agent-run-rc-report.mjs", "--check-template"],
