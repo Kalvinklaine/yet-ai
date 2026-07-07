@@ -12,6 +12,7 @@ const validators = [
   ["scripts/smoke-controlled-run-explicit-context.mjs"],
   ["scripts/smoke-controlled-run-memory-attachment.mjs"],
   ["scripts/smoke-controlled-run-observability.mjs"],
+  ["scripts/smoke-controlled-run-history.mjs"],
   ["scripts/smoke-controlled-agent-patch-plan-preview.mjs"],
   ["scripts/validate-ide-artifact-contract.mjs"],
   ["scripts/validate-ide-artifact-workflow.mjs"],

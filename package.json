@@ -126,6 +126,7 @@
     "validate:npm-spawn": "node scripts/validate-npm-spawn.mjs",
     "validate:icon-assets": "node scripts/validate-icon-assets.mjs",
     "smoke:controlled-run-observability": "node scripts/smoke-controlled-run-observability.mjs",
+    "smoke:controlled-run-history": "node scripts/smoke-controlled-run-history.mjs",
     "smoke:controlled-agent-patch-plan-preview": "node scripts/smoke-controlled-agent-patch-plan-preview.mjs"
   },
   "devDependencies": {

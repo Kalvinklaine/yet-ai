@@ -23,6 +23,7 @@ npm run check
 npm run smoke:gui-browser
 npm run smoke:gui-runtime-e2e
 npm run smoke:gui-conversation-history
+npm run smoke:controlled-run-history
 ```
 
 Agent progress read-only panel coverage is available from the root:
