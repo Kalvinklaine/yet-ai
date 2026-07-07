@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-search-informed-proposal.schema.json",
+  "title": "Controlled Agent Search-Informed Provider Proposal Metadata",
+  "description": "Strict metadata-only contract for a provider proposal step that may cite only explicit user-selected controlled context evidence. It grants no raw prompt or file dump, broad search output, hidden result expansion, provider tool calling, local tool calling, command execution, automatic apply, automatic verification, automatic repair, or automatic follow-up authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "providerToolCallingAllowed",
+    "rawProviderPayloadStored",
+    "hiddenContextExpansionAllowed",
+    "automaticApplyAllowed",
+    "automaticFollowupAllowed",
+    "workspace",
+    "selectedEvidence",
+    "providerProposal",
+    "policyFlags"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "controlled_agent_search_informed_provider_proposal"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-07-07"
+    },
+    "authority": {
+      "type": "string",
+      "const": "selected_context_metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "providerToolCallingAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "rawProviderPayloadStored": {
+      "type": "boolean",
+      "const": false
+    },
+    "hiddenContextExpansionAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "automaticApplyAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "automaticFollowupAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "selectedEvidence": {
+      "$ref": "#/$defs/selectedEvidence"
+    },
+    "providerProposal": {
+      "$ref": "#/$defs/providerProposal"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Kk][Cc][Ee]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Rr][Ee][Ss][Uu][Ll][Tt]|[Ff][Ii][Ll][Ee]|[Bb][Oo][Dd][Yy]|[Dd][Uu][Mm][Pp]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Mm][Pp][Tt][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Dd][Uu][Mm][Pp])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr](?:[-_ ]?(?:[Tt][Oo][Oo][Ll]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Bb][Oo][Dd][Yy]|[Cc][Aa][Ll][Ll]))?|[Tt][Oo][Oo][Ll](?:[-_ ]?(?:[Cc][Aa][Ll][Ll]|[Uu][Ss][Ee]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Tt][Yy]))?|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Aa][Rr][Gg][Ss]|[Gg][Ii][Tt]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee][-_ ]?[Ii][Nn][Ss][Tt][Aa][Ll][Ll]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Ss][Uu][Ll][Tt]|[Cc][Oo][Nn][Tt][Ee][Xx][Tt]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ss][Cc][Aa][Nn])|[Bb][Rr][Oo][Aa][Dd][-_ ]?(?:[Ss][Ee][Aa][Rr][Cc][Hh]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Dd][Uu][Mm][Pp])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Ff][Oo][Ll][Ll][Oo][Ww][Uu][Pp]|[Ss][Tt][Aa][Rr][Tt])|[Aa][Uu][Tt][Oo][Nn][Oo][Mm](?:[Yy]|[Oo][Uu][Ss])|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Rr][Ee][Ll][Ee][Aa][Ss][Ee]|[Mm][Aa][Rr][Kk][Ee][Tt][Pp][Ll][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^(?!assistant(?:[._:-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 120 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 240 }
+      ]
+    },
+    "workspaceRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private|public)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "character"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "character": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "$ref": "#/$defs/position" },
+        "end": { "$ref": "#/$defs/position" }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlledWorkspaceId", "runId", "workspaceMode", "host", "privatePathExposed"],
+      "properties": {
+        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
+        "runId": { "$ref": "#/$defs/safeId" },
+        "workspaceMode": { "type": "string", "enum": ["disposable", "worktree", "existing"] },
+        "host": { "type": "string", "enum": ["vscode", "jetbrains"] },
+        "privatePathExposed": { "type": "boolean", "const": false },
+        "workspaceLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "selectedEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidenceSetId",
+        "source",
+        "selectedBy",
+        "explicitUserSelection",
+        "hiddenResultsIncluded",
+        "rawBodiesIncluded",
+        "broadOutputIncluded",
+        "contextItems"
+      ],
+      "properties": {
+        "evidenceSetId": { "$ref": "#/$defs/safeId" },
+        "source": { "type": "string", "const": "controlled_search_selection" },
+        "selectedBy": { "type": "string", "const": "user" },
+        "explicitUserSelection": { "type": "boolean", "const": true },
+        "hiddenResultsIncluded": { "type": "boolean", "const": false },
+        "rawBodiesIncluded": { "type": "boolean", "const": false },
+        "broadOutputIncluded": { "type": "boolean", "const": false },
+        "contextItems": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/contextItem" }
+        }
+      }
+    },
+    "contextItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "selectionId",
+        "pathLabel",
+        "range",
+        "snippetSummary",
+        "snippetHash",
+        "sourceResultHash",
+        "sanitized",
+        "rawBodyIncluded",
+        "hiddenResult"
+      ],
+      "properties": {
+        "selectionId": { "$ref": "#/$defs/safeId" },
+        "pathLabel": { "$ref": "#/$defs/workspaceRelativePath" },
+        "range": { "$ref": "#/$defs/range" },
+        "snippetSummary": { "$ref": "#/$defs/safeSummary" },
+        "snippetHash": { "$ref": "#/$defs/safeHash" },
+        "sourceResultHash": { "$ref": "#/$defs/safeHash" },
+        "languageId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9_.+-]+$"
+        },
+        "sanitized": { "type": "boolean", "const": true },
+        "rawBodyIncluded": { "type": "boolean", "const": false },
+        "hiddenResult": { "type": "boolean", "const": false }
+      }
+    },
+    "providerProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposalId",
+        "source",
+        "providerSelectionOwner",
+        "providerCredentialsOwner",
+        "sanitizedOnly",
+        "usesOnlySelectedEvidence",
+        "rawPayloadStored",
+        "toolCallsIncluded",
+        "localToolCallsIncluded",
+        "commandFieldsIncluded",
+        "automaticActionsIncluded",
+        "followupDraftIncluded",
+        "summary",
+        "plan"
+      ],
+      "properties": {
+        "proposalId": { "$ref": "#/$defs/safeId" },
+        "source": { "type": "string", "const": "model" },
+        "providerSelectionOwner": { "type": "string", "const": "engine" },
+        "providerCredentialsOwner": { "type": "string", "const": "engine_local_only" },
+        "sanitizedOnly": { "type": "boolean", "const": true },
+        "usesOnlySelectedEvidence": { "type": "boolean", "const": true },
+        "rawPayloadStored": { "type": "boolean", "const": false },
+        "toolCallsIncluded": { "type": "boolean", "const": false },
+        "localToolCallsIncluded": { "type": "boolean", "const": false },
+        "commandFieldsIncluded": { "type": "boolean", "const": false },
+        "automaticActionsIncluded": { "type": "boolean", "const": false },
+        "followupDraftIncluded": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" },
+        "plan": { "$ref": "#/$defs/planMetadata" }
+      }
+    },
+    "planMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stepCount", "steps"],
+      "properties": {
+        "stepCount": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/safeLabel" }
+        }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadataOnly",
+        "selectedContextMetadataAllowed",
+        "rawPromptPersistenceAllowed",
+        "rawFilePersistenceAllowed",
+        "rawSearchResultPersistenceAllowed",
+        "broadSearchOutputAllowed",
+        "hiddenContextExpansionAllowed",
+        "providerSelectionEngineOwned",
+        "providerCredentialsEngineOwned",
+        "providerToolCallingAllowed",
+        "localToolAuthorityAllowed",
+        "commandExecutionAllowed",
+        "automaticApplyAllowed",
+        "automaticRunAllowed",
+        "automaticVerifyAllowed",
+        "automaticRepairAllowed",
+        "automaticFollowupAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "networkAllowed",
+        "packageInstallAllowed",
+        "indexingAllowed"
+      ],
+      "properties": {
+        "metadataOnly": { "type": "boolean", "const": true },
+        "selectedContextMetadataAllowed": { "type": "boolean", "const": true },
+        "rawPromptPersistenceAllowed": { "type": "boolean", "const": false },
+        "rawFilePersistenceAllowed": { "type": "boolean", "const": false },
+        "rawSearchResultPersistenceAllowed": { "type": "boolean", "const": false },
+        "broadSearchOutputAllowed": { "type": "boolean", "const": false },
+        "hiddenContextExpansionAllowed": { "type": "boolean", "const": false },
+        "providerSelectionEngineOwned": { "type": "boolean", "const": true },
+        "providerCredentialsEngineOwned": { "type": "boolean", "const": true },
+        "providerToolCallingAllowed": { "type": "boolean", "const": false },
+        "localToolAuthorityAllowed": { "type": "boolean", "const": false },
+        "commandExecutionAllowed": { "type": "boolean", "const": false },
+        "automaticApplyAllowed": { "type": "boolean", "const": false },
+        "automaticRunAllowed": { "type": "boolean", "const": false },
+        "automaticVerifyAllowed": { "type": "boolean", "const": false },
+        "automaticRepairAllowed": { "type": "boolean", "const": false },
+        "automaticFollowupAllowed": { "type": "boolean", "const": false },
+        "shellAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "networkAllowed": { "type": "boolean", "const": false },
+        "packageInstallAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false }
+      }
+    }
+  }
+}

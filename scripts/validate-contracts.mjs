@@ -145,6 +145,10 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-provider-proposal.schema.json"
   ],
   [
+    "packages/contracts/examples/engine/controlled-agent-search-informed-proposal-basic.json",
+    "packages/contracts/schemas/engine/controlled-agent-search-informed-proposal.schema.json"
+  ],
+  [
     "packages/contracts/examples/engine/controlled-agent-patch-plan.json",
     "packages/contracts/schemas/engine/controlled-agent-patch-plan.schema.json"
   ],
@@ -1220,6 +1224,18 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-provider-proposal.schema.json"
+  ]),
+  ...[
+    "controlled-agent-search-informed-proposal-raw-search-body.json",
+    "controlled-agent-search-informed-proposal-hidden-result.json",
+    "controlled-agent-search-informed-proposal-assistant-minted-context.json",
+    "controlled-agent-search-informed-proposal-provider-tool-call.json",
+    "controlled-agent-search-informed-proposal-command-field.json",
+    "controlled-agent-search-informed-proposal-private-path-secret.json",
+    "controlled-agent-search-informed-proposal-production-autonomy.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-search-informed-proposal.schema.json"
   ]),
   ...[
     "controlled-agent-patch-plan-raw-diff.json",

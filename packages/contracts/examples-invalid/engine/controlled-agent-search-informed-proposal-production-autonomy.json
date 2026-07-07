@@ -1,0 +1,98 @@
+{
+  "kind": "controlled_agent_search_informed_provider_proposal",
+  "version": "2026-07-07",
+  "authority": "selected_context_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "providerToolCallingAllowed": false,
+  "rawProviderPayloadStored": false,
+  "hiddenContextExpansionAllowed": false,
+  "automaticApplyAllowed": true,
+  "automaticFollowupAllowed": true,
+  "workspace": {
+    "controlledWorkspaceId": "workspace-s113-proposal",
+    "runId": "run-s113-proposal",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "privatePathExposed": false,
+    "workspaceLabel": "Controlled worktree"
+  },
+  "selectedEvidence": {
+    "evidenceSetId": "evidence-s113-selected",
+    "source": "controlled_search_selection",
+    "selectedBy": "user",
+    "explicitUserSelection": true,
+    "hiddenResultsIncluded": false,
+    "rawBodiesIncluded": false,
+    "broadOutputIncluded": false,
+    "contextItems": [
+      {
+        "selectionId": "selection-s113-app",
+        "pathLabel": "apps/gui/src/App.tsx",
+        "range": {
+          "start": {
+            "line": 42,
+            "character": 2
+          },
+          "end": {
+            "line": 44,
+            "character": 1
+          }
+        },
+        "snippetSummary": "Selected composer function summary with bounded visible lines.",
+        "snippetHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        "sourceResultHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "languageId": "typescriptreact",
+        "sanitized": true,
+        "rawBodyIncluded": false,
+        "hiddenResult": false
+      }
+    ]
+  },
+  "providerProposal": {
+    "proposalId": "proposal-s113-basic",
+    "source": "model",
+    "providerSelectionOwner": "engine",
+    "providerCredentialsOwner": "engine_local_only",
+    "sanitizedOnly": true,
+    "usesOnlySelectedEvidence": true,
+    "rawPayloadStored": false,
+    "toolCallsIncluded": false,
+    "localToolCallsIncluded": false,
+    "commandFieldsIncluded": false,
+    "automaticActionsIncluded": true,
+    "followupDraftIncluded": true,
+    "summary": "Production autonomous followup can auto apply after selected evidence review.",
+    "plan": {
+      "stepCount": 2,
+      "steps": [
+        "Compare selected evidence labels",
+        "Prepare bounded review metadata"
+      ]
+    }
+  },
+  "policyFlags": {
+    "metadataOnly": true,
+    "selectedContextMetadataAllowed": true,
+    "rawPromptPersistenceAllowed": false,
+    "rawFilePersistenceAllowed": false,
+    "rawSearchResultPersistenceAllowed": false,
+    "broadSearchOutputAllowed": false,
+    "hiddenContextExpansionAllowed": false,
+    "providerSelectionEngineOwned": true,
+    "providerCredentialsEngineOwned": true,
+    "providerToolCallingAllowed": false,
+    "localToolAuthorityAllowed": false,
+    "commandExecutionAllowed": false,
+    "automaticApplyAllowed": true,
+    "automaticRunAllowed": false,
+    "automaticVerifyAllowed": false,
+    "automaticRepairAllowed": false,
+    "automaticFollowupAllowed": true,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "networkAllowed": false,
+    "packageInstallAllowed": false,
+    "indexingAllowed": false
+  }
+}
