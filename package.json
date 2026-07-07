@@ -125,7 +125,8 @@
     "validate:ide-surface-contract": "node scripts/validate-ide-surface-contract.mjs",
     "validate:npm-spawn": "node scripts/validate-npm-spawn.mjs",
     "validate:icon-assets": "node scripts/validate-icon-assets.mjs",
-    "smoke:controlled-run-observability": "node scripts/smoke-controlled-run-observability.mjs"
+    "smoke:controlled-run-observability": "node scripts/smoke-controlled-run-observability.mjs",
+    "smoke:controlled-agent-patch-plan-preview": "node scripts/smoke-controlled-agent-patch-plan-preview.mjs"
   },
   "devDependencies": {
     "ajv": "^8.20.0",
