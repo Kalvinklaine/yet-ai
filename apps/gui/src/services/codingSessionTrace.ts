@@ -56,6 +56,13 @@ export const codingSessionTraceFamilies = [
   "controlledAgent.runtimeSessionStartRequested",
   "controlledAgent.runtimeSessionStopRequested",
   "controlledAgent.runtimeSessionBlocked",
+  "controlledRun.start",
+  "controlledRun.read",
+  "controlledRun.edit",
+  "controlledRun.verify",
+  "controlledRun.report",
+  "controlledRun.stop",
+  "controlledRun.recovery",
   "agentRun.goalReady",
   "agentRun.proposalDetected",
   "agentRun.prerequisitesBlocked",
@@ -123,6 +130,23 @@ export type CodingSessionRejectedInputSummary = {
   details: CodingSessionTraceDetails;
 };
 
+export const controlledRunTimelineEventTypes = ["start", "read", "edit", "verify", "report", "stop", "recovery"] as const;
+export const controlledRunTimelineOutcomeStatuses = ["planned", "running", "succeeded", "blocked", "failed", "stopped", "recovered"] as const;
+
+export type ControlledRunTimelineEventType = (typeof controlledRunTimelineEventTypes)[number];
+export type ControlledRunTimelineOutcomeStatus = (typeof controlledRunTimelineOutcomeStatuses)[number];
+
+export type ControlledRunTimelineDraft = {
+  type: unknown;
+  outcome: unknown;
+  label: unknown;
+  summary?: unknown;
+  requestId?: unknown;
+  runId?: unknown;
+  details?: unknown;
+};
+
+
 const defaultMaxEntries = 200;
 const maxTitleLength = 120;
 const maxSummaryLength = 1000;
@@ -146,6 +170,48 @@ export function summarizeRejectedTraceInput(reasonCode: unknown, metadata: unkno
     details,
   };
 }
+
+export function createControlledRunTimelineEvent(draft: ControlledRunTimelineDraft, options: CodingSessionTraceCreateOptions = {}): CodingSessionTraceEntry {
+  const type = normalizeControlledRunTimelineEventType(draft.type);
+  const outcome = normalizeControlledRunTimelineOutcome(draft.outcome);
+  const runId = safeTimelineId(draft.runId);
+  const details = sanitizeTraceDetails({
+    displayOnly: true,
+    metadataOnly: true,
+    rawPayloadStored: false,
+    rawPayloadReturned: false,
+    executionAuthority: false,
+    eventType: type,
+    outcome,
+    ...(runId ? { runId } : {}),
+    evidence: draft.details,
+  }) ?? {
+    displayOnly: true,
+    metadataOnly: true,
+    rawPayloadStored: false,
+    rawPayloadReturned: false,
+    executionAuthority: false,
+    eventType: type,
+    outcome,
+  };
+  return createCodingSessionTraceEntry({
+    family: controlledRunTimelineFamily(type),
+    title: controlledRunTimelineTitle(type, draft.label),
+    status: controlledRunTimelineTraceStatus(outcome),
+    summary: optionalControlledRunTimelineSummary(draft.summary, type, outcome),
+    requestId: draft.requestId,
+    details,
+  }, options);
+}
+
+export function normalizeControlledRunTimelineEventType(value: unknown): ControlledRunTimelineEventType {
+  return controlledRunTimelineEventTypes.includes(value as ControlledRunTimelineEventType) ? value as ControlledRunTimelineEventType : "report";
+}
+
+export function normalizeControlledRunTimelineOutcome(value: unknown): ControlledRunTimelineOutcomeStatus {
+  return controlledRunTimelineOutcomeStatuses.includes(value as ControlledRunTimelineOutcomeStatus) ? value as ControlledRunTimelineOutcomeStatus : "blocked";
+}
+
 
 export function createCodingSessionTraceEntry(draft: CodingSessionTraceDraft, options: CodingSessionTraceCreateOptions = {}): CodingSessionTraceEntry {
   const entry: CodingSessionTraceEntry = {
@@ -213,6 +279,46 @@ export function normalizeTraceStatus(value: unknown): CodingSessionTraceStatus {
   return statusSet.has(value) ? value as CodingSessionTraceStatus : "info";
 }
 
+function controlledRunTimelineFamily(type: ControlledRunTimelineEventType): CodingSessionTraceFamily {
+  return `controlledRun.${type}` as CodingSessionTraceFamily;
+}
+
+function controlledRunTimelineTitle(type: ControlledRunTimelineEventType, label: unknown): string {
+  const safeLabel = boundedSanitizedText(label, 80, controlledRunTimelineDefaultLabel(type));
+  return `Controlled run ${type}: ${safeLabel}`;
+}
+
+function controlledRunTimelineDefaultLabel(type: ControlledRunTimelineEventType): string {
+  if (type === "start") return "explicit user start";
+  if (type === "read") return "bounded read";
+  if (type === "edit") return "bounded edit";
+  if (type === "verify") return "allowlisted verification";
+  if (type === "report") return "sanitized report";
+  if (type === "stop") return "controlled stop";
+  return "recovery evidence";
+}
+
+function controlledRunTimelineTraceStatus(outcome: ControlledRunTimelineOutcomeStatus): CodingSessionTraceStatus {
+  if (outcome === "planned") return "pending";
+  if (outcome === "running") return "in_progress";
+  if (outcome === "succeeded" || outcome === "recovered") return "succeeded";
+  if (outcome === "stopped") return "cancelled";
+  if (outcome === "failed") return "failed";
+  return "rejected";
+}
+
+function optionalControlledRunTimelineSummary(summary: unknown, type: ControlledRunTimelineEventType, outcome: ControlledRunTimelineOutcomeStatus): string {
+  return optionalBoundedText(summary, maxSummaryLength) ?? `Controlled run ${type} event recorded as ${outcome}; raw payload omitted.`;
+}
+
+function safeTimelineId(value: unknown): string | undefined {
+  if (typeof value !== "string" || hasSecretRequestIdMarker(value)) {
+    return undefined;
+  }
+  const sanitized = sanitizeDisplayText(value).trim();
+  return /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(sanitized) && !hasSecretRequestIdMarker(sanitized) ? sanitized : undefined;
+}
+
 function sanitizeTraceUnsafeKeys(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeTraceUnsafeKeys(item));
@@ -224,7 +330,7 @@ function sanitizeTraceUnsafeKeys(value: unknown): unknown {
 }
 
 function isTraceUnsafeDetailKey(key: string): boolean {
-  return /^(?:rawCommand|raw_command|rawFileBody|raw_file_body|fileBody|file_body|rawDiff|raw_diff|diff|rawOutput|raw_output|text|body|memoryBody|memory_body|noteBody|note_body|command|cmd|args|arguments|cwd|env|environment|shell|git|network|providerTool|provider_tool|toolCall|tool_call|privatePath|private_path|stackTrace|stack_trace|callstack|affectedFiles|affected_files|touchedFiles|touched_files)$/i.test(key);
+  return /^(?:rawCommand|raw_command|rawFileBody|raw_file_body|fileBody|file_body|rawDiff|raw_diff|diff|rawOutput|raw_output|rawLog|raw_log|text|body|memoryBody|memory_body|noteBody|note_body|command|cmd|args|arguments|cwd|env|environment|shell|git|network|providerTool|provider_tool|toolCall|tool_call|privatePath|private_path|stackTrace|stack_trace|callstack|affectedFiles|affected_files|touchedFiles|touched_files)$/i.test(key);
 }
 
 function summarizeRejectedMetadata(value: unknown): unknown {

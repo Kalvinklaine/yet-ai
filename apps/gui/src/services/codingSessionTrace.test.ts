@@ -3,6 +3,9 @@ import {
   appendCodingSessionTraceEntry,
   type CodingSessionTraceEntry,
   createCodingSessionTraceEntry,
+  createControlledRunTimelineEvent,
+  normalizeControlledRunTimelineEventType,
+  normalizeControlledRunTimelineOutcome,
   normalizeTraceFamily,
   normalizeTraceStatus,
   sanitizeTraceDetails,
@@ -339,6 +342,62 @@ describe("codingSessionTrace", () => {
     expect(rendered).not.toContain("apps/gui/src/App.tsx");
     expect(rendered).not.toContain("/Users/alice");
     expect(rendered).not.toContain("sk-secret123456789");
+  });
+
+  it("creates safe controlled run trace timeline events", () => {
+    const timeline = [
+      createControlledRunTimelineEvent({ type: "start", outcome: "succeeded", label: "VS Code user-owned start", requestId: "start-1", runId: "run-1", details: { confirmedBy: "user", rawPrompt: "PROMPT_SENTINEL" } }, fixedOptions()),
+      createControlledRunTimelineEvent({ type: "read", outcome: "succeeded", label: "docs/safe-copy.md", requestId: "read-1", runId: "run-1", details: { pathLabel: "docs/safe-copy.md", byteCount: 512, fileBody: "FILE_BODY_SENTINEL" } }, { ...fixedOptions(), id: "trace-2" }),
+      createControlledRunTimelineEvent({ type: "edit", outcome: "planned", label: "bounded replacement", requestId: "edit-1", runId: "run-1", details: { touchedFileLabels: ["docs/safe-copy.md"], rawDiff: "DIFF_SENTINEL" } }, { ...fixedOptions(), id: "trace-3" }),
+      createControlledRunTimelineEvent({ type: "verify", outcome: "running", label: "repository-check", requestId: "verify-1", runId: "run-1", details: { commandId: "repository-check", command: "npm test -- --watch", cwd: "/Users/alice/private" } }, { ...fixedOptions(), id: "trace-4" }),
+      createControlledRunTimelineEvent({ type: "report", outcome: "succeeded", label: "completed", requestId: "report-1", runId: "run-1", summary: "Sanitized terminal report is ready.", details: { reportStatus: "completed", rawOutput: "OUTPUT_SENTINEL" } }, { ...fixedOptions(), id: "trace-5" }),
+      createControlledRunTimelineEvent({ type: "stop", outcome: "stopped", label: "user stop", requestId: "stop-1", runId: "run-1", details: { reason: "user_stop", rawLog: "LOG_SENTINEL" } }, { ...fixedOptions(), id: "trace-6" }),
+      createControlledRunTimelineEvent({ type: "recovery", outcome: "recovered", label: "runtime disconnected", requestId: "recovery-1", runId: "run-1", details: { recoveryMode: "manual_restart", privatePath: "/Users/alice/project" } }, { ...fixedOptions(), id: "trace-7" }),
+    ];
+    const rendered = JSON.stringify(timeline);
+
+    expect(timeline.map((entry) => entry.family)).toEqual(["controlledRun.start", "controlledRun.read", "controlledRun.edit", "controlledRun.verify", "controlledRun.report", "controlledRun.stop", "controlledRun.recovery"]);
+    expect(timeline.map((entry) => entry.status)).toEqual(["succeeded", "succeeded", "pending", "in_progress", "succeeded", "cancelled", "succeeded"]);
+    expect(timeline.every((entry) => entry.details?.displayOnly === true && entry.details?.metadataOnly === true && entry.details?.rawPayloadStored === false && entry.details?.rawPayloadReturned === false && entry.details?.executionAuthority === false)).toBe(true);
+    expect(normalizeTraceFamily("controlledRun.verify")).toBe("controlledRun.verify");
+    expect(rendered).toContain("repository-check");
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("PROMPT_SENTINEL");
+    expect(rendered).not.toContain("FILE_BODY_SENTINEL");
+    expect(rendered).not.toContain("DIFF_SENTINEL");
+    expect(rendered).not.toContain("OUTPUT_SENTINEL");
+    expect(rendered).not.toContain("LOG_SENTINEL");
+    expect(rendered).not.toContain("npm test");
+    expect(rendered).not.toContain("/Users/alice");
+  });
+
+  it("fails closed for unknown controlled run timeline values", () => {
+    const entry = createControlledRunTimelineEvent({
+      type: "shell",
+      outcome: "executed",
+      label: "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+      requestId: "request-with-token-marker",
+      runId: "sk-secret123456789",
+      details: { command: "rm -rf /Users/alice/private", rawOutput: "OUTPUT_SENTINEL" },
+    }, fixedOptions());
+    const rendered = JSON.stringify(entry);
+
+    expect(entry.family).toBe("controlledRun.report");
+    expect(entry.status).toBe("rejected");
+    expect(entry.requestId).toBeUndefined();
+    expect(entry.details?.eventType).toBe("report");
+    expect(entry.details?.outcome).toBe("blocked");
+    expect(entry.details?.runId).toBeUndefined();
+    expect(normalizeControlledRunTimelineEventType("verify")).toBe("verify");
+    expect(normalizeControlledRunTimelineEventType("shell")).toBe("report");
+    expect(normalizeControlledRunTimelineOutcome("recovered")).toBe("recovered");
+    expect(normalizeControlledRunTimelineOutcome("executed")).toBe("blocked");
+    expect(rendered).toContain("[redacted]");
+    expect(rendered).not.toContain("abcdefghijklmnopqrstuvwxyz");
+    expect(rendered).not.toContain("rm -rf");
+    expect(rendered).not.toContain("OUTPUT_SENTINEL");
+    expect(rendered).not.toContain("sk-secret");
+    expect(rendered).not.toContain("/Users/alice");
   });
 
   it("normalizes unsafe family and status values at the helper boundary", () => {
