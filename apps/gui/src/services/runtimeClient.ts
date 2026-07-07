@@ -48,6 +48,7 @@ export type CapsResponse = {
   controlledAgentFileRead?: unknown;
   controlledAgentCommandRunner?: unknown;
   controlledAgentEditExecutor?: unknown;
+  controlledAgentPatchPlan?: unknown;
   controlledAgentRuntimeSession?: unknown;
 };
 

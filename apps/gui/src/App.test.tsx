@@ -13,6 +13,7 @@ import commandRunSucceeded from "../../../packages/contracts/examples/engine/con
 import commandRunBlocked from "../../../packages/contracts/examples/engine/controlled-agent-command-runner-blocked.json";
 import runtimeSessionReady from "../../../packages/contracts/examples/engine/controlled-agent-runtime-session-ready-vscode-worktree.json";
 import editExecutorPlanned from "../../../packages/contracts/examples/engine/controlled-agent-edit-executor-planned.json";
+import controlledPatchPlan from "../../../packages/contracts/examples/engine/controlled-agent-patch-plan.json";
 import hostEditApplied from "../../../packages/contracts/examples/bridge/host-controlled-agent-edit-result-applied.json";
 
 const bridgeVersion = "2026-05-15";
@@ -576,6 +577,69 @@ describe("runtime refresh feedback", () => {
     expect(findButton("Clear pending edit")).toBeDefined();
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("controlled_agent_edit_executor");
+  });
+
+  it("renders controlled patch plan dry-run preview and posts no edit request before confirmation", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata(), controlledAgentPatchPlan: controlledPatchPlan }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-edit-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    let text = container?.textContent ?? "";
+    expect(text).toContain("Dry-run patch plan preview");
+    expect(text).toContain("One bounded replacement candidate is ready for review.");
+    expect(text).toContain("docs/safe-copy.md · lines 8-10 · bounded wording replacement · 96 bytes · expected sha256:bbbbbbbbbbb… · user apply required true");
+    expect(text).toContain("Confirm the dry-run patch plan preview before requesting the controlled edit.");
+    expect(buttonsNamed("Request controlled edit")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Confirm dry-run preview").click();
+    });
+
+    text = container?.textContent ?? "";
+    expect(text).toContain("confirmed");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
+    await act(async () => {
+      findButton("Request controlled edit").click();
+    });
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(1);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_patch_plan");
+  });
+
+  it("keeps unsafe controlled patch plan preview non-actionable", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const unsafePlan = JSON.parse(JSON.stringify(controlledPatchPlan)) as Record<string, any>;
+    unsafePlan.patchPlan.candidates[0].operation = "create";
+    unsafePlan.patchPlan.candidates[0].existingFileRequired = false;
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata(), controlledAgentPatchPlan: unsafePlan }) });
+    renderApp();
+    await flushAsync();
+
+    const details = findDetails("controlled-agent-edit-details");
+    await act(async () => {
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Unsafe or malformed patch plan preview metadata is non-actionable.");
+    expect(text).toContain("unsupported_operation");
+    expect(text).toContain("Controlled edit request is disabled because the dry-run patch plan preview is non-actionable.");
+    expect(buttonsNamed("Confirm dry-run preview")).toHaveLength(0);
+    expect(buttonsNamed("Request controlled edit")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
   });
 
   it("keeps browser controlled edit unsupported and unable to post", async () => {

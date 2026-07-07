@@ -47,6 +47,7 @@ import { buildControlledAgentFileReadRequest, correlateControlledAgentFileReadRe
 import { buildControlledAgentEditRequest, correlateControlledAgentEditResult, type ControlledAgentEditRequestCorrelation } from "./services/controlledAgentEditRequest";
 import { buildControlledAgentCommandRunRequest, correlateControlledAgentCommandRunResult, type ControlledAgentCommandRunRequestCorrelation, type ControlledAgentCommandRunResultSummary } from "./services/controlledAgentCommandRunRequest";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
+import { evaluateControlledAgentPatchPlanPreview } from "./services/controlledAgentPatchPlanPreview";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
 import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
 import { evaluateControlledAgentRuntimeSession } from "./services/controlledAgentRuntimeSession";
@@ -477,6 +478,7 @@ export function App() {
   const [controlledEditResultMetadata, setControlledEditResultMetadata] = useState<unknown>(null);
   const [pendingControlledEditRequestId, setPendingControlledEditRequestId] = useState<string | null>(null);
   const [controlledEditNote, setControlledEditNote] = useState<string | null>(null);
+  const [controlledPatchPlanConfirmed, setControlledPatchPlanConfirmed] = useState(false);
   const [controlledCommandRunResultMetadata, setControlledCommandRunResultMetadata] = useState<unknown>(null);
   const [pendingControlledCommandRunRequestId, setPendingControlledCommandRunRequestId] = useState<string | null>(null);
   const [controlledCommandRunNote, setControlledCommandRunNote] = useState<string | null>(null);
@@ -736,6 +738,9 @@ export function App() {
   }), [activeRejectedEditProposal, activeRejectedIdeActionProposal, agentRunInput, agentRunVerificationFixDraft, attachedProjectMemoryItems, codingSessionTraceWithCheckpointDecision, agentRunCheckpointDecision, codingTaskGoal, explicitContextBundleItems, proposalHistory, taskMemorySuggestions]);
   const controlledWorkspaceReadinessMetadata = activeCaps?.controlledAgentWorkspaceReadiness;
   const controlledAgentEditExecutorMetadata = activeCaps?.controlledAgentEditExecutor;
+  const controlledAgentPatchPlanMetadata = activeCaps?.controlledAgentPatchPlan;
+  const controlledAgentPatchPlanPreview = useMemo(() => controlledAgentPatchPlanMetadata === undefined ? undefined : evaluateControlledAgentPatchPlanPreview(controlledAgentPatchPlanMetadata), [controlledAgentPatchPlanMetadata]);
+  const controlledPatchPlanConfirmationKey = controlledAgentPatchPlanPreview?.state === "ready" ? `${controlledAgentPatchPlanPreview.preview.planId}:${controlledAgentPatchPlanPreview.preview.rows.map((row) => `${row.workspaceRelativePath}:${row.lineRangeLabel}:${row.expectedContentHashLabel}`).join("|")}` : controlledAgentPatchPlanPreview?.state ?? "none";
   const controlledAgentFileReadRequest = useMemo(() => buildControlledAgentFileReadRequest({
     host: bridgeHost,
     runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
@@ -826,6 +831,10 @@ export function App() {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
   }, [controlledAgentCommandRunnerMetadata, effectiveControlledAgentFileReadMetadata, controlledWorkspaceReadinessMetadata]);
 
+  useEffect(() => {
+    setControlledPatchPlanConfirmed(false);
+  }, [controlledPatchPlanConfirmationKey]);
+
   const workspaceSnippetQueryValidation = useMemo(() => validateWorkspaceSnippetQuery(workspaceSnippetQuery), [workspaceSnippetQuery]);
 
   useEffect(() => {
@@ -912,6 +921,7 @@ export function App() {
     setPendingControlledEditRequestId(null);
     setControlledEditResultMetadata(null);
     setControlledEditNote(note);
+    setControlledPatchPlanConfirmed(false);
   }, []);
 
   const clearControlledCommandRunState = useCallback((note: string | null = null) => {
@@ -2449,6 +2459,10 @@ export function App() {
   }, [addTimeline, appendTrace, controlledAgentFileReadRequest, pendingControlledFileReadRequestId]);
 
   const submitControlledEdit = useCallback(() => {
+    if (controlledAgentPatchPlanPreview && (controlledAgentPatchPlanPreview.state !== "ready" || !controlledPatchPlanConfirmed)) {
+      setControlledEditNote(controlledAgentPatchPlanPreview.state === "ready" ? "Confirm the dry-run patch plan preview before requesting the controlled edit." : "Controlled edit request blocked because dry-run patch plan preview is non-actionable.");
+      return;
+    }
     if (controlledAgentEditRequest.state !== "ready" || !controlledAgentEditRequest.bridgeRequest || !controlledAgentEditRequest.correlation || pendingControlledEditRequestId) {
       setControlledEditNote(controlledAgentEditRequest.diagnostics[0]?.message ?? "Controlled edit request is not ready.");
       return;
@@ -2461,7 +2475,7 @@ export function App() {
     bridgeAdapterRef.current?.post(controlledAgentEditRequest.bridgeRequest);
     addTimeline(`Controlled edit requested ${controlledAgentEditRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.editPending", title: "Controlled edit requested", status: "pending", summary: "User clicked explicit controlled edit request.", requestId: controlledAgentEditRequest.bridgeRequest.requestId, details: controlledAgentEditRequest.details });
-  }, [addTimeline, appendTrace, controlledAgentEditRequest, pendingControlledEditRequestId]);
+  }, [addTimeline, appendTrace, controlledAgentEditRequest, controlledAgentPatchPlanPreview, controlledPatchPlanConfirmed, pendingControlledEditRequestId]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
     if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
@@ -3258,7 +3272,7 @@ export function App() {
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} capabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
-                {(controlledAgentEditExecutorMetadata !== undefined || controlledAgentEditRequest.state !== "blocked") && <ControlledAgentEditPanel metadata={effectiveControlledEditMetadata} request={controlledAgentEditRequest} pendingRequestId={pendingControlledEditRequestId} note={controlledEditNote} onRequest={submitControlledEdit} onClearPending={clearPendingControlledEditState} />}
+                {(controlledAgentEditExecutorMetadata !== undefined || controlledAgentEditRequest.state !== "blocked" || controlledAgentPatchPlanPreview !== undefined) && <ControlledAgentEditPanel metadata={effectiveControlledEditMetadata} request={controlledAgentEditRequest} pendingRequestId={pendingControlledEditRequestId} note={controlledEditNote} patchPlanPreview={controlledAgentPatchPlanPreview} patchPlanConfirmed={controlledPatchPlanConfirmed} onConfirmPatchPlan={() => setControlledPatchPlanConfirmed(true)} onRequest={submitControlledEdit} onClearPending={clearPendingControlledEditState} />}
                 {effectiveControlledAgentCommandRunnerMetadata !== undefined && <ControlledAgentCommandRunnerPanel metadata={effectiveControlledAgentCommandRunnerMetadata} />}
                 <MultiStepTaskTimelinePanel input={multiStepTaskTimelineInput} />
                 {showWhatWillBeSentPanel && <WhatWillBeSentPanel summary={contextBudgetSummary} draftPromptCharacters={chatInput.trim().length} />}

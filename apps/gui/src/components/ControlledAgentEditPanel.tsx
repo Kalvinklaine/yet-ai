@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { evaluateControlledAgentEditExecutor, type ControlledAgentEditExecutorSummary } from "../services/controlledAgentEditExecutor";
 import type { ControlledAgentEditRequestResult } from "../services/controlledAgentEditRequest";
+import type { ControlledAgentPatchPlanPreviewResult } from "../services/controlledAgentPatchPlanPreview";
 import { sanitizeDisplayText } from "../services/redaction";
 
 export type ControlledAgentEditPanelProps = {
@@ -9,17 +10,24 @@ export type ControlledAgentEditPanelProps = {
   request?: ControlledAgentEditRequestResult;
   pendingRequestId?: string | null;
   note?: string | null;
+  patchPlanPreview?: ControlledAgentPatchPlanPreviewResult;
+  patchPlanConfirmed?: boolean;
   onRequest?: () => void;
+  onConfirmPatchPlan?: () => void;
   onClearPending?: () => void;
 };
 
-export function ControlledAgentEditPanel({ metadata, evaluatedEdit, request, pendingRequestId, note, onRequest, onClearPending }: ControlledAgentEditPanelProps) {
+export function ControlledAgentEditPanel({ metadata, evaluatedEdit, request, pendingRequestId, note, patchPlanPreview, patchPlanConfirmed = false, onRequest, onConfirmPatchPlan, onClearPending }: ControlledAgentEditPanelProps) {
   const [open, setOpen] = useState(false);
   const evaluatedMetadata = useMemo(() => evaluateControlledAgentEditExecutor(metadata), [metadata]);
   const edit = evaluatedEdit ?? evaluatedMetadata;
   const requestDiagnostics = request?.diagnostics.slice(0, 4) ?? [];
   const diagnostics = edit.diagnostics.slice(0, 6);
-  const canRequest = request?.state === "ready" && !pendingRequestId && onRequest;
+  const previewRequired = patchPlanPreview !== undefined;
+  const previewReady = patchPlanPreview?.state === "ready";
+  const previewAllowsRequest = !previewRequired || (previewReady && patchPlanConfirmed);
+  const canConfirmPatchPlan = previewReady && !patchPlanConfirmed && !pendingRequestId && onConfirmPatchPlan;
+  const canRequest = previewAllowsRequest && request?.state === "ready" && !pendingRequestId && onRequest;
   const tone = edit.state === "planned" || edit.state === "applied" ? "ready" : "warn";
 
   return (
@@ -59,6 +67,33 @@ export function ControlledAgentEditPanel({ metadata, evaluatedEdit, request, pen
                 {diagnostics.map((diagnostic) => <span key={diagnostic}>{sanitizeDisplayText(diagnostic)}</span>)}
               </div>
             )}
+            {patchPlanPreview && (
+              <div className={`readiness-card ${patchPlanPreview.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled patch plan dry-run preview">
+                <div className="row">
+                  <strong>Dry-run patch plan preview</strong>
+                  <span className={patchPlanPreview.state === "ready" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(patchPlanPreview.state)}</span>
+                  <span className="badge">review only</span>
+                  <span className="badge">no auto-apply</span>
+                  {patchPlanConfirmed && <span className="badge ok">confirmed</span>}
+                </div>
+                {patchPlanPreview.state === "ready" ? (
+                  <>
+                    <span>{sanitizeDisplayText(patchPlanPreview.preview.summary)}</span>
+                    <span className="subtle">Plan {sanitizeDisplayText(patchPlanPreview.preview.planId)} · {sanitizeDisplayText(patchPlanPreview.preview.workspaceLabel)} · metadata only {String(patchPlanPreview.preview.metadataOnly)} · dry-run only {String(patchPlanPreview.preview.dryRunOnly)} · automatic apply allowed {String(patchPlanPreview.preview.automaticApplyAllowed)}</span>
+                    <div className="agent-progress-grid" aria-label="Controlled patch plan preview rows">
+                      {patchPlanPreview.preview.rows.map((row) => <span key={`${row.workspaceRelativePath}:${row.lineRangeLabel}`}>{sanitizeDisplayText(row.fileLabel)} · {sanitizeDisplayText(row.lineRangeLabel)} · {sanitizeDisplayText(row.replacementLabel)} · {sanitizeDisplayText(row.replacementByteCountLabel)} · expected {sanitizeDisplayText(row.expectedContentHashLabel)} · user apply required {String(row.requiresUserApply)}</span>)}
+                    </div>
+                    <span className="subtle">Confirming this preview only unlocks the explicit controlled edit request button. It does not apply, read, verify, call providers, run commands, or persist raw patch bodies.</span>
+                    {canConfirmPatchPlan && <button type="button" onClick={onConfirmPatchPlan}>Confirm dry-run preview</button>}
+                  </>
+                ) : (
+                  <>
+                    <span>Unsafe or malformed patch plan preview metadata is non-actionable. No controlled edit request can be posted from this panel.</span>
+                    {patchPlanPreview.diagnostics.map((diagnostic) => <span key={`${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}
+                  </>
+                )}
+              </div>
+            )}
             <div className={`readiness-card ${request?.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled edit request status">
               <div className="row">
                 <strong>Explicit controlled edit request</strong>
@@ -70,6 +105,8 @@ export function ControlledAgentEditPanel({ metadata, evaluatedEdit, request, pen
               {request?.details.replacementByteCount !== undefined && <span>Replacement bytes: {sanitizeDisplayText(String(request.details.replacementByteCount))}</span>}
               {pendingRequestId && <span>Pending request: {sanitizeDisplayText(pendingRequestId)}</span>}
               {note && <span>{sanitizeDisplayText(note)}</span>}
+              {previewRequired && !patchPlanConfirmed && patchPlanPreview?.state === "ready" && <span className="subtle">Confirm the dry-run patch plan preview before requesting the controlled edit.</span>}
+              {patchPlanPreview && patchPlanPreview.state !== "ready" && <span className="subtle">Controlled edit request is disabled because the dry-run patch plan preview is non-actionable.</span>}
               {requestDiagnostics.length > 0 && <span className="subtle">Request diagnostics: {requestDiagnostics.map((diagnostic) => sanitizeDisplayText(diagnostic.code)).join(", ")}</span>}
               <div className="row">
                 {canRequest && <button type="button" onClick={onRequest}>Request controlled edit</button>}
