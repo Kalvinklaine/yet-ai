@@ -6,12 +6,13 @@ import { EngineConnection, getLoopbackOrigin, isBridgeSafeSessionToken, redactRu
 import { isControlledFileReadGuiMessage, isInvalidControlledFileReadRequestMessage, runControlledFileReadRequest } from "./controlledFileRead";
 import { isControlledAgentEditGuiMessage, isInvalidControlledAgentEditRequestMessage, runControlledAgentEditRequest } from "./controlledEdit";
 import { isControlledCommandRunGuiMessage, isInvalidControlledCommandRunRequestMessage, runControlledCommandRunRequest } from "./controlledCommandRun";
+import { isControlledLexicalSearchGuiMessage, isInvalidControlledLexicalSearchRequestMessage, runControlledLexicalSearchRequest } from "./controlledLexicalSearch";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
 
 export type HostMessage =
   | { version: string; type: "host.ready"; requestId?: string; payload?: Record<string, unknown> }
   | { version: string; type: "host.openedFromCommand" | "host.runtimeStatus"; requestId?: never; payload?: Record<string, unknown> }
-  | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentCommandRunResult"; requestId?: string; payload?: Record<string, unknown> };
+  | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult"; requestId?: string; payload?: Record<string, unknown> };
 
 type RuntimeStatusLifecycle = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
 type RuntimeStatusLaunchMode = "auto" | "connect" | "launch" | "preview" | "manual" | "unknown";
@@ -79,7 +80,7 @@ type HostContextPayload = {
 
 type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentCommandRunRequest";
+  type: "gui.ready" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
@@ -170,6 +171,7 @@ const maxForwardedIdeActionMessageBytes = 8192;
 const maxForwardedControlledFileReadMessageBytes = 8192;
 const maxForwardedControlledAgentEditMessageBytes = 65536;
 const maxForwardedControlledCommandRunMessageBytes = 8192;
+const maxForwardedControlledLexicalSearchMessageBytes = 8192;
 const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;
 const maxActiveFileExcerptTextLength = 8000;
 const maxWorkspaceSnippetSearchFileBytes = 1024 * 1024;
@@ -255,6 +257,11 @@ export function openYetAiWebview(
         void runControlledCommandRunRequest({ version: bridgeVersion, type: "gui.controlledAgentCommandRunRequest", requestId, payload: {} }, []).then((result) => panel.webview.postMessage(result));
         return;
       }
+      if (isInvalidControlledLexicalSearchRequestMessage(message)) {
+        const requestId = (message as { requestId: string }).requestId;
+        void runControlledLexicalSearchRequest({ version: bridgeVersion, type: "gui.controlledAgentLexicalSearchRequest", requestId, payload: {} }, []).then((result) => panel.webview.postMessage(result));
+        return;
+      }
       console.log("Yet AI rejected invalid GUI bridge message");
       return;
     }
@@ -281,6 +288,10 @@ export function openYetAiWebview(
     }
     if (message.type === "gui.controlledAgentCommandRunRequest") {
       void handleControlledCommandRunRequest(panel.webview, message);
+      return;
+    }
+    if (message.type === "gui.controlledAgentLexicalSearchRequest") {
+      void handleControlledLexicalSearchRequest(panel.webview, message);
       return;
     }
     guiReady = true;
@@ -313,7 +324,8 @@ export function isPrivilegedGuiMessageType(type: GuiMessage["type"]): type is Pr
     type === "gui.applyWorkspaceEditRequest" ||
     type === "gui.controlledAgentFileReadRequest" ||
     type === "gui.controlledAgentEditRequest" ||
-    type === "gui.controlledAgentCommandRunRequest";
+    type === "gui.controlledAgentCommandRunRequest" ||
+    type === "gui.controlledAgentLexicalSearchRequest";
 }
 
 export function isPrivilegedGuiMessageAllowed(state: PrivilegedGuiReadinessState): boolean {
@@ -346,6 +358,10 @@ export async function rejectPrivilegedGuiMessageBeforeReady(webview: vscode.Webv
   }
   if (message.type === "gui.controlledAgentCommandRunRequest") {
     const result = await runControlledCommandRunRequest({ version: bridgeVersion, type: "gui.controlledAgentCommandRunRequest", requestId, payload: {} }, []);
+    await webview.postMessage(result);
+  }
+  if (message.type === "gui.controlledAgentLexicalSearchRequest") {
+    const result = await runControlledLexicalSearchRequest({ version: bridgeVersion, type: "gui.controlledAgentLexicalSearchRequest", requestId, payload: {} }, []);
     await webview.postMessage(result);
   }
 }
@@ -383,6 +399,19 @@ export async function handleControlledCommandRunRequest(webview: vscode.Webview,
   const result = await runControlledCommandRunRequest({
     version: message.version,
     type: "gui.controlledAgentCommandRunRequest",
+    requestId: message.requestId,
+    payload: message.payload,
+  }, workspaceRoots);
+  await webview.postMessage(result);
+}
+
+export async function handleControlledLexicalSearchRequest(webview: vscode.Webview, message: GuiMessage): Promise<void> {
+  const workspaceRoots = (vscode.workspace.workspaceFolders ?? [])
+    .filter((folder) => folder.uri.scheme === "file")
+    .map((folder) => folder.uri.fsPath);
+  const result = await runControlledLexicalSearchRequest({
+    version: message.version,
+    type: "gui.controlledAgentLexicalSearchRequest",
     requestId: message.requestId,
     payload: message.payload,
   }, workspaceRoots);
@@ -1621,6 +1650,7 @@ const maxForwardedIdeActionMessageBytes = ${maxForwardedIdeActionMessageBytes};
 const maxForwardedControlledFileReadMessageBytes = ${maxForwardedControlledFileReadMessageBytes};
 const maxForwardedControlledAgentEditMessageBytes = ${maxForwardedControlledAgentEditMessageBytes};
 const maxForwardedControlledCommandRunMessageBytes = ${maxForwardedControlledCommandRunMessageBytes};
+const maxForwardedControlledLexicalSearchMessageBytes = ${maxForwardedControlledLexicalSearchMessageBytes};
 let latestHostReady;
 let frameReady = false;
 let frameReadyRequestId;
@@ -1663,6 +1693,13 @@ const isBoundedForwardedControlledCommandRunMessage = (value) => {
     return false;
   }
 };
+const isBoundedForwardedControlledLexicalSearchMessage = (value) => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedControlledLexicalSearchMessageBytes;
+  } catch {
+    return false;
+  }
+};
 const isStrictGuiReadyPayload = (payload) => {
   if (payload === undefined) {
     return true;
@@ -1685,22 +1722,30 @@ const isControlledCommandRunId = (value) => typeof value === "string" && /^[A-Za
 const isControlledCommandRunLimits = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["timeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"].includes(key)) && Number.isInteger(value.timeoutMs) && value.timeoutMs >= 1000 && value.timeoutMs <= 1800000 && Number.isInteger(value.maxOutputBytes) && value.maxOutputBytes >= 1 && value.maxOutputBytes <= 20000 && Number.isInteger(value.maxOutputLines) && value.maxOutputLines >= 1 && value.maxOutputLines <= 400 && value.tailOnly === true && value.commandStringAllowed === false && value.argsAllowed === false && value.cwdAllowed === false && value.envAllowed === false && value.shellAllowed === false;
 const isControlledCommandRunCorrelation = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["origin", "confirmedBy", "confirmationId", "hostCorrelationId"].includes(key)) && value.origin === "user" && value.confirmedBy === "user" && isControlledCommandRunId(value.confirmationId) && isControlledCommandRunId(value.hostCorrelationId) && value.confirmationId !== value.hostCorrelationId;
 const isControlledCommandRunPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "correlation", "commandId", "limits"].includes(key)) && isControlledCommandRunId(payload.requestId) && payload.requestIdMintedBy === "gui" && payload.source === "gui" && payload.assistantMinted === false && isControlledCommandRunId(payload.controlledWorkspaceId) && isControlledCommandRunId(payload.runId) && (payload.runtimeSessionId === undefined || isControlledCommandRunId(payload.runtimeSessionId)) && (payload.sessionId === undefined || isControlledCommandRunId(payload.sessionId)) && isControlledCommandRunId(payload.workspaceReadinessId) && payload.userConfirmed === true && isControlledCommandRunCorrelation(payload.correlation) && isVerificationCommandId(payload.commandId) && isControlledCommandRunLimits(payload.limits);
+const isControlledLexicalSearchId = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value) && !/assistant|sk-(?:proj-)?/i.test(value);
+const isControlledLexicalSearchQuery = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && /\S/.test(value) && !/[\u0000-\u001f\u007f-\u009f]|[*/\\~]|\.\.|[{}[\]()^$+?|]|[;&\`$<>]|\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b|authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
+const isControlledLexicalSearchPath = (value) => isControlledFileReadPath(value);
+const isControlledLexicalSearchScope = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["kind", "controlledWorkspaceOnly", "includePathLabels", "excludeHidden", "excludeDependencies", "excludeGenerated", "excludeBinary", "excludeSecretLikePaths", "recursiveAllowed", "broadWorkspaceScanAllowed"].includes(key)) && value.kind === "controlled_workspace_bounded" && value.controlledWorkspaceOnly === true && Array.isArray(value.includePathLabels) && value.includePathLabels.length >= 1 && value.includePathLabels.length <= 8 && new Set(value.includePathLabels).size === value.includePathLabels.length && value.includePathLabels.every(isControlledLexicalSearchPath) && value.excludeHidden === true && value.excludeDependencies === true && value.excludeGenerated === true && value.excludeBinary === true && value.excludeSecretLikePaths === true && value.recursiveAllowed === false && value.broadWorkspaceScanAllowed === false;
+const isControlledLexicalSearchLimits = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["maxFilesScanned", "maxMatches", "maxSnippetBytes", "literalOnly", "regexAllowed", "globAllowed", "pathQueryAllowed", "indexingAllowed", "backgroundAllowed"].includes(key)) && Number.isInteger(value.maxFilesScanned) && value.maxFilesScanned >= 1 && value.maxFilesScanned <= 200 && Number.isInteger(value.maxMatches) && value.maxMatches >= 0 && value.maxMatches <= 20 && Number.isInteger(value.maxSnippetBytes) && value.maxSnippetBytes >= 1 && value.maxSnippetBytes <= 600 && value.literalOnly === true && value.regexAllowed === false && value.globAllowed === false && value.pathQueryAllowed === false && value.indexingAllowed === false && value.backgroundAllowed === false;
+const controlledLexicalSearchPolicyFlags = { explicitLiteralSearchAllowed: true, hiddenSearchAllowed: false, backgroundSearchAllowed: false, indexingAllowed: false, regexAllowed: false, globAllowed: false, pathQueryAllowed: false, broadWorkspaceScanAllowed: false, fileReadBodyAllowed: false, fileWriteAllowed: false, shellAllowed: false, gitAllowed: false, providerAllowed: false, toolAllowed: false, autoSearchAllowed: false, autoApplyAllowed: false, autoRunAllowed: false };
+const isControlledLexicalSearchPolicyFlags = (value) => isPlainObject(value) && Object.keys(value).every((key) => Object.prototype.hasOwnProperty.call(controlledLexicalSearchPolicyFlags, key)) && Object.entries(controlledLexicalSearchPolicyFlags).every(([key, expected]) => value[key] === expected);
+const isControlledLexicalSearchPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "explicitUserGesture", "userGestureId", "host", "query", "queryMode", "scope", "limits", "policyFlags"].includes(key)) && isControlledLexicalSearchId(payload.requestId) && payload.requestIdMintedBy === "gui" && payload.source === "gui" && payload.assistantMinted === false && isControlledLexicalSearchId(payload.controlledWorkspaceId) && isControlledLexicalSearchId(payload.runId) && (payload.runtimeSessionId === undefined || isControlledLexicalSearchId(payload.runtimeSessionId)) && (payload.sessionId === undefined || isControlledLexicalSearchId(payload.sessionId)) && isControlledLexicalSearchId(payload.workspaceReadinessId) && payload.explicitUserGesture === true && isControlledLexicalSearchId(payload.userGestureId) && payload.host === "vscode" && isControlledLexicalSearchQuery(payload.query) && payload.queryMode === "literal_text" && isControlledLexicalSearchScope(payload.scope) && isControlledLexicalSearchLimits(payload.limits) && isControlledLexicalSearchPolicyFlags(payload.policyFlags);
 const isStrictPosition = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "line" || key === "character") && Number.isInteger(value.line) && Number.isInteger(value.character) && value.line >= 0 && value.line <= 1000000 && value.character >= 0 && value.character <= 1000000;
 const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).every((key) => key === "start" || key === "end") && isStrictPosition(value.start) && isStrictPosition(value.end) && (value.end.line > value.start.line || (value.end.line === value.start.line && value.end.character >= value.start.character));
 const isVerificationCommandId = (value) => value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
 const isWorkspaceSnippetSearchQuery = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && /\S/.test(value) && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/[*/\\~]/.test(value) && !value.includes("..") && !/[{}[\]()^$+?|]/.test(value) && !/[;&\`$<>]/.test(value) && !/\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/.test(value) && !/[A-Za-z]:/.test(value);
 const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)) || (Object.keys(payload).every((key) => key === "action" || key === "query") && payload.action === "searchWorkspaceSnippets" && isWorkspaceSnippetSearchQuery(payload.query)));
-const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)) || (message.type === "gui.controlledAgentFileReadRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledFileReadMessage(message) && isControlledFileReadPayload(message.payload)) || (message.type === "gui.controlledAgentEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentEditMessage(message) && isControlledAgentEditPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentCommandRunRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledCommandRunMessage(message) && isControlledCommandRunPayload(message.payload) && message.payload.requestId === message.requestId));
+const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)) || (message.type === "gui.controlledAgentFileReadRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledFileReadMessage(message) && isControlledFileReadPayload(message.payload)) || (message.type === "gui.controlledAgentEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentEditMessage(message) && isControlledAgentEditPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentCommandRunRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledCommandRunMessage(message) && isControlledCommandRunPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentLexicalSearchRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledLexicalSearchMessage(message) && isControlledLexicalSearchPayload(message.payload) && message.payload.requestId === message.requestId));
 const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0);
 const isSafeRuntimeStatusText = (value) => typeof value === "string" && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => key === "protocolVersion" || key === "surface" || key === "lifecycle" || key === "runtimeOwner" || key === "launchMode" || key === "tokenState" || key === "processState" || key === "diagnosis" || key === "nextAction" || key === "cloudRequired" || key === "authority") && payload.protocolVersion === "2026-06-21" && payload.surface === "vscode" && ["unknown", "checking", "starting", "connected", "degraded", "disconnected", "restarting", "stopped", "auth_mismatch", "invalid_settings", "failed"].includes(payload.lifecycle) && ["ide_host", "external", "user", "test_harness"].includes(payload.runtimeOwner) && ["auto", "connect", "launch", "preview", "manual", "unknown"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "checking", "starting", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeRuntimeStatusText(payload.diagnosis) && isSafeRuntimeStatusText(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
-const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : message.type === "host.runtimeStatus" ? message.requestId === undefined && isHostRuntimeStatusPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentCommandRunResult"));
+const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : message.type === "host.runtimeStatus" ? message.requestId === undefined && isHostRuntimeStatusPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentCommandRunResult" || message.type === "host.controlledAgentLexicalSearchResult"));
 const sendToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
   }
 };
-const isPrivilegedGuiMessageType = (type) => type === "gui.ideActionRequest" || type === "gui.applyWorkspaceEditRequest" || type === "gui.controlledAgentFileReadRequest" || type === "gui.controlledAgentEditRequest" || type === "gui.controlledAgentCommandRunRequest";
+const isPrivilegedGuiMessageType = (type) => type === "gui.ideActionRequest" || type === "gui.applyWorkspaceEditRequest" || type === "gui.controlledAgentFileReadRequest" || type === "gui.controlledAgentEditRequest" || type === "gui.controlledAgentCommandRunRequest" || type === "gui.controlledAgentLexicalSearchRequest";
 const canForwardPrivilegedGuiMessage = () => frameReady && frameReadyRequestId !== undefined && latestHostReady && latestHostReady.requestId === frameReadyRequestId;
 const replayHostReady = () => {
   if (canForwardPrivilegedGuiMessage()) {
@@ -1950,7 +1995,8 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
       (record.type === "gui.applyWorkspaceEditRequest" && isBoundedForwardedApplyWorkspaceEditMessage(record) && parseApplyWorkspaceEditRequest(record as GuiMessage) !== undefined) ||
       (record.type === "gui.controlledAgentFileReadRequest" && isBoundedForwardedControlledFileReadMessage(record) && isControlledFileReadGuiMessage(record)) ||
       (record.type === "gui.controlledAgentEditRequest" && isBoundedForwardedControlledAgentEditMessage(record) && isControlledAgentEditGuiMessage(record)) ||
-      (record.type === "gui.controlledAgentCommandRunRequest" && isBoundedForwardedControlledCommandRunMessage(record) && isControlledCommandRunGuiMessage(record)))
+      (record.type === "gui.controlledAgentCommandRunRequest" && isBoundedForwardedControlledCommandRunMessage(record) && isControlledCommandRunGuiMessage(record)) ||
+      (record.type === "gui.controlledAgentLexicalSearchRequest" && isBoundedForwardedControlledLexicalSearchMessage(record) && isControlledLexicalSearchGuiMessage(record)))
   );
 }
 
@@ -1981,6 +2027,21 @@ export function isInvalidIdeActionRequestMessage(value: unknown): value is GuiMe
     isRequiredRequestId(record.requestId) &&
     isBoundedForwardedIdeActionMessage(record) &&
     parseIdeActionRequest(record as GuiMessage) === undefined
+  );
+}
+
+export function isInvalidControlledLexicalSearchGuiMessage(value: unknown): value is GuiMessage & { requestId: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return (
+    hasOnlyKeys(record, ["version", "type", "requestId", "payload"]) &&
+    record.version === bridgeVersion &&
+    record.type === "gui.controlledAgentLexicalSearchRequest" &&
+    isRequiredRequestId(record.requestId) &&
+    isBoundedForwardedControlledLexicalSearchMessage(record) &&
+    isInvalidControlledLexicalSearchRequestMessage(record)
   );
 }
 
@@ -2019,6 +2080,14 @@ function isBoundedForwardedControlledAgentEditMessage(value: Record<string, unkn
 function isBoundedForwardedControlledCommandRunMessage(value: Record<string, unknown>): boolean {
   try {
     return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedControlledCommandRunMessageBytes;
+  } catch {
+    return false;
+  }
+}
+
+function isBoundedForwardedControlledLexicalSearchMessage(value: Record<string, unknown>): boolean {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedControlledLexicalSearchMessageBytes;
   } catch {
     return false;
   }
