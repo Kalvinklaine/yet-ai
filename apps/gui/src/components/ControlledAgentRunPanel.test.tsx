@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worktreeReadiness from "../../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
+import authorityRegistry from "../../../../packages/contracts/examples/engine/controlled-agent-authority-registry-v1.json";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "../services/controlledAgentRunState";
 import { ControlledAgentRunPanel } from "./ControlledAgentRunPanel";
 
@@ -85,6 +86,46 @@ describe("ControlledAgentRunPanel", () => {
     expect(text).toContain("Host: JetBrains host · Partial fail-closed metadata only");
     expect(text).toContain("Capabilities: Start: unsupported fail-closed · Read: unsupported fail-closed · Edit: unsupported fail-closed · Verification: unsupported fail-closed · Repair: unsupported fail-closed");
     expect(text).toContain("These labels are safe display evidence only; unsupported hosts remain disabled and fail-closed.");
+    expect(findButton("Start controlled dev-preview").disabled).toBe(true);
+  });
+
+  it("renders S109 authority registry evidence as sanitized display-only status", () => {
+    renderPanel(readyState(), "vscode");
+
+    const text = panelText();
+    expect(text).toContain("S109 authority registry evidence");
+    expect(text).toContain("registry status");
+    expect(text).toContain("display-only evidence");
+    expect(text).toContain("not a permission grant");
+    expect(text).toContain("metadata only");
+    expect(text).toContain("S109 contract registry for bounded dev preview authority vocabulary only.");
+    expect(text).toContain("Categories: 9 total · metadata evidence 8 · fail-closed or blocked 1");
+    expect(text).toContain("Hosts: Browser unsupported for trusted execution · VS Code first execution host · JetBrains fail closed until verified");
+    expect(text).toContain("Authority booleans: execute false · read false · search false · apply false · verification false · provider tools false · shell false · git false · network false");
+    expect(text).toContain("Registry status is sanitized evidence for future S110-S124 contracts only.");
+    expect(text).toContain("grants no authority");
+    expect(text).not.toContain(JSON.stringify(authorityRegistry.categories.fileRead));
+    expect(text).not.toContain("safe workspace relative path");
+    expect(text).not.toContain("repository-check");
+    expect(buttonTexts()).not.toContain("Search");
+    expect(buttonTexts()).not.toContain("Apply");
+    expect(buttonTexts()).not.toContain("Verification");
+    expect(buttonTexts()).not.toContain("Provider");
+    expect(findButton("Start controlled dev-preview").disabled).toBe(true);
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("keeps unsupported host registry limitations visible without action authority", () => {
+    renderPanel(readyState(), "browser");
+    expect(panelText()).toContain("Browser unsupported for trusted execution");
+    expect(panelText()).toContain("JetBrains fail closed until verified");
+    expect(panelText()).toContain("Browser preview cannot start the controlled local agent dev-preview.");
+
+    renderPanel(readyState(), "jetbrains");
+    expect(panelText()).toContain("Browser unsupported for trusted execution");
+    expect(panelText()).toContain("JetBrains fail closed until verified");
+    expect(panelText()).toContain("JetBrains host support is partial in this VS Code-first dev-preview.");
     expect(findButton("Start controlled dev-preview").disabled).toBe(true);
   });
 

@@ -1,10 +1,12 @@
 import { useMemo } from "react";
+import authorityRegistry from "../../../../packages/contracts/examples/engine/controlled-agent-authority-registry-v1.json";
 import type { BridgeHost } from "../bridge/bridgeAdapter";
 import { createControlledAgentDevPreviewReport } from "../services/controlledAgentDevPreviewReport";
 import type { ControlledAgentProgressReport } from "../services/controlledAgentProgressReport";
 import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledAgentDevPreviewStatus";
 import type { ControlledLocalAgentMvpReport } from "../services/controlledLocalAgentMvp";
 import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
+import { evaluateControlledAgentAuthorityRegistry } from "../services/controlledAgentAuthorityRegistry";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
 
@@ -31,6 +33,10 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
   const progressDiagnostics = progressReport?.diagnostics.slice(0, 6) ?? [];
   const mvpDiagnostics = mvpReport?.diagnostics.slice(0, 6) ?? [];
   const runtimeSessionDiagnostics = mvpReport?.runtimeSession.diagnostics.slice(0, 6) ?? [];
+  const authorityRegistrySummary = useMemo(() => evaluateControlledAgentAuthorityRegistry(authorityRegistry), []);
+  const authorityCategoryEntries = useMemo(() => Object.values(authorityRegistrySummary.categories), [authorityRegistrySummary.categories]);
+  const authorityAllowedCategoryCount = authorityCategoryEntries.filter((item) => item.decision === "metadata_only" && item.state !== "blocked").length;
+  const authorityBlockedCategoryCount = authorityCategoryEntries.length - authorityAllowedCategoryCount;
   const stopDisabled = state.stopped || state.phase === "idle" || state.phase === "opt_in_required" || state.phase === "blocked" || state.phase === "failed" || state.phase === "completed";
   const devPreviewStatus = evaluateControlledAgentDevPreviewStatus({
     host,
@@ -92,6 +98,20 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
           <span className="subtle">These labels are safe display evidence only; unsupported hosts remain disabled and fail-closed.</span>
         </section>
       )}
+      <section className="readiness-card warn stack" role="status" aria-label="Controlled agent authority registry evidence">
+        <div className="row">
+          <strong>S109 authority registry evidence</strong>
+          <span className="badge">registry status</span>
+          <span className="badge">display-only evidence</span>
+          <span className="badge">not a permission grant</span>
+          <span className={authorityRegistrySummary.decision === "metadata_only" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(authorityRegistrySummary.decision.replace(/_/g, " "))}</span>
+        </div>
+        <span>{sanitizeDisplayText(authorityRegistrySummary.summary)}</span>
+        <span>Categories: {authorityCategoryEntries.length} total · metadata evidence {authorityAllowedCategoryCount} · fail-closed or blocked {authorityBlockedCategoryCount}</span>
+        <span>Hosts: Browser {sanitizeDisplayText(authorityRegistrySummary.hosts.browser.supportState.replace(/_/g, " "))} · VS Code {sanitizeDisplayText(authorityRegistrySummary.hosts.vscode.supportState.replace(/_/g, " "))} · JetBrains {sanitizeDisplayText(authorityRegistrySummary.hosts.jetbrains.supportState.replace(/_/g, " "))}</span>
+        <span>Authority booleans: execute {String(authorityRegistrySummary.allowedToExecute)} · read {String(authorityRegistrySummary.canReadFiles)} · search {String(authorityRegistrySummary.canSearchWorkspace)} · apply {String(authorityRegistrySummary.canApplyEdits)} · verification {String(authorityRegistrySummary.canRunVerification)} · provider tools {String(authorityRegistrySummary.canCallProviderTools)} · shell {String(authorityRegistrySummary.canRunShell)} · git {String(authorityRegistrySummary.canUseGit)} · network {String(authorityRegistrySummary.canUseNetwork)}</span>
+        <span className="subtle">Registry status is sanitized evidence for future S110-S124 contracts only. It posts no bridge request, starts no search, reads no files, applies no edits, runs no verification, calls no provider, writes no storage, and grants no authority.</span>
+      </section>
       <section className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">
           <strong>Dev-preview readiness</strong>
