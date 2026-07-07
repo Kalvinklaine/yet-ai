@@ -152,6 +152,10 @@ const mappings = [
     "packages/contracts/examples/engine/controlled-agent-authority-registry-v1.json",
     "packages/contracts/schemas/engine/controlled-agent-authority-registry.schema.json"
   ],
+  [
+    "packages/contracts/examples/engine/controlled-agent-lexical-search-succeeded.json",
+    "packages/contracts/schemas/engine/controlled-agent-lexical-search.schema.json"
+  ],
   ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
@@ -274,12 +278,14 @@ const mappings = [
   ["packages/contracts/examples/bridge/gui-controlled-agent-file-read-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-controlled-agent-edit-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/gui-controlled-agent-command-run-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
+  ["packages/contracts/examples/bridge/gui-controlled-agent-lexical-search-request.json", "packages/contracts/schemas/bridge/gui-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-progress-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-ide-action-result-search-workspace-snippets-rejected.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-success.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-controlled-agent-file-read-result-blocked.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ["packages/contracts/examples/bridge/host-controlled-agent-command-run-result-succeeded.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
+  ["packages/contracts/examples/bridge/host-controlled-agent-lexical-search-result-succeeded.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ...[
     "host-controlled-agent-edit-result-applied.json",
     "host-controlled-agent-edit-result-blocked.json",
@@ -655,7 +661,15 @@ const invalidMappings = [
     "gui-controlled-agent-command-run-request-args-cwd-env.json",
     "gui-controlled-agent-command-run-request-assistant-minted.json",
     "gui-controlled-agent-command-run-request-unconfirmed.json",
-    "gui-controlled-agent-command-run-request-unknown-command.json"
+    "gui-controlled-agent-command-run-request-unknown-command.json",
+    "gui-controlled-agent-lexical-search-request-assistant-minted.json",
+    "gui-controlled-agent-lexical-search-request-browser-host.json",
+    "gui-controlled-agent-lexical-search-request-jetbrains-host.json",
+    "gui-controlled-agent-lexical-search-request-regex.json",
+    "gui-controlled-agent-lexical-search-request-glob.json",
+    "gui-controlled-agent-lexical-search-request-private-path.json",
+    "gui-controlled-agent-lexical-search-request-indexing.json",
+    "gui-controlled-agent-lexical-search-request-tool-field.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/gui-message.schema.json"
@@ -772,7 +786,11 @@ const invalidMappings = [
     "host-controlled-agent-edit-result-widened-authority.json",
     "host-controlled-agent-edit-result-raw-body-included.json",
     "host-controlled-agent-command-run-result-raw-output.json",
-    "host-controlled-agent-command-run-result-private-path.json"
+    "host-controlled-agent-command-run-result-private-path.json",
+    "host-controlled-agent-lexical-search-result-browser-success.json",
+    "host-controlled-agent-lexical-search-result-secret-snippet.json",
+    "host-controlled-agent-lexical-search-result-private-path.json",
+    "host-controlled-agent-lexical-search-result-raw-content-field.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/bridge/${fileName}`,
     "packages/contracts/schemas/bridge/host-message.schema.json"
@@ -1222,6 +1240,23 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-authority-registry.schema.json"
+  ]),
+  ...[
+    "controlled-agent-lexical-search-assistant-minted.json",
+    "controlled-agent-lexical-search-regex-query.json",
+    "controlled-agent-lexical-search-glob-query.json",
+    "controlled-agent-lexical-search-private-path.json",
+    "controlled-agent-lexical-search-hidden-path.json",
+    "controlled-agent-lexical-search-dependency-path.json",
+    "controlled-agent-lexical-search-broad-recursive.json",
+    "controlled-agent-lexical-search-indexing.json",
+    "controlled-agent-lexical-search-browser-execution.json",
+    "controlled-agent-lexical-search-jetbrains-execution.json",
+    "controlled-agent-lexical-search-provider-field.json",
+    "controlled-agent-lexical-search-secret-snippet.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-lexical-search.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",

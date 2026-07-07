@@ -1,0 +1,111 @@
+{
+  "kind": "controlled_agent_lexical_search",
+  "version": "2026-07-07",
+  "authority": "explicit_literal_lexical_search_metadata",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "agentStartAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "workspace-s110-search",
+    "runId": "run-s110-search",
+    "runtimeSessionId": "runtime-s110-search",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "hostSupport": "vscode_supported",
+    "privatePathExposed": false,
+    "workspaceLabel": "Controlled worktree"
+  },
+  "request": {
+    "requestId": "gui-s110-search-1",
+    "source": "gui",
+    "requestIdMintedBy": "gui",
+    "assistantMinted": false,
+    "explicitUserGesture": true,
+    "userGestureId": "gesture-s110-search-1",
+    "query": "chat.*composer",
+    "queryMode": "regex",
+    "scope": {
+      "kind": "controlled_workspace_bounded",
+      "controlledWorkspaceOnly": true,
+      "includePathLabels": [
+        "apps/gui/src/App.tsx",
+        "apps/gui/src/bridge/bridgeAdapter.ts"
+      ],
+      "excludeHidden": true,
+      "excludeDependencies": true,
+      "excludeGenerated": true,
+      "excludeBinary": true,
+      "excludeSecretLikePaths": true,
+      "recursiveAllowed": false,
+      "broadWorkspaceScanAllowed": false
+    },
+    "limits": {
+      "maxFilesScanned": 40,
+      "maxMatches": 10,
+      "maxSnippetBytes": 400,
+      "maxTotalSnippetBytes": 2000,
+      "literalOnly": true,
+      "regexAllowed": true,
+      "globAllowed": false,
+      "pathQueryAllowed": false,
+      "indexingAllowed": false,
+      "backgroundAllowed": false,
+      "limitLabel": "Small literal snippet search"
+    },
+    "requestedAt": "2026-07-07T10:00:00Z",
+    "reason": "User approved one bounded literal snippet search"
+  },
+  "policyFlags": {
+    "explicitLiteralSearchAllowed": true,
+    "hiddenSearchAllowed": false,
+    "backgroundSearchAllowed": false,
+    "indexingAllowed": false,
+    "regexAllowed": false,
+    "globAllowed": false,
+    "pathQueryAllowed": false,
+    "broadWorkspaceScanAllowed": false,
+    "fileReadBodyAllowed": false,
+    "fileWriteAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "providerAllowed": false,
+    "toolAllowed": false,
+    "autoSearchAllowed": false,
+    "autoApplyAllowed": false,
+    "autoRunAllowed": false
+  },
+  "result": {
+    "status": "succeeded",
+    "cloudRequired": false,
+    "searchAllowed": true,
+    "privatePathExposed": false,
+    "rawContentIncluded": false,
+    "resultCount": 1,
+    "totalMatchCount": 1,
+    "totalSnippetBytes": 74,
+    "truncated": false,
+    "resultHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "snippets": [
+      {
+        "pathLabel": "apps/gui/src/App.tsx",
+        "range": {
+          "start": {
+            "line": 42,
+            "character": 2
+          },
+          "end": {
+            "line": 44,
+            "character": 1
+          }
+        },
+        "languageId": "typescriptreact",
+        "snippet": "function ChatComposer() {\n  return null;\n}",
+        "snippetByteCount": 41,
+        "snippetHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "matchCount": 1,
+        "truncated": false
+      }
+    ],
+    "message": "Literal snippet search returned sanitized metadata"
+  }
+}

@@ -23,7 +23,8 @@
         "gui.applyWorkspaceEditRequest",
         "gui.controlledAgentFileReadRequest",
         "gui.controlledAgentEditRequest",
-        "gui.controlledAgentCommandRunRequest"
+        "gui.controlledAgentCommandRunRequest",
+        "gui.controlledAgentLexicalSearchRequest"
       ]
     },
     "requestId": {
@@ -50,7 +51,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 1000,
-      "pattern": "^(?!.*(?:[\u0000-\u001f-]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
+      "pattern": "^(?!.*(?:[\u0000-\u001f\u007f-\u009f]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
     },
     "position": {
       "type": "object",
@@ -916,26 +917,86 @@
         "autoFixAllowed"
       ],
       "properties": {
-        "allowlistedCommandIdOnly": { "type": "boolean", "const": true },
-        "freeformCommandAllowed": { "type": "boolean", "const": false },
-        "argsAllowed": { "type": "boolean", "const": false },
-        "cwdAllowed": { "type": "boolean", "const": false },
-        "envAllowed": { "type": "boolean", "const": false },
-        "shellAllowed": { "type": "boolean", "const": false },
-        "gitAllowed": { "type": "boolean", "const": false },
-        "networkAllowed": { "type": "boolean", "const": false },
-        "providerAllowed": { "type": "boolean", "const": false },
-        "toolAllowed": { "type": "boolean", "const": false },
-        "packageInstallAllowed": { "type": "boolean", "const": false },
-        "fileReadAllowed": { "type": "boolean", "const": false },
-        "fileWriteAllowed": { "type": "boolean", "const": false },
-        "hiddenSearchAllowed": { "type": "boolean", "const": false },
-        "indexingAllowed": { "type": "boolean", "const": false },
-        "autoStartAllowed": { "type": "boolean", "const": false },
-        "autoApplyAllowed": { "type": "boolean", "const": false },
-        "autoRunAllowed": { "type": "boolean", "const": false },
-        "autoVerifyAllowed": { "type": "boolean", "const": false },
-        "autoFixAllowed": { "type": "boolean", "const": false }
+        "allowlistedCommandIdOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "freeformCommandAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "argsAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "cwdAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "envAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "gitAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "networkAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "packageInstallAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileReadAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileWriteAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "hiddenSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "indexingAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoStartAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoApplyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoRunAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoVerifyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoFixAllowed": {
+          "type": "boolean",
+          "const": false
+        }
       }
     },
     "controlledAgentCommandRunRequestPayload": {
@@ -955,19 +1016,344 @@
         "policyFlags"
       ],
       "properties": {
-        "requestId": { "$ref": "#/$defs/safeId" },
-        "requestIdMintedBy": { "type": "string", "const": "gui" },
-        "source": { "type": "string", "const": "gui" },
-        "assistantMinted": { "type": "boolean", "const": false },
-        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
-        "runId": { "$ref": "#/$defs/safeId" },
-        "runtimeSessionId": { "$ref": "#/$defs/safeId" },
-        "sessionId": { "$ref": "#/$defs/safeId" },
-        "workspaceReadinessId": { "$ref": "#/$defs/safeId" },
-        "userConfirmed": { "type": "boolean", "const": true },
-        "commandId": { "$ref": "#/$defs/verificationCommandId" },
-        "limits": { "$ref": "#/$defs/controlledAgentCommandRunLimits" },
-        "policyFlags": { "$ref": "#/$defs/controlledAgentCommandRunPolicyFlags" }
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "const": "gui"
+        },
+        "source": {
+          "type": "string",
+          "const": "gui"
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "controlledWorkspaceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runtimeSessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceReadinessId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "userConfirmed": {
+          "type": "boolean",
+          "const": true
+        },
+        "commandId": {
+          "$ref": "#/$defs/verificationCommandId"
+        },
+        "limits": {
+          "$ref": "#/$defs/controlledAgentCommandRunLimits"
+        },
+        "policyFlags": {
+          "$ref": "#/$defs/controlledAgentCommandRunPolicyFlags"
+        }
+      }
+    },
+    "controlledAgentLexicalSearchQuery": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^(?!.*(?:[\\u0000-\\u001f\\u007f-\\u009f]|[*/\\\\~]|\\.\\.|[{}[\\]()^$+?|]|[;&`$<>]|\\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\\b|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[\\s\\S]*\\S[\\s\\S]*$"
+    },
+    "controlledAgentLexicalSearchLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxFilesScanned",
+        "maxMatches",
+        "maxSnippetBytes",
+        "literalOnly",
+        "regexAllowed",
+        "globAllowed",
+        "pathQueryAllowed",
+        "indexingAllowed",
+        "backgroundAllowed"
+      ],
+      "properties": {
+        "maxFilesScanned": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "maxMatches": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "maxSnippetBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "literalOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "regexAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "globAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "pathQueryAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "indexingAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "backgroundAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "controlledAgentLexicalSearchPolicyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "explicitLiteralSearchAllowed",
+        "hiddenSearchAllowed",
+        "backgroundSearchAllowed",
+        "indexingAllowed",
+        "regexAllowed",
+        "globAllowed",
+        "pathQueryAllowed",
+        "broadWorkspaceScanAllowed",
+        "fileReadBodyAllowed",
+        "fileWriteAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "autoSearchAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed"
+      ],
+      "properties": {
+        "explicitLiteralSearchAllowed": {
+          "type": "boolean",
+          "const": true
+        },
+        "hiddenSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "backgroundSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "indexingAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "regexAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "globAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "pathQueryAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "broadWorkspaceScanAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileReadBodyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileWriteAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "gitAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoApplyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoRunAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "controlledAgentLexicalSearchRequestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "requestIdMintedBy",
+        "source",
+        "assistantMinted",
+        "controlledWorkspaceId",
+        "runId",
+        "workspaceReadinessId",
+        "explicitUserGesture",
+        "userGestureId",
+        "host",
+        "query",
+        "queryMode",
+        "scope",
+        "limits",
+        "policyFlags"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "const": "gui"
+        },
+        "source": {
+          "type": "string",
+          "const": "gui"
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "controlledWorkspaceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runtimeSessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceReadinessId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "explicitUserGesture": {
+          "type": "boolean",
+          "const": true
+        },
+        "userGestureId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "host": {
+          "type": "string",
+          "const": "vscode"
+        },
+        "query": {
+          "$ref": "#/$defs/controlledAgentLexicalSearchQuery"
+        },
+        "queryMode": {
+          "type": "string",
+          "const": "literal_text"
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "controlledWorkspaceOnly",
+            "includePathLabels",
+            "excludeHidden",
+            "excludeDependencies",
+            "excludeGenerated",
+            "excludeBinary",
+            "excludeSecretLikePaths",
+            "recursiveAllowed",
+            "broadWorkspaceScanAllowed"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "controlled_workspace_bounded"
+            },
+            "controlledWorkspaceOnly": {
+              "type": "boolean",
+              "const": true
+            },
+            "includePathLabels": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 8,
+              "items": {
+                "$ref": "#/$defs/controlledAgentFileReadPath"
+              },
+              "uniqueItems": true
+            },
+            "excludeHidden": {
+              "type": "boolean",
+              "const": true
+            },
+            "excludeDependencies": {
+              "type": "boolean",
+              "const": true
+            },
+            "excludeGenerated": {
+              "type": "boolean",
+              "const": true
+            },
+            "excludeBinary": {
+              "type": "boolean",
+              "const": true
+            },
+            "excludeSecretLikePaths": {
+              "type": "boolean",
+              "const": true
+            },
+            "recursiveAllowed": {
+              "type": "boolean",
+              "const": false
+            },
+            "broadWorkspaceScanAllowed": {
+              "type": "boolean",
+              "const": false
+            }
+          }
+        },
+        "limits": {
+          "$ref": "#/$defs/controlledAgentLexicalSearchLimits"
+        },
+        "policyFlags": {
+          "$ref": "#/$defs/controlledAgentLexicalSearchPolicyFlags"
+        }
       }
     }
   },
@@ -1172,6 +1558,48 @@
           },
           "payload": {
             "$ref": "#/$defs/controlledAgentCommandRunRequestPayload"
+          }
+        },
+        "allOf": [
+          {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "const": {
+                      "$data": "2/requestId"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "gui.controlledAgentLexicalSearchRequest"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/controlledAgentLexicalSearchRequestPayload"
           }
         },
         "allOf": [

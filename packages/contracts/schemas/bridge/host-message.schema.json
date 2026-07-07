@@ -26,7 +26,8 @@
         "host.runtimeStatus",
         "host.controlledAgentFileReadResult",
         "host.controlledAgentEditResult",
-        "host.controlledAgentCommandRunResult"
+        "host.controlledAgentCommandRunResult",
+        "host.controlledAgentLexicalSearchResult"
       ]
     },
     "requestId": {
@@ -59,7 +60,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 1000,
-      "pattern": "^(?!.*(?:[\u0000-\u001f-]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
+      "pattern": "^(?!.*(?:[\u0000-\u001f\u007f-\u009f]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][_-]?[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Rr][Aa][Ww][_-]?[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee][_-]?[Cc][Oo][Nn][Tt][Ee][Nn][Tt]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,})).*$"
     },
     "activeEditorContext": {
       "type": "object",
@@ -2738,26 +2739,86 @@
         "autoFixAllowed"
       ],
       "properties": {
-        "allowlistedCommandIdOnly": { "type": "boolean", "const": true },
-        "freeformCommandAllowed": { "type": "boolean", "const": false },
-        "argsAllowed": { "type": "boolean", "const": false },
-        "cwdAllowed": { "type": "boolean", "const": false },
-        "envAllowed": { "type": "boolean", "const": false },
-        "shellAllowed": { "type": "boolean", "const": false },
-        "gitAllowed": { "type": "boolean", "const": false },
-        "networkAllowed": { "type": "boolean", "const": false },
-        "providerAllowed": { "type": "boolean", "const": false },
-        "toolAllowed": { "type": "boolean", "const": false },
-        "packageInstallAllowed": { "type": "boolean", "const": false },
-        "fileReadAllowed": { "type": "boolean", "const": false },
-        "fileWriteAllowed": { "type": "boolean", "const": false },
-        "hiddenSearchAllowed": { "type": "boolean", "const": false },
-        "indexingAllowed": { "type": "boolean", "const": false },
-        "autoStartAllowed": { "type": "boolean", "const": false },
-        "autoApplyAllowed": { "type": "boolean", "const": false },
-        "autoRunAllowed": { "type": "boolean", "const": false },
-        "autoVerifyAllowed": { "type": "boolean", "const": false },
-        "autoFixAllowed": { "type": "boolean", "const": false }
+        "allowlistedCommandIdOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "freeformCommandAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "argsAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "cwdAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "envAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "gitAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "networkAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "packageInstallAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileReadAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileWriteAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "hiddenSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "indexingAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoStartAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoApplyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoRunAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoVerifyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoFixAllowed": {
+          "type": "boolean",
+          "const": false
+        }
       }
     },
     "controlledAgentCommandRunResultDetails": {
@@ -2785,12 +2846,27 @@
             "killed"
           ]
         },
-        "cloudRequired": { "type": "boolean", "const": false },
-        "freeformCommandAllowed": { "type": "boolean", "const": false },
-        "privatePathExposed": { "type": "boolean", "const": false },
-        "rawOutputIncluded": { "type": "boolean", "const": false },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "freeformCommandAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawOutputIncluded": {
+          "type": "boolean",
+          "const": false
+        },
         "exitCode": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0,
           "maximum": 255
         },
@@ -2799,8 +2875,12 @@
           "minimum": 0,
           "maximum": 1800000
         },
-        "truncated": { "type": "boolean" },
-        "outputTail": { "$ref": "#/$defs/controlledAgentCommandRunOutputTail" },
+        "truncated": {
+          "type": "boolean"
+        },
+        "outputTail": {
+          "$ref": "#/$defs/controlledAgentCommandRunOutputTail"
+        },
         "outputByteCount": {
           "type": "integer",
           "minimum": 0,
@@ -2811,7 +2891,9 @@
           "minimum": 0,
           "maximum": 400
         },
-        "resultHash": { "$ref": "#/$defs/safeHash" },
+        "resultHash": {
+          "$ref": "#/$defs/safeHash"
+        },
         "blockedReason": {
           "type": "string",
           "enum": [
@@ -2825,7 +2907,9 @@
             "output_limit_exceeds_limit"
           ]
         },
-        "message": { "$ref": "#/$defs/safeSummary" }
+        "message": {
+          "$ref": "#/$defs/safeSummary"
+        }
       }
     },
     "controlledAgentCommandRunResultPayload": {
@@ -2849,27 +2933,73 @@
         "truncated"
       ],
       "properties": {
-        "requestId": { "$ref": "#/$defs/safeId" },
-        "requestIdMintedBy": { "type": "string", "const": "gui" },
-        "userConfirmed": { "type": "boolean", "const": true },
-        "controlledWorkspaceId": { "$ref": "#/$defs/safeId" },
-        "runId": { "$ref": "#/$defs/safeId" },
-        "runtimeSessionId": { "$ref": "#/$defs/safeId" },
-        "sessionId": { "$ref": "#/$defs/safeId" },
-        "workspaceReadinessId": { "$ref": "#/$defs/safeId" },
-        "commandId": { "$ref": "#/$defs/verificationCommandId" },
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "const": "gui"
+        },
+        "userConfirmed": {
+          "type": "boolean",
+          "const": true
+        },
+        "controlledWorkspaceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runtimeSessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceReadinessId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "commandId": {
+          "$ref": "#/$defs/verificationCommandId"
+        },
         "status": {
           "type": "string",
-          "enum": ["blocked", "running", "succeeded", "failed", "timed_out", "killed"]
+          "enum": [
+            "blocked",
+            "running",
+            "succeeded",
+            "failed",
+            "timed_out",
+            "killed"
+          ]
         },
-        "authority": { "type": "string", "const": "allowlisted_command_id" },
-        "cloudRequired": { "type": "boolean", "const": false },
-        "executionAllowed": { "type": "boolean", "const": false },
-        "freeformCommandAllowed": { "type": "boolean", "const": false },
-        "policyFlags": { "$ref": "#/$defs/controlledAgentCommandRunPolicyFlags" },
-        "message": { "$ref": "#/$defs/safeSummary" },
+        "authority": {
+          "type": "string",
+          "const": "allowlisted_command_id"
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "executionAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "freeformCommandAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "policyFlags": {
+          "$ref": "#/$defs/controlledAgentCommandRunPolicyFlags"
+        },
+        "message": {
+          "$ref": "#/$defs/safeSummary"
+        },
         "exitCode": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 0,
           "maximum": 255
         },
@@ -2878,7 +3008,9 @@
           "minimum": 0,
           "maximum": 1800000
         },
-        "outputTail": { "$ref": "#/$defs/controlledAgentCommandRunOutputTail" },
+        "outputTail": {
+          "$ref": "#/$defs/controlledAgentCommandRunOutputTail"
+        },
         "outputByteCount": {
           "type": "integer",
           "minimum": 0,
@@ -2889,14 +3021,26 @@
           "minimum": 0,
           "maximum": 400
         },
-        "resultHash": { "$ref": "#/$defs/safeHash" },
-        "truncated": { "type": "boolean" }
+        "resultHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "truncated": {
+          "type": "boolean"
+        }
       },
       "allOf": [
         {
           "if": {
-            "properties": { "status": { "enum": ["blocked"] } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "enum": [
+                  "blocked"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
             "properties": {
@@ -2906,14 +3050,22 @@
               "outputByteCount": false,
               "outputLineCount": false,
               "resultHash": false,
-              "truncated": { "const": false }
+              "truncated": {
+                "const": false
+              }
             }
           }
         },
         {
           "if": {
-            "properties": { "status": { "const": "running" } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "const": "running"
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
             "properties": {
@@ -2922,39 +3074,484 @@
               "outputByteCount": false,
               "outputLineCount": false,
               "resultHash": false,
-              "truncated": { "const": false }
+              "truncated": {
+                "const": false
+              }
             },
-            "required": ["durationMs"]
+            "required": [
+              "durationMs"
+            ]
           }
         },
         {
           "if": {
-            "properties": { "status": { "const": "succeeded" } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
-            "properties": { "exitCode": { "const": 0 } },
-            "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+            "properties": {
+              "exitCode": {
+                "const": 0
+              }
+            },
+            "required": [
+              "exitCode",
+              "durationMs",
+              "outputTail",
+              "outputByteCount",
+              "outputLineCount",
+              "resultHash"
+            ]
           }
         },
         {
           "if": {
-            "properties": { "status": { "const": "failed" } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "const": "failed"
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
-            "properties": { "exitCode": { "not": { "const": 0 } } },
-            "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+            "properties": {
+              "exitCode": {
+                "not": {
+                  "const": 0
+                }
+              }
+            },
+            "required": [
+              "exitCode",
+              "durationMs",
+              "outputTail",
+              "outputByteCount",
+              "outputLineCount",
+              "resultHash"
+            ]
           }
         },
         {
           "if": {
-            "properties": { "status": { "enum": ["timed_out", "killed"] } },
-            "required": ["status"]
+            "properties": {
+              "status": {
+                "enum": [
+                  "timed_out",
+                  "killed"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
           },
           "then": {
-            "properties": { "exitCode": { "type": "null" } },
-            "required": ["exitCode", "durationMs", "outputTail", "outputByteCount", "outputLineCount", "resultHash"]
+            "properties": {
+              "exitCode": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "exitCode",
+              "durationMs",
+              "outputTail",
+              "outputByteCount",
+              "outputLineCount",
+              "resultHash"
+            ]
+          }
+        }
+      ]
+    },
+    "controlledAgentLexicalSearchPolicyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "explicitLiteralSearchAllowed",
+        "hiddenSearchAllowed",
+        "backgroundSearchAllowed",
+        "indexingAllowed",
+        "regexAllowed",
+        "globAllowed",
+        "pathQueryAllowed",
+        "broadWorkspaceScanAllowed",
+        "fileReadBodyAllowed",
+        "fileWriteAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "providerAllowed",
+        "toolAllowed",
+        "autoSearchAllowed",
+        "autoApplyAllowed",
+        "autoRunAllowed"
+      ],
+      "properties": {
+        "explicitLiteralSearchAllowed": {
+          "type": "boolean",
+          "const": true
+        },
+        "hiddenSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "backgroundSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "indexingAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "regexAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "globAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "pathQueryAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "broadWorkspaceScanAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileReadBodyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "fileWriteAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "shellAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "gitAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoApplyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoRunAllowed": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "controlledAgentLexicalSearchSnippet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pathLabel",
+        "range",
+        "languageId",
+        "snippet",
+        "snippetByteCount",
+        "snippetHash",
+        "matchCount",
+        "truncated"
+      ],
+      "properties": {
+        "pathLabel": {
+          "$ref": "#/$defs/workspaceRelativePath"
+        },
+        "range": {
+          "$ref": "#/$defs/range"
+        },
+        "languageId": {
+          "$ref": "#/$defs/languageId"
+        },
+        "snippet": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/safeText"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 600
+            }
+          ]
+        },
+        "snippetByteCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600
+        },
+        "snippetHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "matchCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "controlledAgentLexicalSearchResultPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "requestIdMintedBy",
+        "userConfirmed",
+        "explicitUserGesture",
+        "controlledWorkspaceId",
+        "runId",
+        "workspaceReadinessId",
+        "host",
+        "status",
+        "authority",
+        "cloudRequired",
+        "executionAllowed",
+        "searchAllowed",
+        "privatePathExposed",
+        "rawContentIncluded",
+        "policyFlags",
+        "resultCount",
+        "totalMatchCount",
+        "totalSnippetBytes",
+        "truncated",
+        "resultHash",
+        "snippets",
+        "message"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "const": "gui"
+        },
+        "userConfirmed": {
+          "type": "boolean",
+          "const": true
+        },
+        "explicitUserGesture": {
+          "type": "boolean",
+          "const": true
+        },
+        "controlledWorkspaceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runtimeSessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "sessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceReadinessId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "host": {
+          "type": "string",
+          "enum": [
+            "vscode",
+            "browser",
+            "jetbrains"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "blocked",
+            "succeeded",
+            "truncated"
+          ]
+        },
+        "authority": {
+          "type": "string",
+          "const": "explicit_literal_lexical_search_metadata"
+        },
+        "cloudRequired": {
+          "type": "boolean",
+          "const": false
+        },
+        "executionAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "searchAllowed": {
+          "type": "boolean"
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawContentIncluded": {
+          "type": "boolean",
+          "const": false
+        },
+        "policyFlags": {
+          "$ref": "#/$defs/controlledAgentLexicalSearchPolicyFlags"
+        },
+        "resultCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        },
+        "totalMatchCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "totalSnippetBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4000
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "resultHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "snippets": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/controlledAgentLexicalSearchSnippet"
+          }
+        },
+        "blockedReason": {
+          "type": "string",
+          "enum": [
+            "search_disabled",
+            "policy_denied",
+            "unsupported_host",
+            "unsafe_query",
+            "unsafe_scope",
+            "outside_workspace",
+            "budget_exceeded",
+            "assistant_minted"
+          ]
+        },
+        "message": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "blocked"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "searchAllowed": {
+                "const": false
+              },
+              "resultCount": {
+                "const": 0
+              },
+              "totalMatchCount": {
+                "const": 0
+              },
+              "totalSnippetBytes": {
+                "const": 0
+              },
+              "truncated": {
+                "const": false
+              },
+              "snippets": {
+                "maxItems": 0,
+                "type": "array"
+              },
+              "blockedReason": {}
+            },
+            "required": [
+              "blockedReason"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "succeeded"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "host": {
+                "const": "vscode"
+              },
+              "searchAllowed": {
+                "const": true
+              },
+              "truncated": {
+                "const": false
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "truncated"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "host": {
+                "const": "vscode"
+              },
+              "searchAllowed": {
+                "const": true
+              },
+              "truncated": {
+                "const": true
+              }
+            }
           }
         }
       ]
@@ -3263,6 +3860,48 @@
           },
           "payload": {
             "$ref": "#/$defs/controlledAgentCommandRunResultPayload"
+          }
+        },
+        "allOf": [
+          {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "requestId": {
+                    "const": {
+                      "$data": "2/requestId"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "host.controlledAgentLexicalSearchResult"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "required": [
+          "requestId",
+          "payload"
+        ],
+        "properties": {
+          "requestId": {
+            "$ref": "#/$defs/requestId"
+          },
+          "payload": {
+            "$ref": "#/$defs/controlledAgentLexicalSearchResultPayload"
           }
         },
         "allOf": [

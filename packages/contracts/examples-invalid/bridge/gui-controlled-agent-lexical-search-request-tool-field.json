@@ -1,0 +1,65 @@
+{
+  "version": "2026-05-15",
+  "type": "gui.controlledAgentLexicalSearchRequest",
+  "requestId": "search-s110-c1",
+  "payload": {
+    "requestId": "search-s110-c1",
+    "requestIdMintedBy": "gui",
+    "source": "gui",
+    "assistantMinted": false,
+    "controlledWorkspaceId": "workspace-s110-c1",
+    "runId": "run-s110-c1",
+    "runtimeSessionId": "runtime-s110-c1",
+    "workspaceReadinessId": "ready-s110-c1",
+    "explicitUserGesture": true,
+    "userGestureId": "gesture-s110-c1",
+    "host": "vscode",
+    "query": "chat composer",
+    "queryMode": "literal_text",
+    "scope": {
+      "kind": "controlled_workspace_bounded",
+      "controlledWorkspaceOnly": true,
+      "includePathLabels": [
+        "apps/gui/src/App.tsx"
+      ],
+      "excludeHidden": true,
+      "excludeDependencies": true,
+      "excludeGenerated": true,
+      "excludeBinary": true,
+      "excludeSecretLikePaths": true,
+      "recursiveAllowed": false,
+      "broadWorkspaceScanAllowed": false
+    },
+    "limits": {
+      "maxFilesScanned": 40,
+      "maxMatches": 10,
+      "maxSnippetBytes": 400,
+      "literalOnly": true,
+      "regexAllowed": false,
+      "globAllowed": false,
+      "pathQueryAllowed": false,
+      "indexingAllowed": false,
+      "backgroundAllowed": false
+    },
+    "policyFlags": {
+      "explicitLiteralSearchAllowed": true,
+      "hiddenSearchAllowed": false,
+      "backgroundSearchAllowed": false,
+      "indexingAllowed": false,
+      "regexAllowed": false,
+      "globAllowed": false,
+      "pathQueryAllowed": false,
+      "broadWorkspaceScanAllowed": false,
+      "fileReadBodyAllowed": false,
+      "fileWriteAllowed": false,
+      "shellAllowed": false,
+      "gitAllowed": false,
+      "providerAllowed": false,
+      "toolAllowed": false,
+      "autoSearchAllowed": false,
+      "autoApplyAllowed": false,
+      "autoRunAllowed": false
+    },
+    "tool": "search"
+  }
+}

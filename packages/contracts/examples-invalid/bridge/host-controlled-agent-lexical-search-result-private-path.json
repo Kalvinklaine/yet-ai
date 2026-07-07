@@ -1,0 +1,69 @@
+{
+  "version": "2026-05-15",
+  "type": "host.controlledAgentLexicalSearchResult",
+  "requestId": "search-s110-c1",
+  "payload": {
+    "requestId": "search-s110-c1",
+    "requestIdMintedBy": "gui",
+    "userConfirmed": true,
+    "explicitUserGesture": true,
+    "controlledWorkspaceId": "workspace-s110-c1",
+    "runId": "run-s110-c1",
+    "runtimeSessionId": "runtime-s110-c1",
+    "workspaceReadinessId": "ready-s110-c1",
+    "host": "vscode",
+    "status": "succeeded",
+    "authority": "explicit_literal_lexical_search_metadata",
+    "cloudRequired": false,
+    "executionAllowed": false,
+    "searchAllowed": true,
+    "privatePathExposed": false,
+    "rawContentIncluded": false,
+    "policyFlags": {
+      "explicitLiteralSearchAllowed": true,
+      "hiddenSearchAllowed": false,
+      "backgroundSearchAllowed": false,
+      "indexingAllowed": false,
+      "regexAllowed": false,
+      "globAllowed": false,
+      "pathQueryAllowed": false,
+      "broadWorkspaceScanAllowed": false,
+      "fileReadBodyAllowed": false,
+      "fileWriteAllowed": false,
+      "shellAllowed": false,
+      "gitAllowed": false,
+      "providerAllowed": false,
+      "toolAllowed": false,
+      "autoSearchAllowed": false,
+      "autoApplyAllowed": false,
+      "autoRunAllowed": false
+    },
+    "resultCount": 1,
+    "totalMatchCount": 1,
+    "totalSnippetBytes": 41,
+    "truncated": false,
+    "resultHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "snippets": [
+      {
+        "pathLabel": "/Users/alice/project/src/App.tsx",
+        "range": {
+          "start": {
+            "line": 42,
+            "character": 2
+          },
+          "end": {
+            "line": 44,
+            "character": 1
+          }
+        },
+        "languageId": "typescriptreact",
+        "snippet": "function ChatComposer() {\n  return null;\n}",
+        "snippetByteCount": 41,
+        "snippetHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "matchCount": 1,
+        "truncated": false
+      }
+    ],
+    "message": "Literal snippets returned as sanitized metadata."
+  }
+}
