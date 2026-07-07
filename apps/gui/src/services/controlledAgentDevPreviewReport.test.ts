@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createControlledAgentDevPreviewReport } from "./controlledAgentDevPreviewReport";
+import { createControlledAgentDevPreviewReport, createSanitizedControlledRunExport } from "./controlledAgentDevPreviewReport";
 
 function readyInput(): Record<string, unknown> {
   return {
@@ -146,5 +146,92 @@ describe("createControlledAgentDevPreviewReport", () => {
     expect(rendered).not.toContain("raw command output");
     expect(rendered).not.toContain("secret file body");
     expect(rendered).not.toContain("editBytes");
+  });
+
+  it("exports controlled-run metadata without raw prompt file diff command output provider or private path", () => {
+    const result = createSanitizedControlledRunExport({
+      runId: "run-105",
+      host: "vscode",
+      status: "completed",
+      startedAt: "2026-07-07T01:00:00.000Z",
+      completedAt: "2026-07-07T01:01:00.000Z",
+      counters: { loopSteps: 4, fileReads: 1, filesTouched: 1, verificationRuns: 1, runtimeSeconds: 60 },
+      trace: [
+        { type: "start", outcome: "succeeded", label: "VS Code explicit start", summary: "User started the controlled run." },
+        { type: "read", outcome: "succeeded", label: "docs/architecture", summary: "Read bounded architecture metadata.", fileBody: "FILE_BODY_SENTINEL" },
+        { type: "verify", outcome: "succeeded", label: "repository-check", summary: "Allowlisted verification passed." },
+      ],
+      evidence: [
+        { kind: "report", status: "completed", summary: "Sanitized final report ready." },
+        { kind: "verification", status: "succeeded", summary: "Provider payload omitted." },
+      ],
+    });
+    const rendered = JSON.stringify(result);
+
+    expect(result.kind).toBe("controlled_run.sanitized_export");
+    expect(result.displayOnly).toBe(true);
+    expect(result.metadataOnly).toBe(true);
+    expect(result.rawPayloadStored).toBe(false);
+    expect(result.rawPayloadReturned).toBe(false);
+    expect(result.executionAuthority).toBe(false);
+    expect(result.host).toBe("vscode");
+    expect(result.status).toBe("completed");
+    expect(result.runId).toBe("run-105");
+    expect(result.trace).toEqual([
+      { type: "start", status: "succeeded", label: "VS Code explicit start", summary: "User started the controlled run." },
+      { type: "verify", status: "succeeded", label: "repository-check", summary: "Allowlisted verification passed." },
+    ]);
+    expect(result.diagnostics).toEqual([{ code: "raw_payload_omitted", message: "Controlled-run trace item with raw payload fields was omitted." }]);
+    expect(result.safetyBoundaryLabels).toContain("Report is display-only sanitized metadata, not runtime authority.");
+    expect(rendered).not.toContain("FILE_BODY_SENTINEL");
+    expect(rendered).not.toContain("rawPrompt");
+    expect(rendered).not.toContain("rawDiff");
+    expect(rendered).not.toContain("npm run");
+    expect(rendered).not.toContain("outputTail");
+    expect(rendered).not.toContain("providerPayload");
+    expect(rendered).not.toContain("/Users/alice");
+  });
+
+  it("fails closed for unsafe controlled-run export metadata", () => {
+    const result = createSanitizedControlledRunExport({
+      runId: "sk-proj-123456789",
+      host: "browser",
+      status: "completed",
+      startedAt: "/Users/alice/private/start",
+      counters: { loopSteps: 1, runtimeSeconds: 2, rawOutputBytes: 9000 },
+      trace: [
+        { type: "shell", outcome: "executed", label: "npm run check", summary: "raw command output /Users/alice/private sk-proj-123456789" },
+        { type: "report", outcome: "completed", label: "safe report", summary: "Sanitized metadata is available." },
+        { type: "edit", outcome: "failed", label: "patch", summary: "diff sentinel", rawDiff: "DIFF_SENTINEL" },
+      ],
+      evidence: [
+        { kind: "verification", status: "failed", summary: "raw output /Users/alice/private" },
+        { kind: "status", status: "blocked", providerPayload: "PROVIDER_SENTINEL" },
+      ],
+      safetyBoundaries: ["metadata_only", "no_raw_secrets"],
+    });
+    const rendered = JSON.stringify(result);
+
+    expect(result.host).toBe("browser");
+    expect(result.status).toBe("blocked");
+    expect(result.runId).toBeUndefined();
+    expect(result.startedAt).toBeUndefined();
+    expect(result.counters).toEqual({ loopSteps: 1, runtimeSeconds: 2 });
+    expect(result.trace).toEqual([
+      { type: "report", status: "recorded", label: "Sanitized report", summary: "Sanitized controlled-run metadata recorded; raw payload omitted." },
+      { type: "report", status: "completed", label: "safe report", summary: "Sanitized metadata is available." },
+    ]);
+    expect(result.evidence).toEqual([
+      { label: "Allowlisted verification evidence: failed", summary: "Sanitized evidence summary was unavailable." },
+      { label: "Omitted unsafe evidence", summary: "Evidence omitted because it looked unsafe for dev-preview reporting." },
+    ]);
+    expect(result.diagnostics.map((item) => item.code)).toEqual(["unsafe_metadata", "raw_payload_omitted"]);
+    expect(rendered).not.toContain("sk-proj-123456789");
+    expect(rendered).not.toContain("npm run check");
+    expect(rendered).not.toContain("raw command output");
+    expect(rendered).not.toContain("DIFF_SENTINEL");
+    expect(rendered).not.toContain("PROVIDER_SENTINEL");
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("rawOutputBytes");
   });
 });

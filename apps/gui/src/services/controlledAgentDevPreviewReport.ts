@@ -4,6 +4,9 @@ export type ControlledAgentDevPreviewReportHost = "browser" | "vscode" | "jetbra
 export type ControlledAgentDevPreviewReportStatus = "not_started" | "ready" | "running" | "completed" | "stopped" | "failed" | "blocked";
 export type ControlledAgentDevPreviewCapability = "explicit_start" | "bounded_read" | "bounded_edit" | "allowlisted_verification" | "bounded_repair" | "sanitized_report";
 export type ControlledAgentDevPreviewEvidenceKind = "start" | "read" | "edit" | "verification" | "repair" | "stop" | "status";
+export type SanitizedControlledRunExportStatus = "not_started" | "running" | "completed" | "stopped" | "failed" | "blocked";
+export type SanitizedControlledRunExportTraceType = "start" | "read" | "edit" | "verify" | "report" | "stop" | "recovery";
+export type SanitizedControlledRunExportDiagnosticCode = "malformed_input" | "unsafe_metadata" | "raw_payload_omitted";
 
 export type ControlledAgentDevPreviewReportCounters = {
   loopSteps?: number;
@@ -30,6 +33,60 @@ export type ControlledAgentDevPreviewReportInput = {
   limitations?: unknown;
   evidence?: unknown;
   safetyBoundaries?: unknown;
+};
+export type SanitizedControlledRunExportTraceInput = {
+  type?: unknown;
+  outcome?: unknown;
+  label?: unknown;
+  summary?: unknown;
+  requestId?: unknown;
+  runId?: unknown;
+  details?: unknown;
+};
+
+export type SanitizedControlledRunExportInput = {
+  runId?: unknown;
+  host?: unknown;
+  status?: unknown;
+  startedAt?: unknown;
+  completedAt?: unknown;
+  counters?: Partial<Record<keyof ControlledAgentDevPreviewReportCounters, unknown>>;
+  trace?: unknown;
+  evidence?: unknown;
+  safetyBoundaries?: unknown;
+};
+
+export type SanitizedControlledRunExportTraceItem = {
+  type: SanitizedControlledRunExportTraceType;
+  status: string;
+  label: string;
+  summary: string;
+};
+
+export type SanitizedControlledRunExportDiagnostic = {
+  code: SanitizedControlledRunExportDiagnosticCode;
+  message: string;
+};
+
+export type SanitizedControlledRunExport = {
+  kind: "controlled_run.sanitized_export";
+  version: "2026-07-07";
+  displayOnly: true;
+  metadataOnly: true;
+  rawPayloadStored: false;
+  rawPayloadReturned: false;
+  executionAuthority: false;
+  runId?: string;
+  host: ControlledAgentDevPreviewReportHost;
+  status: SanitizedControlledRunExportStatus;
+  statusLabel: string;
+  startedAt?: string;
+  completedAt?: string;
+  counters: ControlledAgentDevPreviewReportCounters;
+  trace: SanitizedControlledRunExportTraceItem[];
+  evidence: ControlledAgentDevPreviewEvidence[];
+  safetyBoundaryLabels: string[];
+  diagnostics: SanitizedControlledRunExportDiagnostic[];
 };
 
 export type ControlledAgentDevPreviewEvidence = {
@@ -112,6 +169,24 @@ const evidenceLabels: Record<ControlledAgentDevPreviewEvidenceKind, string> = {
   stop: "Stop evidence",
   status: "Status evidence",
 };
+const exportStatusLabels: Record<SanitizedControlledRunExportStatus, string> = {
+  not_started: "Not started",
+  running: "Running after explicit user start",
+  completed: "Completed with sanitized metadata",
+  stopped: "Stopped by explicit boundary",
+  failed: "Failed closed",
+  blocked: "Blocked because safe export metadata was unavailable",
+};
+
+const exportTraceLabels: Record<SanitizedControlledRunExportTraceType, string> = {
+  start: "Explicit start",
+  read: "Bounded read",
+  edit: "Bounded edit",
+  verify: "Allowlisted verification",
+  report: "Sanitized report",
+  stop: "Controlled stop",
+  recovery: "Recovery evidence",
+};
 
 const allowedCounters: Array<keyof ControlledAgentDevPreviewReportCounters> = ["loopSteps", "fileReads", "filesTouched", "verificationRuns", "repairAttempts", "userTurns", "runtimeSeconds"];
 const capabilityOrder: ControlledAgentDevPreviewCapability[] = ["explicit_start", "bounded_read", "bounded_edit", "allowlisted_verification", "bounded_repair", "sanitized_report"];
@@ -136,6 +211,119 @@ export function createControlledAgentDevPreviewReport(input: unknown): Controlle
     evidence: normalizeEvidence(metadata.evidence),
     safetyBoundaryLabels: normalizeSafetyBoundaries(metadata.safetyBoundaries),
   };
+}
+
+export function createSanitizedControlledRunExport(input: unknown): SanitizedControlledRunExport {
+  const diagnostics: SanitizedControlledRunExportDiagnostic[] = [];
+  if (!isPlainObject(input)) diagnostics.push(exportDiagnostic("malformed_input", "Controlled run export metadata must be an object."));
+  const metadata = isPlainObject(input) ? input as SanitizedControlledRunExportInput : {};
+  const host = normalizeHost(metadata.host);
+  const status = normalizeExportStatus(metadata.status, host);
+  const runId = safeId(metadata.runId);
+  if (metadata.runId !== undefined && runId === undefined) diagnostics.push(exportDiagnostic("unsafe_metadata", "Unsafe run identifier was omitted from the controlled-run export."));
+  const startedAt = safeTimestamp(metadata.startedAt);
+  const completedAt = safeTimestamp(metadata.completedAt);
+  if (metadata.startedAt !== undefined && startedAt === undefined) diagnostics.push(exportDiagnostic("unsafe_metadata", "Unsafe start timestamp was omitted from the controlled-run export."));
+  if (metadata.completedAt !== undefined && completedAt === undefined) diagnostics.push(exportDiagnostic("unsafe_metadata", "Unsafe completion timestamp was omitted from the controlled-run export."));
+  const trace = normalizeExportTrace(metadata.trace, diagnostics);
+  const evidence = normalizeEvidence(metadata.evidence);
+
+  return {
+    kind: "controlled_run.sanitized_export",
+    version: "2026-07-07",
+    displayOnly: true,
+    metadataOnly: true,
+    rawPayloadStored: false,
+    rawPayloadReturned: false,
+    executionAuthority: false,
+    ...(runId ? { runId } : {}),
+    host,
+    status,
+    statusLabel: exportStatusLabels[status],
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
+    counters: normalizeCounters(metadata.counters),
+    trace,
+    evidence,
+    safetyBoundaryLabels: normalizeSafetyBoundaries(metadata.safetyBoundaries),
+    diagnostics: dedupeDiagnostics(diagnostics),
+  };
+}
+
+function normalizeExportStatus(value: unknown, host: ControlledAgentDevPreviewReportHost): SanitizedControlledRunExportStatus {
+  if (host === "browser" || host === "unknown") return "blocked";
+  if (value === "not_started" || value === "running" || value === "completed" || value === "stopped" || value === "failed" || value === "blocked") return value;
+  return "blocked";
+}
+
+function normalizeExportTrace(value: unknown, diagnostics: SanitizedControlledRunExportDiagnostic[]): SanitizedControlledRunExportTraceItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 16).map((item) => toExportTraceItem(item, diagnostics)).filter((item): item is SanitizedControlledRunExportTraceItem => item !== undefined);
+}
+
+function toExportTraceItem(value: unknown, diagnostics: SanitizedControlledRunExportDiagnostic[]): SanitizedControlledRunExportTraceItem | undefined {
+  if (!isPlainObject(value)) {
+    diagnostics.push(exportDiagnostic("malformed_input", "Non-object controlled-run trace item was omitted."));
+    return undefined;
+  }
+  if (hasUnsafeKey(value)) {
+    diagnostics.push(exportDiagnostic("raw_payload_omitted", "Controlled-run trace item with raw payload fields was omitted."));
+    return undefined;
+  }
+  const type = normalizeExportTraceType(value.type);
+  const status = safeExportStatus(value.outcome ?? value.status);
+  const label = safeExportText(value.label, exportTraceLabels[type], 100);
+  const summary = safeExportText(value.summary, "Sanitized controlled-run metadata recorded; raw payload omitted.", 180);
+  if (hasUnsafeText({ status, label, summary }) || hasUnsafeText(value)) {
+    diagnostics.push(exportDiagnostic("raw_payload_omitted", "Unsafe controlled-run trace text was replaced with sanitized export metadata."));
+    return {
+      type,
+      status: "recorded",
+      label: exportTraceLabels[type],
+      summary: "Sanitized controlled-run metadata recorded; raw payload omitted.",
+    };
+  }
+  return { type, status, label, summary };
+}
+
+function normalizeExportTraceType(value: unknown): SanitizedControlledRunExportTraceType {
+  if (value === "start" || value === "read" || value === "edit" || value === "verify" || value === "report" || value === "stop" || value === "recovery") return value;
+  return "report";
+}
+
+function safeExportStatus(value: unknown): string {
+  if (typeof value !== "string" || unsafeTextPattern.test(value)) return "recorded";
+  return safeText(value, 40);
+}
+
+function safeExportText(value: unknown, fallback: string, limit: number): string {
+  if (typeof value !== "string" || unsafeTextPattern.test(value)) return fallback;
+  return safeText(value, limit);
+}
+
+function safeId(value: unknown): string | undefined {
+  if (typeof value !== "string" || unsafeTextPattern.test(value)) return undefined;
+  const sanitized = sanitizeTimelineText(value).trim();
+  return /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(sanitized) ? sanitized : undefined;
+}
+
+function safeTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || unsafeTextPattern.test(value)) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+function exportDiagnostic(code: SanitizedControlledRunExportDiagnosticCode, message: string): SanitizedControlledRunExportDiagnostic {
+  return { code, message };
+}
+
+function dedupeDiagnostics(diagnostics: SanitizedControlledRunExportDiagnostic[]): SanitizedControlledRunExportDiagnostic[] {
+  const seen = new Set<string>();
+  return diagnostics.filter((item) => {
+    if (seen.has(item.code)) return false;
+    seen.add(item.code);
+    return true;
+  }).slice(0, 8);
 }
 
 function normalizeHost(value: unknown): ControlledAgentDevPreviewReportHost {
