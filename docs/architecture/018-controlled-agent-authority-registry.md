@@ -64,6 +64,7 @@ For this contract foundation, run:
 
 ```sh
 npm run validate:contracts
+npm run check:controlled-agent-authority-registry
 npm run check
 ```
 
