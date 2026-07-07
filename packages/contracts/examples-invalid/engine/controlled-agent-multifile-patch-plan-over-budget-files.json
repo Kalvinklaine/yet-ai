@@ -1,0 +1,204 @@
+{
+  "kind": "controlled_agent_multifile_patch_plan",
+  "version": "2026-07-07",
+  "authority": "review_only_multifile_replacement_metadata",
+  "cloudRequired": false,
+  "reviewOnly": true,
+  "applyAuthority": {
+    "automaticApplyAllowed": false,
+    "assistantMintedApplyAllowed": false,
+    "requiresFutureExplicitHostApply": true,
+    "modelMintedApplyAuthorityAllowed": false
+  },
+  "workspace": {
+    "controlledWorkspaceId": "controlled-workspace-s114",
+    "runId": "controlled-run-s114",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "privatePathExposed": false,
+    "workspaceLabel": "controlled worktree"
+  },
+  "limits": {
+    "maxFiles": 6,
+    "maxEdits": 6,
+    "maxReplacementBytesPerEdit": 800,
+    "maxTotalReplacementBytes": 1600
+  },
+  "plan": {
+    "planId": "multifile-plan-s114",
+    "status": "review_pending",
+    "summary": "Two bounded text replacements are ready for user review.",
+    "fileCount": 6,
+    "editCount": 2,
+    "totalReplacementBytes": 220,
+    "files": [
+      {
+        "workspaceRelativePath": "apps/gui/src/SafePanel.tsx",
+        "fileLabel": "apps/gui/src/SafePanel.tsx",
+        "existingTextFileRequired": true,
+        "expectedPreEditHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fileSummary": "Adjusts a small display label for review.",
+        "riskLabel": "low",
+        "edits": [
+          {
+            "editId": "edit-s114-1",
+            "operation": "replace",
+            "range": {
+              "startLine": 12,
+              "endLine": 14
+            },
+            "expectedRangeHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "replacementByteCount": 120,
+            "replacementSummary": "Updates a bounded label branch.",
+            "rawReplacementIncluded": false,
+            "rawDiffIncluded": false
+          }
+        ]
+      },
+      {
+        "workspaceRelativePath": "docs/architecture/safe-note.md",
+        "fileLabel": "docs/architecture/safe-note.md",
+        "existingTextFileRequired": true,
+        "expectedPreEditHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "fileSummary": "Refreshes a short architecture note.",
+        "riskLabel": "medium",
+        "edits": [
+          {
+            "editId": "edit-s114-2",
+            "operation": "replace",
+            "range": {
+              "startLine": 20,
+              "endLine": 22
+            },
+            "expectedRangeHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "replacementByteCount": 100,
+            "replacementSummary": "Updates a bounded note paragraph.",
+            "rawReplacementIncluded": false,
+            "rawDiffIncluded": false
+          }
+        ]
+      },
+      {
+        "workspaceRelativePath": "apps/gui/src/SafePanel.tsx",
+        "fileLabel": "apps/gui/src/SafePanel.tsx",
+        "existingTextFileRequired": true,
+        "expectedPreEditHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fileSummary": "Adjusts a small display label for review.",
+        "riskLabel": "low",
+        "edits": [
+          {
+            "editId": "edit-s114-1",
+            "operation": "replace",
+            "range": {
+              "startLine": 12,
+              "endLine": 14
+            },
+            "expectedRangeHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "replacementByteCount": 120,
+            "replacementSummary": "Updates a bounded label branch.",
+            "rawReplacementIncluded": false,
+            "rawDiffIncluded": false
+          }
+        ]
+      },
+      {
+        "workspaceRelativePath": "docs/architecture/safe-note.md",
+        "fileLabel": "docs/architecture/safe-note.md",
+        "existingTextFileRequired": true,
+        "expectedPreEditHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "fileSummary": "Refreshes a short architecture note.",
+        "riskLabel": "medium",
+        "edits": [
+          {
+            "editId": "edit-s114-2",
+            "operation": "replace",
+            "range": {
+              "startLine": 20,
+              "endLine": 22
+            },
+            "expectedRangeHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "replacementByteCount": 100,
+            "replacementSummary": "Updates a bounded note paragraph.",
+            "rawReplacementIncluded": false,
+            "rawDiffIncluded": false
+          }
+        ]
+      },
+      {
+        "workspaceRelativePath": "apps/gui/src/SafePanel.tsx",
+        "fileLabel": "apps/gui/src/SafePanel.tsx",
+        "existingTextFileRequired": true,
+        "expectedPreEditHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "fileSummary": "Adjusts a small display label for review.",
+        "riskLabel": "low",
+        "edits": [
+          {
+            "editId": "edit-s114-1",
+            "operation": "replace",
+            "range": {
+              "startLine": 12,
+              "endLine": 14
+            },
+            "expectedRangeHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "replacementByteCount": 120,
+            "replacementSummary": "Updates a bounded label branch.",
+            "rawReplacementIncluded": false,
+            "rawDiffIncluded": false
+          }
+        ]
+      },
+      {
+        "workspaceRelativePath": "docs/architecture/safe-note.md",
+        "fileLabel": "docs/architecture/safe-note.md",
+        "existingTextFileRequired": true,
+        "expectedPreEditHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "fileSummary": "Refreshes a short architecture note.",
+        "riskLabel": "medium",
+        "edits": [
+          {
+            "editId": "edit-s114-2",
+            "operation": "replace",
+            "range": {
+              "startLine": 20,
+              "endLine": 22
+            },
+            "expectedRangeHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "replacementByteCount": 100,
+            "replacementSummary": "Updates a bounded note paragraph.",
+            "rawReplacementIncluded": false,
+            "rawDiffIncluded": false
+          }
+        ]
+      }
+    ]
+  },
+  "policyFlags": {
+    "metadataOnly": true,
+    "reviewOnly": true,
+    "existingFileReplacementOnly": true,
+    "rawReplacementBodiesAllowed": false,
+    "rawDiffsAllowed": false,
+    "rawBodiesInReportExportHistoryAllowed": false,
+    "createAllowed": false,
+    "deleteAllowed": false,
+    "renameAllowed": false,
+    "moveAllowed": false,
+    "chmodAllowed": false,
+    "binaryEditAllowed": false,
+    "symlinkEditAllowed": false,
+    "generatedFileEditAllowed": false,
+    "dependencyEditAllowed": false,
+    "hiddenPathEditAllowed": false,
+    "privatePathAllowed": false,
+    "assistantMintedApplyAllowed": false,
+    "modelMintedApplyAuthorityAllowed": false,
+    "automaticApplyAllowed": false,
+    "commandExecutionAllowed": false,
+    "providerToolCallingAllowed": false,
+    "localToolAuthorityAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "networkAllowed": false,
+    "packageInstallAllowed": false
+  }
+}

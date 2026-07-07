@@ -1,0 +1,456 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-multifile-patch-plan.schema.json",
+  "title": "Controlled Agent Multi-file Patch Plan Metadata",
+  "description": "Strict review-only metadata contract for bounded multi-file existing-text-file replacement plans. It grants no apply, create, delete, rename, move, chmod, binary, symlink, generated, dependency, hidden, private-path, raw body, raw diff, command, provider tool, local tool, shell, git, network, package, runtime, bridge, or autonomous authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "reviewOnly",
+    "applyAuthority",
+    "workspace",
+    "limits",
+    "plan",
+    "policyFlags"
+  ],
+  "properties": {
+    "kind": {
+      "const": "controlled_agent_multifile_patch_plan"
+    },
+    "version": {
+      "const": "2026-07-07"
+    },
+    "authority": {
+      "const": "review_only_multifile_replacement_metadata"
+    },
+    "cloudRequired": {
+      "const": false
+    },
+    "reviewOnly": {
+      "const": true
+    },
+    "applyAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "automaticApplyAllowed",
+        "assistantMintedApplyAllowed",
+        "requiresFutureExplicitHostApply",
+        "modelMintedApplyAuthorityAllowed"
+      ],
+      "properties": {
+        "automaticApplyAllowed": {
+          "const": false
+        },
+        "assistantMintedApplyAllowed": {
+          "const": false
+        },
+        "requiresFutureExplicitHostApply": {
+          "const": true
+        },
+        "modelMintedApplyAuthorityAllowed": {
+          "const": false
+        }
+      }
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "plan": {
+      "$ref": "#/$defs/plan"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Rr][Ee][Pp][Ll][Aa][Cc][Ee][Mm][Ee][Nn][Tt]|[Bb][Oo][Dd][Yy]|[Dd][Ii][Ff][Ff]|[Pp][Aa][Tt][Cc][Hh]|[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Tt][Oo][Oo][Ll]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee]|[Hh][Ii][Dd][Dd][Ee][Nn]|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|[Aa][Pp][Pp][Ll][Yy][-_ ]?[Pp][Aa][Tt][Cc][Hh]|[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt][-_ ]?[Mm][Ii][Nn][Tt][Ee][Dd]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^(?!assistant(?:[._:-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      ]
+    },
+    "workspaceRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private|public)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*\\.(?:md|txt|ts|tsx|js|jsx|json|css|html|rs|py|java|kt|xml|yaml|yml)$"
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlledWorkspaceId",
+        "runId",
+        "workspaceMode",
+        "host",
+        "privatePathExposed"
+      ],
+      "properties": {
+        "controlledWorkspaceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceMode": {
+          "enum": [
+            "worktree",
+            "disposable",
+            "existing"
+          ]
+        },
+        "host": {
+          "enum": [
+            "vscode",
+            "jetbrains"
+          ]
+        },
+        "privatePathExposed": {
+          "const": false
+        },
+        "workspaceLabel": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxFiles",
+        "maxEdits",
+        "maxReplacementBytesPerEdit",
+        "maxTotalReplacementBytes"
+      ],
+      "properties": {
+        "maxFiles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "maxEdits": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "maxReplacementBytesPerEdit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12000
+        },
+        "maxTotalReplacementBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 48000
+        }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planId",
+        "status",
+        "summary",
+        "fileCount",
+        "editCount",
+        "totalReplacementBytes",
+        "files"
+      ],
+      "properties": {
+        "planId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "status": {
+          "const": "review_pending"
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        },
+        "fileCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "editCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "totalReplacementBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 48000
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/filePlan"
+          }
+        }
+      }
+    },
+    "filePlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspaceRelativePath",
+        "fileLabel",
+        "existingTextFileRequired",
+        "expectedPreEditHash",
+        "fileSummary",
+        "riskLabel",
+        "edits"
+      ],
+      "properties": {
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/workspaceRelativePath"
+        },
+        "fileLabel": {
+          "$ref": "#/$defs/safeLabel"
+        },
+        "existingTextFileRequired": {
+          "const": true
+        },
+        "expectedPreEditHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "fileSummary": {
+          "$ref": "#/$defs/safeSummary"
+        },
+        "riskLabel": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "edits": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/edit"
+          }
+        }
+      }
+    },
+    "edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "editId",
+        "operation",
+        "range",
+        "expectedRangeHash",
+        "replacementByteCount",
+        "replacementSummary",
+        "rawReplacementIncluded",
+        "rawDiffIncluded"
+      ],
+      "properties": {
+        "editId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "operation": {
+          "const": "replace"
+        },
+        "range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "startLine",
+            "endLine"
+          ],
+          "properties": {
+            "startLine": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            },
+            "endLine": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000
+            }
+          }
+        },
+        "expectedRangeHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "replacementByteCount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12000
+        },
+        "replacementSummary": {
+          "$ref": "#/$defs/safeSummary"
+        },
+        "rawReplacementIncluded": {
+          "const": false
+        },
+        "rawDiffIncluded": {
+          "const": false
+        }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadataOnly",
+        "reviewOnly",
+        "existingFileReplacementOnly",
+        "rawReplacementBodiesAllowed",
+        "rawDiffsAllowed",
+        "rawBodiesInReportExportHistoryAllowed",
+        "createAllowed",
+        "deleteAllowed",
+        "renameAllowed",
+        "moveAllowed",
+        "chmodAllowed",
+        "binaryEditAllowed",
+        "symlinkEditAllowed",
+        "generatedFileEditAllowed",
+        "dependencyEditAllowed",
+        "hiddenPathEditAllowed",
+        "privatePathAllowed",
+        "assistantMintedApplyAllowed",
+        "modelMintedApplyAuthorityAllowed",
+        "automaticApplyAllowed",
+        "commandExecutionAllowed",
+        "providerToolCallingAllowed",
+        "localToolAuthorityAllowed",
+        "shellAllowed",
+        "gitAllowed",
+        "networkAllowed",
+        "packageInstallAllowed"
+      ],
+      "properties": {
+        "metadataOnly": {
+          "const": true
+        },
+        "reviewOnly": {
+          "const": true
+        },
+        "existingFileReplacementOnly": {
+          "const": true
+        },
+        "rawReplacementBodiesAllowed": {
+          "const": false
+        },
+        "rawDiffsAllowed": {
+          "const": false
+        },
+        "rawBodiesInReportExportHistoryAllowed": {
+          "const": false
+        },
+        "createAllowed": {
+          "const": false
+        },
+        "deleteAllowed": {
+          "const": false
+        },
+        "renameAllowed": {
+          "const": false
+        },
+        "moveAllowed": {
+          "const": false
+        },
+        "chmodAllowed": {
+          "const": false
+        },
+        "binaryEditAllowed": {
+          "const": false
+        },
+        "symlinkEditAllowed": {
+          "const": false
+        },
+        "generatedFileEditAllowed": {
+          "const": false
+        },
+        "dependencyEditAllowed": {
+          "const": false
+        },
+        "hiddenPathEditAllowed": {
+          "const": false
+        },
+        "privatePathAllowed": {
+          "const": false
+        },
+        "assistantMintedApplyAllowed": {
+          "const": false
+        },
+        "modelMintedApplyAuthorityAllowed": {
+          "const": false
+        },
+        "automaticApplyAllowed": {
+          "const": false
+        },
+        "commandExecutionAllowed": {
+          "const": false
+        },
+        "providerToolCallingAllowed": {
+          "const": false
+        },
+        "localToolAuthorityAllowed": {
+          "const": false
+        },
+        "shellAllowed": {
+          "const": false
+        },
+        "gitAllowed": {
+          "const": false
+        },
+        "networkAllowed": {
+          "const": false
+        },
+        "packageInstallAllowed": {
+          "const": false
+        }
+      }
+    }
+  }
+}

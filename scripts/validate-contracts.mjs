@@ -149,6 +149,10 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-search-informed-proposal.schema.json"
   ],
   [
+    "packages/contracts/examples/engine/controlled-agent-multifile-patch-plan-basic.json",
+    "packages/contracts/schemas/engine/controlled-agent-multifile-patch-plan.schema.json"
+  ],
+  [
     "packages/contracts/examples/engine/controlled-agent-patch-plan.json",
     "packages/contracts/schemas/engine/controlled-agent-patch-plan.schema.json"
   ],
@@ -1236,6 +1240,26 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-search-informed-proposal.schema.json"
+  ]),
+  ...[
+    "controlled-agent-multifile-patch-plan-broad-mutation.json",
+    "controlled-agent-multifile-patch-plan-raw-replacement-body.json",
+    "controlled-agent-multifile-patch-plan-create-operation.json",
+    "controlled-agent-multifile-patch-plan-delete-operation.json",
+    "controlled-agent-multifile-patch-plan-rename-operation.json",
+    "controlled-agent-multifile-patch-plan-absolute-private-path.json",
+    "controlled-agent-multifile-patch-plan-dependency-path.json",
+    "controlled-agent-multifile-patch-plan-generated-path.json",
+    "controlled-agent-multifile-patch-plan-assistant-minted-apply.json",
+    "controlled-agent-multifile-patch-plan-missing-pre-edit-hash.json",
+    "controlled-agent-multifile-patch-plan-over-budget-files.json",
+    "controlled-agent-multifile-patch-plan-over-budget-replacement-bytes.json",
+    "controlled-agent-multifile-patch-plan-command-field.json",
+    "controlled-agent-multifile-patch-plan-provider-field.json",
+    "controlled-agent-multifile-patch-plan-tool-field.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-multifile-patch-plan.schema.json"
   ]),
   ...[
     "controlled-agent-patch-plan-raw-diff.json",
