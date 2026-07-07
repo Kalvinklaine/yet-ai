@@ -84,6 +84,27 @@ describe("controlledAgentSearchSelection", () => {
     expect(Object.values(result.authority).every((value) => value === false)).toBe(true);
   });
 
+  it("selects truncated search results as bounded metadata", () => {
+    const truncatedSnippet = snippet({ truncated: true });
+    const search = { ...lexicalSearch([truncatedSnippet]), status: "truncated" as const, truncated: true, message: "Literal snippets returned as truncated sanitized metadata." };
+    const result = createControlledAgentSearchSelection(selectionInput({ lexicalSearch: search, selectedResultIds: [controlledAgentSearchSelectionResultId(truncatedSnippet)] }));
+
+    expect(result.state).toBe("ready");
+    expect(result.selectedContext?.items[0]).toMatchObject({ pathLabel: "apps/gui/src/App.tsx", truncated: true });
+    expect(result.selectedContext?.selectedCount).toBe(1);
+    expect(output(result.selectedContext)).not.toContain("function ChatComposer");
+  });
+
+  it("selects safe snippets containing provider command and tool vocabulary", () => {
+    const safeCode = "const providerCommandTool = createActionProvider(commandTool);";
+    const safeSnippet = snippet({ snippet: safeCode, snippetByteCount: new TextEncoder().encode(safeCode).length });
+    const result = createControlledAgentSearchSelection(selectionInput({ lexicalSearch: lexicalSearch([safeSnippet]), selectedResultIds: [controlledAgentSearchSelectionResultId(safeSnippet)] }));
+
+    expect(result.state).toBe("ready");
+    expect(result.selectedContext?.selectedCount).toBe(1);
+    expect(output(result.selectedContext)).not.toContain("providerCommandTool");
+  });
+
   it("fails closed for assistant-minted selection authority", () => {
     const result = createControlledAgentSearchSelection(selectionInput({ selectionMintedBy: "assistant", assistantMinted: true }));
 

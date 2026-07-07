@@ -128,7 +128,7 @@ export type ControlledAgentLexicalSearchSnippet = {
 };
 
 export type ControlledAgentLexicalSearchSummary = {
-  status: "succeeded" | "blocked" | "failed";
+  status: "succeeded" | "truncated" | "blocked" | "failed";
   resultCount: number;
   totalMatchCount: number;
   totalSnippetBytes: number;
@@ -364,7 +364,7 @@ function extractSource(runtimeInput: unknown, readinessInput: unknown): { runId?
 }
 
 function sanitizeResultPayload(value: Record<string, unknown>) {
-  const status = value.status === "succeeded" || value.status === "blocked" || value.status === "failed" ? value.status : undefined;
+  const status = value.status === "succeeded" || value.status === "truncated" || value.status === "blocked" || value.status === "failed" ? value.status : undefined;
   const requestId = safeId(value.requestId);
   const runId = safeId(value.runId);
   const controlledWorkspaceId = safeId(value.controlledWorkspaceId);
@@ -381,10 +381,10 @@ function sanitizeResultPayload(value: Record<string, unknown>) {
   const totalSnippetBytes = boundedInteger(value.totalSnippetBytes, 0, 4000) ? value.totalSnippetBytes : undefined;
   const truncated = typeof value.truncated === "boolean" ? value.truncated : undefined;
   if (resultCount === undefined || totalMatchCount === undefined || totalSnippetBytes === undefined || truncated === undefined) return undefined;
-  if (status === "succeeded" && value.searchAllowed !== true) return undefined;
-  if (status !== "succeeded" && value.searchAllowed !== false) return undefined;
-  if (status === "succeeded" && snippets.length !== resultCount) return undefined;
-  if (status !== "succeeded" && snippets.length !== 0) return undefined;
+  if ((status === "succeeded" || status === "truncated") && value.searchAllowed !== true) return undefined;
+  if ((status === "blocked" || status === "failed") && value.searchAllowed !== false) return undefined;
+  if ((status === "succeeded" || status === "truncated") && snippets.length !== resultCount) return undefined;
+  if ((status === "blocked" || status === "failed") && snippets.length !== 0) return undefined;
   return stripUndefined({ status, requestId, runId, controlledWorkspaceId, runtimeSessionId, workspaceReadinessId, resultCount, totalMatchCount, totalSnippetBytes, truncated, resultHash, snippets, message, policyFlags: policy, searchAllowed: value.searchAllowed });
 }
 
@@ -399,11 +399,11 @@ function resultAuthorityIsSafe(payload: ReturnType<typeof sanitizeResultPayload>
 }
 
 function normalizeResult(payload: NonNullable<ReturnType<typeof sanitizeResultPayload>>): ControlledAgentLexicalSearchSummary {
-  return stripUndefined({ status: payload.status as "succeeded" | "blocked" | "failed", resultCount: payload.resultCount, totalMatchCount: payload.totalMatchCount, totalSnippetBytes: payload.totalSnippetBytes, truncated: payload.truncated, resultHash: payload.resultHash, snippets: payload.snippets, message: payload.message });
+  return stripUndefined({ status: payload.status as "succeeded" | "truncated" | "blocked" | "failed", resultCount: payload.resultCount, totalMatchCount: payload.totalMatchCount, totalSnippetBytes: payload.totalSnippetBytes, truncated: payload.truncated, resultHash: payload.resultHash, snippets: payload.snippets, message: payload.message });
 }
 
 function sanitizeExistingResult(value: ControlledAgentLexicalSearchSummary): ControlledAgentLexicalSearchSummary {
-  return { status: value.status === "succeeded" || value.status === "blocked" || value.status === "failed" ? value.status : "blocked", resultCount: 0, totalMatchCount: 0, totalSnippetBytes: 0, truncated: false, snippets: [], message: safeDisplayText(value.message, 240) ?? "Controlled lexical search result." };
+  return { status: value.status === "succeeded" || value.status === "truncated" || value.status === "blocked" || value.status === "failed" ? value.status : "blocked", resultCount: 0, totalMatchCount: 0, totalSnippetBytes: 0, truncated: false, snippets: [], message: safeDisplayText(value.message, 240) ?? "Controlled lexical search result." };
 }
 
 function sanitizeSnippets(value: unknown): ControlledAgentLexicalSearchSnippet[] | undefined {

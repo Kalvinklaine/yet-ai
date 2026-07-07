@@ -49,6 +49,7 @@ describe("codingTaskPrompt builder", () => {
     expect(validateWorkspaceSnippetQuery("../secret").message).toContain("literal text only");
     expect(validateWorkspaceSnippetQuery("chat.*composer").message).toContain("literal text only");
     expect(validateWorkspaceSnippetQuery("shell env").message).toContain("tool, path, provider, regex, and glob queries are not allowed");
+    expect(validateWorkspaceSnippetQuery("raw output").message).toBe("Remove secret-like text from the snippet query before searching.");
     expect(validateWorkspaceSnippetQuery("access_token=" + "x".repeat(64)).message).toBe("Remove secret-like text from the snippet query before searching.");
   });
 

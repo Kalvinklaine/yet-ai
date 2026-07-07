@@ -47,6 +47,7 @@ async function main(): Promise<void> {
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
     await assertPreReadyControlledCommandRunRejectsWithoutExecution(webview);
     assertFrameReadinessBlocksStaleHostReady(webview);
+    assertControlledLexicalSearchRejectsRawOutputAtWebviewGate(webview);
   } finally {
     moduleWithLoad._load = originalLoad;
   }
@@ -255,6 +256,76 @@ async function assertPreReadyControlledCommandRunRejectsWithoutExecution(webview
 function assertFrameReadinessBlocksStaleHostReady(webview: typeof import("./webview")): void {
   assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-old", latestHostReadyRequestId: "ready-new" }), false);
   assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-new", latestHostReadyRequestId: "ready-new" }), true);
+}
+
+function assertControlledLexicalSearchRejectsRawOutputAtWebviewGate(webview: typeof import("./webview")): void {
+  const message = controlledLexicalSearchMessage("raw output");
+  assert.equal(webview.isGuiMessage(message), false);
+}
+
+function controlledLexicalSearchMessage(query: string) {
+  return {
+    version: "2026-05-15",
+    type: "gui.controlledAgentLexicalSearchRequest",
+    requestId: "search-raw-output",
+    payload: {
+      requestId: "search-raw-output",
+      requestIdMintedBy: "gui",
+      source: "gui",
+      assistantMinted: false,
+      controlledWorkspaceId: "workspace-search-safe",
+      runId: "run-search-safe",
+      runtimeSessionId: "runtime-search-safe",
+      workspaceReadinessId: "ready-search-safe",
+      explicitUserGesture: true,
+      userGestureId: "gesture-search-safe",
+      host: "vscode",
+      query,
+      queryMode: "literal_text",
+      scope: {
+        kind: "controlled_workspace_bounded",
+        controlledWorkspaceOnly: true,
+        includePathLabels: ["src/app.ts"],
+        excludeHidden: true,
+        excludeDependencies: true,
+        excludeGenerated: true,
+        excludeBinary: true,
+        excludeSecretLikePaths: true,
+        recursiveAllowed: false,
+        broadWorkspaceScanAllowed: false,
+      },
+      limits: {
+        maxFilesScanned: 40,
+        maxMatches: 10,
+        maxSnippetBytes: 400,
+        literalOnly: true,
+        regexAllowed: false,
+        globAllowed: false,
+        pathQueryAllowed: false,
+        indexingAllowed: false,
+        backgroundAllowed: false,
+      },
+      policyFlags: {
+        explicitLiteralSearchAllowed: true,
+        hiddenSearchAllowed: false,
+        backgroundSearchAllowed: false,
+        indexingAllowed: false,
+        regexAllowed: false,
+        globAllowed: false,
+        pathQueryAllowed: false,
+        broadWorkspaceScanAllowed: false,
+        fileReadBodyAllowed: false,
+        fileWriteAllowed: false,
+        shellAllowed: false,
+        gitAllowed: false,
+        providerAllowed: false,
+        toolAllowed: false,
+        autoSearchAllowed: false,
+        autoApplyAllowed: false,
+        autoRunAllowed: false,
+      },
+    },
+  };
 }
 
 void main();

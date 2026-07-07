@@ -107,7 +107,8 @@ const safeIdPattern = /^(?!assistant(?:[._:-]|$))(?!.*(?:assistant|sk-(?:proj-)?
 const safeHashPattern = /^sha256:[a-f0-9]{64}$/;
 const unsafeKeyPattern = /^(?:command|cmd|args|arguments|cwd|env|environment|network|git|provider|tool|shell|rawCommand|raw_command|rawFile|raw_file|rawFileBody|raw_file_body|fileBody|file_body|fileContents|file_contents|rawContent|raw_content|rawPrompt|raw_prompt|rawOutput|raw_output|diff|rawDiff|raw_diff|patch|browserStorage|browser_storage|storageDump|storage_dump|hiddenRead|hidden_read|hiddenSearch|hidden_search|regex|glob|index|indexing|autoSearch|auto_search|autoAttach|auto_attach|autoSend|auto_send|autoApply|auto_apply|autoRun|auto_run|prompt|providerPayload|provider_payload|privatePath|private_path)$/i;
 const unsafeTextPattern = /authorization|bearer|api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|cookie|raw[_ -]?(?:file|prompt|command|output|log|body|content|diff)|file[_ -]?(?:body|content|dump)|provider|shell|command|cwd|\benv\b|\bgit\b|\btool\b|network|hidden[_ -]?(?:scan|read|search)|index(?:ing)?|auto[_ -]?(?:search|attach|send|apply|run)|private[_ -]?path|sk-(?:proj-)?[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/)/i;
-const safePathPattern = /^(?!\/)(?![A-Za-z]:)(?!~)(?!.*(?:^|\/)\.)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)(?!.*[\\:*?"<>|{}\[\]$^+])(?!(?:^|.*\/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:\/|$))(?!.*(?:^|[._-])(?:auth|credentials?|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/i;
+const unsafeSnippetTextPattern = /authorization|bearer|api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|cookie|raw[_ -]?(?:file|prompt|command|output|log|body|content|diff)|file[_ -]?(?:body|content|dump)|hidden[_ -]?(?:scan|read|search)|auto[_ -]?(?:search|attach|send|apply|run)|private[_ -]?path|sk-(?:proj-)?[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/)/i;
+const safePathPattern = /^(?!\/)(?![A-Za-z]:)(?!~)(?!.*(?:^|\/)\.)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)(?!.*[\\:*?"<>|{}\[\]$^+])(?!(?:^|.*\/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:\/|$))(?!.*(?:^|[._-])(?:credentials?|password|secret|token|access[_-]?token|auth[_-]?token|api[_-]?key)(?:[._-]|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/i;
 const textEncoder = new TextEncoder();
 
 export function createControlledAgentSearchSelection(input: unknown): ControlledAgentSearchSelectionResult {
@@ -199,7 +200,7 @@ export function createControlledAgentSearchSelection(input: unknown): Controlled
 
 function sanitizeLexicalSearch(value: unknown): ControlledAgentLexicalSearchSummary | undefined {
   if (!isPlainObject(value)) return undefined;
-  const status = value.status === "succeeded" ? value.status : undefined;
+  const status = value.status === "succeeded" || value.status === "truncated" ? value.status : undefined;
   const resultCount = boundedInteger(value.resultCount, 0, 10) ? value.resultCount : undefined;
   const totalMatchCount = boundedInteger(value.totalMatchCount, 0, 100) ? value.totalMatchCount : undefined;
   const totalSnippetBytes = boundedInteger(value.totalSnippetBytes, 0, 4000) ? value.totalSnippetBytes : undefined;
@@ -208,7 +209,7 @@ function sanitizeLexicalSearch(value: unknown): ControlledAgentLexicalSearchSumm
   const resultHash = typeof value.resultHash === "string" && safeHashPattern.test(value.resultHash) ? value.resultHash : undefined;
   const snippets = sanitizeSnippets(value.snippets);
   if (!status || resultCount === undefined || totalMatchCount === undefined || totalSnippetBytes === undefined || truncated === undefined || !message || !snippets || snippets.length !== resultCount) return undefined;
-  return stripUndefined({ status: status as "succeeded", resultCount, totalMatchCount, totalSnippetBytes, truncated, resultHash, snippets, message });
+  return stripUndefined({ status: status as "succeeded" | "truncated", resultCount, totalMatchCount, totalSnippetBytes, truncated, resultHash, snippets, message });
 }
 
 function sanitizeSnippets(value: unknown): ControlledAgentLexicalSearchSnippet[] | undefined {
@@ -350,9 +351,9 @@ function safeLanguageId(value: unknown): string | undefined {
 
 function safeSnippet(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  if (unsafeTextPattern.test(value) || redactSecrets(value) !== value) return undefined;
+  if (unsafeSnippetTextPattern.test(value) || redactSecrets(value) !== value) return undefined;
   const sanitized = sanitizeTimelineText(value).trim();
-  return sanitized.length > 0 && sanitized.length <= controlledAgentSearchSelectionLimits.maxSnippetBytes && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(sanitized) && !unsafeTextPattern.test(sanitized) ? sanitized : undefined;
+  return sanitized.length > 0 && sanitized.length <= controlledAgentSearchSelectionLimits.maxSnippetBytes && !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/u.test(sanitized) && !unsafeSnippetTextPattern.test(sanitized) ? sanitized : undefined;
 }
 
 function safeDisplayText(value: unknown, limit: number): string | undefined {

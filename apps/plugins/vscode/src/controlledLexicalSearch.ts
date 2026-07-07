@@ -119,7 +119,7 @@ const generatedSegments = new Set(["dist", "build", "out", "target", "coverage",
 const unsafeQueryPattern = /[\u0000-\u001f\u007f-\u009f]|[*/\\~]|\.\.|[{}[\]()^$+?|]|[;&`$<>]|\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path|raw|dump|output|command|prompt)\b|authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i;
 const unsafeTextPattern = /authorization|bearer|api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|credential|cookie|BEGIN [A-Z ]*PRIVATE KEY|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i;
 const privatePathPattern = /(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i;
-const secretNamePattern = /auth|credential|password|secret|token|access[_-]?token|api[_-]?key|^\.env$/i;
+const secretNamePattern = /^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|secrets|token|tokens|access[_-]?token|api[_-]?key|\.env)(?:[._-]|$)|(?:^|[._-])(?:credential|credentials|password|secret|secrets|token|tokens|access[_-]?token|api[_-]?key)(?:[._-]|$)/i;
 
 export function isControlledLexicalSearchGuiMessage(value: unknown): value is ControlledLexicalSearchGuiMessage {
   return parseControlledLexicalSearchRequest(value) !== undefined;

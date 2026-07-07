@@ -6,6 +6,7 @@ import { isInvalidControlledLexicalSearchRequestMessage, parseControlledLexicalS
 
 async function main(): Promise<void> {
   await testSafeSearch();
+  await testLegitimateAuthAuthorityAndTokenizerPaths();
   await testUnsafeQueryAndMalformedRequestsFailClosed();
   await testUnsafeHiddenDependencyAndGeneratedPathsFailClosed();
   await testBinarySecretAndPrivateSnippetsFailClosedOrSanitize();
@@ -32,6 +33,18 @@ async function testSafeSearch(): Promise<void> {
   assert.equal(result.payload.snippets[0].languageId, "typescript");
   assert.match(result.payload.snippets[0].snippet, /chat composer/);
   assert.equal(JSON.stringify(result).includes(workspace), false);
+}
+
+async function testLegitimateAuthAuthorityAndTokenizerPaths(): Promise<void> {
+  const workspace = await createWorkspace();
+  await fs.mkdir(path.join(workspace, "src"), { recursive: true });
+  for (const file of ["authenticator.ts", "authority.ts", "tokenizer.ts"]) {
+    await fs.writeFile(path.join(workspace, "src", file), "alpha\nneedle source line\nomega\n", "utf8");
+    const result = await runControlledLexicalSearchRequest(createRequest([`src/${file}`], "needle"), [workspace]);
+    assert.equal(result.payload.status, "succeeded", file);
+    assert.equal(result.payload.searchAllowed, true, file);
+    assert.equal(result.payload.snippets[0].pathLabel, `src/${file}`, file);
+  }
 }
 
 async function testUnsafeQueryAndMalformedRequestsFailClosed(): Promise<void> {
