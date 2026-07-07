@@ -74,7 +74,17 @@ import hostIdeActionResultUnavailableContextWithPathRangeMessage from "../../../
 import hostIdeActionResultRawPromptFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-raw-prompt-field.json";
 import hostIdeActionResultProviderResponseFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-result-provider-response-field.json";
 import hostIdeActionProgressRawFileContentsFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-ide-action-progress-raw-file-contents-field.json";
-import { isControlledAgentCommandRunRequestPayload, isControlledAgentCommandRunResultPayload } from "./bridgeAdapter";
+import { isControlledAgentCommandRunRequestPayload, isControlledAgentCommandRunResultPayload, isControlledAgentLexicalSearchRequestPayload, isControlledAgentLexicalSearchResultPayload } from "./bridgeAdapter";
+import guiControlledAgentLexicalSearchRequestMessage from "../../../../packages/contracts/examples/bridge/gui-controlled-agent-lexical-search-request.json";
+import hostControlledAgentLexicalSearchResultSucceededMessage from "../../../../packages/contracts/examples/bridge/host-controlled-agent-lexical-search-result-succeeded.json";
+import guiControlledAgentLexicalSearchRequestAssistantMintedMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-controlled-agent-lexical-search-request-assistant-minted.json";
+import guiControlledAgentLexicalSearchRequestBrowserHostMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-controlled-agent-lexical-search-request-browser-host.json";
+import guiControlledAgentLexicalSearchRequestRegexMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-controlled-agent-lexical-search-request-regex.json";
+import guiControlledAgentLexicalSearchRequestToolFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-controlled-agent-lexical-search-request-tool-field.json";
+import hostControlledAgentLexicalSearchResultBrowserSuccessMessage from "../../../../packages/contracts/examples-invalid/bridge/host-controlled-agent-lexical-search-result-browser-success.json";
+import hostControlledAgentLexicalSearchResultPrivatePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-controlled-agent-lexical-search-result-private-path.json";
+import hostControlledAgentLexicalSearchResultRawContentFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-controlled-agent-lexical-search-result-raw-content-field.json";
+import hostControlledAgentLexicalSearchResultSecretSnippetMessage from "../../../../packages/contracts/examples-invalid/bridge/host-controlled-agent-lexical-search-result-secret-snippet.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -1152,6 +1162,32 @@ describe("bridgeAdapter", () => {
     expect(isHostMessage(controlledCommandRunResult({ outputTail: "Authorization: Bearer unsafe" }))).toBe(false);
     expect(isHostMessage(controlledCommandRunResult({ cwd: "/Users/alice/project" }))).toBe(false);
     expect(isHostMessage(controlledCommandRunResult({ policyFlags: { ...controlledCommandRunPolicyFlags(), shellAllowed: true } }))).toBe(false);
+  });
+
+  it("validates controlled lexical search bridge requests and sanitized host results", () => {
+    expect(isControlledAgentLexicalSearchRequestPayload(guiControlledAgentLexicalSearchRequestMessage.payload)).toBe(true);
+    expect(isGuiMessage(guiControlledAgentLexicalSearchRequestMessage)).toBe(true);
+    expect(isControlledAgentLexicalSearchResultPayload(hostControlledAgentLexicalSearchResultSucceededMessage.payload)).toBe(true);
+    expect(isHostMessage(hostControlledAgentLexicalSearchResultSucceededMessage)).toBe(true);
+  });
+
+  it("rejects unsafe controlled lexical search bridge metadata", () => {
+    for (const message of [
+      guiControlledAgentLexicalSearchRequestAssistantMintedMessage,
+      guiControlledAgentLexicalSearchRequestBrowserHostMessage,
+      guiControlledAgentLexicalSearchRequestRegexMessage,
+      guiControlledAgentLexicalSearchRequestToolFieldMessage,
+    ]) {
+      expect(isGuiMessage(message)).toBe(false);
+    }
+    for (const message of [
+      hostControlledAgentLexicalSearchResultBrowserSuccessMessage,
+      hostControlledAgentLexicalSearchResultPrivatePathMessage,
+      hostControlledAgentLexicalSearchResultRawContentFieldMessage,
+      hostControlledAgentLexicalSearchResultSecretSnippetMessage,
+    ]) {
+      expect(isHostMessage(message)).toBe(false);
+    }
   });
 
   it("accepts current non-privileged host messages", () => {

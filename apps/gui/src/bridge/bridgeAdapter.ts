@@ -105,7 +105,7 @@ export type IdeActionResultPayload = {
 
 export type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentCommandRunRequest";
+  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
@@ -128,7 +128,7 @@ export type HostRuntimeStatusPayload = {
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentCommandRunResult";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload | HostRuntimeStatusPayload;
 };
@@ -232,6 +232,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.controlledAgentFileReadResult",
   "host.controlledAgentEditResult",
   "host.controlledAgentCommandRunResult",
+  "host.controlledAgentLexicalSearchResult",
 ]);
 const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.ready",
@@ -242,6 +243,7 @@ const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.controlledAgentFileReadRequest",
   "gui.controlledAgentEditRequest",
   "gui.controlledAgentCommandRunRequest",
+  "gui.controlledAgentLexicalSearchRequest",
 ]);
 
 function expectedParentOrigin(): string | undefined {
@@ -413,6 +415,9 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   if (value.type === "gui.controlledAgentCommandRunRequest") {
     return typeof value.requestId === "string" && isControlledAgentCommandRunRequestPayload(value.payload) && value.payload.requestId === value.requestId;
   }
+  if (value.type === "gui.controlledAgentLexicalSearchRequest") {
+    return typeof value.requestId === "string" && isControlledAgentLexicalSearchRequestPayload(value.payload) && value.payload.requestId === value.requestId;
+  }
   return value.type === "gui.applyWorkspaceEditRequest" && typeof value.requestId === "string" && isApplyWorkspaceEditPayload(value.payload);
 }
 
@@ -456,6 +461,44 @@ export function isControlledAgentCommandRunResultPayload(value: unknown): value 
   return false;
 }
 
+export function isControlledAgentLexicalSearchRequestPayload(value: unknown): value is Record<string, unknown> & { requestId: string } {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "workspaceReadinessId", "explicitUserGesture", "userGestureId", "host", "query", "queryMode", "scope", "limits", "policyFlags"])) {
+    return false;
+  }
+  return safeControlledAgentId(value.requestId) &&
+    value.requestIdMintedBy === "gui" &&
+    value.source === "gui" &&
+    value.assistantMinted === false &&
+    safeControlledAgentId(value.controlledWorkspaceId) &&
+    safeControlledAgentId(value.runId) &&
+    safeControlledAgentId(value.runtimeSessionId) &&
+    safeControlledAgentId(value.workspaceReadinessId) &&
+    value.explicitUserGesture === true &&
+    safeControlledAgentId(value.userGestureId) &&
+    value.host === "vscode" &&
+    safeControlledAgentLexicalSearchQuery(value.query) &&
+    value.queryMode === "literal_text" &&
+    isControlledAgentLexicalSearchScope(value.scope) &&
+    isControlledAgentLexicalSearchLimits(value.limits) &&
+    isControlledAgentLexicalSearchPolicyFlags(value.policyFlags);
+}
+
+export function isControlledAgentLexicalSearchResultPayload(value: unknown): value is Record<string, unknown> & { requestId: string } {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["requestId", "requestIdMintedBy", "userConfirmed", "explicitUserGesture", "controlledWorkspaceId", "runId", "runtimeSessionId", "workspaceReadinessId", "host", "status", "authority", "cloudRequired", "executionAllowed", "searchAllowed", "privatePathExposed", "rawContentIncluded", "policyFlags", "resultCount", "totalMatchCount", "totalSnippetBytes", "truncated", "resultHash", "snippets", "blockedReason", "message"])) {
+    return false;
+  }
+  if (!safeControlledAgentId(value.requestId) || value.requestIdMintedBy !== "gui" || value.userConfirmed !== true || value.explicitUserGesture !== true || !safeControlledAgentId(value.controlledWorkspaceId) || !safeControlledAgentId(value.runId) || !safeControlledAgentId(value.runtimeSessionId) || !safeControlledAgentId(value.workspaceReadinessId) || value.host !== "vscode" || value.authority !== "explicit_literal_lexical_search_metadata" || value.cloudRequired !== false || value.executionAllowed !== false || value.privatePathExposed !== false || value.rawContentIncluded !== false || !isControlledAgentLexicalSearchPolicyFlags(value.policyFlags) || !safeMessage(value.message)) {
+    return false;
+  }
+  if (value.status === "succeeded") {
+    return value.searchAllowed === true && optionalBoundedInteger(value.resultCount, 0, 20) && value.resultCount !== undefined && optionalBoundedInteger(value.totalMatchCount, 0, 200) && value.totalMatchCount !== undefined && optionalBoundedInteger(value.totalSnippetBytes, 0, 8000) && value.totalSnippetBytes !== undefined && typeof value.truncated === "boolean" && typeof value.resultHash === "string" && /^sha256:[a-f0-9]{64}$/.test(value.resultHash) && isControlledAgentLexicalSearchSnippets(value.snippets) && Array.isArray(value.snippets) && value.snippets.length === value.resultCount && value.blockedReason === undefined;
+  }
+  if (value.status === "blocked" || value.status === "failed") {
+    return value.searchAllowed === false && value.resultCount === 0 && value.totalMatchCount === 0 && value.totalSnippetBytes === 0 && value.truncated === false && value.resultHash === undefined && Array.isArray(value.snippets) && value.snippets.length === 0 && (value.blockedReason === undefined || isControlledAgentLexicalSearchBlockedReason(value.blockedReason));
+  }
+  return false;
+}
+
 function isControlledAgentCommandRunLimits(value: unknown): boolean {
   return isPlainObject(value) && hasOnlyKeys(value, ["timeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"]) &&
     optionalBoundedInteger(value.timeoutMs, 1000, 1800000) && value.timeoutMs !== undefined &&
@@ -475,6 +518,58 @@ function isControlledAgentCommandRunPolicyFlags(value: unknown): boolean {
     return false;
   }
   return keys.every((key) => key === "allowlistedCommandIdOnly" ? value[key] === true : value[key] === false);
+}
+
+function isControlledAgentLexicalSearchScope(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["kind", "controlledWorkspaceOnly", "includePathLabels", "excludeHidden", "excludeDependencies", "excludeGenerated", "excludeBinary", "excludeSecretLikePaths", "recursiveAllowed", "broadWorkspaceScanAllowed"]) &&
+    value.kind === "controlled_workspace_bounded" &&
+    value.controlledWorkspaceOnly === true &&
+    Array.isArray(value.includePathLabels) && value.includePathLabels.length <= 8 && value.includePathLabels.every((item) => requiredSafeRelativePath(item)) &&
+    value.excludeHidden === true &&
+    value.excludeDependencies === true &&
+    value.excludeGenerated === true &&
+    value.excludeBinary === true &&
+    value.excludeSecretLikePaths === true &&
+    value.recursiveAllowed === false &&
+    value.broadWorkspaceScanAllowed === false;
+}
+
+function isControlledAgentLexicalSearchLimits(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["maxFilesScanned", "maxMatches", "maxSnippetBytes", "literalOnly", "regexAllowed", "globAllowed", "pathQueryAllowed", "indexingAllowed", "backgroundAllowed"]) &&
+    optionalBoundedInteger(value.maxFilesScanned, 1, 40) && value.maxFilesScanned !== undefined &&
+    optionalBoundedInteger(value.maxMatches, 1, 20) && value.maxMatches !== undefined &&
+    optionalBoundedInteger(value.maxSnippetBytes, 1, 400) && value.maxSnippetBytes !== undefined &&
+    value.literalOnly === true &&
+    value.regexAllowed === false &&
+    value.globAllowed === false &&
+    value.pathQueryAllowed === false &&
+    value.indexingAllowed === false &&
+    value.backgroundAllowed === false;
+}
+
+function isControlledAgentLexicalSearchPolicyFlags(value: unknown): boolean {
+  const keys = ["explicitLiteralSearchAllowed", "hiddenSearchAllowed", "backgroundSearchAllowed", "indexingAllowed", "regexAllowed", "globAllowed", "pathQueryAllowed", "broadWorkspaceScanAllowed", "fileReadBodyAllowed", "fileWriteAllowed", "shellAllowed", "gitAllowed", "providerAllowed", "toolAllowed", "autoSearchAllowed", "autoApplyAllowed", "autoRunAllowed"];
+  return isPlainObject(value) && hasOnlyKeys(value, keys) && keys.every((key) => key === "explicitLiteralSearchAllowed" ? value[key] === true : value[key] === false);
+}
+
+function isControlledAgentLexicalSearchSnippets(value: unknown): boolean {
+  return Array.isArray(value) && value.length <= 20 && value.every(isControlledAgentLexicalSearchSnippet);
+}
+
+function isControlledAgentLexicalSearchSnippet(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["pathLabel", "range", "languageId", "snippet", "snippetByteCount", "snippetHash", "matchCount", "truncated"]) &&
+    requiredSafeRelativePath(value.pathLabel) &&
+    isEditRange(value.range) &&
+    optionalLanguageId(value.languageId) && value.languageId !== undefined &&
+    safeControlledAgentLexicalSearchSnippet(value.snippet) &&
+    optionalBoundedInteger(value.snippetByteCount, 0, 400) && value.snippetByteCount !== undefined &&
+    typeof value.snippetHash === "string" && /^sha256:[a-f0-9]{64}$/.test(value.snippetHash) &&
+    optionalBoundedInteger(value.matchCount, 0, 20) && value.matchCount !== undefined &&
+    typeof value.truncated === "boolean";
+}
+
+function isControlledAgentLexicalSearchBlockedReason(value: unknown): boolean {
+  return value === "search_disabled" || value === "unsupported_host" || value === "unsafe_query" || value === "policy_denied" || value === "host_unavailable";
 }
 
 function safeControlledAgentId(value: unknown): boolean {
@@ -529,6 +624,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   }
   if (value.type === "host.controlledAgentCommandRunResult") {
     return typeof value.requestId === "string" && isControlledAgentCommandRunResultPayload(value.payload) && value.payload.requestId === value.requestId;
+  }
+  if (value.type === "host.controlledAgentLexicalSearchResult") {
+    return typeof value.requestId === "string" && isControlledAgentLexicalSearchResultPayload(value.payload) && value.payload.requestId === value.requestId;
   }
   return value.type === "host.openedFromCommand" && value.requestId === undefined && isEmptyPayload(value.payload);
 }
@@ -949,6 +1047,14 @@ function safeVerificationOutputTail(value: unknown): boolean {
 
 function safeWorkspaceSnippetQuery(value: unknown): boolean {
   return typeof value === "string" && value.length > 0 && value.length <= 120 && value.trim().length > 0 && !hasControlCharacters(value) && !/[*/\\~]|\.\.|[{}[\]()^$+?|]|[;&`$<>]/.test(value) && !/\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b/i.test(value) && !unsafeDisplayText(value) && !hasKeyLikeSecretText(value);
+}
+
+function safeControlledAgentLexicalSearchQuery(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= 120 && value.trim().length > 0 && !hasControlCharacters(value) && !/[*/\\~]|\.\.|[{}[\]()^$+?|]|[;&`$<>]/.test(value) && !/\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path|token|secret)\b/i.test(value) && !unsafeDisplayText(value) && !hasKeyLikeSecretText(value);
+}
+
+function safeControlledAgentLexicalSearchSnippet(value: unknown): boolean {
+  return typeof value === "string" && value.length > 0 && value.length <= 400 && !hasControlCharactersExceptCodeWhitespace(value) && !unsafeDisplayText(value) && !hasPrivatePathLikeText(value) && !hasKeyLikeSecretText(value);
 }
 
 function safeWorkspaceSnippetText(value: unknown): boolean {
