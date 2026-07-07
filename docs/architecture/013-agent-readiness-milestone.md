@@ -699,6 +699,20 @@ npm run audit:controlled-autonomy-wording && npm run check
 
 These gates validate schemas, examples, invalid examples, wording, and repository checks only. They do not call real providers, execute provider tools, persist raw model responses, apply edits, run verification, read files, search, index, execute shell/git/network/package actions, prove production autonomy, or complete cross-host controlled execution parity.
 
+## Sprint 102 reviewable patch-plan metadata contract
+
+Sprint 102 adds `controlled_agent_patch_plan` as a minimal review-only dry-run metadata contract. A valid payload can describe bounded safe labels and existing-file replacement candidates for user review, while keeping `executionAllowed: false`, `dryRunOnly: true`, and `automaticApplyAllowed: false`.
+
+S102 grants no create, delete, rename, move, chmod, binary, symlink, or directory edit authority; no raw diff, file body, or provider payload persistence; no shell, git, network, package, provider, or tool authority; and no hidden read, search, or indexing authority. It does not add an apply path, bridge message, runtime endpoint, provider call, verification executor, production autonomy, release evidence, or marketplace evidence.
+
+The S102 contract fixture gate is:
+
+```sh
+npm run validate:contracts
+```
+
+This validates schemas and fixtures only. It does not apply edits, run verification, call providers, execute tools, mutate workspaces, or prove production autonomy.
+
 ## Sprint 104 explicit project memory attachment contract
 
 Sprint 104 defines project memory use for controlled runs as an explicit attachment contract only. A controlled run may use project memory notes only when the user deliberately selects or confirms those notes for that run through the existing project-memory attachment path. Project memory suggestions, labels, search results, run history, traces, capability metadata, or prior sessions must not become hidden runtime context and must not be injected automatically into a controlled run prompt, proposal step, repair attempt, terminal report, or provider request.

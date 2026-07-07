@@ -1,0 +1,66 @@
+{
+  "kind": "controlled_agent_patch_plan",
+  "version": "2026-07-07",
+  "authority": "review_only_dry_run_metadata",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "reviewOnly": true,
+  "dryRunOnly": true,
+  "automaticApplyAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "controlled-workspace-s102",
+    "runId": "controlled-run-s102",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "privatePathExposed": false,
+    "workspaceLabel": "controlled worktree"
+  },
+  "patchPlan": {
+    "planId": "patch-plan-s102",
+    "dryRunStatus": "not_applied",
+    "summary": "One bounded replacement candidate is ready for review.",
+    "candidates": [
+      {
+        "operation": "replace",
+        "existingFileRequired": true,
+        "workspaceRelativePath": "docs/safe-copy.md",
+        "fileLabel": "docs/safe-copy.md",
+        "expectedContentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "startLine": 8,
+        "endLine": 10,
+        "replacementByteCount": 96,
+        "replacementLabel": "bounded wording replacement",
+        "rawReplacementStored": false,
+        "rawDiffStored": false,
+        "requiresUserApply": true
+      }
+    ]
+  },
+  "policyFlags": {
+    "metadataOnly": true,
+    "reviewOnly": true,
+    "dryRunOnly": true,
+    "existingFileReplacementOnly": true,
+    "rawDiffPersistenceAllowed": false,
+    "rawFilePersistenceAllowed": false,
+    "rawProviderPayloadPersistenceAllowed": false,
+    "automaticApplyAllowed": false,
+    "shellAllowed": false,
+    "gitAllowed": false,
+    "networkAllowed": false,
+    "packageInstallAllowed": false,
+    "providerToolCallingAllowed": false,
+    "toolAuthorityAllowed": false,
+    "hiddenReadAllowed": false,
+    "searchAllowed": false,
+    "indexingAllowed": false,
+    "createAllowed": false,
+    "deleteAllowed": false,
+    "renameAllowed": false,
+    "moveAllowed": false,
+    "chmodAllowed": false,
+    "binaryEditAllowed": false,
+    "symlinkEditAllowed": false,
+    "directoryEditAllowed": false
+  }
+}

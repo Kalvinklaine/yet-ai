@@ -144,6 +144,10 @@ const mappings = [
     "packages/contracts/examples/engine/controlled-agent-provider-proposal.json",
     "packages/contracts/schemas/engine/controlled-agent-provider-proposal.schema.json"
   ],
+  [
+    "packages/contracts/examples/engine/controlled-agent-patch-plan.json",
+    "packages/contracts/schemas/engine/controlled-agent-patch-plan.schema.json"
+  ],
   ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
@@ -1194,6 +1198,14 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-provider-proposal.schema.json"
+  ]),
+  ...[
+    "controlled-agent-patch-plan-raw-diff.json",
+    "controlled-agent-patch-plan-auto-apply.json",
+    "controlled-agent-patch-plan-create-operation.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-patch-plan.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",
