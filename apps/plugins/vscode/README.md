@@ -8,6 +8,21 @@ The plugin stays thin. Chat runtime, provider configuration, tool policy, storag
 
 The plugin connects the GUI to the local Yet AI runtime for local-first BYOK workflows. It does not require a Yet AI cloud workspace, account, hosted model gateway, or managed credit balance for normal operation. It must not persist provider API keys or duplicate provider adapters.
 
+## Controlled lexical search executor
+
+The VS Code plugin owns the S111 controlled lexical search executor for `gui.controlledAgentLexicalSearchRequest` messages. It is VS Code-only and accepts only GUI/user-minted requests with explicit user gesture metadata, host `vscode`, `queryMode: literal_text`, safe workspace-relative include path labels, and deny-by-default policy flags. It returns `host.controlledAgentLexicalSearchResult` metadata with bounded sanitized snippets, hashes, ranges, counts, and truncation flags.
+
+Browser remains unsupported for trusted workspace lexical search. JetBrains remains fail-closed until a future verified parity card implements and documents its own host executor. This VS Code executor does not add provider tools, runtime endpoints, background indexing, broad recursive scans, hidden reads, regex/glob/path query authority, shell/git/tool execution, file mutation, production autonomy, release, or marketplace claims.
+
+Focused local coverage is:
+
+```sh
+npm run smoke:controlled-agent-real-lexical-search
+cd apps/plugins/vscode && npm run compile && npm test
+```
+
+The smoke compiles/imports the package-local executor and uses a disposable sentinel workspace. It does not launch VS Code UI, browser automation, providers, runtime services, network, git, package installation, or shell commands beyond local Node and TypeScript test helpers. It is kept out of root `npm run check` so unrelated docs/contract validation does not recompile the VS Code plugin; run it when changing the controlled lexical search executor, bridge wiring, or S111 docs.
+
 ## IDE surface parity
 Runtime lifecycle parity is documented in `docs/architecture/009-runtime-lifecycle-roadmap.md`. VS Code currently remains an IDE-owned lifecycle host for `auto` / `connect` / `launch`; it does not depend on or implement a daemon-lite, proxy worker, global runtime registry, or resumable background-session model.
 

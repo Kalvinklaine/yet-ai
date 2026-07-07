@@ -116,7 +116,7 @@ const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const safeRequestIdPattern = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const dependencySegments = new Set(["node_modules", "vendor"]);
 const generatedSegments = new Set(["dist", "build", "out", "target", "coverage", "__pycache__", "generated", "tmp", "temp", "cache"]);
-const unsafeQueryPattern = /[\u0000-\u001f\u007f-\u009f]|[*/\\~]|\.\.|[{}[\]()^$+?|]|[;&`$<>]|\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b|authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i;
+const unsafeQueryPattern = /[\u0000-\u001f\u007f-\u009f]|[*/\\~]|\.\.|[{}[\]()^$+?|]|[;&`$<>]|\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path|raw|dump|output|command|prompt)\b|authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i;
 const unsafeTextPattern = /authorization|bearer|api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|credential|cookie|BEGIN [A-Z ]*PRIVATE KEY|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i;
 const privatePathPattern = /(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i;
 const secretNamePattern = /auth|credential|password|secret|token|access[_-]?token|api[_-]?key|^\.env$/i;

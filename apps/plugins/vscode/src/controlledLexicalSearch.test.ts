@@ -39,7 +39,7 @@ async function testUnsafeQueryAndMalformedRequestsFailClosed(): Promise<void> {
   await fs.mkdir(path.join(workspace, "src"), { recursive: true });
   await fs.writeFile(path.join(workspace, "src", "app.ts"), "chat composer\n", "utf8");
 
-  for (const query of ["", "../secret", "chat.*", "api_key", "shell command", "/Users/private"]) {
+  for (const query of ["", "../secret", "chat.*", "api_key", "shell command", "raw output", "/Users/private"]) {
     const message = createRequest(["src/app.ts"], query);
     assert.equal(parseControlledLexicalSearchRequest(message), undefined, query);
     const result = await runControlledLexicalSearchRequest(message, [workspace]);
