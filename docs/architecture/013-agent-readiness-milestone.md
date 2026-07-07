@@ -678,6 +678,22 @@ npm run smoke:controlled-agent-s96-useful-run && npm run check && git diff --che
 This gate validates the useful-run smoke evidence, repository documentation checks, whitespace hygiene, and tracked status only. It does not run providers, require hosted services, publish artifacts, prove production autonomy, prove release readiness, or complete cross-host parity.
 
 
+## Sprint 104 explicit project memory attachment contract
+
+Sprint 104 defines project memory use for controlled runs as an explicit attachment contract only. A controlled run may use project memory notes only when the user deliberately selects or confirms those notes for that run through the existing project-memory attachment path. Project memory suggestions, labels, search results, run history, traces, capability metadata, or prior sessions must not become hidden runtime context and must not be injected automatically into a controlled run prompt, proposal step, repair attempt, terminal report, or provider request.
+
+Attached memory evidence must be sanitized metadata by default: stable note ids when safe, user-visible safe titles, short safe summaries, task/session labels, attach status, and bounded counts. Raw note bodies are allowed into the transient run context only when they were explicitly selected by the user and pass the same safe-content checks as other explicit context. Unsafe note bodies must be omitted rather than partially echoed. Unsafe means secret-looking text, credential material, private absolute paths, raw provider responses, raw prompts, file bodies, diffs, command material, bridge payloads, stack traces, or arbitrary unreviewed note text that could leak private data.
+
+The controlled-run memory boundary adds no memory indexing, background search, automatic relevance selection, provider/tool memory writes, task-board mutation, bridge authority, runtime endpoint, browser-storage persistence, or production autonomy. Memory attachment remains one-shot for the current explicit run context; accepted sends or completed runs must not silently reuse previously attached notes unless the user selects them again. Final reports, traces, dogfood evidence, and smoke output may mention only sanitized labels, summaries, counts, and omitted/unsafe statuses, with no secrets, private paths, raw note bodies, or raw memory-store dumps.
+
+The S104 documentation gate is:
+
+```sh
+npm run audit:controlled-autonomy-wording && npm run check
+```
+
+This gate validates wording hygiene and repository checks only. It does not implement a new memory subsystem, provider memory feature, hidden context path, storage migration, production autonomy, release evidence, marketplace evidence, or real-provider CI.
+
 ## Blocked and deferred capabilities
 
 These capabilities are explicitly not implemented as active Agent Run features:

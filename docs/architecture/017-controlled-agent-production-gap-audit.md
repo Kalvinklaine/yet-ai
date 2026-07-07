@@ -98,6 +98,14 @@ A future authority registry must enumerate:
 
 Required evidence before a production-like decision: a single source-of-truth authority registry linked from this audit, contract fixtures for safe and unsafe messages, host fail-closed tests for Browser and JetBrains, VS Code execution-path tests for each allowed slice, and proof that unsupported hosts cannot produce privileged bridge requests.
 
+### Project memory attachment boundary
+
+Until a later authority registry intentionally changes it, controlled-run project memory is explicit attachment only. The allowed dev-preview boundary is user-selected local project memory notes, carried into the current controlled run through the visible one-shot attachment path. There is no automatic memory injection from project history, run history, trace labels, suggestions, search results, prior sessions, capability metadata, or model/provider output.
+
+Safe memory metadata may include sanitized note ids, user-visible safe titles, short safe summaries, task/session labels, attach status, and bounded counts. Raw note bodies must not appear in final reports, traces, dogfood reports, smoke output, browser storage, bridge payload dumps, or GUI-facing status after save. A raw note body may enter only the transient explicit run context when the user selected that note and the note passes safe-content checks. If a note body contains or resembles secrets, credentials, private absolute paths, raw prompts, provider responses, file bodies, diffs, replacement text, command material, full output dumps, bridge payloads, stack traces, or arbitrary unreviewed private text, the body is unsafe and must be omitted with a sanitized omitted/unsafe label.
+
+This boundary does not grant memory indexing, background relevance search, automatic selection, provider/tool memory writes, task-board mutation, storage migration, export authority, bridge authority, runtime authority, hidden workspace reads, or production autonomy. Required future evidence before widening memory use: safe/unsafe fixtures for memory notes, raw-body exclusion tests, no-secret/private-path evidence across GUI/runtime/plugin/report surfaces, explicit re-selection behavior for later runs, and host fail-closed proof that unsupported surfaces cannot mint privileged memory attachments.
+
 ### Secrets, provider data, and credential handling gaps
 
 The local-first BYOK contract requires provider settings and credentials to remain local-only. GUI-facing save flows must not persist or echo raw provider secrets after save, and tracked evidence must not include secrets or raw provider payloads. The production gap is that the current audit does not yet link a complete credential-flow proof across GUI, engine, plugin, local runtime, logs, crash reports, exports, and packaged wrappers.
