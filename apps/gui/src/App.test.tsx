@@ -8635,9 +8635,10 @@ describe("edit proposal preview", () => {
     const stale = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload);
     await dispatchHostControlledCommandRunResult(stale.requestId, stale.payload);
 
+    expect(container?.textContent).toContain("State: Runtime unavailable");
+    expect(buttonWithin(agentRunPanel(), "Manually run allowlisted verification").disabled).toBe(true);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(1);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
-    expect(container?.querySelector("[data-testid='controlled-agent-run-panel']")?.textContent).toContain("Stop reason: partial execution stopped");
     expect(agentRunPanel().textContent).not.toContain("Verified");
   });
 
