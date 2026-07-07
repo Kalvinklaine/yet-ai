@@ -661,13 +661,21 @@ S96 does not change runtime authority. It does not add production autonomy, mult
 
 Host limitations stay explicit. VS Code is the first controlled dev-preview host for the useful-run target. Browser remains preview-only/unsupported for trusted workspace execution and must not post controlled read, edit, or command requests. JetBrains may keep hosted GUI/manual parity and fail-closed copy, but it must not be described as controlled execution parity until a later verified card changes that status.
 
-The S96 documentation gate is:
+The focused T-516 replacement smoke is the S96 final useful-run audit evidence:
 
 ```sh
-npm run audit:controlled-autonomy-wording && npm run check && git diff --check && git status --short
+npm run smoke:controlled-agent-s96-useful-run
 ```
 
-This gate validates wording hygiene, repository documentation checks, whitespace hygiene, and tracked status only. It does not run providers, require hosted services, publish artifacts, prove production autonomy, prove release readiness, or complete cross-host parity.
+It validates exactly the explicit VS Code user Start label, one bounded controlled read label, one bounded replacement edit label, one allowlisted verification command-id label, and one sanitized terminal report label. This is deterministic local/mock evidence only.
+
+The S96 documentation and smoke gate is:
+
+```sh
+npm run smoke:controlled-agent-s96-useful-run && npm run check && git diff --check && git status --short
+```
+
+This gate validates the useful-run smoke evidence, repository documentation checks, whitespace hygiene, and tracked status only. It does not run providers, require hosted services, publish artifacts, prove production autonomy, prove release readiness, or complete cross-host parity.
 
 
 ## Blocked and deferred capabilities

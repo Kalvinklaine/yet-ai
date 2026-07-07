@@ -170,6 +170,8 @@ The focused S96 useful-run smoke replacement is:
 npm run smoke:controlled-agent-s96-useful-run
 ```
 
+This T-516 replacement smoke is the S96 final useful-run audit evidence. It validates exactly the explicit VS Code user Start label, one bounded read label, one bounded replacement edit label, one allowlisted verification command-id label, and one sanitized terminal report label, while staying deterministic local/mock evidence only.
+
 The S96 documentation and smoke gate is:
 
 ```sh
