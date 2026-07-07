@@ -11,6 +11,8 @@ import type { ControlledOneStepAgentLoopState } from "../services/controlledOneS
 import type { ControlledAgentRepairLoopEvaluation } from "../services/controlledAgentRepairLoop";
 import type { ControlledRunHistoryItem } from "../services/controlledRunHistory";
 import type { ControlledRunContextBundle, ControlledRunContextReport } from "../services/controlledRunContext";
+import type { ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
+import { controlledAgentSearchSelectionResultId, type ControlledAgentSearchSelectionResult } from "../services/controlledAgentSearchSelection";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
@@ -45,9 +47,17 @@ export type AgentRunPanelProps = {
   includeControlledRunContext?: boolean;
   onIncludeControlledRunContextChange?: (include: boolean) => void;
   controlledRunHistory?: ControlledRunHistoryItem[];
+  controlledLexicalSearch?: ControlledAgentLexicalSearchSummary;
+  controlledSearchResultId?: string;
+  selectedControlledSearchResultIds?: string[];
+  controlledSearchSelection?: ControlledAgentSearchSelectionResult;
+  controlledSearchRequestState?: "ready" | "blocked" | "unsupported";
+  pendingControlledSearch?: boolean;
+  onRequestControlledSearch?: () => void;
+  onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [] }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -151,6 +161,14 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const showControlledRunContextSelector = controlledRunContextBundle !== undefined || controlledRunContextReport !== undefined;
   const controlledRunContextSupported = host === "vscode";
   const controlledRunContextEnabled = controlledRunContextSupported && controlledRunContextItems.length > 0;
+  const controlledSearchSnippets = controlledLexicalSearch?.snippets ?? [];
+  const controlledSearchSelectedIds = new Set(selectedControlledSearchResultIds);
+  const controlledSearchSafeItems = controlledSearchSnippets.map((snippet) => ({ id: controlledAgentSearchSelectionResultId(snippet), snippet }));
+  const controlledSearchSafeIds = new Set(controlledSearchSafeItems.map((item) => item.id));
+  const controlledSearchSelectedSafeCount = selectedControlledSearchResultIds.filter((id) => controlledSearchSafeIds.has(id)).length;
+  const controlledSearchUnsafeOmittedCount = Math.max(0, (controlledLexicalSearch?.resultCount ?? 0) - controlledSearchSafeItems.length) + controlledSearchSelectionUnsafeCount(controlledSearchSelection);
+  const showControlledSearchSelection = controlledLexicalSearch !== undefined || controlledSearchSelection !== undefined || controlledSearchRequestState !== undefined;
+  const canRequestControlledSearch = host === "vscode" && controlledSearchRequestState === "ready" && !pendingControlledSearch && Boolean(onRequestControlledSearch);
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -205,6 +223,35 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           </div>
         )) : <span className="subtle">No explicit controlled-run context selected. The cat sees no basket, therefore carries no files.</span>}
         <span className="subtle">Preview is bounded and in-memory only. This panel never persists raw file bodies, starts search/indexing, or attaches hidden workspace context.</span>
+      </div>}
+      {showControlledSearchSelection && <div className={`readiness-card ${controlledSearchSelectedSafeCount > 0 && controlledSearchSelection?.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled lexical search explicit selection">
+        <div className="row">
+          <strong>Controlled lexical search results</strong>
+          <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code explicit search" : host === "jetbrains" ? "JetBrains fail-closed" : "browser unsupported"}</span>
+          <span className="badge">explicit user-selected context only</span>
+          <span className="badge">no auto attach/send/provider/apply/verify</span>
+        </div>
+        <span>{host === "vscode" ? "Sanitized lexical search results can be selected here as display metadata for later explicit context inclusion." : host === "jetbrains" ? "JetBrains controlled lexical search selection is display-only and fail-closed until host parity is verified." : "Browser preview cannot run or select controlled lexical search results; no bridge request is posted."}</span>
+        <span className="subtle">This panel does not start search on render, read files, index the workspace, persist raw snippets, attach to prompts, send chat, call providers, apply edits, or run verification. Tiny paws, strict boundaries.</span>
+        <div className="agent-progress-grid" aria-label="Controlled lexical search selection budget">
+          <span>Search result id: {controlledSearchResultId ? sanitizeDisplayText(controlledSearchResultId) : "not recorded"}</span>
+          <span>Search status: {controlledLexicalSearch?.status ?? "no accepted result"}</span>
+          <span>Displayed safe results: {controlledSearchSafeItems.length}</span>
+          <span>Selected safe results: {controlledSearchSelection?.selectedContext?.selectedCount ?? controlledSearchSelectedSafeCount}</span>
+          <span>Selected bytes: {controlledSearchSelection?.selectedContext?.totalSnippetBytes ?? 0}/{controlledSearchSelection?.selectedContext?.budgets.maxTotalSnippetBytes ?? 1200}</span>
+          <span>Selected lines: {controlledSearchSelection?.selectedContext?.totalSnippetLines ?? 0}/{controlledSearchSelection?.selectedContext?.budgets.maxTotalSnippetLines ?? 80}</span>
+          <span>Omitted unsafe/stale results: {controlledSearchUnsafeOmittedCount}</span>
+          <span>Truncated search result: {controlledLexicalSearch?.truncated ? "yes" : "no"}</span>
+        </div>
+        <button type="button" className="secondary-button" onClick={onRequestControlledSearch} disabled={!canRequestControlledSearch}>{pendingControlledSearch ? "Controlled search pending" : "Request controlled lexical search"}</button>
+        {controlledSearchSelection?.state === "blocked" && controlledSearchSelection.diagnostics.length > 0 && <span className="subtle">Selection diagnostics: {controlledSearchSelection.diagnostics.map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span>}
+        {controlledSearchSafeItems.length === 0 && <span>No safe sanitized lexical search results are available for selection.</span>}
+        {controlledSearchSafeItems.map(({ id, snippet }) => (
+          <label className="row attached-context-toggle" key={id}>
+            <input style={{ width: "auto" }} type="checkbox" checked={controlledSearchSelectedIds.has(id)} disabled={host !== "vscode" || !onControlledSearchResultSelectionChange} onChange={(event) => onControlledSearchResultSelectionChange?.(id, event.target.checked)} />
+            {sanitizeDisplayText(snippet.pathLabel)} · {snippet.range.start.line}:{snippet.range.start.character}-{snippet.range.end.line}:{snippet.range.end.character} · {sanitizeDisplayText(snippet.languageId ?? "unknown")} · {snippet.snippetByteCount} bytes · {snippet.matchCount} matches{id ? ` · ${sanitizeDisplayText(id)}` : ""}
+          </label>
+        ))}
       </div>}
       {(showOneStepLoop || showRepairLoop) && (      <div className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">
@@ -544,6 +591,13 @@ function numberDetail(value: unknown): number | undefined {
 
 function stringArrayDetail(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function controlledSearchSelectionUnsafeCount(selection: ControlledAgentSearchSelectionResult | undefined): number {
+  if (!selection || selection.state === "ready") {
+    return 0;
+  }
+  return selection.diagnostics.filter((item) => item.code === "unsafe_metadata" || item.code === "stale_result").length;
 }
 
 function agentRunProposalToApplyRiskPayload(proposal: AgentRunInput["proposal"], details: Record<string, string | number | boolean | string[]>): ApplyWorkspaceEditPayload | undefined {

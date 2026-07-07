@@ -7,6 +7,8 @@ import type { VerificationCommandId } from "../bridge/bridgeAdapter";
 import { createProposalHistory, type ProposalHistory } from "../services/proposalHistory";
 import { evaluateControlledAgentRepairLoop } from "../services/controlledAgentRepairLoop";
 import { createControlledRunHistoryItem } from "../services/controlledRunHistory";
+import { controlledAgentSearchSelectionResultId, createControlledAgentSearchSelection } from "../services/controlledAgentSearchSelection";
+import type { ControlledAgentLexicalSearchSnippet, ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -157,6 +159,36 @@ const capabilityMatrixFixture = {
   summary: "Display evidence only.",
 } as const;
 
+const searchHash = `sha256:${"a".repeat(64)}`;
+
+function lexicalSnippet(overrides: Partial<ControlledAgentLexicalSearchSnippet> = {}): ControlledAgentLexicalSearchSnippet {
+  const snippet = overrides.snippet ?? "function ChatComposer() {\n  return null;\n}";
+  return {
+    pathLabel: "apps/gui/src/App.tsx",
+    range: { start: { line: 10, character: 0 }, end: { line: 12, character: 1 } },
+    languageId: "typescriptreact",
+    snippet,
+    snippetByteCount: new TextEncoder().encode(snippet).length,
+    snippetHash: searchHash,
+    matchCount: 1,
+    truncated: false,
+    ...overrides,
+  };
+}
+
+function lexicalSearch(snippets: ControlledAgentLexicalSearchSnippet[] = [lexicalSnippet()]): ControlledAgentLexicalSearchSummary {
+  return {
+    status: "succeeded",
+    resultCount: snippets.length,
+    totalMatchCount: snippets.reduce((total, item) => total + item.matchCount, 0),
+    totalSnippetBytes: snippets.reduce((total, item) => total + item.snippetByteCount, 0),
+    truncated: false,
+    resultHash: `sha256:${"b".repeat(64)}`,
+    snippets,
+    message: "Sanitized lexical search completed.",
+  };
+}
+
 
 const readyInput: AgentRunInput = {
   goal: { id: "goal-1", title: "Add safe panel", summary: "Add safe panel" },
@@ -219,6 +251,94 @@ afterEach(() => {
 });
 
 describe("AgentRunPanel", () => {
+  it("renders controlled lexical search results and selects only after explicit user checkbox", () => {
+    const search = lexicalSearch();
+    const resultId = controlledAgentSearchSelectionResultId(search.snippets[0]);
+    const onSelectionChange = vi.fn();
+    const onRequestControlledSearch = vi.fn();
+
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledLexicalSearch: search,
+      controlledSearchResultId: "lexical-result-s112",
+      selectedControlledSearchResultIds: [],
+      controlledSearchRequestState: "ready",
+      onRequestControlledSearch,
+      onControlledSearchResultSelectionChange: onSelectionChange,
+    });
+
+    expect(panelText()).toContain("Controlled lexical search results");
+    expect(panelText()).toContain("explicit user-selected context only");
+    expect(panelText()).toContain("Displayed safe results: 1");
+    expect(panelText()).toContain("Selected safe results: 0");
+    expect(panelText()).toContain("no auto attach/send/provider/apply/verify");
+    expect(browserStorageDump()).toBe("");
+    expect(onSelectionChange).not.toHaveBeenCalled();
+    expect(onRequestControlledSearch).not.toHaveBeenCalled();
+
+    const checkbox = Array.from(container?.querySelectorAll<HTMLInputElement>("input[type='checkbox']") ?? []).find((item) => item.parentElement?.textContent?.includes(resultId));
+    expect(checkbox).toBeDefined();
+    act(() => {
+      checkbox?.click();
+    });
+    expect(onSelectionChange).toHaveBeenCalledWith(resultId, true);
+    expect(onRequestControlledSearch).not.toHaveBeenCalled();
+  });
+
+  it("shows selected controlled lexical search budget and unsafe omission diagnostics without raw persistence", () => {
+    const search = lexicalSearch();
+    const resultId = controlledAgentSearchSelectionResultId(search.snippets[0]);
+    const selection = createControlledAgentSearchSelection({
+      searchResultId: "lexical-result-s112",
+      lexicalSearch: search,
+      selectedResultIds: [resultId],
+      explicitUserGesture: true,
+      userGestureId: "gesture-s112-selection",
+      selectionMintedBy: "user",
+      assistantMinted: false,
+    });
+
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledLexicalSearch: { ...search, resultCount: 2 },
+      controlledSearchResultId: "lexical-result-s112",
+      selectedControlledSearchResultIds: [resultId],
+      controlledSearchSelection: selection,
+    });
+
+    expect(panelText()).toContain("Selected safe results: 1");
+    expect(panelText()).toContain("Selected bytes: 42/1200");
+    expect(panelText()).toContain("Selected lines: 3/80");
+    expect(panelText()).toContain("Omitted unsafe/stale results: 1");
+    expect(panelText()).not.toContain("Authorization: Bearer");
+    expect(browserStorageDump()).toBe("");
+  });
+
+  it("keeps browser and JetBrains controlled lexical search selection fail-closed", () => {
+    const search = lexicalSearch();
+    renderPanel(undefined, {
+      host: "browser",
+      controlledLexicalSearch: search,
+      controlledSearchRequestState: "unsupported",
+      onControlledSearchResultSelectionChange: vi.fn(),
+    });
+
+    expect(panelText()).toContain("browser unsupported");
+    expect(panelText()).toContain("Browser preview cannot run or select controlled lexical search results; no bridge request is posted.");
+    expect(optionalButton("Request controlled lexical search")?.disabled).toBe(true);
+
+    renderPanel(undefined, {
+      host: "jetbrains",
+      controlledLexicalSearch: search,
+      controlledSearchRequestState: "unsupported",
+      onControlledSearchResultSelectionChange: vi.fn(),
+    });
+
+    expect(panelText()).toContain("JetBrains fail-closed");
+    expect(panelText()).toContain("JetBrains controlled lexical search selection is display-only and fail-closed until host parity is verified.");
+    expect(optionalButton("Request controlled lexical search")?.disabled).toBe(true);
+  });
+
   it("renders idle state", () => {
     renderPanel(undefined);
 
@@ -1182,8 +1302,17 @@ type PanelTestProps = {
   controlledRunContextReport?: any;
   includeControlledRunContext?: boolean;
   onIncludeControlledRunContextChange?: (include: boolean) => void;
+  controlledLexicalSearch?: ControlledAgentLexicalSearchSummary;
+  controlledSearchResultId?: string;
+  selectedControlledSearchResultIds?: string[];
+  controlledSearchSelection?: any;
+  controlledSearchRequestState?: "ready" | "blocked" | "unsupported";
+  pendingControlledSearch?: boolean;
+  onRequestControlledSearch?: () => void;
+  onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
   controlledRunHistory?: any;
 };
+
 
 function renderPanel(input: unknown, props: PanelTestProps = {}) {
   if (root) {
@@ -1224,6 +1353,14 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         includeControlledRunContext={props.includeControlledRunContext}
         onIncludeControlledRunContextChange={props.onIncludeControlledRunContextChange}
         controlledRunHistory={props.controlledRunHistory}
+        controlledLexicalSearch={props.controlledLexicalSearch}
+        controlledSearchResultId={props.controlledSearchResultId}
+        selectedControlledSearchResultIds={props.selectedControlledSearchResultIds}
+        controlledSearchSelection={props.controlledSearchSelection}
+        controlledSearchRequestState={props.controlledSearchRequestState}
+        pendingControlledSearch={props.pendingControlledSearch}
+        onRequestControlledSearch={props.onRequestControlledSearch}
+        onControlledSearchResultSelectionChange={props.onControlledSearchResultSelectionChange}
       />,
     );
   });

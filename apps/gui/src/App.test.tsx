@@ -15,6 +15,7 @@ import runtimeSessionReady from "../../../packages/contracts/examples/engine/con
 import editExecutorPlanned from "../../../packages/contracts/examples/engine/controlled-agent-edit-executor-planned.json";
 import controlledPatchPlan from "../../../packages/contracts/examples/engine/controlled-agent-patch-plan.json";
 import hostEditApplied from "../../../packages/contracts/examples/bridge/host-controlled-agent-edit-result-applied.json";
+import hostLexicalSearchSucceeded from "../../../packages/contracts/examples/bridge/host-controlled-agent-lexical-search-result-succeeded.json";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -449,6 +450,51 @@ describe("runtime refresh feedback", () => {
     expect(findButton("Clear pending read")).toBeDefined();
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("controlled_agent_file_read");
+  });
+
+  it("posts controlled lexical search only after explicit click and selection stays local", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady }) });
+    renderApp();
+    await flushAsync();
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentLexicalSearchRequest")).toHaveLength(0);
+    expect(container?.textContent).toContain("Controlled lexical search results");
+
+    await act(async () => {
+      findButton("Request controlled lexical search").click();
+    });
+
+    const searchRequests = postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentLexicalSearchRequest");
+    expect(searchRequests).toHaveLength(1);
+    const request = searchRequests[0][0] as { requestId: string; payload: Record<string, unknown> };
+    expect(request.payload).toMatchObject({ host: "vscode", explicitUserGesture: true, queryMode: "literal_text" });
+
+    const result = structuredClone(hostLexicalSearchSucceeded) as Record<string, any>;
+    result.requestId = request.requestId;
+    result.payload.requestId = request.requestId;
+    result.payload.controlledWorkspaceId = request.payload.controlledWorkspaceId;
+    result.payload.runId = request.payload.runId;
+    result.payload.runtimeSessionId = request.payload.runtimeSessionId;
+    result.payload.workspaceReadinessId = request.payload.workspaceReadinessId;
+    await dispatchHostMessage({ version: bridgeVersion, type: "host.controlledAgentLexicalSearchResult", requestId: result.requestId, payload: result.payload });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Displayed safe results: 1");
+    const checkbox = Array.from(container?.querySelectorAll<HTMLInputElement>("input[type='checkbox']") ?? []).find((item) => item.parentElement?.textContent?.includes("search-result-"));
+    expect(checkbox).toBeDefined();
+    await act(async () => {
+      checkbox?.click();
+    });
+
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentLexicalSearchRequest")).toHaveLength(1);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+    expect(container?.textContent).toContain("Selected safe results: 1");
+    expect(container?.textContent).toContain("explicit user-selected context only");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("function ChatComposer");
   });
 
   it("keeps browser controlled read unsupported and unable to post", async () => {
@@ -10989,6 +11035,12 @@ async function dispatchHostIdeActionResult(requestId: string | undefined, payloa
         payload,
       },
     }));
+  });
+}
+
+async function dispatchHostMessage(message: Record<string, unknown>) {
+  await act(async () => {
+    window.dispatchEvent(new MessageEvent("message", { data: message }));
   });
 }
 

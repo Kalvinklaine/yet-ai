@@ -46,6 +46,8 @@ import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileR
 import { buildControlledAgentFileReadRequest, correlateControlledAgentFileReadResult, type ControlledAgentFileReadRequestCorrelation } from "./services/controlledAgentFileReadRequest";
 import { buildControlledAgentEditRequest, correlateControlledAgentEditResult, type ControlledAgentEditRequestCorrelation } from "./services/controlledAgentEditRequest";
 import { buildControlledAgentCommandRunRequest, correlateControlledAgentCommandRunResult, type ControlledAgentCommandRunRequestCorrelation, type ControlledAgentCommandRunResultSummary } from "./services/controlledAgentCommandRunRequest";
+import { buildControlledAgentLexicalSearchRequest, correlateControlledAgentLexicalSearchResult, type ControlledAgentLexicalSearchCorrelation, type ControlledAgentLexicalSearchSummary } from "./services/controlledAgentLexicalSearch";
+import { createControlledAgentSearchSelection, type ControlledAgentSearchSelectionResult } from "./services/controlledAgentSearchSelection";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import { evaluateControlledAgentPatchPlanPreview } from "./services/controlledAgentPatchPlanPreview";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
@@ -457,6 +459,7 @@ export function App() {
   const controlledEditCompletedRequestIdRef = useRef<string | null>(null);
   const controlledCommandRunCorrelationRef = useRef<ControlledAgentCommandRunRequestCorrelation | null>(null);
   const controlledCommandRunCompletedRequestIdRef = useRef<string | null>(null);
+  const controlledLexicalSearchCorrelationRef = useRef<ControlledAgentLexicalSearchCorrelation | null>(null);
   const oneStepFileReadRequestIdRef = useRef<string | null>(null);
   const oneStepEditRequestIdRef = useRef<string | null>(null);
   const oneStepCommandRunRequestIdRef = useRef<string | null>(null);
@@ -483,6 +486,9 @@ export function App() {
   const [controlledCommandRunResultMetadata, setControlledCommandRunResultMetadata] = useState<unknown>(null);
   const [pendingControlledCommandRunRequestId, setPendingControlledCommandRunRequestId] = useState<string | null>(null);
   const [controlledCommandRunNote, setControlledCommandRunNote] = useState<string | null>(null);
+  const [controlledLexicalSearchResult, setControlledLexicalSearchResult] = useState<ControlledAgentLexicalSearchSummary | undefined>(undefined);
+  const [controlledLexicalSearchResultId, setControlledLexicalSearchResultId] = useState<string | undefined>(undefined);
+  const [selectedControlledSearchResultIds, setSelectedControlledSearchResultIds] = useState<string[]>([]);
   const [oneStepLoopState, setOneStepLoopState] = useState<ControlledOneStepAgentLoopState>(() => createControlledOneStepAgentLoopState());
   const [controlledRunHistory, setControlledRunHistory] = useState<ControlledRunHistoryItem[]>([]);
 
@@ -791,6 +797,30 @@ export function App() {
     userConfirmed: true,
     requestSeed: agentRunInput?.applyRequest?.requestId ?? agentRunInput?.proposal?.id ?? "agent-run-verification",
   }), [agentRunInput, bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata, controlledAgentVerificationCommandId]);
+  const controlledAgentLexicalSearchRequest = useMemo(() => buildControlledAgentLexicalSearchRequest({
+    host: bridgeHost,
+    runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
+    workspaceReadinessMetadata: controlledWorkspaceReadinessMetadata,
+    query: "Agent Run",
+    includePathLabels: ["apps/gui/src/App.tsx", "apps/gui/src/components/AgentRunPanel.tsx"],
+    explicitUserGesture: true,
+    userGestureId: "agent-run-controlled-search-button",
+    requestSeed: "agent-run-controlled-search",
+  }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  const controlledSearchSelection = useMemo<ControlledAgentSearchSelectionResult | undefined>(() => {
+    if (!controlledLexicalSearchResult || !controlledLexicalSearchResultId || selectedControlledSearchResultIds.length === 0) {
+      return undefined;
+    }
+    return createControlledAgentSearchSelection({
+      searchResultId: controlledLexicalSearchResultId,
+      lexicalSearch: controlledLexicalSearchResult,
+      selectedResultIds: selectedControlledSearchResultIds,
+      explicitUserGesture: true,
+      userGestureId: "agent-run-controlled-search-selection",
+      selectionMintedBy: "user",
+      assistantMinted: false,
+    });
+  }, [controlledLexicalSearchResult, controlledLexicalSearchResultId, selectedControlledSearchResultIds]);
   const oneStepControlledAgentCommandRunRequest = useMemo(() => buildControlledAgentCommandRunRequest({
     host: bridgeHost,
     runtimeSessionMetadata: controlledAgentRuntimeSessionMetadata,
@@ -1160,6 +1190,19 @@ export function App() {
           setPendingControlledEditRequestId(null);
           setOneStepLoopState((current) => current.phase === "idle" || current.phase === "completed" || current.phase === "failed" || current.phase === "stopped" ? current : reduceControlledOneStepAgentLoopState(current, { type: "runtime_disconnect", summary: "One-step run stopped because runtime lifecycle became unavailable." }));
           setControlledAgentRunState((current) => reduceControlledAgentRunState(current, { type: "stop", reason: "partial_execution_stopped", summary: "Controlled run stopped because runtime lifecycle became unavailable." }));
+        }
+      } else if (message.type === "host.controlledAgentLexicalSearchResult") {
+        const current = controlledLexicalSearchCorrelationRef.current;
+        if (!current) {
+          return;
+        }
+        const correlation = correlateControlledAgentLexicalSearchResult({ current, hostMessage: message, existingResult: controlledLexicalSearchResult });
+        controlledLexicalSearchCorrelationRef.current = null;
+        if (correlation.state === "accepted" && correlation.lexicalSearch) {
+          setControlledLexicalSearchResult(correlation.lexicalSearch);
+          setControlledLexicalSearchResultId(current.requestId);
+          setSelectedControlledSearchResultIds([]);
+          appendTrace({ family: "controlledAgent.fileReadResult", title: "Controlled lexical search result accepted", status: "succeeded", summary: "Sanitized lexical search result metadata accepted for explicit user selection.", requestId: current.requestId, details: correlation.details });
         }
       } else if (message.type === "host.controlledAgentFileReadResult") {
         const requestId = message.requestId ?? "unknown";
@@ -2383,6 +2426,26 @@ export function App() {
     appendTrace({ family: "controlledAgent.commandPlanned", title: "Controlled Agent Run verification requested", status: "pending", summary: "User clicked explicit controlled Agent Run verification.", requestId: controlledAgentCommandRunRequest.bridgeRequest.requestId, details: controlledAgentCommandRunRequest.details });
   }, [addTimeline, agentRunInput, appendTrace, bridgeHost, controlledAgentCommandRunRequest, pendingControlledCommandRunRequestId]);
 
+  const requestControlledLexicalSearch = useCallback(() => {
+    if (controlledAgentLexicalSearchRequest.state !== "ready" || !controlledAgentLexicalSearchRequest.bridgeRequest || !controlledAgentLexicalSearchRequest.correlation || controlledLexicalSearchCorrelationRef.current) {
+      return;
+    }
+    controlledLexicalSearchCorrelationRef.current = controlledAgentLexicalSearchRequest.correlation;
+    setControlledLexicalSearchResult(undefined);
+    setControlledLexicalSearchResultId(undefined);
+    setSelectedControlledSearchResultIds([]);
+    bridgeAdapterRef.current?.post(controlledAgentLexicalSearchRequest.bridgeRequest);
+    addTimeline(`Controlled lexical search requested ${controlledAgentLexicalSearchRequest.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.fileReadPlanned", title: "Controlled lexical search requested", status: "pending", summary: "User clicked explicit controlled lexical search; sanitized snippet metadata only is expected.", requestId: controlledAgentLexicalSearchRequest.bridgeRequest.requestId, details: controlledAgentLexicalSearchRequest.details });
+  }, [addTimeline, appendTrace, controlledAgentLexicalSearchRequest]);
+
+  const updateControlledSearchSelection = useCallback((resultId: string, selected: boolean) => {
+    setSelectedControlledSearchResultIds((current) => {
+      const without = current.filter((item) => item !== resultId);
+      return selected ? [...without, resultId] : without;
+    });
+  }, []);
+
   const postOneStepEditRequest = useCallback(() => {
     const request = oneStepEditRequestRef.current;
     if (!request || request.state !== "ready" || !request.bridgeRequest || !request.correlation || controlledEditCorrelationRef.current || pendingControlledEditRequestId) {
@@ -3291,7 +3354,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} controlledLexicalSearch={controlledLexicalSearchResult} controlledSearchResultId={controlledLexicalSearchResultId} selectedControlledSearchResultIds={selectedControlledSearchResultIds} controlledSearchSelection={controlledSearchSelection} controlledSearchRequestState={controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledLexicalSearchResult !== undefined ? controlledAgentLexicalSearchRequest.state : undefined} pendingControlledSearch={controlledLexicalSearchCorrelationRef.current !== null} onRequestControlledSearch={requestControlledLexicalSearch} onControlledSearchResultSelectionChange={updateControlledSearchSelection} />
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} capabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
