@@ -94,7 +94,7 @@ describe("ControlledAgentRunPanel", () => {
     const stopped = reduceControlledAgentRunState(readyState(), { type: "stop", reason: "user_stop", summary: "Stopped after explicit user request." });
     const failed = failedState();
 
-    for (const [state, label] of [[active, "Running after explicit user start"], [completed, "Completed with sanitized evidence"], [stopped, "Stopped by explicit boundary"], [failed, "Failed closed"]] as const) {
+    for (const [state, label] of [[active, "Running after explicit user start"], [completed, "Completed with sanitized evidence"], [stopped, "User stop recorded; stale results ignored"], [failed, "Verification failed or recovery failed closed"]] as const) {
       renderPanel(state, "vscode");
       const text = panelText();
       expect(text).toContain("Controlled dev-preview report");

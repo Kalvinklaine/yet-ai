@@ -202,6 +202,16 @@ describe("evaluateAgentRunModelProposal", () => {
     expect(result.agentRunInput.verificationRequest).toBeUndefined();
   });
 
+  it("returns provider proposal correlation state for GUI adoption", () => {
+    const result = evaluateAgentRunModelProposal(input(providerProposal()));
+
+    expect(result.providerProposalState).toEqual({
+      sourceMessageId: "assistant-1",
+      proposalId: "provider-proposal-1",
+      payloadKey: expect.stringContaining("controlled_agent_provider_proposal"),
+    });
+  });
+
   it("rejects unsafe provider proposals", () => {
     const result = evaluateAgentRunModelProposal(input(providerProposal({ rawProviderPayloadStored: true })));
 

@@ -97,6 +97,21 @@ describe("parseControlledAgentProviderProposal", () => {
     expect(result.payloadKey).toContain("controlled_agent_provider_proposal");
   });
 
+  it("accepts sanitized hash placeholders after GUI-facing SSE redaction", () => {
+    const result = parseControlledAgentProviderProposal(JSON.stringify(providerProposal({
+      providerProposal: {
+        ...providerProposal().providerProposal,
+        editMetadata: {
+          ...providerProposal().providerProposal.editMetadata,
+          expectedContentHash: "sha256:[redacted]",
+        },
+      },
+    })));
+
+    expect(result.state).toBe("valid");
+    expect(result.state === "valid" ? result.proposal.touchedFile : undefined).toBe("apps/gui/src/App.tsx");
+  });
+
   it("rejects raw payload, tool-call, and automatic authority metadata", () => {
     const rawPayload = parseControlledAgentProviderProposal(JSON.stringify(providerProposal({ rawProviderPayloadStored: true })));
     const toolCall = parseControlledAgentProviderProposal(JSON.stringify(providerProposal({ providerProposal: { ...providerProposal().providerProposal, toolCallsIncluded: true } })));

@@ -29,7 +29,7 @@ import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { buildContextBudgetSummary, type ContextBudgetSummary } from "./services/contextBudget";
 import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt";
-import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult } from "./services/agentRunModelProposal";
+import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult, type AgentRunModelProviderProposalState } from "./services/agentRunModelProposal";
 import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type AgentRunApplyCorrelationMetadata } from "./services/agentRunApply";
 import { correlateAgentRunVerificationProgress, correlateAgentRunVerificationResult, type AgentRunVerificationCorrelationMetadata } from "./services/agentRunVerification";
 import { createAgentRunReport, createAgentRunTraceDetails } from "./services/agentRunReport";
@@ -367,6 +367,7 @@ export function App() {
   const [codingTaskGoal, setCodingTaskGoal] = useState("");
   const [modelProposalDraft, setModelProposalDraft] = useState<ModelProposalDraftState | null>(null);
   const [submittedModelProposalPrompt, setSubmittedModelProposalPrompt] = useState<SubmittedModelProposalPrompt | null>(null);
+  const [adoptedProviderProposalState, setAdoptedProviderProposalState] = useState<AgentRunModelProviderProposalState | undefined>(undefined);
   const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const [timeline, setTimeline] = useState<string[]>([]);
@@ -596,7 +597,8 @@ export function App() {
       userMessageId: submittedModelProposalPrompt.userMessageId,
       runtimeSettingsVersion: submittedModelProposalPrompt.runtimeSettingsVersion,
     } : undefined,
-  }), [chatId, codingTaskGoal, latestModelProposalAssistant, submittedModelProposalPrompt]);
+    providerProposalState: adoptedProviderProposalState && latestModelProposalAssistant?.id !== adoptedProviderProposalState.sourceMessageId ? adoptedProviderProposalState : undefined,
+  }), [adoptedProviderProposalState, chatId, codingTaskGoal, latestModelProposalAssistant, submittedModelProposalPrompt]);
   const legacyAgentRunInput = useMemo(() => buildAgentRunInput(codingTaskGoal, activeEditProposal, applyResult, verificationAttempt), [activeEditProposal, applyResult, codingTaskGoal, verificationAttempt]);
   const agentRunReadiness = useMemo<AgentRunReadinessResult | null>(() => {
     if (agentRunModelProposal.proposalPathState !== "proposal_detected") {
@@ -634,6 +636,11 @@ export function App() {
     return withControlledVerification;
   }, [activeEditProposal, agentRunApplyRequest, agentRunModelProposal, agentRunReadiness, agentRunVerificationProgress, agentRunVerificationRequest, agentRunVerificationResult, legacyAgentRunInput, modelProposalDraft, submittedModelProposalPrompt]);
   agentRunInputRef.current = agentRunInput ?? null;
+  useEffect(() => {
+    if (agentRunModelProposal.providerProposalState) {
+      setAdoptedProviderProposalState((current) => current?.payloadKey === agentRunModelProposal.providerProposalState?.payloadKey ? current : agentRunModelProposal.providerProposalState);
+    }
+  }, [agentRunModelProposal.providerProposalState]);
   const agentRunCheckpointDecision = useMemo<AgentRunCheckpointDecisionSummary | undefined>(() => agentRunInput ? buildAgentRunCheckpointDecision({ host: bridgeHost, agentRun: agentRunInput }) : undefined, [agentRunInput, bridgeHost]);
   const agentRunCheckpointDecisionTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createCheckpointDecisionTraceEntry(agentRunCheckpointDecision), [agentRunCheckpointDecision]);
   const controlledAgentFileReadMetadata = activeCaps?.controlledAgentFileRead;
@@ -876,6 +883,7 @@ export function App() {
   const clearModelProposalState = useCallback(() => {
     setModelProposalDraft(null);
     setSubmittedModelProposalPrompt(null);
+    setAdoptedProviderProposalState(undefined);
   }, []);
 
   const clearIdeActionState = useCallback(() => {

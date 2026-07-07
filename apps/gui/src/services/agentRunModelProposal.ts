@@ -58,6 +58,7 @@ export type AgentRunModelProposalInput = {
 export type AgentRunModelProposalResult = {
   agentRunInput: AgentRunInput;
   proposalPathState: AgentRunModelProposalPathState;
+  providerProposalState?: AgentRunModelProviderProposalState;
   planPreview?: AgentRunModelPlanPreviewState;
   diagnostics: SanitizedDiagnostic[];
 };
@@ -107,7 +108,7 @@ export function evaluateAgentRunModelProposal(input: AgentRunModelProposalInput)
       applyResult: normalizeApplyResult(input.applyResult),
       verificationResult: input.verificationResult,
     };
-    return result(agentRunInput, "proposal_detected", diagnostics);
+    return result(agentRunInput, "proposal_detected", diagnostics, { sourceMessageId: assistant.id, proposalId: providerAnalysis.proposal.proposalId, payloadKey: providerAnalysis.payloadKey });
   }
   if (providerAnalysis.state === "rejected") {
     const code = providerAnalysis.diagnostic.code === "unsafe_metadata" ? "unsafe_metadata" : "proposal_rejected";
@@ -145,11 +146,14 @@ export function evaluateAgentRunModelProposal(input: AgentRunModelProposalInput)
   return result(agentRunInput, "proposal_detected", diagnostics);
 }
 
-function result(agentRunInput: AgentRunInput, proposalPathState: AgentRunModelProposalPathState, diagnostics: SanitizedDiagnostic[], planPreview?: AgentRunModelPlanPreviewState): AgentRunModelProposalResult {
+function result(agentRunInput: AgentRunInput, proposalPathState: AgentRunModelProposalPathState, diagnostics: SanitizedDiagnostic[], providerProposalStateOrPlanPreview?: AgentRunModelProviderProposalState | AgentRunModelPlanPreviewState, planPreview?: AgentRunModelPlanPreviewState): AgentRunModelProposalResult {
+  const providerProposalState = providerProposalStateOrPlanPreview && "proposalId" in providerProposalStateOrPlanPreview ? providerProposalStateOrPlanPreview : undefined;
+  const resolvedPlanPreview = providerProposalStateOrPlanPreview && "plan" in providerProposalStateOrPlanPreview ? providerProposalStateOrPlanPreview : planPreview;
   return stripUndefined({
     agentRunInput: stripUndefined(agentRunInput),
     proposalPathState,
-    planPreview,
+    providerProposalState,
+    planPreview: resolvedPlanPreview,
     diagnostics: diagnostics.slice(0, 12),
   });
 }

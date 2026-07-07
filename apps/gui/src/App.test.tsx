@@ -8855,6 +8855,43 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
+  it("renders provider-backed model proposal metadata safely without privileged bridge requests", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = controlledProviderProposalPayload();
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-provider-proposal-1", "assistant", JSON.stringify(proposal)) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => { setTextareaByPlaceholder("Describe the coding task goal", "Review provider-backed metadata safely"); });
+    await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("proposal_detected");
+    const panel = agentRunPanel();
+    expect(panel.textContent).toContain("Manual state: Checkpoint required");
+    expect(panel.textContent).toContain("Proposal status: detected but checkpoint metadata is missing");
+    expect(panel.textContent).toContain("Plan: Review visible metadata · Wait for manual apply");
+    expect(panel.textContent).toContain("Verification suggestions (display-only command IDs): GUI app tests");
+    expect(panel.textContent).toContain("Touched files: 1");
+    expect(buttonWithin(panel, "Manually apply reviewed patch").disabled).toBe(true);
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest" || message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(1);
+    expect(browserStorageDump()).not.toContain("controlled_agent_provider_proposal");
+    expect(browserStorageDump()).not.toContain("Review provider-backed metadata safely");
+  });
+
   it("posts the existing apply bridge message only after explicit Agent Run apply click", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -11293,6 +11330,58 @@ function safeEditProposalPayload() {
         ],
       },
     ],
+  };
+}
+
+function controlledProviderProposalPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "controlled_agent_provider_proposal",
+    version: "2026-07-07",
+    authority: "provider_proposal_metadata_only",
+    cloudRequired: false,
+    executionAllowed: false,
+    providerToolCallingAllowed: false,
+    rawProviderPayloadStored: false,
+    automaticApplyAllowed: false,
+    automaticRunAllowed: false,
+    workspace: { controlledWorkspaceId: "workspace-1", runId: "run-1", workspaceMode: "worktree", host: "vscode", privatePathExposed: false },
+    providerProposal: {
+      proposalId: "model-proposal-1",
+      source: "model",
+      sanitizedOnly: true,
+      rawPayloadStored: false,
+      toolCallsIncluded: false,
+      automaticActionsIncluded: false,
+      summary: "Review a bounded model proposal.",
+      plan: { stepCount: 2, steps: ["Review visible metadata", "Wait for manual apply"] },
+      editMetadata: { operation: "replace", workspaceRelativePath: "apps/gui/src/App.tsx", expectedContentHash: `sha256:${"a".repeat(64)}`, startLine: 3, endLine: 3, replacementByteCount: 42, rawReplacementStored: false, rawDiffStored: false, requiresUserApply: true },
+      verificationSuggestion: { commandId: "gui-app-tests", allowlistedCommandIdOnly: true, freeformCommandAllowed: false, requiresUserRun: true },
+    },
+    policyFlags: {
+      metadataOnly: true,
+      boundedPlanMetadataAllowed: true,
+      boundedEditMetadataAllowed: true,
+      providerToolCallingAllowed: false,
+      rawProviderPayloadPersistenceAllowed: false,
+      rawPromptPersistenceAllowed: false,
+      rawFilePersistenceAllowed: false,
+      rawDiffPersistenceAllowed: false,
+      rawCommandPersistenceAllowed: false,
+      rawOutputPersistenceAllowed: false,
+      automaticApplyAllowed: false,
+      automaticRunAllowed: false,
+      automaticVerifyAllowed: false,
+      automaticRepairAllowed: false,
+      shellAllowed: false,
+      gitAllowed: false,
+      networkAllowed: false,
+      packageInstallAllowed: false,
+      hiddenReadAllowed: false,
+      searchAllowed: false,
+      indexingAllowed: false,
+      toolAuthorityAllowed: false,
+    },
+    ...overrides,
   };
 }
 

@@ -324,7 +324,7 @@ describe("AgentRunPanel", () => {
   it("renders sanitized controlled dev-preview reports for active and terminal one-step states", () => {
     const onStartOneStepRun = vi.fn();
     const onStopOneStepRun = vi.fn();
-    for (const [loop, label] of [[activeOneStepLoop, "Running after explicit user start"], [completedOneStepLoop, "Completed with sanitized evidence"], [stoppedOneStepLoop, "Stopped by explicit boundary"], [failedOneStepLoop, "Failed closed"]] as const) {
+    for (const [loop, label] of [[activeOneStepLoop, "Running after explicit user start"], [completedOneStepLoop, "Completed with sanitized evidence"], [stoppedOneStepLoop, "User stop recorded; stale results ignored"], [failedOneStepLoop, "Verification failed or recovery failed closed"]] as const) {
       renderPanel(undefined, {
         host: "vscode",
         oneStepLoopState: loop,
@@ -360,7 +360,7 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Host: Browser preview host");
     expect(panelText()).toContain("Blocked until local readiness returns");
     expect(panelText()).toContain("Browser preview cannot start the controlled local agent dev-preview.");
-    expect(panelText()).toContain("Evidence: Status evidence: read_context — Sanitized evidence summary was unavailable.");
+    expect(panelText()).toContain("Evidence: Status evidence: read context — Sanitized evidence summary was unavailable.");
     expect(panelText()).not.toContain(secret);
     expect(panelText()).not.toContain("/Users/alice");
 
