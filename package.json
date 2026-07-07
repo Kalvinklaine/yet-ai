@@ -124,7 +124,8 @@
     "validate:ide-artifact-workflow": "node scripts/validate-ide-artifact-workflow.mjs",
     "validate:ide-surface-contract": "node scripts/validate-ide-surface-contract.mjs",
     "validate:npm-spawn": "node scripts/validate-npm-spawn.mjs",
-    "validate:icon-assets": "node scripts/validate-icon-assets.mjs"
+    "validate:icon-assets": "node scripts/validate-icon-assets.mjs",
+    "smoke:controlled-run-observability": "node scripts/smoke-controlled-run-observability.mjs"
   },
   "devDependencies": {
     "ajv": "^8.20.0",
