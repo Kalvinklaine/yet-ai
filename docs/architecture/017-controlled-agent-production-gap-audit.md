@@ -15,6 +15,27 @@ Minimum entry shape for future evidence:
 - **Boundary statement**: what authority remains absent or unsupported.
 - **Residual risk**: accepted limitation, owner, and revisit trigger.
 
+## Final through-S107 audit status
+
+The through-S107 audit result is still **blocked for any production-like agent decision** and **allowed only as controlled local dev-preview evidence**. The completed S96-S107 work improves the evidence trail for narrow, explicit user-started runs, but it does not ship a production autonomous agent, does not approve broader workspace authority, and does not create release, marketplace, support, signing, notarization, hosted backend, or real-provider CI approval.
+
+Evidence now available after S96-S107:
+
+- **S96 useful-run contract**: documents the VS Code-first one-step useful-run target with explicit Start, one bounded read, one bounded replacement edit, one allowlisted verification command id, and one sanitized terminal report.
+- **S102 replacement contract**: adds the review-only `controlled_agent_patch_plan` dry-run metadata contract with execution, apply, provider/tool, search, and raw-payload authority absent.
+- **S104 memory smoke**: keeps controlled-run project memory as explicit user-selected attachment metadata only, with no automatic memory injection, indexing, background relevance search, provider memory writes, bridge authority, runtime authority, or raw note-body persistence in reports/traces/dogfood evidence.
+- **S105 observability smoke**: verifies controlled-run trace/report/export evidence remains sanitized metadata and rejects raw prompts, file bodies, diffs, command material, provider payloads, secrets, private paths, and bridge payload dumps.
+- **S106 beta report validator**: adds a deterministic local validator for sanitized controlled dev-preview beta dogfood notes, including a safe template/check/self-test path and unsafe evidence rejection without provider calls, runtime launch, artifact publication, or production approval.
+
+Remaining blockers are not closed by those evidence items. The next decisions before any later production-like gate are:
+
+1. Decide the owner and shape of a single authority registry covering reads, edits, command ids, provider use, memory use, host actions, storage writes, exports, and unsupported operations.
+2. Decide the host-parity plan: VS Code execution evidence scope, Browser unsupported-state proof, and whether JetBrains remains fail-closed or gets a separate verified parity track.
+3. Decide the privacy/storage workstream for credential-flow proof, storage inventory, retention/deletion controls, export validation, support-bundle redaction, and local log handling.
+4. Decide the CI/CD and packaging evidence strategy, including deterministic gate matrix, flaky-smoke quarantine, cross-platform/package evidence, dependency/provenance checks, update/rollback policy, and clear separation from manual local BYOK dogfood.
+5. Decide the real-provider dogfood policy for sanitized local BYOK reports across provider families and failure/recovery paths, with no credentials, raw prompts, raw responses, private paths, or hosted Yet AI backend/account/gateway requirement.
+6. Decide the UX/recovery review scope for consent, Start/Stop, edit review, verification, one repair attempt, repair exhaustion, disconnects, stale results, provider timeout, rollback review, and final report comprehension across supported and unsupported hosts.
+
 ## Current known gaps
 
 ### UX, CI, and host parity focus
