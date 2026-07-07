@@ -164,10 +164,16 @@ S96 non-goals are part of the contract. This runbook must not describe productio
 
 Host limitations remain unchanged: VS Code is the target useful-run host for this dev-preview contract; Browser/standalone GUI is preview-only and unsupported for trusted workspace execution; JetBrains remains partial/fail-closed until a later verified parity card changes that status.
 
-The S96 documentation gate is:
+The focused S96 useful-run smoke replacement is:
 
 ```sh
-npm run audit:controlled-autonomy-wording && npm run check && git diff --check && git status --short
+npm run smoke:controlled-agent-s96-useful-run
+```
+
+The S96 documentation and smoke gate is:
+
+```sh
+npm run smoke:controlled-agent-s96-useful-run && npm run audit:controlled-autonomy-wording && npm run check && git diff --check && git status --short
 ```
 
 ## Verification
