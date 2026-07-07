@@ -128,8 +128,8 @@ const statusLabels: Record<ControlledAgentDevPreviewReportStatus, string> = {
   ready: "Ready for explicit user start",
   running: "Running after explicit user start",
   completed: "Completed with sanitized evidence",
-  stopped: "Stopped by explicit boundary",
-  failed: "Failed closed",
+  stopped: "User stop recorded; stale results ignored",
+  failed: "Verification failed or recovery failed closed",
   blocked: "Blocked until local readiness returns",
 };
 
@@ -146,8 +146,13 @@ const limitationLabels: Record<string, string> = {
   browser_unsupported: "Browser preview cannot start the controlled local agent dev-preview.",
   jetbrains_partial: "JetBrains support is partial and fail-closed in this VS Code-first dev-preview.",
   missing_runtime: "Local runtime readiness metadata is required.",
+  runtime_disconnect: "Runtime disconnect stopped the controlled run; stale host results are ignored and no auto-retry starts.",
   missing_workspace: "Workspace readiness metadata is required.",
+  read_blocked: "Read blocked by controlled workspace policy; no raw file body is included.",
+  hash_mismatch: "Hash mismatch blocked the edit; no replacement text or diff is included.",
+  edit_rejected: "Edit rejected by the host or policy; no raw patch is included.",
   verification_failed: "Allowlisted verification failed; no automatic repair is started.",
+  repair_exhausted: "Repair exhausted after the single user-confirmed attempt; no further repair starts automatically.",
   stopped: "Controlled dev-preview is stopped until the user starts it again.",
   unsupported_host: "Supported IDE host metadata is unavailable.",
 };
@@ -383,11 +388,24 @@ function normalizeEvidence(value: unknown): ControlledAgentDevPreviewEvidence[] 
 function toEvidence(value: unknown): ControlledAgentDevPreviewEvidence | undefined {
   if (!isPlainObject(value)) return { label: "Omitted unsafe evidence", summary: "Evidence omitted because it looked unsafe for dev-preview reporting." };
   const kind = normalizeEvidenceKind(value.kind);
-  const status = typeof value.status === "string" && !unsafeTextPattern.test(value.status) ? safeText(value.status, 80) : "recorded";
+  const status = normalizeEvidenceStatus(kind, value.status);
   if (hasUnsafeKey(value)) return { label: "Omitted unsafe evidence", summary: "Evidence omitted because it looked unsafe for dev-preview reporting." };
   if (hasUnsafeText(value)) return { label: `${evidenceLabels[kind]}: ${status}`, summary: "Sanitized evidence summary was unavailable." };
   const summary = typeof value.summary === "string" && !unsafeTextPattern.test(value.summary) ? safeText(value.summary, 180) : "Sanitized evidence summary was unavailable.";
   return { label: `${evidenceLabels[kind]}: ${status}`, summary };
+}
+
+function normalizeEvidenceStatus(kind: ControlledAgentDevPreviewEvidenceKind, value: unknown): string {
+  if (typeof value !== "string" || unsafeTextPattern.test(value)) return "Recorded";
+  const status = safeText(value, 80);
+  if (value === "user_stop" || value === "stopped") return "User stop";
+  if (value === "runtime_disconnect" || value === "disconnected") return "Runtime disconnect";
+  if (value === "read_blocked") return "Read blocked";
+  if (value === "hash_mismatch") return "Hash mismatch";
+  if (value === "edit_rejected" || (kind === "edit" && value === "rejected")) return "Edit rejected";
+  if (value === "verification_failed" || (kind === "verification" && value === "failed")) return "Verification failed";
+  if (value === "repair_exhausted" || (kind === "repair" && value === "exhausted")) return "Repair exhausted";
+  return status.replace(/_/g, " ");
 }
 
 function normalizeEvidenceKind(value: unknown): ControlledAgentDevPreviewEvidenceKind {

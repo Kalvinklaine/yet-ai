@@ -66,7 +66,7 @@ describe("createControlledAgentDevPreviewReport", () => {
     });
 
     expect(result.status).toBe("failed");
-    expect(result.statusLabel).toBe("Failed closed");
+    expect(result.statusLabel).toBe("Verification failed or recovery failed closed");
     expect(result.currentUserActionLabel).toBe("User may retry after fixing the reported local limitation.");
     expect(result.limitationLabels).toContain("Allowlisted verification failed; no automatic repair is started.");
     expect(result.safetyBoundaryLabels).toContain("No automatic start; the user must explicitly start the dev-preview.");
@@ -82,9 +82,49 @@ describe("createControlledAgentDevPreviewReport", () => {
     });
 
     expect(result.status).toBe("stopped");
-    expect(result.statusLabel).toBe("Stopped by explicit boundary");
+    expect(result.statusLabel).toBe("User stop recorded; stale results ignored");
     expect(result.currentUserActionLabel).toBe("User may start again only with a new explicit action.");
     expect(result.limitationLabels).toContain("Controlled dev-preview is stopped until the user starts it again.");
+  });
+
+  it("labels recovery diagnostics clearly without raw sensitive report data", () => {
+    const result = createControlledAgentDevPreviewReport({
+      host: "vscode",
+      status: "failed",
+      limitations: ["runtime_disconnect", "read_blocked", "hash_mismatch", "edit_rejected", "verification_failed", "repair_exhausted"],
+      evidence: [
+        { kind: "stop", status: "user_stop", summary: "User stopped the controlled run." },
+        { kind: "status", status: "runtime_disconnect", summary: "Runtime disconnected; stale host results ignored." },
+        { kind: "read", status: "read_blocked", summary: "Read blocked before raw file body was returned." },
+        { kind: "edit", status: "hash_mismatch", summary: "Hash mismatch blocked the bounded edit." },
+        { kind: "edit", status: "edit_rejected", summary: "Edit rejected by controlled policy." },
+        { kind: "verification", status: "verification_failed", summary: "raw output /Users/alice/private sk-proj-123456789" },
+        { kind: "repair", status: "repair_exhausted", summary: "Repair exhausted after one user-confirmed attempt." },
+      ],
+    });
+    const rendered = JSON.stringify(result);
+
+    expect(result.evidence.map((item) => item.label)).toEqual([
+      "Stop evidence: User stop",
+      "Status evidence: Runtime disconnect",
+      "Bounded read evidence: Read blocked",
+      "Bounded edit evidence: Hash mismatch",
+      "Bounded edit evidence: Edit rejected",
+      "Allowlisted verification evidence: Verification failed",
+      "Bounded repair evidence: Repair exhausted",
+    ]);
+    expect(result.evidence[5]?.summary).toBe("Sanitized evidence summary was unavailable.");
+    expect(result.limitationLabels).toEqual([
+      "Runtime disconnect stopped the controlled run; stale host results are ignored and no auto-retry starts.",
+      "Read blocked by controlled workspace policy; no raw file body is included.",
+      "Hash mismatch blocked the edit; no replacement text or diff is included.",
+      "Edit rejected by the host or policy; no raw patch is included.",
+      "Allowlisted verification failed; no automatic repair is started.",
+      "Repair exhausted after the single user-confirmed attempt; no further repair starts automatically.",
+    ]);
+    expect(rendered).not.toContain("/Users/alice");
+    expect(rendered).not.toContain("sk-proj-123456789");
+    expect(rendered).not.toContain("raw output");
   });
 
   it("reports browser as unsupported and capability-limited", () => {
@@ -138,7 +178,7 @@ describe("createControlledAgentDevPreviewReport", () => {
     expect(result.counters).toEqual({ loopSteps: 1, runtimeSeconds: 4 });
     expect(result.capabilityLabels).toEqual(["Sanitized display-only report"]);
     expect(result.evidence).toEqual([
-      { label: "Allowlisted verification evidence: failed", summary: "Sanitized evidence summary was unavailable." },
+      { label: "Allowlisted verification evidence: Verification failed", summary: "Sanitized evidence summary was unavailable." },
       { label: "Omitted unsafe evidence", summary: "Evidence omitted because it looked unsafe for dev-preview reporting." },
     ]);
     expect(rendered).not.toContain("/Users/alice");
@@ -222,7 +262,7 @@ describe("createControlledAgentDevPreviewReport", () => {
       { type: "report", status: "completed", label: "safe report", summary: "Sanitized metadata is available." },
     ]);
     expect(result.evidence).toEqual([
-      { label: "Allowlisted verification evidence: failed", summary: "Sanitized evidence summary was unavailable." },
+      { label: "Allowlisted verification evidence: Verification failed", summary: "Sanitized evidence summary was unavailable." },
       { label: "Omitted unsafe evidence", summary: "Evidence omitted because it looked unsafe for dev-preview reporting." },
     ]);
     expect(result.diagnostics.map((item) => item.code)).toEqual(["unsafe_metadata", "raw_payload_omitted"]);
