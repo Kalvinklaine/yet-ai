@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-authority-registry.schema.json",
+  "title": "Controlled Agent Authority Registry",
+  "description": "Strict S109 registry for controlled-agent authority vocabulary. It is a contract and documentation source of truth only; it grants no runtime, bridge, provider, search, edit, command, tool, storage, production, release, or marketplace authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "status",
+    "localFirstByok",
+    "cloudRequired",
+    "productionClaimAllowed",
+    "releaseClaimAllowed",
+    "marketplaceClaimAllowed",
+    "userGesture",
+    "hosts",
+    "categories",
+    "unsupportedPrivilegedOperations"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "controlled_agent_authority_registry" },
+    "version": { "type": "string", "const": "2026-07-07" },
+    "authority": { "type": "string", "const": "s109_fail_closed_registry_contract" },
+    "status": { "type": "string", "const": "dev_preview_contract_only" },
+    "localFirstByok": { "type": "boolean", "const": true },
+    "cloudRequired": { "type": "boolean", "const": false },
+    "productionClaimAllowed": { "type": "boolean", "const": false },
+    "releaseClaimAllowed": { "type": "boolean", "const": false },
+    "marketplaceClaimAllowed": { "type": "boolean", "const": false },
+    "summary": { "$ref": "#/$defs/safeSummary" },
+    "userGesture": { "$ref": "#/$defs/userGesture" },
+    "hosts": { "$ref": "#/$defs/hosts" },
+    "categories": { "$ref": "#/$defs/categories" },
+    "unsupportedPrivilegedOperations": { "$ref": "#/$defs/unsupportedPrivilegedOperations" }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Ff][Ii][Ll][Ee]|[Bb][Oo][Dd][Yy]|[Dd][Ii][Ff][Ff]|[Pp][Aa][Tt][Cc][Hh]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr](?:[-_ ]?(?:[Tt][Oo][Oo][Ll]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]))?|[Tt][Oo][Oo][Ll](?:[-_ ]?[Cc][Aa][Ll][Ll])?|[Ss][Hh][Ee][Ll][Ll]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee][-_ ]?[Ii][Nn][Ss][Tt][Aa][Ll][Ll]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Tt][Aa][Rr][Tt]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn][-_ ]?[Rr][Ee][Aa][Dd][Yy]|[Rr][Ee][Ll][Ee][Aa][Ss][Ee][-_ ]?[Rr][Ee][Aa][Dd][Yy]|[Mm][Aa][Rr][Kk][Ee][Tt][Pp][Ll][Aa][Cc][Ee][-_ ]?[Rr][Ee][Aa][Dd][Yy]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 120 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 260 }
+      ]
+    },
+    "authorityState": {
+      "type": "string",
+      "enum": ["allowed_dev_preview", "allowed_metadata_only", "blocked", "unsupported", "future_requires_verified_card"]
+    },
+    "stringList": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 12,
+      "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+      "uniqueItems": true
+    },
+    "userGesture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "correlationRequired", "trustedRequester", "assistantMayMintRequests"],
+      "properties": {
+        "required": { "type": "boolean", "const": true },
+        "correlationRequired": { "type": "boolean", "const": true },
+        "trustedRequester": { "type": "string", "enum": ["gui", "host"] },
+        "assistantMayMintRequests": { "type": "boolean", "const": false },
+        "gestureLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "hostState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trustedExecution", "canClaimExecution", "canMintPrivilegedRequests", "supportState"],
+      "properties": {
+        "trustedExecution": { "type": "boolean" },
+        "canClaimExecution": { "type": "boolean" },
+        "canMintPrivilegedRequests": { "type": "boolean" },
+        "supportState": { "type": "string", "enum": ["first_execution_host", "unsupported_for_trusted_execution", "fail_closed_until_verified"] },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "hosts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["browser", "vscode", "jetbrains"],
+      "properties": {
+        "browser": {
+          "allOf": [
+            { "$ref": "#/$defs/hostState" },
+            {
+              "type": "object",
+              "properties": {
+                "trustedExecution": { "const": false },
+                "canClaimExecution": { "const": false },
+                "canMintPrivilegedRequests": { "const": false },
+                "supportState": { "const": "unsupported_for_trusted_execution" }
+              }
+            }
+          ]
+        },
+        "vscode": {
+          "allOf": [
+            { "$ref": "#/$defs/hostState" },
+            {
+              "type": "object",
+              "properties": {
+                "trustedExecution": { "const": true },
+                "canClaimExecution": { "const": true },
+                "canMintPrivilegedRequests": { "const": true },
+                "supportState": { "const": "first_execution_host" }
+              }
+            }
+          ]
+        },
+        "jetbrains": {
+          "allOf": [
+            { "$ref": "#/$defs/hostState" },
+            {
+              "type": "object",
+              "properties": {
+                "trustedExecution": { "const": false },
+                "canClaimExecution": { "const": false },
+                "canMintPrivilegedRequests": { "const": false },
+                "supportState": { "const": "fail_closed_until_verified" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "categoryBase": {
+      "type": "object",
+      "required": ["state", "allowed", "blocked", "requiresUserGesture", "requiresHostSupport", "persistsRawSensitiveData"],
+      "properties": {
+        "state": { "$ref": "#/$defs/authorityState" },
+        "allowed": { "$ref": "#/$defs/stringList" },
+        "blocked": { "$ref": "#/$defs/stringList" },
+        "requiresUserGesture": { "type": "boolean", "const": true },
+        "requiresHostSupport": { "type": "boolean", "const": true },
+        "persistsRawSensitiveData": { "type": "boolean", "const": false },
+        "notes": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "fileReadCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["singleExplicitFileOnly", "noBackgroundReads"],
+          "properties": {
+            "state": { "enum": ["allowed_dev_preview", "future_requires_verified_card"] },
+            "singleExplicitFileOnly": { "type": "boolean", "const": true },
+            "noBackgroundReads": { "type": "boolean", "const": true }
+          }
+        }
+      ]
+    },
+    "lexicalSearchCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["literalOnly", "hiddenSearchAllowed", "indexingAllowed", "backgroundScanAllowed"],
+          "properties": {
+            "state": { "const": "future_requires_verified_card" },
+            "literalOnly": { "type": "boolean", "const": true },
+            "hiddenSearchAllowed": { "type": "boolean", "const": false },
+            "indexingAllowed": { "type": "boolean", "const": false },
+            "backgroundScanAllowed": { "type": "boolean", "const": false }
+          }
+        }
+      ]
+    },
+    "editApplyCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["existingFileReplacementOnly", "broadMutationAllowed", "automaticApplyAllowed", "createDeleteRenameMoveAllowed"],
+          "properties": {
+            "state": { "enum": ["allowed_dev_preview", "future_requires_verified_card"] },
+            "existingFileReplacementOnly": { "type": "boolean", "const": true },
+            "broadMutationAllowed": { "type": "boolean", "const": false },
+            "automaticApplyAllowed": { "type": "boolean", "const": false },
+            "createDeleteRenameMoveAllowed": { "type": "boolean", "const": false }
+          }
+        }
+      ]
+    },
+    "verificationCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["commandIds", "allowlistedCommandIdOnly", "freeformCommandAllowed", "cwdAllowed", "envAllowed"],
+          "properties": {
+            "state": { "enum": ["allowed_dev_preview", "future_requires_verified_card"] },
+            "commandIds": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "items": { "type": "string", "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"] },
+              "uniqueItems": true
+            },
+            "allowlistedCommandIdOnly": { "type": "boolean", "const": true },
+            "freeformCommandAllowed": { "type": "boolean", "const": false },
+            "cwdAllowed": { "type": "boolean", "const": false },
+            "envAllowed": { "type": "boolean", "const": false }
+          }
+        }
+      ]
+    },
+    "providerCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["proposalMetadataOnly", "providerToolAuthorityAllowed", "localToolAuthorityAllowed", "rawProviderPayloadStored"],
+          "properties": {
+            "state": { "enum": ["allowed_metadata_only", "future_requires_verified_card"] },
+            "proposalMetadataOnly": { "type": "boolean", "const": true },
+            "providerToolAuthorityAllowed": { "type": "boolean", "const": false },
+            "localToolAuthorityAllowed": { "type": "boolean", "const": false },
+            "rawProviderPayloadStored": { "type": "boolean", "const": false }
+          }
+        }
+      ]
+    },
+    "memoryCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["explicitAttachmentOnly", "automaticMemorySelectionAllowed", "rawNoteBodyPersistenceAllowed"],
+          "properties": {
+            "state": { "const": "allowed_metadata_only" },
+            "explicitAttachmentOnly": { "type": "boolean", "const": true },
+            "automaticMemorySelectionAllowed": { "type": "boolean", "const": false },
+            "rawNoteBodyPersistenceAllowed": { "type": "boolean", "const": false }
+          }
+        }
+      ]
+    },
+    "observabilityCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["sanitizedMetadataOnly", "rawPromptStored", "rawFileStored", "rawCommandStored", "rawProviderStored"],
+          "properties": {
+            "state": { "const": "allowed_metadata_only" },
+            "sanitizedMetadataOnly": { "type": "boolean", "const": true },
+            "rawPromptStored": { "type": "boolean", "const": false },
+            "rawFileStored": { "type": "boolean", "const": false },
+            "rawCommandStored": { "type": "boolean", "const": false },
+            "rawProviderStored": { "type": "boolean", "const": false }
+          }
+        }
+      ]
+    },
+    "hostActionsCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["openRevealPreviewOnly", "packageUpdateAllowed", "taskBoardMutationAllowed"],
+          "properties": {
+            "state": { "enum": ["allowed_dev_preview", "allowed_metadata_only", "future_requires_verified_card"] },
+            "openRevealPreviewOnly": { "type": "boolean", "const": true },
+            "packageUpdateAllowed": { "type": "boolean", "const": false },
+            "taskBoardMutationAllowed": { "type": "boolean", "const": false }
+          }
+        }
+      ]
+    },
+    "unsupportedPrivilegedCategory": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "allOf": [
+        { "$ref": "#/$defs/categoryBase" },
+        {
+          "type": "object",
+          "required": ["shellAllowed", "gitAllowed", "networkAllowed", "packageInstallAllowed", "releaseOperationAllowed"],
+          "properties": {
+            "state": { "const": "blocked" },
+            "requiresUserGesture": { "type": "boolean" },
+            "requiresHostSupport": { "type": "boolean" },
+            "shellAllowed": { "type": "boolean", "const": false },
+            "gitAllowed": { "type": "boolean", "const": false },
+            "networkAllowed": { "type": "boolean", "const": false },
+            "packageInstallAllowed": { "type": "boolean", "const": false },
+            "releaseOperationAllowed": { "type": "boolean", "const": false }
+          }
+        }
+      ]
+    },
+    "categories": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fileRead",
+        "lexicalSearch",
+        "editApply",
+        "verificationCommandIds",
+        "providerProposalUse",
+        "memoryAttachment",
+        "runHistoryReportExportObservabilityWrites",
+        "hostActions",
+        "unsupportedPrivilegedOperations"
+      ],
+      "properties": {
+        "fileRead": { "$ref": "#/$defs/fileReadCategory" },
+        "lexicalSearch": { "$ref": "#/$defs/lexicalSearchCategory" },
+        "editApply": { "$ref": "#/$defs/editApplyCategory" },
+        "verificationCommandIds": { "$ref": "#/$defs/verificationCategory" },
+        "providerProposalUse": { "$ref": "#/$defs/providerCategory" },
+        "memoryAttachment": { "$ref": "#/$defs/memoryCategory" },
+        "runHistoryReportExportObservabilityWrites": { "$ref": "#/$defs/observabilityCategory" },
+        "hostActions": { "$ref": "#/$defs/hostActionsCategory" },
+        "unsupportedPrivilegedOperations": { "$ref": "#/$defs/unsupportedPrivilegedCategory" }
+      }
+    },
+    "unsupportedPrivilegedOperations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["defaultState", "operations", "futureChangeRequires"],
+      "properties": {
+        "defaultState": { "type": "string", "const": "blocked" },
+        "operations": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "uniqueItems": true
+        },
+        "futureChangeRequires": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 6,
+          "items": { "type": "string", "enum": ["architecture_record", "implementation_card", "contract_fixture", "host_owned_test", "sanitized_evidence", "human_review"] },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

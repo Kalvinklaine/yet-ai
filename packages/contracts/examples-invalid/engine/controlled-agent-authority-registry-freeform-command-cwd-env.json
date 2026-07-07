@@ -1,0 +1,258 @@
+{
+  "kind": "controlled_agent_authority_registry",
+  "version": "2026-07-07",
+  "authority": "s109_fail_closed_registry_contract",
+  "status": "dev_preview_contract_only",
+  "localFirstByok": true,
+  "cloudRequired": false,
+  "productionClaimAllowed": false,
+  "releaseClaimAllowed": false,
+  "marketplaceClaimAllowed": false,
+  "summary": "S109 contract registry for bounded dev preview authority vocabulary only.",
+  "userGesture": {
+    "required": true,
+    "correlationRequired": true,
+    "trustedRequester": "gui",
+    "assistantMayMintRequests": false,
+    "gestureLabel": "Explicit user action with correlation"
+  },
+  "hosts": {
+    "browser": {
+      "trustedExecution": false,
+      "canClaimExecution": false,
+      "canMintPrivilegedRequests": false,
+      "supportState": "unsupported_for_trusted_execution",
+      "label": "Browser preview display only"
+    },
+    "vscode": {
+      "trustedExecution": true,
+      "canClaimExecution": true,
+      "canMintPrivilegedRequests": true,
+      "supportState": "first_execution_host",
+      "label": "VS Code first execution host"
+    },
+    "jetbrains": {
+      "trustedExecution": false,
+      "canClaimExecution": false,
+      "canMintPrivilegedRequests": false,
+      "supportState": "fail_closed_until_verified",
+      "label": "JetBrains fail closed until verified"
+    }
+  },
+  "categories": {
+    "fileRead": {
+      "state": "allowed_dev_preview",
+      "allowed": [
+        "one selected text file",
+        "safe workspace relative path",
+        "bounded byte and line limits"
+      ],
+      "blocked": [
+        "background file discovery",
+        "recursive project scan",
+        "dependency or generated path"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "singleExplicitFileOnly": true,
+      "noBackgroundReads": true,
+      "notes": "Allowed only as bounded selected text read evidence."
+    },
+    "lexicalSearch": {
+      "state": "future_requires_verified_card",
+      "allowed": [
+        "explicit literal query proposal only"
+      ],
+      "blocked": [
+        "background scan",
+        "recursive discovery",
+        "project index"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "literalOnly": true,
+      "hiddenSearchAllowed": false,
+      "indexingAllowed": false,
+      "backgroundScanAllowed": false,
+      "notes": "Search expansion needs a later verified card and host proof."
+    },
+    "editApply": {
+      "state": "allowed_dev_preview",
+      "allowed": [
+        "existing text file replacement",
+        "pre edit hash check",
+        "visible user review"
+      ],
+      "blocked": [
+        "create file",
+        "delete file",
+        "rename or move file",
+        "directory mutation"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "existingFileReplacementOnly": true,
+      "broadMutationAllowed": false,
+      "automaticApplyAllowed": false,
+      "createDeleteRenameMoveAllowed": false,
+      "notes": "Mutation remains bounded replacement after review."
+    },
+    "verificationCommandIds": {
+      "state": "allowed_dev_preview",
+      "allowed": [
+        "repository-check",
+        "gui-app-tests",
+        "engine-chat-tests"
+      ],
+      "blocked": [
+        "model selected process text",
+        "working directory selection",
+        "environment selection"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "commandIds": [
+        "repository-check",
+        "gui-app-tests",
+        "engine-chat-tests"
+      ],
+      "allowlistedCommandIdOnly": true,
+      "freeformCommandAllowed": true,
+      "cwdAllowed": true,
+      "envAllowed": true,
+      "notes": "Verification uses fixed ids with bounded sanitized tail evidence.",
+      "processText": "repository check"
+    },
+    "providerProposalUse": {
+      "state": "allowed_metadata_only",
+      "allowed": [
+        "sanitized plan labels",
+        "bounded replacement candidate metadata",
+        "allowlisted verification suggestion"
+      ],
+      "blocked": [
+        "provider tool calls",
+        "local tool calls",
+        "stored provider exchange"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "proposalMetadataOnly": true,
+      "providerToolAuthorityAllowed": false,
+      "localToolAuthorityAllowed": false,
+      "rawProviderPayloadStored": false,
+      "notes": "Model settings stay local and proposal use is review metadata."
+    },
+    "memoryAttachment": {
+      "state": "allowed_metadata_only",
+      "allowed": [
+        "user selected note labels",
+        "safe summaries",
+        "bounded counts"
+      ],
+      "blocked": [
+        "automatic relevance selection",
+        "background memory lookup",
+        "stored note body in report"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "explicitAttachmentOnly": true,
+      "automaticMemorySelectionAllowed": false,
+      "rawNoteBodyPersistenceAllowed": false,
+      "notes": "Memory use is one shot explicit attachment metadata."
+    },
+    "runHistoryReportExportObservabilityWrites": {
+      "state": "allowed_metadata_only",
+      "allowed": [
+        "phase labels",
+        "safe summaries",
+        "bounded counters",
+        "artifact references"
+      ],
+      "blocked": [
+        "prompt transcript",
+        "file contents",
+        "replacement details",
+        "process transcript"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "sanitizedMetadataOnly": true,
+      "rawPromptStored": false,
+      "rawFileStored": false,
+      "rawCommandStored": false,
+      "rawProviderStored": false,
+      "notes": "History reports and exports write sanitized metadata only."
+    },
+    "hostActions": {
+      "state": "allowed_metadata_only",
+      "allowed": [
+        "open safe file label",
+        "reveal safe range label",
+        "stop visible run"
+      ],
+      "blocked": [
+        "package update",
+        "task board mutation",
+        "unattended rollback"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "openRevealPreviewOnly": true,
+      "packageUpdateAllowed": false,
+      "taskBoardMutationAllowed": false,
+      "notes": "Host actions stay explicit and bounded to safe UI actions."
+    },
+    "unsupportedPrivilegedOperations": {
+      "state": "blocked",
+      "allowed": [],
+      "blocked": [
+        "shell execution",
+        "git mutation",
+        "network action",
+        "package install",
+        "provider tool call",
+        "release publication"
+      ],
+      "requiresUserGesture": true,
+      "requiresHostSupport": true,
+      "persistsRawSensitiveData": false,
+      "shellAllowed": false,
+      "gitAllowed": false,
+      "networkAllowed": false,
+      "packageInstallAllowed": false,
+      "releaseOperationAllowed": false,
+      "notes": "Privileged operations stay blocked until a later architecture gate."
+    }
+  },
+  "unsupportedPrivilegedOperations": {
+    "defaultState": "blocked",
+    "operations": [
+      "shell execution",
+      "git mutation",
+      "network action",
+      "package install",
+      "provider tool call",
+      "local tool call",
+      "broad file mutation",
+      "background project scan",
+      "release publication"
+    ],
+    "futureChangeRequires": [
+      "architecture_record",
+      "implementation_card",
+      "contract_fixture",
+      "host_owned_test",
+      "sanitized_evidence"
+    ]
+  }
+}

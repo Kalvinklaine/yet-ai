@@ -13,6 +13,7 @@ const docsAllowlist = [
   "docs/architecture/014-controlled-run-history.md",
   "docs/architecture/015-controlled-run-explicit-context.md",
   "docs/architecture/017-controlled-agent-production-gap-audit.md",
+  "docs/architecture/018-controlled-agent-authority-registry.md",
   "docs/dogfood/agent-run-one-step.md",
   "docs/dogfood/manual-agent-run-rc.md",
   "docs/dogfood/one-step-agent-run.md",

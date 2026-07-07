@@ -148,6 +148,10 @@ const mappings = [
     "packages/contracts/examples/engine/controlled-agent-patch-plan.json",
     "packages/contracts/schemas/engine/controlled-agent-patch-plan.schema.json"
   ],
+  [
+    "packages/contracts/examples/engine/controlled-agent-authority-registry-v1.json",
+    "packages/contracts/schemas/engine/controlled-agent-authority-registry.schema.json"
+  ],
   ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
@@ -1206,6 +1210,18 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-patch-plan.schema.json"
+  ]),
+  ...[
+    "controlled-agent-authority-registry-raw-payload-fields.json",
+    "controlled-agent-authority-registry-unsupported-host-execution.json",
+    "controlled-agent-authority-registry-hidden-search-indexing.json",
+    "controlled-agent-authority-registry-freeform-command-cwd-env.json",
+    "controlled-agent-authority-registry-broad-mutation.json",
+    "controlled-agent-authority-registry-provider-tool-authority.json",
+    "controlled-agent-authority-registry-production-release-claims.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-authority-registry.schema.json"
   ]),
   ...[
     "tool-authority-policy-permissive-default.json",
