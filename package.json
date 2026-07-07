@@ -30,6 +30,7 @@
     "smoke:controlled-agent-file-read": "node scripts/smoke-controlled-agent-file-read.mjs",
     "smoke:controlled-agent-lexical-search": "node scripts/smoke-controlled-agent-lexical-search.mjs",
     "smoke:controlled-agent-real-lexical-search": "node scripts/smoke-controlled-agent-real-lexical-search.mjs",
+    "smoke:controlled-agent-search-selection": "node scripts/smoke-controlled-agent-search-selection.mjs",
     "smoke:controlled-agent-real-file-read": "node scripts/smoke-controlled-agent-real-file-read.mjs",
     "smoke:controlled-agent-command-runner": "node scripts/smoke-controlled-agent-command-runner.mjs",
     "smoke:controlled-agent-edit-executor": "node scripts/smoke-controlled-agent-edit-executor.mjs",

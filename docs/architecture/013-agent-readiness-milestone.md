@@ -35,6 +35,7 @@ Avoid softer wording that implies implementation, autonomy, production publicati
 | S67 guided fix loop | Experimental manual-only | Failed verification can expose sanitized guided-fix status and a draft-only fix CTA when safe prior proposal lineage exists. Clicking the CTA only writes composer text and focuses it; unsafe/raw-looking verification metadata blocks actionable drafting. It adds no auto-send, repair, retry, rollback, apply, verification, provider/tool execution, persistence, hidden reads, or runtime/bridge authority. |
 | S68 safer apply UX | Experimental manual-only | Apply readiness and risk display may summarize sanitized proposal metadata, checkpoint/policy readiness, host support, disabled reasons, and manual recovery guidance. It does not expose raw replacement bodies, create apply authority, apply automatically, run verification, repair, retry, roll back, attach context, persist proposal bodies, or add runtime/bridge endpoints. |
 | S109 authority registry evidence | Experimental manual-only | The controlled Agent Run surface may show compact sanitized status from `docs/architecture/018-controlled-agent-authority-registry.md` and the S109 registry fixture. This status is registry evidence only: it is not a button, permission grant, bridge request, runtime/provider call, workspace read/search, edit/apply, verification, storage write, production claim, or host-parity claim. Browser remains unsupported for trusted execution and JetBrains remains fail-closed until separately verified. |
+| S109-S112 controlled lexical search Phase 1 | Experimental manual-only | Phase 1 establishes explicit bounded lexical search foundations: S109 authority vocabulary, S110 contracts/pure GUI request-result checks, S111 VS Code-only executor evidence, and S112 GUI-local explicit result selection. Safe results can be user-selected and summarized, but the selected context is not auto-attached or sent to a provider. Browser remains unsupported for trusted workspace search, JetBrains remains fail-closed, and this is not production, autonomy, release, provider-proposal, or cross-host parity readiness. |
 | S69 task memory suggestions | Experimental manual-only | Task memory suggestions are GUI-local display metadata over already-listed local project memory note metadata. Safe suggested notes can be attached only by explicit user click through the existing one-shot project-memory bundle path; stale, unsafe, already-attached, or unrelated notes show labels/warnings only. Suggestion/session/trace labels do not become hidden runtime chat context and do not add auto-attach, search, save, provider, bridge, storage, hidden-read, indexing, or workspace mutation authority. |
 | S71 multi-step task timeline | Experimental manual-only | The multi-step task timeline is read-only sanitized metadata UX over already-known Agent Run GUI state. It is not an execution engine and does not add autonomy, Send, Apply, Verification, repair, retry, rollback, provider/tool calls, hidden reads, runtime endpoints, bridge authority, browser-storage persistence, or raw-data persistence. |
 | S72 checkpoint decision UX | Experimental manual-only | Checkpoint decision metadata can show continue, stop, rollback review, and separate manual run guidance over already-known Agent Run state. Rollback review remains review-only, separate manual run creates nothing, and no automatic Send, Apply, Verification, repair, retry, rollback, hidden read/search/indexing, memory attach, provider/tool call, runtime endpoint, bridge authority, storage persistence, production readiness, or autonomy is added. |
@@ -729,6 +730,26 @@ npm run audit:controlled-autonomy-wording && npm run check
 ```
 
 This gate validates wording hygiene and repository checks only. It does not implement a new memory subsystem, provider memory feature, hidden context path, storage migration, production autonomy, release evidence, marketplace evidence, or real-provider CI.
+
+## Sprint 112 controlled lexical search Phase 1 audit
+
+Sprint 112 closes S109-S112 as Phase 1 foundation evidence for controlled lexical search. The foundation is explicit and bounded: S109 records fail-closed authority vocabulary, S110 records strict fixtures and pure GUI request/result correlation, S111 proves the real executor only in VS Code, and S112 adds GUI-local explicit result selection over sanitized metadata.
+
+The Phase 1 host audit is intentionally uneven and explicit:
+
+- **VS Code**: has S111 executor evidence for bounded literal lexical search requests and S112 GUI selection evidence for sanitized result summaries. This is local dev-preview evidence only and does not prove production readiness, marketplace readiness, release readiness, autonomy, or provider proposal quality.
+- **Browser / standalone GUI**: remains unsupported for trusted workspace search and hidden indexing. It may render GUI-local mock/service state, but it has no trusted workspace host executor and must not post privileged search, apply, verification, command, git, package, network, or provider-tool actions.
+- **JetBrains**: remains fail-closed for controlled lexical search execution until a later parity card implements and verifies a bounded host executor. Hosted GUI/manual parity is not controlled search execution parity.
+
+S112 selection does not change the blocked/deferred capabilities. It adds no hidden reads, hidden search, background indexing, broad workspace scan, raw file-body persistence, browser-storage raw persistence, auto-send, auto-attach, auto-provider, auto-apply, automatic verification, command execution, git/package/network/tool authority, provider-tool authority, production autonomy, release evidence, or cross-host completion. The selected search context is ready for S113 provider proposal work only after a future explicit user action and a separate provider proposal contract.
+
+The focused S112 smoke is:
+
+```sh
+npm run smoke:controlled-agent-search-selection
+```
+
+It is deterministic local/mock evidence over GUI pure services only. It verifies explicit safe selection, unsafe/private/secret/raw omission, bounded summaries, all no-auto policy flags, clean browser-storage mock state, and no automatic send/attach/provider/apply/verification/search/indexing/command/git/package/network/tool calls.
 
 ## Blocked and deferred capabilities
 
