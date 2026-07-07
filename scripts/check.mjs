@@ -10,6 +10,7 @@ const validators = [
   ["scripts/validate-controlled-agent-dev-preview-fixtures.mjs"],
   ["scripts/smoke-sandbox-checkpoint.mjs"],
   ["scripts/smoke-controlled-run-explicit-context.mjs"],
+  ["scripts/smoke-controlled-run-memory-attachment.mjs"],
   ["scripts/validate-ide-artifact-contract.mjs"],
   ["scripts/validate-ide-artifact-workflow.mjs"],
   ["scripts/validate-ide-surface-contract.mjs"],
