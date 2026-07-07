@@ -10614,6 +10614,40 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("ChatComposer");
   });
 
+  it("mirrors selected snippets into explicit controlled-run context preview without storage or hidden reads", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => { setInputValue(projectSnippetQueryInput(), "chat composer"); });
+    await act(async () => { findButton("Search project snippets").click(); });
+    await dispatchHostIdeActionResult("gui-workspace-snippet-search-1", workspaceSnippetSearchResultPayload());
+    await act(async () => { Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? [])[0]?.click(); });
+    await act(async () => { findButton("Attach selected snippets (1)").click(); });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Explicit controlled-run context");
+    expect(text).toContain("VS Code visible selection");
+    expect(text).toContain("Only the user-selected bounded context below is eligible for the controlled run preview.");
+    expect(text).toContain("Selected bounded items: 1");
+    expect(text).toContain("Total preview lines: 3");
+    expect(text).toContain("function ChatComposer");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledRunRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("ChatComposer");
+
+    await act(async () => { setTextareaValue(chatInput(), "use selected context once"); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+
+    expect(lastUserMessageBody()).toMatchObject({ payload: { context: { kind: "explicit_context_bundle" } } });
+    expect(container?.textContent ?? "").toContain("One-shot explicit context bundle attached to the last accepted message and cleared.");
+    expect(container?.textContent ?? "").not.toContain("Explicit controlled-run context");
+    expect(browserStorageDump()).not.toContain("ChatComposer");
+  });
+
   it("keeps selected project snippets after failed send and ignores stale unsafe results", async () => {
     const postMessage = vi.fn();
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");

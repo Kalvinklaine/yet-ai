@@ -9,6 +9,7 @@ import type { ControlledAgentEditRequestResult } from "../services/controlledAge
 import type { ControlledAgentFileReadRequestResult } from "../services/controlledAgentFileReadRequest";
 import type { ControlledOneStepAgentLoopState } from "../services/controlledOneStepAgentLoop";
 import type { ControlledAgentRepairLoopEvaluation } from "../services/controlledAgentRepairLoop";
+import type { ControlledRunContextBundle, ControlledRunContextReport } from "../services/controlledRunContext";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
@@ -38,9 +39,13 @@ export type AgentRunPanelProps = {
   onStartOneStepRun?: () => void;
   onStopOneStepRun?: () => void;
   controlledHostCapabilityMatrix?: ControlledHostCapabilityMatrixDisplay;
+  controlledRunContextBundle?: ControlledRunContextBundle;
+  controlledRunContextReport?: ControlledRunContextReport;
+  includeControlledRunContext?: boolean;
+  onIncludeControlledRunContextChange?: (include: boolean) => void;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -140,6 +145,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       { kind: "status", status: oneStepLoopState?.phase ?? repairLoop?.state ?? "blocked", summary: oneStepLoopState?.summary ?? controlledReportEvidenceSummary(oneStepLoopState?.phase, repairLoop?.state) },
     ],
   }) : undefined;
+  const controlledRunContextItems = controlledRunContextBundle?.items ?? [];
+  const showControlledRunContextSelector = controlledRunContextBundle !== undefined || controlledRunContextReport !== undefined;
+  const controlledRunContextSupported = host === "vscode";
+  const controlledRunContextEnabled = controlledRunContextSupported && controlledRunContextItems.length > 0;
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -162,6 +171,39 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span className="subtle">Dev-preview labels are display evidence only and do not grant controlled Start, read, edit, verification, repair, shell, git, provider, tool, or workspace authority.</span>
         </div>
       )}
+      {showControlledRunContextSelector && <div className={`readiness-card ${controlledRunContextEnabled ? "ready" : "warn"} stack`} role="status" aria-label="Explicit controlled-run context selector">
+        <div className="row">
+          <strong>Explicit controlled-run context</strong>
+          <span className={controlledRunContextSupported ? "badge ok" : "badge warn"}>{controlledRunContextSupported ? "VS Code visible selection" : "unsupported host"}</span>
+          <span className="badge">one-shot include</span>
+          <span className="badge">no hidden scan/search/index</span>
+        </div>
+        <span>{controlledRunContextEnabled ? "Only the user-selected bounded context below is eligible for the controlled run preview." : controlledRunContextSupported ? "Attach explicit context snippets first; no workspace scan, search, index, or file read starts here." : "Controlled-run context include is disabled outside VS Code and posts no bridge request."}</span>
+        <label className="row attached-context-toggle">
+          <input style={{ width: "auto" }} type="checkbox" checked={includeControlledRunContext && controlledRunContextEnabled} disabled={!controlledRunContextEnabled} onChange={(event) => onIncludeControlledRunContextChange?.(event.target.checked)} />
+          {includeControlledRunContext && controlledRunContextEnabled ? "Include selected context with the next controlled run" : "Do not include selected context"}
+        </label>
+        <div className="agent-progress-grid" aria-label="Explicit controlled-run context budget">
+          <span>Selected bounded items: {controlledRunContextReport?.selectedContextCount ?? controlledRunContextItems.length}</span>
+          <span>Total preview bytes: {controlledRunContextReport?.totalPreviewBytes ?? 0}</span>
+          <span>Total preview lines: {controlledRunContextReport?.totalPreviewLines ?? 0}</span>
+          <span>Truncated previews: {controlledRunContextReport?.truncatedCount ?? 0}</span>
+          <span>Omitted unsafe items: {controlledRunContextReport?.omittedUnsafeItemCount ?? 0}</span>
+        </div>
+        {controlledRunContextReport && controlledRunContextReport.blockedReasons.length > 0 && <span className="subtle">Blocked context reasons: {controlledRunContextReport.blockedReasons.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+        {controlledRunContextItems.length > 0 ? controlledRunContextItems.map((item, index) => (
+          <div className="provider-item stack" key={item.key}>
+            <div className="row">
+              <strong>{index + 1}. {sanitizeDisplayText(item.label)}</strong>
+              <span className="badge ok">{sanitizeDisplayText(item.sourceKind.replace(/_/g, " "))}</span>
+              {item.workspaceRelativePath && <span className="badge">{sanitizeDisplayText(item.workspaceRelativePath)}</span>}
+            </div>
+            <span className="subtle">{item.range ? `Lines ${item.range.startLine}-${item.range.endLine} · ` : ""}{item.previewByteCount} bytes · {item.previewLineCount} lines · truncated {item.truncated ? "yes" : "no"} · {sanitizeDisplayText(item.hostSurfaceLabel)}</span>
+            <div className="attached-context-preview"><pre>{sanitizeDisplayText(item.previewText)}</pre></div>
+          </div>
+        )) : <span className="subtle">No explicit controlled-run context selected. The cat sees no basket, therefore carries no files.</span>}
+        <span className="subtle">Preview is bounded and in-memory only. This panel never persists raw file bodies, starts search/indexing, or attaches hidden workspace context.</span>
+      </div>}
       {(showOneStepLoop || showRepairLoop) && (      <div className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">
           <strong>S91 controlled dev-preview status</strong>

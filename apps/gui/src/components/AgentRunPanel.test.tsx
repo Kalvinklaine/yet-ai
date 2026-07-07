@@ -1030,6 +1030,55 @@ describe("AgentRunPanel", () => {
     expect(onDraftVerificationFix).toHaveBeenCalledTimes(1);
   });
 
+  it("renders explicit controlled-run context selector with bounded preview and disabled unsupported hosts", () => {
+    const onIncludeControlledRunContextChange = vi.fn();
+    const bundle = {
+      cleared: false,
+      items: [{
+        id: "workspace-ctx-1",
+        sourceKind: "workspace_fragment" as const,
+        label: "src/context.ts",
+        previewText: "export const selected = true;",
+        previewByteCount: 29,
+        previewLineCount: 1,
+        truncated: false,
+        workspaceRelativePath: "src/context.ts",
+        range: { startLine: 2, endLine: 4 },
+        hostSurfaceLabel: "VS Code explicit context bundle",
+        key: "workspace|src/context.ts|2-4|hash",
+      }],
+    };
+    const report = {
+      selectedContextCount: 1,
+      safeLabels: ["workspace fragment · src/context.ts"],
+      omittedUnsafeItemCount: 0,
+      totalPreviewBytes: 29,
+      totalPreviewLines: 1,
+      truncatedCount: 0,
+      blockedReasons: [],
+    };
+
+    renderPanel(undefined, { host: "vscode", controlledRunContextBundle: bundle, controlledRunContextReport: report, onIncludeControlledRunContextChange });
+
+    expect(panelText()).toContain("Explicit controlled-run context");
+    expect(panelText()).toContain("VS Code visible selection");
+    expect(panelText()).toContain("Only the user-selected bounded context below is eligible for the controlled run preview.");
+    expect(panelText()).toContain("Selected bounded items: 1");
+    expect(panelText()).toContain("src/context.ts");
+    expect(panelText()).toContain("export const selected = true;");
+    expect(panelText()).toContain("Preview is bounded and in-memory only. This panel never persists raw file bodies, starts search/indexing, or attaches hidden workspace context.");
+    const checkbox = container?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    expect(checkbox?.disabled).toBe(false);
+    act(() => { checkbox?.click(); });
+    expect(onIncludeControlledRunContextChange).toHaveBeenCalledWith(false);
+
+    renderPanel(undefined, { host: "jetbrains", controlledRunContextBundle: bundle, controlledRunContextReport: report });
+    expect(panelText()).toContain("unsupported host");
+    expect(panelText()).toContain("Controlled-run context include is disabled outside VS Code and posts no bridge request.");
+    expect(container?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.disabled).toBe(true);
+    expect(browserStorageDump()).not.toContain("export const selected");
+  });
+
   it("does not persist run internals or expose raw unsafe data", () => {
     const secret = "sk-" + "x".repeat(40);
     renderPanel({
@@ -1088,6 +1137,10 @@ type PanelTestProps = {
   onStartOneStepRun?: () => void;
   onStopOneStepRun?: () => void;
   controlledHostCapabilityMatrix?: any;
+  controlledRunContextBundle?: any;
+  controlledRunContextReport?: any;
+  includeControlledRunContext?: boolean;
+  onIncludeControlledRunContextChange?: (include: boolean) => void;
 };
 
 function renderPanel(input: unknown, props: PanelTestProps = {}) {
@@ -1124,6 +1177,10 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onStartOneStepRun={props.onStartOneStepRun}
         onStopOneStepRun={props.onStopOneStepRun}
         controlledHostCapabilityMatrix={props.controlledHostCapabilityMatrix}
+        controlledRunContextBundle={props.controlledRunContextBundle}
+        controlledRunContextReport={props.controlledRunContextReport}
+        includeControlledRunContext={props.includeControlledRunContext}
+        onIncludeControlledRunContextChange={props.onIncludeControlledRunContextChange}
       />,
     );
   });

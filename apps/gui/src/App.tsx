@@ -52,6 +52,7 @@ import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp
 import { evaluateControlledAgentRuntimeSession } from "./services/controlledAgentRuntimeSession";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./services/controlledAgentRunState";
 import { createControlledOneStepAgentLoopState, reduceControlledOneStepAgentLoopState, type ControlledOneStepAgentLoopState } from "./services/controlledOneStepAgentLoop";
+import { addControlledRunContextItem, buildControlledRunContextReport, createControlledRunContextBundle, validateControlledRunContextItem, type ControlledRunContextBlockedReason, type ControlledRunContextInput } from "./services/controlledRunContext";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
 
@@ -379,6 +380,7 @@ export function App() {
   const [attachedContextStatus, setAttachedContextStatus] = useState<string | null>(null);
   const [explicitContextBundleItems, setExplicitContextBundleItems] = useState<ExplicitContextBundleItem[]>([]);
   const [includeExplicitContextBundle, setIncludeExplicitContextBundle] = useState(true);
+  const [includeControlledRunContext, setIncludeControlledRunContext] = useState(true);
   const [explicitContextBundleStatus, setExplicitContextBundleStatus] = useState<string | null>(null);
   const [workspaceSnippetQuery, setWorkspaceSnippetQuery] = useState("");
   const [workspaceSnippetResult, setWorkspaceSnippetResult] = useState<WorkspaceSnippetSearchResultPayload | null>(null);
@@ -672,6 +674,8 @@ export function App() {
       ...(activeEditProposal ? [{ label: `Edit proposal metadata · ${activeEditProposal.payload.summary}`, charCount: activeEditProposal.payload.summary.length, itemCount: activeEditProposal.payload.edits.length }] : []),
     ],
   }), [activeEditProposal, codingTaskGoal, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle, modelProposalDraft]);
+  const controlledRunContextSelection = useMemo(() => buildControlledRunContextSelection(explicitContextBundleItems, bridgeHost), [bridgeHost, explicitContextBundleItems]);
+  const showControlledRunContextSelector = explicitContextBundleItems.length > 0;
   const codingTaskSessionBase = useMemo(() => createCodingTaskSessionSnapshot({
     goal: codingTaskGoal,
     contextItems: explicitContextBundleItems,
@@ -842,6 +846,7 @@ export function App() {
   const clearExplicitContextBundle = useCallback((status: string | null = null) => {
     setExplicitContextBundleItems([]);
     setIncludeExplicitContextBundle(true);
+    setIncludeControlledRunContext(true);
     setExplicitContextBundleStatus(status);
     setAttachedVerificationKey(null);
   }, []);
@@ -3061,7 +3066,7 @@ export function App() {
 
   const hostedWebview = bridgeHost === "vscode" || bridgeHost === "jetbrains";
   const hostCapabilityEvaluation = useMemo(() => evaluateHostCapabilityMetadata(bridgeHost), [bridgeHost]);
-  const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, bridgeHost), [bridgeHost, controlledHostCapabilities]);
+  const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, controlledHostCapabilityDisplayHost(controlledHostCapabilities, bridgeHost)), [bridgeHost, controlledHostCapabilities]);
 
   return (
     <main className={`app-shell host-${bridgeHost}`}>
@@ -3238,7 +3243,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress"} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} />
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} capabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
@@ -3493,6 +3498,86 @@ export function App() {
       </section>
     </main>
   );
+}
+
+function controlledHostCapabilityDisplayHost(payload: HostReadyPayload["controlledCapabilities"] | undefined, fallback: BridgeHost): BridgeHost {
+  return payload?.hostSurface === "vscode" || payload?.hostSurface === "jetbrains" || payload?.hostSurface === "browser" ? payload.hostSurface : fallback;
+}
+
+type ControlledRunContextSelection = {
+  bundle: ReturnType<typeof createControlledRunContextBundle>;
+  report: ReturnType<typeof buildControlledRunContextReport>;
+};
+
+function buildControlledRunContextSelection(items: ExplicitContextBundleItem[], host: BridgeHost): ControlledRunContextSelection {
+  let bundle = createControlledRunContextBundle();
+  const blockedReasons: ControlledRunContextBlockedReason[] = [];
+  for (const item of items) {
+    const input = explicitBundleItemToControlledRunContextInput(item, host);
+    if (!input) {
+      blockedReasons.push("unsafe_label");
+      continue;
+    }
+    const result = validateControlledRunContextItem(input);
+    if (!result.ok) {
+      blockedReasons.push(result.reason);
+      continue;
+    }
+    const next = addControlledRunContextItem(bundle, result.item);
+    if (next === bundle) {
+      blockedReasons.push(bundle.items.some((existing) => existing.key === result.item.key || existing.id === result.item.id) ? "duplicate_item" : "total_bytes_exceeded");
+    }
+    bundle = next;
+  }
+  return { bundle, report: buildControlledRunContextReport(bundle, blockedReasons) };
+}
+
+function explicitBundleItemToControlledRunContextInput(item: ExplicitContextBundleItem, host: BridgeHost): ControlledRunContextInput | null {
+  const hostSurfaceLabel = host === "vscode" ? "VS Code explicit context bundle" : host === "jetbrains" ? "JetBrains explicit context bundle" : "Browser explicit context bundle";
+  if (item.kind === "workspace_snippet") {
+    return {
+      id: controlledRunContextId("workspace", item.key),
+      sourceKind: "workspace_fragment",
+      label: item.workspaceRelativePath,
+      workspaceRelativePath: item.workspaceRelativePath,
+      range: { startLine: item.range.start.line + 1, endLine: item.range.end.line + 1 },
+      previewText: item.text,
+      hostSurfaceLabel,
+    };
+  }
+  if (item.kind === "verification_output") {
+    return {
+      id: controlledRunContextId("verification", item.key),
+      sourceKind: "verification_summary",
+      label: item.commandId,
+      previewText: item.outputTail,
+      hostSurfaceLabel,
+      truncated: item.truncated,
+    };
+  }
+  if (item.kind === "project_memory") {
+    return {
+      id: controlledRunContextId("memory", item.key),
+      sourceKind: "memory_summary",
+      label: item.title,
+      previewText: item.text,
+      hostSurfaceLabel,
+    };
+  }
+  const range = item.selection && item.selection.startLine !== undefined && item.selection.endLine !== undefined ? { startLine: item.selection.startLine + 1, endLine: item.selection.endLine + 1 } : undefined;
+  return {
+    id: controlledRunContextId("active", item.key),
+    sourceKind: "active_editor_selection",
+    label: item.file?.workspaceRelativePath ?? item.file?.displayPath ?? "active editor selection",
+    workspaceRelativePath: item.file?.workspaceRelativePath,
+    range,
+    previewText: item.selection?.text ?? "",
+    hostSurfaceLabel,
+  };
+}
+
+function controlledRunContextId(prefix: string, key: string): string {
+  return `${prefix}-${key.replace(/[^A-Za-z0-9_.-]/g, "").slice(0, 80) || "context"}`;
 }
 
 function controlledEditResultToOneStepMetadata(payload: unknown): unknown {
