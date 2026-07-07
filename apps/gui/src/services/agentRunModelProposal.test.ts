@@ -60,6 +60,58 @@ function multistepPlan(overrides: Record<string, unknown> = {}): string {
   });
 }
 
+function providerProposal(overrides: Record<string, unknown> = {}): string {
+  return JSON.stringify({
+    kind: "controlled_agent_provider_proposal",
+    version: "2026-07-07",
+    authority: "provider_proposal_metadata_only",
+    cloudRequired: false,
+    executionAllowed: false,
+    providerToolCallingAllowed: false,
+    rawProviderPayloadStored: false,
+    automaticApplyAllowed: false,
+    automaticRunAllowed: false,
+    workspace: { controlledWorkspaceId: "workspace-1", runId: "run-1", workspaceMode: "worktree", host: "vscode", privatePathExposed: false },
+    providerProposal: {
+      proposalId: "provider-proposal-1",
+      source: "model",
+      sanitizedOnly: true,
+      rawPayloadStored: false,
+      toolCallsIncluded: false,
+      automaticActionsIncluded: false,
+      summary: "Review a bounded model proposal.",
+      plan: { stepCount: 2, steps: ["Review visible metadata", "Wait for manual apply"] },
+      editMetadata: { operation: "replace", workspaceRelativePath: "apps/gui/src/App.tsx", expectedContentHash: `sha256:${"a".repeat(64)}`, startLine: 3, endLine: 3, replacementByteCount: 42, rawReplacementStored: false, rawDiffStored: false, requiresUserApply: true },
+      verificationSuggestion: { commandId: "gui-app-tests", allowlistedCommandIdOnly: true, freeformCommandAllowed: false, requiresUserRun: true },
+    },
+    policyFlags: {
+      metadataOnly: true,
+      boundedPlanMetadataAllowed: true,
+      boundedEditMetadataAllowed: true,
+      providerToolCallingAllowed: false,
+      rawProviderPayloadPersistenceAllowed: false,
+      rawPromptPersistenceAllowed: false,
+      rawFilePersistenceAllowed: false,
+      rawDiffPersistenceAllowed: false,
+      rawCommandPersistenceAllowed: false,
+      rawOutputPersistenceAllowed: false,
+      automaticApplyAllowed: false,
+      automaticRunAllowed: false,
+      automaticVerifyAllowed: false,
+      automaticRepairAllowed: false,
+      shellAllowed: false,
+      gitAllowed: false,
+      networkAllowed: false,
+      packageInstallAllowed: false,
+      hiddenReadAllowed: false,
+      searchAllowed: false,
+      indexingAllowed: false,
+      toolAuthorityAllowed: false,
+    },
+    ...overrides,
+  });
+}
+
 function input(content: string, overrides: Partial<AgentRunModelProposalInput> = {}): AgentRunModelProposalInput {
   return {
     chatId: "chat-1",
@@ -132,6 +184,46 @@ describe("evaluateAgentRunModelProposal", () => {
         verificationSuggestions: [{ commandId: "gui-app-tests", label: "GUI app tests" }],
       }),
     });
+  });
+
+  it("detects metadata-only provider proposals without apply authority", () => {
+    const result = evaluateAgentRunModelProposal(input(providerProposal()));
+
+    expect(result.proposalPathState).toBe("proposal_detected");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.agentRunInput.proposal).toEqual({
+      id: "provider-proposal-1",
+      summary: "Review a bounded model proposal.",
+      touchedFiles: ["apps/gui/src/App.tsx"],
+      planSteps: ["Review visible metadata", "Wait for manual apply"],
+      verificationSuggestions: ["GUI app tests"],
+    });
+    expect(result.agentRunInput.applyRequest).toBeUndefined();
+    expect(result.agentRunInput.verificationRequest).toBeUndefined();
+  });
+
+  it("rejects unsafe provider proposals", () => {
+    const result = evaluateAgentRunModelProposal(input(providerProposal({ rawProviderPayloadStored: true })));
+
+    expect(result.proposalPathState).toBe("blocked");
+    expect(result.agentRunInput.proposal).toBeUndefined();
+    expect(result.diagnostics[0]?.code).toBe("unsafe_metadata");
+  });
+
+  it("prevents duplicate provider proposal adoption", () => {
+    const first = evaluateAgentRunModelProposal(input(providerProposal()));
+    const second = evaluateAgentRunModelProposal(input(providerProposal(), {
+      providerProposalState: {
+        sourceMessageId: "assistant-1",
+        proposalId: "provider-proposal-1",
+        payloadKey: first.proposalPathState === "proposal_detected" ? "not-needed-for-id-match" : "unused",
+      },
+    }));
+
+    expect(first.proposalPathState).toBe("proposal_detected");
+    expect(second.proposalPathState).toBe("stale_response");
+    expect(second.agentRunInput.proposal).toBeUndefined();
+    expect(second.diagnostics[0]?.code).toBe("duplicate_proposal");
   });
 
   it("treats normal prose as a non-authoritative normal response", () => {
