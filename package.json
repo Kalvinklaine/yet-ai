@@ -28,6 +28,7 @@
     "smoke:agent-run-checkpoint-decision": "node scripts/smoke-agent-run-checkpoint-decision.mjs",
     "smoke:controlled-agent-workspace-readiness": "node scripts/smoke-controlled-agent-workspace-readiness.mjs",
     "smoke:controlled-agent-file-read": "node scripts/smoke-controlled-agent-file-read.mjs",
+    "smoke:controlled-agent-lexical-search": "node scripts/smoke-controlled-agent-lexical-search.mjs",
     "smoke:controlled-agent-real-file-read": "node scripts/smoke-controlled-agent-real-file-read.mjs",
     "smoke:controlled-agent-command-runner": "node scripts/smoke-controlled-agent-command-runner.mjs",
     "smoke:controlled-agent-edit-executor": "node scripts/smoke-controlled-agent-edit-executor.mjs",
