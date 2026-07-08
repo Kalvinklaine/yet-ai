@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ApplyWorkspaceEditPayload, BridgeHost, VerificationCommandId } from "../bridge/bridgeAdapter";
 import { buildAgentRunApplyRiskSummary } from "../services/agentRunApplyRisk";
 import { buildAgentRunCheckpointDecision, type AgentRunCheckpointDecisionSummary } from "../services/agentRunCheckpointDecision";
@@ -19,6 +20,7 @@ import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../serv
 import type { ProposalHistory } from "../services/proposalHistory";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
+import { buildControlledAgentTaskPresetGuidance, controlledAgentTaskPresets, type ControlledAgentTaskPresetGuidance, type ControlledAgentTaskPresetId } from "../services/controlledAgentTaskPresets";
 
 export type AgentRunPanelProps = {
   input: unknown;
@@ -183,6 +185,12 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const showControlledMultifileApply = controlledMultifilePatchPlan !== undefined || controlledMultifileApplyResult !== undefined;
   const canConfirmControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "blocked" && !controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onConfirmControlledMultifileApply);
   const canRequestControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "ready" && controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onRequestControlledMultifileApply);
+  const [selectedTaskPresetId, setSelectedTaskPresetId] = useState<ControlledAgentTaskPresetId | null>(null);
+  const [taskPresetGuidance, setTaskPresetGuidance] = useState<ControlledAgentTaskPresetGuidance | null>(null);
+  const selectTaskPreset = (presetId: ControlledAgentTaskPresetId) => {
+    setSelectedTaskPresetId(presetId);
+    setTaskPresetGuidance(buildControlledAgentTaskPresetGuidance(presetId, { goal: textDetail(details.goalTitle) || textDetail(details.goalSummary) || "Review a local coding task before sending.", selectedSearchResultCount: controlledSearchSelectedSafeCount }));
+  };
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -205,6 +213,29 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span className="subtle">Dev-preview labels are display evidence only and do not grant controlled Start, read, edit, verification, repair, shell, git, provider, tool, or workspace authority.</span>
         </div>
       )}
+      <div className="readiness-card warn stack" role="status" aria-label="Controlled agent task presets">
+        <div className="row">
+          <strong>Task presets · draft guidance only</strong>
+          <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code draft" : host === "jetbrains" ? "JetBrains display-only" : "browser preview"}</span>
+          <span className="badge">no auto actions</span>
+        </div>
+        <span>Draft only; no hidden read/search/index, send, provider, apply, verify, storage, or bridge action.</span>
+        <div className="row" role="group" aria-label="Controlled agent task preset choices">
+          {controlledAgentTaskPresets.map((preset) => <button key={preset.presetId} type="button" className="secondary-button" onClick={() => selectTaskPreset(preset.presetId)}>{preset.label}</button>)}
+        </div>
+        {taskPresetGuidance ? <div className="provider-item stack" role="status" aria-label="Controlled agent task preset draft guidance">
+          <div className="row">
+            <strong>{sanitizeDisplayText(taskPresetGuidance.label)} guidance draft</strong>
+            <span className="badge">draft guidance only</span>
+            <span className={taskPresetGuidance.useful ? "badge ok" : "badge warn"}>{taskPresetGuidance.useful ? "safe preset" : "blocked preset"}</span>
+          </div>
+          <span>Selected preset id: {selectedTaskPresetId ? sanitizeDisplayText(selectedTaskPresetId) : "none"}</span>
+          <span>Policy: auto-send {String(taskPresetGuidance.policy.canAutoSend)} · auto-search {String(taskPresetGuidance.policy.canAutoSearch)} · auto-attach {String(taskPresetGuidance.policy.canAutoAttachContext)} · auto-apply {String(taskPresetGuidance.policy.canAutoApply)} · auto-verification {String(taskPresetGuidance.policy.canAutoRunVerification)} · provider calls {String(taskPresetGuidance.policy.canCallProviders)} · hidden reads {String(taskPresetGuidance.policy.canReadHiddenFiles)} · free-form commands {String(taskPresetGuidance.policy.canUseFreeformCommands)}</span>
+          {taskPresetGuidance.diagnostics.length > 0 && <span className="subtle">Preset diagnostics: {taskPresetGuidance.diagnostics.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>}
+          <strong>User-reviewed draft prompt</strong>
+          <div className="attached-context-preview" aria-label="Controlled agent task preset draft prompt"><pre>{sanitizeDisplayText(taskPresetGuidance.draftPrompt).slice(0, 320)}</pre></div>
+        </div> : <span className="subtle">Choose a preset to generate a visible draft. Nothing starts until the user reviews and sends later, if they choose. Cozy boundaries, no surprise zoomies.</span>}
+      </div>
       {showControlledRunContextSelector && <div className={`readiness-card ${controlledRunContextEnabled ? "ready" : "warn"} stack`} role="status" aria-label="Explicit controlled-run context selector">
         <div className="row">
           <strong>Explicit controlled-run context</strong>

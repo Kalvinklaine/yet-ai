@@ -10,6 +10,7 @@ import { createControlledRunHistoryItem } from "../services/controlledRunHistory
 import { evaluateControlledAgentMultifilePatchPlan } from "../services/controlledAgentMultifilePatchPlan";
 import { controlledAgentSearchSelectionResultId, createControlledAgentSearchSelection } from "../services/controlledAgentSearchSelection";
 import type { ControlledAgentLexicalSearchSnippet, ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
+import { controlledAgentTaskPresets } from "../services/controlledAgentTaskPresets";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -279,6 +280,70 @@ afterEach(() => {
 });
 
 describe("AgentRunPanel", () => {
+  it("renders task preset choices and generates user-reviewed draft guidance after explicit selection", () => {
+    const onApplyReviewedPatch = vi.fn();
+    const onRunAllowlistedVerification = vi.fn();
+    const onRequestControlledSearch = vi.fn();
+    const onRequestControlledMultifileApply = vi.fn();
+
+    renderPanel({ goal: { id: "goal-1", title: "Fix flaky login copy" } }, {
+      host: "vscode",
+      controlledSearchRequestState: "ready",
+      selectedControlledSearchResultIds: ["safe-search-result"],
+      onApplyReviewedPatch,
+      onRunAllowlistedVerification,
+      onRequestControlledSearch,
+      onRequestControlledMultifileApply,
+    });
+
+    expect(panelText()).toContain("Task presets · draft guidance only");
+
+    expect(panelText()).toContain("Draft only; no hidden read/search/index");
+    for (const preset of controlledAgentTaskPresets) {
+      expect(optionalButton(preset.label)).toBeTruthy();
+    }
+    expect(panelText()).not.toContain("Fix small bug guidance draft");
+    expect(onApplyReviewedPatch).not.toHaveBeenCalled();
+    expect(onRunAllowlistedVerification).not.toHaveBeenCalled();
+    expect(onRequestControlledSearch).not.toHaveBeenCalled();
+    expect(onRequestControlledMultifileApply).not.toHaveBeenCalled();
+
+    act(() => {
+      findButton("Fix small bug").click();
+    });
+
+    expect(panelText()).toContain("Fix small bug guidance draft");
+    expect(panelText()).toContain("Selected preset id: fix-small-bug");
+    expect(panelText()).toContain("draft guidance only");
+    expect(panelText()).toContain("auto-send false · auto-search false · auto-attach false · auto-apply false · auto-verification false");
+    expect(panelText()).toContain("Fix small bug preset guidance");
+    expect(panelText()).toContain("Fix flaky login copy");
+
+
+    expect(panelText()).toContain("Preset intent");
+    expect(onApplyReviewedPatch).not.toHaveBeenCalled();
+    expect(onRunAllowlistedVerification).not.toHaveBeenCalled();
+    expect(onRequestControlledSearch).not.toHaveBeenCalled();
+    expect(onRequestControlledMultifileApply).not.toHaveBeenCalled();
+    expect(browserStorageDump()).toBe("");
+  });
+
+  it("covers every task preset as inert guidance and keeps Browser and JetBrains limitation copy honest", () => {
+    for (const host of ["browser", "jetbrains"] as const) {
+      renderPanel(undefined, { host });
+
+    expect(panelText()).toContain(host === "browser" ? "browser preview" : "JetBrains display-only");
+      for (const preset of controlledAgentTaskPresets) {
+        act(() => {
+          findButton(preset.label).click();
+        });
+        expect(panelText()).toContain(`${preset.label} guidance draft`);
+        expect(panelText()).toContain(`Selected preset id: ${preset.presetId}`);
+        expect(panelText()).toContain("provider calls false · hidden reads false · free-form commands false");
+      }
+    }
+  });
+
   it("renders controlled lexical search results and selects only after explicit user checkbox", () => {
     const search = lexicalSearch();
     const resultId = controlledAgentSearchSelectionResultId(search.snippets[0]);
@@ -1565,7 +1630,7 @@ function optionalButton(name: string) {
 }
 
 function actionButtonLabels() {
-  return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).map((item) => item.textContent ?? "");
+  return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).map((item) => item.textContent ?? "").filter((label) => !controlledAgentTaskPresets.some((preset) => preset.label === label));
 }
 
 function browserStorageDump() {

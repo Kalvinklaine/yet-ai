@@ -2864,7 +2864,7 @@ describe("agent progress panel", () => {
     expect(text).not.toContain("SECRET_WORKSPACE_BODY");
     expect(text).not.toContain("SECRET_THOUGHT_BODY");
     expect((text.match(/SAFE_NOISY_AGENT_OUTPUT_/g) ?? []).length).toBeLessThan(220);
-    expect(text.length).toBeLessThan(17600);
+    expect(text.length).toBeLessThan(18100);
   });
 
   it("detects fallback overflow before raw-content redaction", async () => {
@@ -2920,7 +2920,8 @@ describe("agent progress panel", () => {
     expect(text).toContain("7 more summaries hidden.");
     expect(text).not.toContain("T-BOUND-18 / run-18");
     expect(text).not.toContain("safe recent summary 16");
-    expect(text.length).toBeLessThan(37750);
+
+    expect(text.length).toBeLessThan(38250);
   });
 
   it("endpoint unavailable or corrupt runtime error is sanitized and non-fatal", async () => {
@@ -10247,7 +10248,8 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("Bearer");
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
-    expect(text.length).toBeLessThan(15600);
+
+    expect(text.length).toBeLessThan(16100);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {

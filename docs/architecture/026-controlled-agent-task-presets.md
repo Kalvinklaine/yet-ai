@@ -61,6 +61,20 @@ The valid fixture covers all five presets with explicit context gates, dry-run p
 
 Invalid fixtures reject unsafe preset authority, broad workspace mutation, hidden search, free-form command authority, missing explicit user gates, raw prompt/file/diff persistence, and production/release/marketplace claims.
 
+## GUI implementation boundary
+
+S121-C3 exposes these presets in `AgentRunPanel` as visible, user-reviewed draft guidance. Selecting a preset calls the pure GUI prompt builder only and renders the draft prompt, recommended next steps, context counts, and all-false no-auto policy in the panel.
+
+Selection does not post bridge messages, read files, search, index, attach context, send chat, call providers, apply edits, run verification, save memory, write browser storage, or mint execution authority. Browser remains preview-only for trusted workspace execution. JetBrains remains display-only / partial fail-closed until separate host parity work proves controlled execution. VS Code copy is guidance-only until the user explicitly reviews and uses existing controlled lanes.
+
+Smoke coverage is:
+
+```sh
+npm run smoke:controlled-agent-task-presets
+```
+
+The smoke covers all five preset ids, unsafe preset metadata rejection, bounded sanitized draft output, and no automatic send/search/index/attach/provider/apply/verification/bridge/storage/command/git/network/tool authority.
+
 ## Future implementation boundary
 
 Future UI or prompt work may render these presets as starting choices, but must still perform separate explicit context selection, review, apply confirmation, and verification approval. Any implementation must treat this contract as a small labeled menu, not as permission to read, mutate, run, store, or claim readiness. Tiny menu, tiny leash; the agent may sniff, not sprint.
