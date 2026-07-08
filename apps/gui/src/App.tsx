@@ -51,6 +51,7 @@ import { createControlledAgentSearchSelection, type ControlledAgentSearchSelecti
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import { evaluateControlledAgentPatchPlanPreview } from "./services/controlledAgentPatchPlanPreview";
 import { evaluateControlledAgentMultifilePatchPlan } from "./services/controlledAgentMultifilePatchPlan";
+import { buildControlledAgentMultifileApplyRequest, correlateControlledAgentMultifileApplyResult, type ControlledAgentMultifileApplyCorrelation, type ControlledAgentMultifileApplySummary } from "./services/controlledAgentMultifileApplyRequest";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
 import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
 import { evaluateControlledAgentRuntimeSession } from "./services/controlledAgentRuntimeSession";
@@ -461,6 +462,8 @@ export function App() {
   const controlledCommandRunCorrelationRef = useRef<ControlledAgentCommandRunRequestCorrelation | null>(null);
   const controlledCommandRunCompletedRequestIdRef = useRef<string | null>(null);
   const controlledLexicalSearchCorrelationRef = useRef<ControlledAgentLexicalSearchCorrelation | null>(null);
+  const controlledMultifileApplyCorrelationRef = useRef<ControlledAgentMultifileApplyCorrelation | null>(null);
+  const controlledMultifileApplyCompletedRequestIdRef = useRef<string | null>(null);
   const oneStepFileReadRequestIdRef = useRef<string | null>(null);
   const oneStepEditRequestIdRef = useRef<string | null>(null);
   const oneStepCommandRunRequestIdRef = useRef<string | null>(null);
@@ -488,6 +491,10 @@ export function App() {
   const [pendingControlledCommandRunRequestId, setPendingControlledCommandRunRequestId] = useState<string | null>(null);
   const [controlledCommandRunNote, setControlledCommandRunNote] = useState<string | null>(null);
   const [controlledLexicalSearchResult, setControlledLexicalSearchResult] = useState<ControlledAgentLexicalSearchSummary | undefined>(undefined);
+  const [controlledMultifileApplyResult, setControlledMultifileApplyResult] = useState<ControlledAgentMultifileApplySummary | undefined>(undefined);
+  const [pendingControlledMultifileApplyRequestId, setPendingControlledMultifileApplyRequestId] = useState<string | null>(null);
+  const [controlledMultifileApplyNote, setControlledMultifileApplyNote] = useState<string | null>(null);
+  const [controlledMultifileApplyConfirmed, setControlledMultifileApplyConfirmed] = useState(false);
   const [controlledLexicalSearchResultId, setControlledLexicalSearchResultId] = useState<string | undefined>(undefined);
   const [selectedControlledSearchResultIds, setSelectedControlledSearchResultIds] = useState<string[]>([]);
   const [oneStepLoopState, setOneStepLoopState] = useState<ControlledOneStepAgentLoopState>(() => createControlledOneStepAgentLoopState());
@@ -749,6 +756,7 @@ export function App() {
   const controlledAgentEditExecutorMetadata = activeCaps?.controlledAgentEditExecutor;
   const controlledAgentPatchPlanMetadata = activeCaps?.controlledAgentPatchPlan;
   const controlledAgentMultifilePatchPlanMetadata = activeCaps?.controlledAgentMultifilePatchPlan;
+  const controlledAgentMultifileApplyMetadata = activeCaps?.controlledAgentMultifileApply;
   const controlledAgentPatchPlanPreview = useMemo(() => controlledAgentPatchPlanMetadata === undefined ? undefined : evaluateControlledAgentPatchPlanPreview(controlledAgentPatchPlanMetadata), [controlledAgentPatchPlanMetadata]);
   const controlledAgentMultifilePatchPlanPreview = useMemo(() => controlledAgentMultifilePatchPlanMetadata === undefined ? undefined : evaluateControlledAgentMultifilePatchPlan(controlledAgentMultifilePatchPlanMetadata), [controlledAgentMultifilePatchPlanMetadata]);
   const controlledPatchPlanConfirmationKey = controlledAgentPatchPlanPreview?.state === "ready" ? `${controlledAgentPatchPlanPreview.preview.planId}:${controlledAgentPatchPlanPreview.preview.rows.map((row) => `${row.workspaceRelativePath}:${row.lineRangeLabel}:${row.expectedContentHashLabel}`).join("|")}` : controlledAgentPatchPlanPreview?.state ?? "none";
@@ -810,6 +818,16 @@ export function App() {
     userGestureId: "agent-run-controlled-search-button",
     requestSeed: "agent-run-controlled-search",
   }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  const controlledAgentMultifileApplyRequest = useMemo(() => buildControlledAgentMultifileApplyRequest({
+    host: bridgeHost,
+    patchPlanMetadata: controlledAgentMultifilePatchPlanMetadata,
+    userConfirmed: controlledMultifileApplyConfirmed,
+    requestSeed: "agent-run-multifile-apply",
+    runtimeSessionId: isRecord(controlledAgentRuntimeSessionMetadata) ? stringOrUndefined(controlledAgentRuntimeSessionMetadata.sessionId) : undefined,
+    workspaceReadinessId: isRecord(controlledWorkspaceReadinessMetadata) && isRecord(controlledWorkspaceReadinessMetadata.isolation) ? stringOrUndefined(controlledWorkspaceReadinessMetadata.isolation.readinessId) : undefined,
+    replacementContentHashes: isRecord(controlledAgentMultifileApplyMetadata) && isRecord(controlledAgentMultifileApplyMetadata.replacementContentHashes) ? controlledAgentMultifileApplyMetadata.replacementContentHashes as Record<string, string> : undefined,
+    reviewedReplacementTexts: isRecord(controlledAgentMultifileApplyMetadata) && isRecord(controlledAgentMultifileApplyMetadata.reviewedReplacementTexts) ? controlledAgentMultifileApplyMetadata.reviewedReplacementTexts as Record<string, string> : undefined,
+  }), [bridgeHost, controlledAgentMultifileApplyMetadata, controlledAgentMultifilePatchPlanMetadata, controlledAgentRuntimeSessionMetadata, controlledMultifileApplyConfirmed, controlledWorkspaceReadinessMetadata]);
   const controlledSearchSelection = useMemo<ControlledAgentSearchSelectionResult | undefined>(() => {
     if (!controlledLexicalSearchResult || !controlledLexicalSearchResultId || selectedControlledSearchResultIds.length === 0) {
       return undefined;
@@ -978,6 +996,15 @@ export function App() {
     setControlledEditResultMetadata(null);
     setControlledEditNote(note);
     setControlledPatchPlanConfirmed(false);
+  }, []);
+
+  const clearControlledMultifileApplyState = useCallback((note: string | null = null) => {
+    controlledMultifileApplyCorrelationRef.current = null;
+    controlledMultifileApplyCompletedRequestIdRef.current = null;
+    setPendingControlledMultifileApplyRequestId(null);
+    setControlledMultifileApplyResult(undefined);
+    setControlledMultifileApplyNote(note);
+    setControlledMultifileApplyConfirmed(false);
   }, []);
 
   const clearControlledCommandRunState = useCallback((note: string | null = null) => {
@@ -1207,6 +1234,40 @@ export function App() {
           setSelectedControlledSearchResultIds([]);
           appendTrace({ family: "controlledAgent.fileReadResult", title: "Controlled lexical search result accepted", status: "succeeded", summary: "Sanitized lexical search result metadata accepted for explicit user selection.", requestId: current.requestId, details: correlation.details });
         }
+      } else if (message.type === "host.controlledAgentMultifileApplyResult") {
+        const requestId = message.requestId ?? "unknown";
+        const current = controlledMultifileApplyCorrelationRef.current;
+        if (controlledMultifileApplyCompletedRequestIdRef.current === requestId) {
+          setControlledMultifileApplyNote("Ignored duplicate multi-file apply result.");
+          return;
+        }
+        if (!current) {
+          setControlledMultifileApplyNote("Ignored stale multi-file apply result.");
+          return;
+        }
+        const correlation = correlateControlledAgentMultifileApplyResult({ current, hostMessage: message, existingResult: controlledMultifileApplyResult });
+        if (correlation.state === "accepted" && correlation.summary) {
+          controlledMultifileApplyCompletedRequestIdRef.current = requestId;
+          controlledMultifileApplyCorrelationRef.current = null;
+          setPendingControlledMultifileApplyRequestId(null);
+          setControlledMultifileApplyResult(correlation.summary);
+          setControlledMultifileApplyNote(`Multi-file apply result accepted: ${correlation.summary.state}.`);
+          appendTrace({ family: correlation.summary.state === "applied" ? "controlledAgent.editResult" : "controlledAgent.editBlocked", title: "Controlled multi-file apply result received", status: correlation.summary.state === "applied" ? "succeeded" : "failed", summary: correlation.summary.message, requestId, details: correlation.details });
+          return;
+        }
+        if (correlation.state === "duplicate") {
+          controlledMultifileApplyCorrelationRef.current = null;
+          setPendingControlledMultifileApplyRequestId(null);
+          setControlledMultifileApplyNote("Ignored duplicate multi-file apply result.");
+          return;
+        }
+        if (correlation.state === "ignored") {
+          setControlledMultifileApplyNote("Ignored stale multi-file apply result.");
+          return;
+        }
+        controlledMultifileApplyCorrelationRef.current = null;
+        setPendingControlledMultifileApplyRequestId(null);
+        setControlledMultifileApplyNote(correlation.diagnostics[0]?.message ?? "Multi-file apply result was blocked.");
       } else if (message.type === "host.controlledAgentFileReadResult") {
         const requestId = message.requestId ?? "unknown";
         const current = controlledFileReadCorrelationRef.current;
@@ -2442,6 +2503,26 @@ export function App() {
     appendTrace({ family: "controlledAgent.fileReadPlanned", title: "Controlled lexical search requested", status: "pending", summary: "User clicked explicit controlled lexical search; sanitized snippet metadata only is expected.", requestId: controlledAgentLexicalSearchRequest.bridgeRequest.requestId, details: controlledAgentLexicalSearchRequest.details });
   }, [addTimeline, appendTrace, controlledAgentLexicalSearchRequest]);
 
+  const confirmControlledMultifileApplyReview = useCallback(() => {
+    setControlledMultifileApplyConfirmed(true);
+    setControlledMultifileApplyNote("Multi-file apply review confirmed. Use the explicit apply button only if the bounded VS Code request is ready.");
+  }, []);
+
+  const requestControlledMultifileApply = useCallback(() => {
+    if (controlledAgentMultifileApplyRequest.state !== "ready" || !controlledAgentMultifileApplyRequest.bridgeRequest || !controlledAgentMultifileApplyRequest.correlation || controlledMultifileApplyCorrelationRef.current || pendingControlledMultifileApplyRequestId) {
+      setControlledMultifileApplyNote(controlledAgentMultifileApplyRequest.diagnostics[0]?.message ?? "Multi-file apply request is not ready.");
+      return;
+    }
+    controlledMultifileApplyCorrelationRef.current = controlledAgentMultifileApplyRequest.correlation;
+    controlledMultifileApplyCompletedRequestIdRef.current = null;
+    setPendingControlledMultifileApplyRequestId(controlledAgentMultifileApplyRequest.bridgeRequest.requestId);
+    setControlledMultifileApplyResult(undefined);
+    setControlledMultifileApplyNote("Multi-file apply request posted after explicit user click.");
+    bridgeAdapterRef.current?.post(controlledAgentMultifileApplyRequest.bridgeRequest);
+    addTimeline(`Controlled multi-file apply requested ${controlledAgentMultifileApplyRequest.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.editPending", title: "Controlled multi-file apply requested", status: "pending", summary: "User clicked explicit VS Code-only bounded multi-file apply.", requestId: controlledAgentMultifileApplyRequest.bridgeRequest.requestId, details: controlledAgentMultifileApplyRequest.details });
+  }, [addTimeline, appendTrace, controlledAgentMultifileApplyRequest, pendingControlledMultifileApplyRequestId]);
+
   const updateControlledSearchSelection = useCallback((resultId: string, selected: boolean) => {
     setSelectedControlledSearchResultIds((current) => {
       const without = current.filter((item) => item !== resultId);
@@ -3357,7 +3438,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} controlledLexicalSearch={controlledLexicalSearchResult} controlledMultifilePatchPlan={controlledAgentMultifilePatchPlanPreview} controlledSearchResultId={controlledLexicalSearchResultId} selectedControlledSearchResultIds={selectedControlledSearchResultIds} controlledSearchSelection={controlledSearchSelection} controlledSearchRequestState={controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledLexicalSearchResult !== undefined ? controlledAgentLexicalSearchRequest.state : undefined} pendingControlledSearch={controlledLexicalSearchCorrelationRef.current !== null} onRequestControlledSearch={requestControlledLexicalSearch} onControlledSearchResultSelectionChange={updateControlledSearchSelection} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} controlledLexicalSearch={controlledLexicalSearchResult} controlledMultifilePatchPlan={controlledAgentMultifilePatchPlanPreview} controlledMultifileApplyRequest={controlledAgentMultifileApplyRequest} controlledMultifileApplyResult={controlledMultifileApplyResult} controlledMultifileApplyNote={controlledMultifileApplyNote} pendingControlledMultifileApply={pendingControlledMultifileApplyRequestId !== null} controlledMultifileApplyConfirmed={controlledMultifileApplyConfirmed} onConfirmControlledMultifileApply={confirmControlledMultifileApplyReview} onRequestControlledMultifileApply={requestControlledMultifileApply} onClearControlledMultifileApply={clearControlledMultifileApplyState} controlledSearchResultId={controlledLexicalSearchResultId} selectedControlledSearchResultIds={selectedControlledSearchResultIds} controlledSearchSelection={controlledSearchSelection} controlledSearchRequestState={controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledLexicalSearchResult !== undefined ? controlledAgentLexicalSearchRequest.state : undefined} pendingControlledSearch={controlledLexicalSearchCorrelationRef.current !== null} onRequestControlledSearch={requestControlledLexicalSearch} onControlledSearchResultSelectionChange={updateControlledSearchSelection} />
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} capabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}
@@ -4194,6 +4275,10 @@ function agentRunReadinessProposalMetadata(proposal: AgentRunInput["proposal"], 
     patchBytes: Math.max(1, patchBytes),
     contentHash: safeAgentRunHash(),
   };
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

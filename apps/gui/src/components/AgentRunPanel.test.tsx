@@ -419,6 +419,90 @@ describe("AgentRunPanel", () => {
     expect(browserStorageDump()).toBe("");
   });
 
+  it("requires explicit VS Code confirmation before requesting multi-file apply", () => {
+    const onConfirm = vi.fn();
+    const onRequest = vi.fn();
+    const preview = evaluateControlledAgentMultifilePatchPlan(multifilePatchPlan());
+
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledMultifilePatchPlan: preview,
+      controlledMultifileApplyRequest: { state: "blocked", diagnostics: [{ code: "explicit_confirmation_required", message: "Bounded multi-file apply requires explicit user confirmation." }], details: {}, authority: {} },
+      onConfirmControlledMultifileApply: onConfirm,
+      onRequestControlledMultifileApply: onRequest,
+    });
+
+    expect(panelText()).toContain("Explicit multi-file apply confirmation");
+    expect(panelText()).toContain("VS Code executor");
+    expect(panelText()).toContain("No apply starts on render, provider response, search selection, or dry-run preview.");
+    expect(findButton("Confirm multi-file apply review").disabled).toBe(false);
+    expect(findButton("Apply reviewed multi-file patch in VS Code").disabled).toBe(true);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(onRequest).not.toHaveBeenCalled();
+    act(() => findButton("Confirm multi-file apply review").click());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+
+  it("enables explicit VS Code multi-file apply and renders sanitized result summaries", () => {
+    const onRequest = vi.fn();
+    const preview = evaluateControlledAgentMultifilePatchPlan(multifilePatchPlan());
+
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledMultifilePatchPlan: preview,
+      controlledMultifileApplyConfirmed: true,
+      controlledMultifileApplyRequest: { state: "ready", diagnostics: [], details: {}, authority: {} },
+      controlledMultifileApplyResult: {
+        state: "applied",
+        message: "Bounded multi-file replacements applied by VS Code host.",
+        patchPlanId: "multifile-plan-s115",
+        appliedFileCount: 2,
+        appliedEditCount: 2,
+        blockedFileCount: 0,
+        failedEditCount: 0,
+        affectedFiles: ["apps/gui/src/SafePanel.tsx", "docs/architecture/safe-note.md"],
+        files: [
+          { editId: "edit-s115-1", workspaceRelativePath: "apps/gui/src/SafePanel.tsx", fileLabel: "apps/gui/src/SafePanel.tsx", status: "applied", startLine: 12, endLine: 14, replacementByteCount: 120, expectedPreEditHashLabel: "sha256:aaaaaaaaaa…", expectedRangeHashLabel: "sha256:bbbbbbbbbb…", replacementContentHashLabel: "sha256:1111111111…", actualPostEditHashLabel: "sha256:2222222222…", sanitizedSummary: "Updates a bounded label branch." },
+        ],
+        metadataOnly: true,
+        rawReplacementIncluded: false,
+        rawDiffIncluded: false,
+        fileBodyIncluded: false,
+      },
+      onRequestControlledMultifileApply: onRequest,
+    });
+
+    expect(findButton("Apply reviewed multi-file patch in VS Code").disabled).toBe(false);
+    expect(panelText()).toContain("Multi-file apply result summary");
+    expect(panelText()).toContain("Applied files: 2");
+    expect(panelText()).toContain("Metadata only: true");
+    expect(panelText()).not.toContain("replacementText");
+    expect(panelText()).not.toContain("diff --git");
+    expect(onRequest).not.toHaveBeenCalled();
+    act(() => findButton("Apply reviewed multi-file patch in VS Code").click());
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps browser and JetBrains multi-file apply fail-closed", () => {
+    const onRequest = vi.fn();
+    const preview = evaluateControlledAgentMultifilePatchPlan(multifilePatchPlan());
+
+    for (const host of ["browser", "jetbrains"] as const) {
+      renderPanel(undefined, {
+        host,
+        controlledMultifilePatchPlan: preview,
+        controlledMultifileApplyConfirmed: true,
+        controlledMultifileApplyRequest: { state: "unsupported", diagnostics: [{ code: "unsupported_host", message: "Bounded multi-file apply requests require the VS Code host." }], details: {}, authority: {} },
+        onRequestControlledMultifileApply: onRequest,
+      });
+
+      expect(panelText()).toContain(host === "browser" ? "browser unsupported" : "JetBrains fail-closed");
+      expect(findButton("Apply reviewed multi-file patch in VS Code").disabled).toBe(true);
+    }
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+
   it("renders idle state", () => {
     renderPanel(undefined);
 
@@ -1384,6 +1468,14 @@ type PanelTestProps = {
   onIncludeControlledRunContextChange?: (include: boolean) => void;
   controlledLexicalSearch?: ControlledAgentLexicalSearchSummary;
   controlledMultifilePatchPlan?: ReturnType<typeof evaluateControlledAgentMultifilePatchPlan>;
+  controlledMultifileApplyRequest?: any;
+  controlledMultifileApplyResult?: any;
+  controlledMultifileApplyNote?: string | null;
+  pendingControlledMultifileApply?: boolean;
+  controlledMultifileApplyConfirmed?: boolean;
+  onConfirmControlledMultifileApply?: () => void;
+  onRequestControlledMultifileApply?: () => void;
+  onClearControlledMultifileApply?: () => void;
   controlledSearchResultId?: string;
   selectedControlledSearchResultIds?: string[];
   controlledSearchSelection?: any;
@@ -1436,6 +1528,14 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         controlledRunHistory={props.controlledRunHistory}
         controlledLexicalSearch={props.controlledLexicalSearch}
         controlledMultifilePatchPlan={props.controlledMultifilePatchPlan}
+        controlledMultifileApplyRequest={props.controlledMultifileApplyRequest}
+        controlledMultifileApplyResult={props.controlledMultifileApplyResult}
+        controlledMultifileApplyNote={props.controlledMultifileApplyNote}
+        pendingControlledMultifileApply={props.pendingControlledMultifileApply}
+        controlledMultifileApplyConfirmed={props.controlledMultifileApplyConfirmed}
+        onConfirmControlledMultifileApply={props.onConfirmControlledMultifileApply}
+        onRequestControlledMultifileApply={props.onRequestControlledMultifileApply}
+        onClearControlledMultifileApply={props.onClearControlledMultifileApply}
         controlledSearchResultId={props.controlledSearchResultId}
         selectedControlledSearchResultIds={props.selectedControlledSearchResultIds}
         controlledSearchSelection={props.controlledSearchSelection}

@@ -131,7 +131,8 @@
     "validate:icon-assets": "node scripts/validate-icon-assets.mjs",
     "smoke:controlled-run-observability": "node scripts/smoke-controlled-run-observability.mjs",
     "smoke:controlled-run-history": "node scripts/smoke-controlled-run-history.mjs",
-    "smoke:controlled-agent-patch-plan-preview": "node scripts/smoke-controlled-agent-patch-plan-preview.mjs"
+    "smoke:controlled-agent-patch-plan-preview": "node scripts/smoke-controlled-agent-patch-plan-preview.mjs",
+    "smoke:controlled-agent-real-multifile-edit": "node scripts/smoke-controlled-agent-real-multifile-edit.mjs"
   },
   "devDependencies": {
     "ajv": "^8.20.0",

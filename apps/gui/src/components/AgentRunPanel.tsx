@@ -13,6 +13,7 @@ import type { ControlledRunHistoryItem } from "../services/controlledRunHistory"
 import type { ControlledRunContextBundle, ControlledRunContextReport } from "../services/controlledRunContext";
 import type { ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
 import type { ControlledAgentMultifilePatchPlanResult } from "../services/controlledAgentMultifilePatchPlan";
+import type { ControlledAgentMultifileApplyRequestResult, ControlledAgentMultifileApplySummary } from "../services/controlledAgentMultifileApplyRequest";
 import { controlledAgentSearchSelectionResultId, type ControlledAgentSearchSelectionResult } from "../services/controlledAgentSearchSelection";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
@@ -50,6 +51,14 @@ export type AgentRunPanelProps = {
   controlledRunHistory?: ControlledRunHistoryItem[];
   controlledLexicalSearch?: ControlledAgentLexicalSearchSummary;
   controlledMultifilePatchPlan?: ControlledAgentMultifilePatchPlanResult;
+  controlledMultifileApplyRequest?: ControlledAgentMultifileApplyRequestResult;
+  controlledMultifileApplyResult?: ControlledAgentMultifileApplySummary;
+  controlledMultifileApplyNote?: string | null;
+  pendingControlledMultifileApply?: boolean;
+  controlledMultifileApplyConfirmed?: boolean;
+  onConfirmControlledMultifileApply?: () => void;
+  onRequestControlledMultifileApply?: () => void;
+  onClearControlledMultifileApply?: () => void;
   controlledSearchResultId?: string;
   selectedControlledSearchResultIds?: string[];
   controlledSearchSelection?: ControlledAgentSearchSelectionResult;
@@ -59,7 +68,7 @@ export type AgentRunPanelProps = {
   onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -171,6 +180,9 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const controlledSearchUnsafeOmittedCount = Math.max(0, (controlledLexicalSearch?.resultCount ?? 0) - controlledSearchSafeItems.length) + controlledSearchSelectionUnsafeCount(controlledSearchSelection);
   const showControlledSearchSelection = controlledLexicalSearch !== undefined || controlledSearchSelection !== undefined || controlledSearchRequestState !== undefined;
   const canRequestControlledSearch = host === "vscode" && controlledSearchRequestState === "ready" && !pendingControlledSearch && Boolean(onRequestControlledSearch);
+  const showControlledMultifileApply = controlledMultifilePatchPlan !== undefined || controlledMultifileApplyResult !== undefined;
+  const canConfirmControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "blocked" && !controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onConfirmControlledMultifileApply);
+  const canRequestControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "ready" && controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onRequestControlledMultifileApply);
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -293,6 +305,46 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span>Unsafe or malformed multi-file patch plan metadata is blocked and non-actionable. No apply, bridge post, provider call, command, file operation, browser storage write, or auto-action was introduced.</span>
           {controlledMultifilePatchPlan.diagnostics.map((diagnostic) => <span key={`${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}
         </>}
+      </div>}
+      {showControlledMultifileApply && <div className={`readiness-card ${canRequestControlledMultifileApply || controlledMultifileApplyResult?.state === "applied" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled multi-file apply confirmation">
+        <div className="row">
+          <strong>Explicit multi-file apply confirmation</strong>
+          <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code executor" : host === "jetbrains" ? "JetBrains fail-closed" : "browser unsupported"}</span>
+          <span className="badge">user confirmed only</span>
+          <span className="badge">existing text files only</span>
+          {controlledMultifileApplyConfirmed && <span className="badge ok">review confirmed</span>}
+          {pendingControlledMultifileApply && <span className="badge warn">pending</span>}
+        </div>
+        <span>{host === "vscode" ? "Review every file label, count, range, hash, and limit above before requesting bounded multi-file apply." : host === "jetbrains" ? "JetBrains multi-file apply remains disabled and posts no bridge request until host parity is separately verified." : "Browser preview cannot request multi-file apply and posts no bridge request."}</span>
+        <span className="subtle">No apply starts on render, provider response, search selection, or dry-run preview. This control cannot create, delete, rename, move, run commands, call providers or tools, expose private paths, display replacement bodies, display diff bodies, or persist file bodies.</span>
+        <div className="agent-progress-grid" aria-label="Controlled multi-file apply request status">
+          <span>Request status: {sanitizeDisplayText(controlledMultifileApplyRequest?.state ?? "blocked")}</span>
+          <span>Plan status: {sanitizeDisplayText(controlledMultifilePatchPlan?.state ?? "missing")}</span>
+          <span>Confirmed: {String(controlledMultifileApplyConfirmed)}</span>
+          <span>Pending: {String(pendingControlledMultifileApply)}</span>
+          <span>Can create/delete/rename: false</span>
+          <span>Command/provider/tool authority: false</span>
+        </div>
+        {controlledMultifileApplyRequest?.diagnostics.length ? <span className="subtle">Apply diagnostics: {controlledMultifileApplyRequest.diagnostics.slice(0, 4).map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span> : null}
+        {controlledMultifileApplyResult && <div className={`readiness-card ${controlledMultifileApplyResult.state === "applied" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled multi-file apply result summary">
+          <strong>Multi-file apply result summary</strong>
+          <span>{sanitizeDisplayText(controlledMultifileApplyResult.message)}</span>
+          <div className="agent-progress-grid" aria-label="Controlled multi-file apply result counts">
+            <span>State: {sanitizeDisplayText(controlledMultifileApplyResult.state)}</span>
+            <span>Applied files: {controlledMultifileApplyResult.appliedFileCount}</span>
+            <span>Applied edits: {controlledMultifileApplyResult.appliedEditCount}</span>
+            <span>Blocked files: {controlledMultifileApplyResult.blockedFileCount}</span>
+            <span>Failed edits: {controlledMultifileApplyResult.failedEditCount}</span>
+            <span>Metadata only: {String(controlledMultifileApplyResult.metadataOnly)}</span>
+          </div>
+          {controlledMultifileApplyResult.files.map((file) => <span key={file.editId}>{sanitizeDisplayText(file.fileLabel)} · {sanitizeDisplayText(file.status)} · lines {file.startLine}-{file.endLine} · {file.replacementByteCount} bytes · post {sanitizeDisplayText(file.actualPostEditHashLabel ?? "not reported")}</span>)}
+        </div>}
+        {controlledMultifileApplyNote && <span>{sanitizeDisplayText(controlledMultifileApplyNote)}</span>}
+        <div className="row" role="group" aria-label="Controlled multi-file apply actions">
+          <button type="button" className="secondary-button" onClick={onConfirmControlledMultifileApply} disabled={!canConfirmControlledMultifileApply}>Confirm multi-file apply review</button>
+          <button type="button" onClick={onRequestControlledMultifileApply} disabled={!canRequestControlledMultifileApply}>Apply reviewed multi-file patch in VS Code</button>
+          <button type="button" className="secondary-button" onClick={onClearControlledMultifileApply} disabled={!pendingControlledMultifileApply && !controlledMultifileApplyResult && !controlledMultifileApplyConfirmed}>Clear multi-file apply state</button>
+        </div>
       </div>}
       {(showOneStepLoop || showRepairLoop) && (      <div className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">
