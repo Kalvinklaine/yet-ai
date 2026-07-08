@@ -54,14 +54,24 @@ const extendedSmokeEvidence = [
   ["unsupported/fail-closed controlled-task states", /unsupported.*fail-closed|fail-closed.*unsupported|Browser.*unsupported|JetBrains.*fail-closed/i],
   ["sanitized report output", /sanitized report|safe labels|Raw .* omitted|raw .* intentionally omitted|private absolute paths/i],
 ];
+const conservativeCopyEvidence = [
+  ["local dev-preview scope", /local[^\n.]*dev-preview|dev-preview[^\n.]*local/i],
+  ["install-from-file artifact scope", /install-from-file|local VSIX/i],
+  ["marketplace/signing/notarization/production exclusion", /marketplace[^\n.]*signing[^\n.]*notarization[^\n.]*production|production[^\n.]*marketplace[^\n.]*signing[^\n.]*notarization|signed package[^\n.]*notarized package[^\n.]*production/i],
+  ["no VS Code UI launch", /does not launch VS Code|no VS Code launch|not launch VS Code/i],
+  ["no provider or credential use", /provider call|provider credential|provider credentials|real-provider CI/i],
+  ["no workspace mutation", /workspace mutation|mutate files|mutate workspaces/i],
+  ["static/manual recovery boundary", /static evidence only|manual recovery|manual guidance only|archive\/content\/static packaged-GUI evidence/i],
+  ["separately verified live recovery boundary", /unless separately verified|separately approved harness|later verified card|Future automated evidence would require/i],
+];
 const forbiddenSharedEvidence = [
   ["marketplace promotion", new RegExp(["marketplace[- ]" + "ready", "marketplace publication " + "ready", "publish(?:ed|able) marketplace package"].join("|"), "i")],
   ["release promotion", new RegExp(["release[- ]" + "ready", "production release " + "ready", "release candidate approved"].join("|"), "i")],
   ["packaging proof promotion", /signature complete|hardened package/i],
   ["hosted backend requirement", /requires hosted Yet AI backend|requires Yet AI account|requires managed model gateway|requires product credit/i],
   ["automatic task start claim", /automatically starts? (?:a )?task|auto[- ]starts? controlled task/i],
-  ["automatic update claim", /automatic update channel|background updater|auto[- ]update/i],
-  ["cross-project resume claim", /cross-project resume|crash-recovery contract/i],
+  ["automatic update claim", /(?:has|includes|supports|provides|enables|uses) (?:an? )?(?:automatic update channel|background updater|auto[- ]update)/i],
+  ["cross-project resume claim", /(?:supports|provides|enables|guarantees|proves) (?:cross-project resume|a crash-recovery contract|crash-recovery)/i],
 ];
 
 console.log("Packaged VS Code controlled-task smoke starting.");
@@ -92,6 +102,16 @@ function checkExtendedSmokeDesign() {
   for (const [label, pattern] of extendedSmokeEvidence) {
     if (!pattern.test(architectureDoc)) {
       failures.push(`docs/architecture/033-packaged-vscode-controlled-task-smoke.md must describe ${label} for packaged controlled-task smoke evidence.`);
+    }
+  }
+  for (const [label, pattern] of conservativeCopyEvidence) {
+    if (!pattern.test(architectureDoc)) {
+      failures.push(`docs/architecture/033-packaged-vscode-controlled-task-smoke.md must describe ${label} for conservative packaged controlled-task copy.`);
+    }
+  }
+  for (const [label, pattern] of forbiddenSharedEvidence) {
+    if (pattern.test(architectureDoc)) {
+      failures.push(`docs/architecture/033-packaged-vscode-controlled-task-smoke.md must not contain ${label}.`);
     }
   }
 }
@@ -264,16 +284,21 @@ async function checkGuiEvidence(vsixPath, entries, html, relativeVsix) {
   for (const [label, pattern] of packagedGuiEvidence) {
     if (!pattern.test(packagedGuiText)) {
       failures.push(`${relativeVsix} packaged GUI must retain ${label} for local controlled-task smoke evidence.`);
+    }
+  }
   for (const [label, pattern] of extendedSmokeEvidence) {
     if (!pattern.test(`${packagedGuiText}\n${architectureDoc}`)) {
       failures.push(`${relativeVsix} packaged GUI or smoke design must retain ${label} for local controlled-task smoke evidence.`);
     }
   }
+  for (const [label, pattern] of conservativeCopyEvidence) {
+    if (!pattern.test(`${packagedGuiText}\n${architectureDoc}`)) {
+      failures.push(`${relativeVsix} packaged GUI or smoke design must retain ${label} for conservative packaged controlled-task copy.`);
+    }
+  }
   for (const [label, pattern] of forbiddenSharedEvidence) {
     if (pattern.test(packagedGuiText)) {
       failures.push(`${relativeVsix} packaged GUI must not contain ${label}.`);
-    }
-  }
     }
   }
 }
