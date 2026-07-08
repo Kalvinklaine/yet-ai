@@ -131,6 +131,12 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-verification-followup.schema.json"
   ],
   ...[
+    "controlled-agent-two-step-run-completed.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-two-step-run.schema.json"
+  ]),
+  ...[
     "controlled-agent-recovery-matrix-v1.json",
     "controlled-agent-recovery-matrix-stop-and-unsupported.json"
   ].map((fileName) => [
@@ -1261,6 +1267,23 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-verification-followup.schema.json"
+  ]),
+  ...[
+    "controlled-agent-two-step-run-auto-verify.json",
+    "controlled-agent-two-step-run-broad-mutation.json",
+    "controlled-agent-two-step-run-freeform-command.json",
+    "controlled-agent-two-step-run-hidden-read.json",
+    "controlled-agent-two-step-run-hidden-search.json",
+    "controlled-agent-two-step-run-missing-user-gate.json",
+    "controlled-agent-two-step-run-production-overclaim.json",
+    "controlled-agent-two-step-run-provider-call.json",
+    "controlled-agent-two-step-run-raw-payload.json",
+    "controlled-agent-two-step-run-stale-ids.json",
+    "controlled-agent-two-step-run-tool-call.json",
+    "controlled-agent-two-step-run-unbounded-steps.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-two-step-run.schema.json"
   ]),
   ...[
     "controlled-agent-recovery-matrix-auto-retry-rollback.json",

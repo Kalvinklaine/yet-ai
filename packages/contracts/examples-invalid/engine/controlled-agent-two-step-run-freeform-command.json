@@ -1,0 +1,224 @@
+{
+  "kind": "controlled_agent_two_step_run",
+  "version": "2026-07-08",
+  "authority": "two_step_run_metadata_only",
+  "cloudRequired": false,
+  "executionImplementationAdded": false,
+  "unattendedAutonomyAllowed": false,
+  "workspace": {
+    "controlledWorkspaceId": "workspace-s119",
+    "runtimeSessionId": "runtime-s119",
+    "runId": "run-s119",
+    "workspaceReadinessId": "ready-s119",
+    "workspaceMode": "worktree",
+    "host": "vscode",
+    "workspaceReady": true,
+    "privatePathExposed": false,
+    "workspaceLabel": "Controlled worktree"
+  },
+  "phase": {
+    "state": "completed",
+    "sequence": 8,
+    "enteredAt": "2026-07-08T01:00:00Z",
+    "label": "Completed after explicit checks"
+  },
+  "gates": {
+    "planningRequest": {
+      "required": true,
+      "satisfied": true,
+      "confirmedBy": "user",
+      "assistantMinted": false,
+      "requestIdMintedBy": "gui",
+      "confirmationId": "plan-request-s119",
+      "confirmedAt": "2026-07-08T00:40:00Z",
+      "summary": "User requested a plan from selected evidence"
+    },
+    "planReview": {
+      "required": true,
+      "satisfied": true,
+      "confirmedBy": "user",
+      "assistantMinted": false,
+      "requestIdMintedBy": "gui",
+      "confirmationId": "plan-review-s119",
+      "confirmedAt": "2026-07-08T00:45:00Z",
+      "summary": "User reviewed and accepted the checkpoint"
+    },
+    "executionRequest": {
+      "required": true,
+      "satisfied": true,
+      "confirmedBy": "user",
+      "assistantMinted": false,
+      "requestIdMintedBy": "gui",
+      "confirmationId": "execute-s119",
+      "confirmedAt": "2026-07-08T00:50:00Z",
+      "summary": "User requested bounded replacement"
+    },
+    "verificationRequest": {
+      "required": true,
+      "satisfied": true,
+      "confirmedBy": "user",
+      "assistantMinted": false,
+      "requestIdMintedBy": "gui",
+      "confirmationId": "verify-s119",
+      "confirmedAt": "2026-07-08T00:55:00Z",
+      "summary": "User requested allowlisted validation"
+    }
+  },
+  "limits": {
+    "maxPlannerSteps": 4,
+    "maxSelectedContextItems": 3,
+    "maxSearchQueries": 1,
+    "maxSearchResults": 4,
+    "maxTouchedFiles": 2,
+    "maxEditBytes": 1200,
+    "maxVerificationCommands": 1,
+    "maxRuntimeSeconds": 900
+  },
+  "counters": {
+    "plannerSteps": 3,
+    "selectedContextItems": 2,
+    "searchQueries": 1,
+    "searchResults": 2,
+    "filesTouched": 1,
+    "editBytes": 320,
+    "verificationCommands": 1,
+    "userTurns": 4
+  },
+  "policyFlags": {
+    "metadataOnly": true,
+    "explicitPlanReviewRequired": true,
+    "explicitExecutionRequestRequired": true,
+    "explicitVerificationRequestRequired": true,
+    "selectedContextOnly": true,
+    "selectedSearchOnly": true,
+    "hiddenReadAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "autoApplyAllowed": false,
+    "autoVerifyAllowed": false,
+    "autoRepairAllowed": false,
+    "freeformCommandAllowed": true,
+    "broadMutationAllowed": false,
+    "providerCallsAllowed": false,
+    "toolCallsAllowed": false,
+    "rawPromptStored": false,
+    "rawFileStored": false,
+    "rawDiffStored": false,
+    "rawCommandStored": false,
+    "rawOutputStored": false
+  },
+  "selectedContext": {
+    "explicitOnly": true,
+    "hiddenReads": 0,
+    "items": [
+      {
+        "contextId": "ctx-s119-a",
+        "source": "active_editor",
+        "workspaceRelativePath": "docs/architecture/024-controlled-agent-two-step-run.md",
+        "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "summary": "Selected architecture note"
+      },
+      {
+        "contextId": "ctx-s119-b",
+        "source": "named_file",
+        "workspaceRelativePath": "packages/contracts/schemas/engine/controlled-agent-run-state.schema.json",
+        "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "summary": "Selected state contract"
+      }
+    ]
+  },
+  "selectedSearch": {
+    "explicitOnly": true,
+    "hiddenSearches": 0,
+    "indexing": false,
+    "queries": [
+      {
+        "queryId": "query-s119",
+        "requestedBy": "user",
+        "literalQuery": "two step run",
+        "resultCount": 2,
+        "summary": "User selected bounded literal search"
+      }
+    ]
+  },
+  "planCheckpoint": {
+    "planId": "plan-s119",
+    "state": "accepted",
+    "reviewedByUser": true,
+    "reviewGateId": "plan-review-s119",
+    "plannerStepCount": 3,
+    "sanitizedOnly": true,
+    "summary": "Reviewed plan proposes one bounded replacement and one validation preset",
+    "steps": [
+      {
+        "stepId": "step-context",
+        "kind": "inspect_selected_context",
+        "summary": "Use selected context only"
+      },
+      {
+        "stepId": "step-edit",
+        "kind": "prepare_existing_file_replacement",
+        "summary": "Prepare bounded replacement metadata"
+      },
+      {
+        "stepId": "step-verify",
+        "kind": "prepare_allowlisted_verification",
+        "summary": "Prepare one allowlisted validation preset"
+      }
+    ]
+  },
+  "execution": {
+    "requestId": "exec-request-s119",
+    "requestedByUser": true,
+    "executionGateId": "execute-s119",
+    "planId": "plan-s119",
+    "applyState": "applied",
+    "existingTextFilesOnly": true,
+    "operation": "replace",
+    "broadMutation": false,
+    "edits": [
+      {
+        "editId": "edit-s119",
+        "workspaceRelativePath": "docs/architecture/024-controlled-agent-two-step-run.md",
+        "expectedContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "replacementContentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "replacementByteCount": 320,
+        "summary": "Bounded existing text replacement"
+      }
+    ]
+  },
+  "verification": {
+    "requestId": "verify-request-s119",
+    "requestedByUser": true,
+    "verificationGateId": "verify-s119",
+    "state": "succeeded",
+    "allowlistedOnly": true,
+    "freeformCommandAllowed": true,
+    "commands": [
+      {
+        "commandId": "repository-check",
+        "tailOnly": true,
+        "rawOutputStored": false,
+        "exitCode": 0,
+        "summary": "Allowlisted validation completed"
+      }
+    ]
+  },
+  "followup": {
+    "state": "draft_ready",
+    "adjacentContract": "agent-run-followup-prompt-draft",
+    "autoSendAllowed": false,
+    "summary": "Optional user-reviewed follow-up draft may be prepared separately"
+  },
+  "diagnostics": {
+    "sanitized": true,
+    "rawPayloadStored": false,
+    "entries": [
+      {
+        "level": "info",
+        "code": "step_completed",
+        "summary": "Completed through explicit user gates"
+      }
+    ]
+  }
+}

@@ -1,0 +1,1299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-two-step-run.schema.json",
+  "title": "Controlled Agent Two Step Run Metadata",
+  "description": "Strict metadata-only Sprint 119 two-step controlled run contract. It records a plan/review checkpoint and a separately user-confirmed execution request with bounded edit and verification metadata, selected context/search evidence only, sanitized diagnostics, and no unattended execution, hidden reads/search, automatic apply, automatic verification, automatic repair, free-form commands, provider/tool calls, broad mutation, raw payload persistence, or production autonomy claims.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionImplementationAdded",
+    "unattendedAutonomyAllowed",
+    "workspace",
+    "phase",
+    "gates",
+    "limits",
+    "counters",
+    "policyFlags",
+    "selectedContext",
+    "selectedSearch",
+    "planCheckpoint",
+    "execution",
+    "verification",
+    "diagnostics"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "controlled_agent_two_step_run"
+    },
+    "version": {
+      "type": "string",
+      "const": "2026-07-08"
+    },
+    "authority": {
+      "type": "string",
+      "const": "two_step_run_metadata_only"
+    },
+    "cloudRequired": {
+      "type": "boolean",
+      "const": false
+    },
+    "executionImplementationAdded": {
+      "type": "boolean",
+      "const": false
+    },
+    "unattendedAutonomyAllowed": {
+      "type": "boolean",
+      "const": false
+    },
+    "workspace": {
+      "$ref": "#/$defs/workspace"
+    },
+    "phase": {
+      "$ref": "#/$defs/phase"
+    },
+    "gates": {
+      "$ref": "#/$defs/gates"
+    },
+    "limits": {
+      "$ref": "#/$defs/limits"
+    },
+    "counters": {
+      "$ref": "#/$defs/counters"
+    },
+    "policyFlags": {
+      "$ref": "#/$defs/policyFlags"
+    },
+    "selectedContext": {
+      "$ref": "#/$defs/selectedContext"
+    },
+    "selectedSearch": {
+      "$ref": "#/$defs/selectedSearch"
+    },
+    "planCheckpoint": {
+      "$ref": "#/$defs/planCheckpoint"
+    },
+    "execution": {
+      "$ref": "#/$defs/execution"
+    },
+    "verification": {
+      "$ref": "#/$defs/verification"
+    },
+    "followup": {
+      "$ref": "#/$defs/followup"
+    },
+    "stop": {
+      "$ref": "#/$defs/stop"
+    },
+    "diagnostics": {
+      "$ref": "#/$defs/diagnostics"
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Dd][Ii][Ff][Ff]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee][-_ ]?[Ii][Nn][Ss][Tt][Aa][Ll][Ll]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Pp][Rr][Oo][Dd][Uu][Cc][T][Ii][Oo][Nn]|[Rr][Ee][Ll][Ee][Aa][Ss][Ee]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Tt][Aa][Rr][Tt]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/safeText"
+        },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        }
+      ]
+    },
+    "safeHash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$",
+      "maxLength": 32
+    },
+    "workspaceRelativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 180,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!~)(?!.*(?:^|/)\\.)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*//)(?!.*[\\\\:*?\"<>|{}\\[\\]$^+])(?!(?:^|.*/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$"
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "controlledWorkspaceId",
+        "runtimeSessionId",
+        "runId",
+        "workspaceReadinessId",
+        "workspaceMode",
+        "host",
+        "workspaceReady",
+        "privatePathExposed"
+      ],
+      "properties": {
+        "controlledWorkspaceId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runtimeSessionId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "runId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceReadinessId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceMode": {
+          "type": "string",
+          "enum": [
+            "disposable",
+            "worktree",
+            "existing"
+          ]
+        },
+        "host": {
+          "type": "string",
+          "enum": [
+            "vscode",
+            "jetbrains"
+          ]
+        },
+        "workspaceReady": {
+          "type": "boolean",
+          "const": true
+        },
+        "privatePathExposed": {
+          "type": "boolean",
+          "const": false
+        },
+        "workspaceLabel": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "phase": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "sequence",
+        "enteredAt"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "planning_requested",
+            "planning_completed",
+            "waiting_for_user_review",
+            "execution_requested",
+            "applying_edits",
+            "running_verification_bundle",
+            "followup_ready",
+            "completed",
+            "stopped",
+            "blocked",
+            "failed"
+          ]
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "enteredAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "label": {
+          "$ref": "#/$defs/safeLabel"
+        }
+      }
+    },
+    "userGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "satisfied",
+        "confirmedBy",
+        "assistantMinted",
+        "requestIdMintedBy",
+        "confirmationId",
+        "confirmedAt"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "const": true
+        },
+        "satisfied": {
+          "type": "boolean"
+        },
+        "confirmedBy": {
+          "type": "string",
+          "enum": [
+            "none",
+            "user"
+          ]
+        },
+        "assistantMinted": {
+          "type": "boolean",
+          "const": false
+        },
+        "requestIdMintedBy": {
+          "type": "string",
+          "enum": [
+            "none",
+            "gui",
+            "host"
+          ]
+        },
+        "confirmationId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "confirmedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "satisfied": {
+                "const": true
+              }
+            },
+            "required": [
+              "satisfied"
+            ]
+          },
+          "then": {
+            "properties": {
+              "confirmedBy": {
+                "const": "user"
+              },
+              "requestIdMintedBy": {
+                "enum": [
+                  "gui",
+                  "host"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "satisfied": {
+                "const": false
+              }
+            },
+            "required": [
+              "satisfied"
+            ]
+          },
+          "then": {
+            "properties": {
+              "confirmedBy": {
+                "const": "none"
+              },
+              "requestIdMintedBy": {
+                "const": "none"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planningRequest",
+        "planReview",
+        "executionRequest",
+        "verificationRequest"
+      ],
+      "properties": {
+        "planningRequest": {
+          "$ref": "#/$defs/userGate"
+        },
+        "planReview": {
+          "$ref": "#/$defs/userGate"
+        },
+        "executionRequest": {
+          "$ref": "#/$defs/userGate"
+        },
+        "verificationRequest": {
+          "$ref": "#/$defs/userGate"
+        }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxPlannerSteps",
+        "maxSelectedContextItems",
+        "maxSearchQueries",
+        "maxSearchResults",
+        "maxTouchedFiles",
+        "maxEditBytes",
+        "maxVerificationCommands",
+        "maxRuntimeSeconds"
+      ],
+      "properties": {
+        "maxPlannerSteps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "maxSelectedContextItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12
+        },
+        "maxSearchQueries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "maxSearchResults": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "maxTouchedFiles": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "maxEditBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50000
+        },
+        "maxVerificationCommands": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "maxRuntimeSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1800
+        }
+      }
+    },
+    "counters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plannerSteps",
+        "selectedContextItems",
+        "searchQueries",
+        "searchResults",
+        "filesTouched",
+        "editBytes",
+        "verificationCommands",
+        "userTurns"
+      ],
+      "properties": {
+        "plannerSteps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "selectedContextItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 12
+        },
+        "searchQueries": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "searchResults": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "filesTouched": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "editBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50000
+        },
+        "verificationCommands": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "userTurns": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 20
+        }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "metadataOnly",
+        "explicitPlanReviewRequired",
+        "explicitExecutionRequestRequired",
+        "explicitVerificationRequestRequired",
+        "selectedContextOnly",
+        "selectedSearchOnly",
+        "hiddenReadAllowed",
+        "hiddenSearchAllowed",
+        "indexingAllowed",
+        "autoApplyAllowed",
+        "autoVerifyAllowed",
+        "autoRepairAllowed",
+        "freeformCommandAllowed",
+        "broadMutationAllowed",
+        "providerCallsAllowed",
+        "toolCallsAllowed",
+        "rawPromptStored",
+        "rawFileStored",
+        "rawDiffStored",
+        "rawCommandStored",
+        "rawOutputStored"
+      ],
+      "properties": {
+        "metadataOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "explicitPlanReviewRequired": {
+          "type": "boolean",
+          "const": true
+        },
+        "explicitExecutionRequestRequired": {
+          "type": "boolean",
+          "const": true
+        },
+        "explicitVerificationRequestRequired": {
+          "type": "boolean",
+          "const": true
+        },
+        "selectedContextOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "selectedSearchOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "hiddenReadAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "hiddenSearchAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "indexingAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoApplyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoVerifyAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "autoRepairAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "freeformCommandAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "broadMutationAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "providerCallsAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "toolCallsAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawPromptStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawFileStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawDiffStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawCommandStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "rawOutputStored": {
+          "type": "boolean",
+          "const": false
+        }
+      }
+    },
+    "selectedContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "explicitOnly",
+        "hiddenReads",
+        "items"
+      ],
+      "properties": {
+        "explicitOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "hiddenReads": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 0
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/contextItem"
+          }
+        }
+      }
+    },
+    "contextItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contextId",
+        "source",
+        "workspaceRelativePath",
+        "contentHash",
+        "summary"
+      ],
+      "properties": {
+        "contextId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "active_editor",
+            "user_selection",
+            "named_file"
+          ]
+        },
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/workspaceRelativePath"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "selectedSearch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "explicitOnly",
+        "hiddenSearches",
+        "indexing",
+        "queries"
+      ],
+      "properties": {
+        "explicitOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "hiddenSearches": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 0
+        },
+        "indexing": {
+          "type": "boolean",
+          "const": false
+        },
+        "queries": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/searchQuery"
+          }
+        }
+      }
+    },
+    "searchQuery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "queryId",
+        "requestedBy",
+        "literalQuery",
+        "resultCount",
+        "summary"
+      ],
+      "properties": {
+        "queryId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestedBy": {
+          "type": "string",
+          "const": "user"
+        },
+        "literalQuery": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/safeText"
+            },
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80,
+              "pattern": "^[A-Za-z0-9_. -]+$"
+            }
+          ]
+        },
+        "resultCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "planCheckpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planId",
+        "state",
+        "reviewedByUser",
+        "reviewGateId",
+        "plannerStepCount",
+        "sanitizedOnly",
+        "summary",
+        "steps"
+      ],
+      "properties": {
+        "planId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "not_started",
+            "requested",
+            "completed",
+            "waiting_for_user_review",
+            "accepted",
+            "declined",
+            "blocked"
+          ]
+        },
+        "reviewedByUser": {
+          "type": "boolean"
+        },
+        "reviewGateId": {
+          "const": {
+            "$data": "/gates/planReview/confirmationId"
+          }
+        },
+        "plannerStepCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "sanitizedOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 6,
+          "items": {
+            "$ref": "#/$defs/planStep"
+          }
+        }
+      }
+    },
+    "planStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stepId",
+        "kind",
+        "summary"
+      ],
+      "properties": {
+        "stepId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "inspect_selected_context",
+            "review_selected_search",
+            "prepare_existing_file_replacement",
+            "prepare_allowlisted_verification",
+            "prepare_followup"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "requestedByUser",
+        "executionGateId",
+        "planId",
+        "applyState",
+        "existingTextFilesOnly",
+        "operation",
+        "broadMutation",
+        "edits"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestedByUser": {
+          "type": "boolean"
+        },
+        "executionGateId": {
+          "const": {
+            "$data": "/gates/executionRequest/confirmationId"
+          }
+        },
+        "planId": {
+          "const": {
+            "$data": "/planCheckpoint/planId"
+          }
+        },
+        "applyState": {
+          "type": "string",
+          "enum": [
+            "not_requested",
+            "requested",
+            "applying",
+            "applied",
+            "skipped",
+            "blocked",
+            "failed"
+          ]
+        },
+        "existingTextFilesOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "operation": {
+          "type": "string",
+          "const": "replace"
+        },
+        "broadMutation": {
+          "type": "boolean",
+          "const": false
+        },
+        "edits": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/edit"
+          }
+        }
+      }
+    },
+    "edit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "editId",
+        "workspaceRelativePath",
+        "expectedContentHash",
+        "replacementContentHash",
+        "replacementByteCount",
+        "summary"
+      ],
+      "properties": {
+        "editId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "workspaceRelativePath": {
+          "$ref": "#/$defs/workspaceRelativePath"
+        },
+        "expectedContentHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "replacementContentHash": {
+          "$ref": "#/$defs/safeHash"
+        },
+        "replacementByteCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50000
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "requestedByUser",
+        "verificationGateId",
+        "state",
+        "allowlistedOnly",
+        "freeformCommandAllowed",
+        "commands"
+      ],
+      "properties": {
+        "requestId": {
+          "$ref": "#/$defs/safeId"
+        },
+        "requestedByUser": {
+          "type": "boolean"
+        },
+        "verificationGateId": {
+          "const": {
+            "$data": "/gates/verificationRequest/confirmationId"
+          }
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "not_requested",
+            "requested",
+            "running",
+            "succeeded",
+            "failed",
+            "blocked",
+            "skipped"
+          ]
+        },
+        "allowlistedOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "freeformCommandAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "commands": {
+          "type": "array",
+          "maxItems": 4,
+          "items": {
+            "$ref": "#/$defs/verificationCommand"
+          }
+        }
+      }
+    },
+    "verificationCommand": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commandId",
+        "tailOnly",
+        "rawOutputStored",
+        "summary"
+      ],
+      "properties": {
+        "commandId": {
+          "type": "string",
+          "enum": [
+            "repository-check",
+            "gui-app-tests",
+            "engine-chat-tests"
+          ]
+        },
+        "tailOnly": {
+          "type": "boolean",
+          "const": true
+        },
+        "rawOutputStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "exitCode": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "followup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "adjacentContract",
+        "autoSendAllowed",
+        "summary"
+      ],
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "none",
+            "draft_ready",
+            "blocked"
+          ]
+        },
+        "adjacentContract": {
+          "type": "string",
+          "const": "agent-run-followup-prompt-draft"
+        },
+        "autoSendAllowed": {
+          "type": "boolean",
+          "const": false
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "stop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "stoppedAt",
+        "summary"
+      ],
+      "properties": {
+        "reason": {
+          "type": "string",
+          "enum": [
+            "user_stop",
+            "user_declined",
+            "policy_blocked",
+            "budget_exhausted",
+            "stale_correlation",
+            "unsafe_metadata",
+            "internal_error"
+          ]
+        },
+        "stoppedAt": {
+          "$ref": "#/$defs/utcTimestamp"
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sanitized",
+        "rawPayloadStored",
+        "entries"
+      ],
+      "properties": {
+        "sanitized": {
+          "type": "boolean",
+          "const": true
+        },
+        "rawPayloadStored": {
+          "type": "boolean",
+          "const": false
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/diagnosticEntry"
+          }
+        }
+      }
+    },
+    "diagnosticEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "level",
+        "code",
+        "summary"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "error"
+          ]
+        },
+        "code": {
+          "type": "string",
+          "enum": [
+            "none",
+            "needs_user_review",
+            "blocked_by_policy",
+            "budget_exhausted",
+            "stale_correlation",
+            "unsafe_metadata",
+            "step_completed"
+          ]
+        },
+        "summary": {
+          "$ref": "#/$defs/safeSummary"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "execution_requested",
+                  "applying_edits",
+                  "running_verification_bundle",
+                  "followup_ready",
+                  "completed"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gates": {
+            "type": "object",
+            "properties": {
+              "planReview": {
+                "type": "object",
+                "properties": {
+                  "satisfied": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "satisfied"
+                ]
+              },
+              "executionRequest": {
+                "type": "object",
+                "properties": {
+                  "satisfied": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "satisfied"
+                ]
+              }
+            },
+            "required": [
+              "planReview",
+              "executionRequest"
+            ]
+          },
+          "planCheckpoint": {
+            "type": "object",
+            "properties": {
+              "reviewedByUser": {
+                "const": true
+              },
+              "state": {
+                "enum": [
+                  "accepted"
+                ]
+              }
+            },
+            "required": [
+              "reviewedByUser",
+              "state"
+            ]
+          },
+          "execution": {
+            "type": "object",
+            "properties": {
+              "requestedByUser": {
+                "const": true
+              }
+            },
+            "required": [
+              "requestedByUser"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "running_verification_bundle",
+                  "followup_ready",
+                  "completed"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "properties": {
+          "gates": {
+            "type": "object",
+            "properties": {
+              "verificationRequest": {
+                "type": "object",
+                "properties": {
+                  "satisfied": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "satisfied"
+                ]
+              }
+            },
+            "required": [
+              "verificationRequest"
+            ]
+          },
+          "verification": {
+            "type": "object",
+            "properties": {
+              "requestedByUser": {
+                "const": true
+              }
+            },
+            "required": [
+              "requestedByUser"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "phase": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "enum": [
+                  "stopped",
+                  "blocked",
+                  "failed"
+                ]
+              }
+            },
+            "required": [
+              "state"
+            ]
+          }
+        },
+        "required": [
+          "phase"
+        ]
+      },
+      "then": {
+        "properties": {
+          "stop": {}
+        },
+        "required": [
+          "stop"
+        ]
+      }
+    }
+  ]
+}
