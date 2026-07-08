@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from "node:fs/promises";
+import Ajv from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
@@ -45,6 +47,21 @@ async function readJson(path) {
   return JSON.parse(await readFile(join(repoRoot, path), "utf8"));
 }
 
+async function listInvalidWorkflowTranscriptFixtures() {
+  const fixtureRoot = join(repoRoot, "packages", "contracts", "examples-invalid", "engine");
+  const prefix = "controlled-agent-workflow-transcript-";
+  const names = (await readdir(fixtureRoot))
+    .filter((name) => name.startsWith(prefix) && name.endsWith(".json"))
+    .sort();
+  const labels = names.map((name) => name.slice(prefix.length, -".json".length));
+  const expectedLabels = ["bridge-dump", "browser-storage-dump", "command-output", "missing-task-preset-label", "overclaim", "private-path", "raw-data"];
+  assert.deepEqual(labels, expectedLabels);
+  return names.map((name) => ({
+    label: name.slice(prefix.length, -".json".length),
+    path: `packages/contracts/examples-invalid/engine/${name}`,
+  }));
+}
+
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
@@ -54,21 +71,22 @@ function assertSanitized(value, label) {
   for (const marker of rawLeakMarkers) assert.equal(output.includes(marker), false, `${label} leaked ${marker}`);
 }
 
+async function compileTranscriptSchemaValidator() {
+  const schema = await readJson("packages/contracts/schemas/engine/controlled-agent-workflow-transcript.schema.json");
+  const ajv = new Ajv({ allErrors: true, strict: true });
+  addFormats(ajv);
+  return ajv.compile(schema);
+}
+
+function diagnosticCodes(result) {
+  return new Set(result.diagnostics.map((item) => item.code));
+}
+
 async function runSmoke() {
   const completed = await readJson("packages/contracts/examples/engine/controlled-agent-workflow-transcript-completed.json");
   const blocked = await readJson("packages/contracts/examples/engine/controlled-agent-workflow-transcript-blocked.json");
-  const invalidNames = [
-    "engine/controlled-agent-workflow-transcript-raw-data.json",
-    "engine/controlled-agent-workflow-transcript-private-path.json",
-    "engine/controlled-agent-workflow-transcript-command-output.json",
-    "engine/controlled-agent-workflow-transcript-bridge-dump.json",
-    "engine/controlled-agent-workflow-transcript-browser-storage-dump.json",
-    "engine/controlled-agent-workflow-transcript-overclaim.json",
-    "engine/controlled-agent-workflow-transcript-missing-task-preset-label.json",
-  ];
-  for (const expected of ["raw-data", "private-path", "command-output", "bridge-dump", "browser-storage-dump", "overclaim", "missing-task-preset-label"]) {
-    assert.equal(invalidNames.some((name) => name.includes(expected)), true, `missing invalid fixture label coverage for ${expected}`);
-  }
+  const invalidFixtures = await listInvalidWorkflowTranscriptFixtures();
+  const validateTranscriptSchema = await compileTranscriptSchemaValidator();
 
   const { imports, cleanup } = await transpileGuiServices(["services/controlledAgentWorkflowTranscript.ts"]);
   try {
@@ -117,9 +135,23 @@ async function runSmoke() {
     assert.equal(isControlledAgentWorkflowTranscriptSafe(contradictoryResult.transcript), true);
     assertSanitized(contradictoryResult, "contradictory verification transcript");
 
+    assert.equal(validateTranscriptSchema(completed), true, "completed transcript fixture should match the contract schema");
+    assert.equal(validateTranscriptSchema(blocked), true, "blocked transcript fixture should match the contract schema");
+
+    const invalidFixtureResults = [];
+    for (const fixture of invalidFixtures) {
+      const input = await readJson(fixture.path);
+      assert.equal(validateTranscriptSchema(input), false, `${fixture.label} should be rejected by the contract schema`);
+      const result = buildControlledAgentWorkflowTranscript(input);
+      assert.equal(isControlledAgentWorkflowTranscriptSafe(result.transcript), true, `${fixture.label} should be sanitized to safe transcript metadata`);
+      assertSanitized(result, `${fixture.label} invalid transcript fixture`);
+      assert.equal(validateTranscriptSchema(result.transcript) || diagnosticCodes(result).size > 0 || JSON.stringify(result.transcript) !== JSON.stringify(input), true, `${fixture.label} should be rejected or sanitized`);
+      invalidFixtureResults.push(fixture.label);
+    }
+
     return {
       contractFixtures: 2,
-      invalidFixtureGroups: invalidNames.length,
+      invalidFixtures: invalidFixtureResults,
       guiScenarios: ["completed", "blocked", "unsafe-raw-markers", "contradictory-verification-counts"],
       hostExecution: false,
       providerCalls: false,
@@ -136,7 +168,7 @@ async function runSmoke() {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const report = await runSmoke();
   console.log("Controlled agent workflow transcript smoke passed.");
-  console.log(`Verified ${report.contractFixtures} safe fixtures, ${report.invalidFixtureGroups} invalid fixture label names, and ${report.guiScenarios.length} local/mock GUI-service scenarios with sanitized metadata only.`);
+  console.log(`Verified ${report.contractFixtures} safe fixtures, ${report.invalidFixtures.length} real invalid fixture files, and ${report.guiScenarios.length} local/mock GUI-service scenarios with sanitized metadata only.`);
 }
 
 export { runSmoke };
