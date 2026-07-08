@@ -98,31 +98,32 @@ async function runSmoke() {
     const browser = await readJson("packages/contracts/examples-invalid/engine/controlled-agent-task-harness-unsupported-browser-host.json");
     const stale = await readJson("packages/contracts/examples-invalid/engine/controlled-agent-task-harness-stale-lineage-accepted.json");
     const raw = await readJson("packages/contracts/examples-invalid/engine/controlled-agent-task-harness-raw-data.json");
+    const hiddenAuthority = await readJson("packages/contracts/examples-invalid/engine/controlled-agent-task-harness-hidden-authority.json");
+    const overclaim = await readJson("packages/contracts/examples-invalid/engine/controlled-agent-task-harness-production-overclaim.json");
 
     const calls = { bridge: 0, runtime: 0, provider: 0, read: 0, apply: 0, verify: 0, storage: 0 };
     const browserStorage = { localStorage: {}, sessionStorage: {} };
+    const exercised = [];
+
+    function recordScenario(category, name, result) {
+      exercised.push({ category, name, state: result.state });
+      assertNoUnsafeLeak(result, name);
+    }
+
+    function assertDiagnostic(result, code, label) {
+      assert.equal(result.diagnostics.some((item) => item.code === code), true, `${label} must report ${code}`);
+    }
+
+    function assertExecutionBlocked(result, label) {
+      assert.equal(result.policy.executionAllowed, false, `${label} execution must be disabled`);
+    }
 
     const ready = evaluateControlledAgentTaskHarness(clone(happy));
     assert.equal(ready.state, "ready");
     assert.equal(ready.host, "vscode");
     assert.equal(ready.counters.verificationCommandCount, 2);
     assertNoAuthority(ready, "happy path");
-    assertNoUnsafeLeak(ready, "happy path");
-
-    const partial = evaluateControlledAgentTaskHarness(clone(jetbrains));
-    assert.equal(partial.state, "partial_fail_closed");
-    assert.equal(partial.policy.executionAllowed, false);
-    assertNoUnsafeLeak(partial, "jetbrains partial");
-
-    const unsupported = evaluateControlledAgentTaskHarness(clone(browser));
-    assert.equal(unsupported.state, "unsupported");
-    assert.equal(unsupported.policy.executionAllowed, false);
-    assertNoUnsafeLeak(unsupported, "browser unsupported");
-
-    const staleResult = evaluateControlledAgentTaskHarness(clone(stale));
-    assert.equal(staleResult.state, "blocked");
-    assert.equal(staleResult.diagnostics.some((item) => item.code === "invalid_lineage"), true);
-    assertNoUnsafeLeak(staleResult, "stale lineage");
+    recordScenario("safe", "happy path", ready);
 
     const failedInput = clone(happy);
     failedInput.verification.state = "failed";
@@ -130,19 +131,55 @@ async function runSmoke() {
     const failed = evaluateControlledAgentTaskHarness(failedInput);
     assert.equal(failed.state, "failed");
     assert.equal(failed.policy.canAutoRepair, false);
-    assertNoUnsafeLeak(failed, "failed verification");
+    assert.equal(failed.policy.canAutoVerify, false);
+    assertDiagnostic(failed, "failed_verification", "failed verification");
+    recordScenario("safe", "failed verification", failed);
+
+    const partial = evaluateControlledAgentTaskHarness(clone(jetbrains));
+    assert.equal(partial.state, "partial_fail_closed");
+    assertExecutionBlocked(partial, "jetbrains partial");
+    assertDiagnostic(partial, "partial_host", "jetbrains partial");
+    recordScenario("failClosed", "jetbrains partial", partial);
+
+    const unsupported = evaluateControlledAgentTaskHarness(clone(browser));
+    assert.equal(unsupported.state, "unsupported");
+    assertExecutionBlocked(unsupported, "browser unsupported");
+    assertDiagnostic(unsupported, "unsupported_host", "browser unsupported");
+    recordScenario("failClosed", "browser unsupported", unsupported);
+
+    const staleResult = evaluateControlledAgentTaskHarness(clone(stale));
+    assert.equal(staleResult.state, "blocked");
+    assertDiagnostic(staleResult, "invalid_lineage", "stale lineage");
+    recordScenario("failClosed", "stale lineage", staleResult);
 
     const unsafeInput = clone(raw);
     unsafeInput.extra = { rawPrompt: "raw prompt /Users/alice/project sk-proj-secret", command: "npm test", browserStorageDump: "browser storage dump" };
     const unsafe = evaluateControlledAgentTaskHarness(unsafeInput);
     assert.equal(unsafe.state, "blocked");
     assert.equal(unsafe.counters.unsafeOmittedCount > 0, true);
-    assert.equal(unsafe.diagnostics.some((item) => item.code === "unsafe_metadata"), true);
-    assertNoUnsafeLeak(unsafe, "unsafe markers");
+    assertDiagnostic(unsafe, "unsafe_metadata", "unsafe markers");
+    recordScenario("failClosed", "unsafe markers", unsafe);
+
+    const authority = evaluateControlledAgentTaskHarness(clone(hiddenAuthority));
+    assert.equal(authority.state, "blocked");
+    assert.equal(authority.policy.canSearchHiddenFiles, true);
+    assertDiagnostic(authority, "unsafe_authority", "hidden authority");
+    recordScenario("failClosed", "hidden authority", authority);
+
+    const claim = evaluateControlledAgentTaskHarness(clone(overclaim));
+    assert.equal(claim.state, "blocked");
+    assertDiagnostic(claim, "unsafe_claim", "production overclaim");
+    recordScenario("failClosed", "production overclaim", claim);
 
     assert.deepEqual(calls, { bridge: 0, runtime: 0, provider: 0, read: 0, apply: 0, verify: 0, storage: 0 });
     assert.deepEqual(browserStorage, { localStorage: {}, sessionStorage: {} });
-    return { safeScenarios: 2, failClosedScenarios: 4, noAuthorityCalls: true };
+
+    const safeScenarios = exercised.filter((scenario) => scenario.category === "safe").length;
+    const failClosedScenarios = exercised.filter((scenario) => scenario.category === "failClosed").length;
+    assert.equal(safeScenarios, 2);
+    assert.equal(failClosedScenarios, 6);
+    assert.equal(exercised.length, 8);
+    return { safeScenarios, failClosedScenarios, noAuthorityCalls: true };
   } finally {
     await cleanup();
   }
