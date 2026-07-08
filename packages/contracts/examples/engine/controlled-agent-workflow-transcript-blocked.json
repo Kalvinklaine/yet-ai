@@ -1,0 +1,164 @@
+{
+  "kind": "controlled_agent_workflow_transcript",
+  "version": "2026-07-08",
+  "authority": "display_export_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "transcriptId": "transcript-2026-07-08-blocked-001",
+  "runId": "controlled-run-blocked-001",
+  "generatedAt": "2026-07-08T15:00:00Z",
+  "hostSurface": "jetbrains",
+  "taskPresetLabel": "Explain selected code",
+  "localFirst": true,
+  "providerAccess": "not-used",
+  "explicitUserGates": [
+    {
+      "gate": "start",
+      "confirmed": true,
+      "assistantMinted": false,
+      "requestId": "gate-blocked-start-001",
+      "at": "2026-07-08T14:50:00Z",
+      "label": "User opened controlled task"
+    },
+    {
+      "gate": "context_search_selection",
+      "confirmed": true,
+      "assistantMinted": false,
+      "requestId": "gate-blocked-context-001",
+      "at": "2026-07-08T14:51:00Z",
+      "label": "User selected visible context"
+    },
+    {
+      "gate": "recovery_choice",
+      "confirmed": true,
+      "assistantMinted": false,
+      "requestId": "gate-blocked-recovery-001",
+      "at": "2026-07-08T14:52:00Z",
+      "label": "User chose to stop"
+    }
+  ],
+  "stageTransitions": [
+    {
+      "at": "2026-07-08T14:50:00Z",
+      "from": "draft",
+      "to": "context_selection",
+      "status": "confirmed",
+      "durationMs": 700,
+      "label": "Task preset accepted"
+    },
+    {
+      "at": "2026-07-08T14:52:00Z",
+      "from": "context_selection",
+      "to": "blocked",
+      "status": "unsupported",
+      "durationMs": 900,
+      "label": "Partial host stopped safely"
+    },
+    {
+      "at": "2026-07-08T14:53:00Z",
+      "from": "blocked",
+      "to": "final_evidence",
+      "status": "blocked",
+      "durationMs": 400,
+      "label": "Sanitized blocked evidence ready"
+    }
+  ],
+  "contextSearch": {
+    "explicitSelectionOnly": true,
+    "selectedContextLabels": [
+      "visible selection label"
+    ],
+    "selectedSearchLabels": [],
+    "contextItemCount": 1,
+    "searchResultCount": 0,
+    "selectedByteCount": 1200,
+    "selectedLineCount": 30,
+    "omittedUnsafeCount": 0,
+    "evidenceHash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+  },
+  "proposal": {
+    "status": "blocked",
+    "providerLabel": "Not used",
+    "summary": "Proposal was not requested after partial host stop.",
+    "citedEvidenceCount": 0,
+    "riskCount": 1,
+    "proposalHash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "patchPlan": {
+    "status": "blocked",
+    "fileCount": 0,
+    "editCount": 0,
+    "replacementByteCount": 0,
+    "reviewLabel": "No plan requested",
+    "planHash": "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+  },
+  "apply": {
+    "status": "blocked",
+    "requestId": "apply-blocked-001",
+    "appliedFileCount": 0,
+    "blockedFileCount": 0,
+    "resultHash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "summary": "Apply was not requested."
+  },
+  "verification": {
+    "status": "blocked",
+    "bundleId": "verify-blocked-001",
+    "commandIds": [],
+    "commandCount": 0,
+    "passedCount": 0,
+    "failedCount": 0,
+    "outputTailStored": false,
+    "resultHash": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "summary": "Verification was not requested."
+  },
+  "followup": {
+    "status": "ready",
+    "draftOnly": true,
+    "requiresUserSend": true,
+    "actionLabel": "Manual follow up available",
+    "summaryHash": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+  },
+  "recovery": {
+    "status": "stopped",
+    "recoveryLabel": "Manual stop selected",
+    "manualOnly": true,
+    "attemptCount": 0,
+    "summary": "User chose to stop without retry."
+  },
+  "omissions": {
+    "rawDataOmitted": true,
+    "unsafeItemCount": 0,
+    "privatePathCount": 0,
+    "secretCount": 0,
+    "unsupportedHostCount": 1,
+    "staleEvidenceCount": 0,
+    "omissionHash": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "finalEvidence": {
+    "result": "blocked",
+    "sanitizedReportReady": true,
+    "taskCompleted": false,
+    "changedFileCount": 0,
+    "testCount": 0,
+    "verificationCommandCount": 0,
+    "evidenceHash": "sha256:abababababababababababababababababababababababababababababababab",
+    "summary": "Task blocked safely with sanitized metadata only."
+  },
+  "safetyReview": {
+    "rawPromptsIncluded": false,
+    "rawProviderResponsesIncluded": false,
+    "fileBodiesIncluded": false,
+    "diffsIncluded": false,
+    "replacementTextIncluded": false,
+    "commandStringsIncluded": false,
+    "commandOutputIncluded": false,
+    "providerPayloadsIncluded": false,
+    "privatePathsIncluded": false,
+    "secretsIncluded": false,
+    "bridgeDumpsIncluded": false,
+    "browserStorageDumpsIncluded": false,
+    "authorityToActIncluded": false,
+    "overclaimIncluded": false,
+    "safeToShare": true
+  }
+}

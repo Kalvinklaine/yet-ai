@@ -193,14 +193,20 @@ const mappings = [
     "packages/contracts/examples/engine/controlled-agent-lexical-search-succeeded.json",
     "packages/contracts/schemas/engine/controlled-agent-lexical-search.schema.json"
   ],
-  [
-    "packages/contracts/examples/engine/controlled-agent-task-harness-vscode-happy-path.json",
+  ...[
+    "controlled-agent-task-harness-vscode-happy-path.json",
+    "controlled-agent-task-harness-jetbrains-partial.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-task-harness.schema.json"
-  ],
-  [
-    "packages/contracts/examples/engine/controlled-agent-workflow-transcript-completed.json",
+  ]),
+  ...[
+    "controlled-agent-workflow-transcript-completed.json",
+    "controlled-agent-workflow-transcript-blocked.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-workflow-transcript.schema.json"
-  ],
+  ]),
   ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
@@ -1426,6 +1432,7 @@ const invalidMappings = [
     "controlled-agent-task-harness-hidden-authority.json",
     "controlled-agent-task-harness-unsupported-browser-host.json",
     "controlled-agent-task-harness-stale-lineage-accepted.json",
+    "controlled-agent-task-harness-invalid-lineage-accepted-proposal-state.json",
     "controlled-agent-task-harness-production-overclaim.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
@@ -1437,7 +1444,8 @@ const invalidMappings = [
     "controlled-agent-workflow-transcript-command-output.json",
     "controlled-agent-workflow-transcript-bridge-dump.json",
     "controlled-agent-workflow-transcript-browser-storage-dump.json",
-    "controlled-agent-workflow-transcript-overclaim.json"
+    "controlled-agent-workflow-transcript-overclaim.json",
+    "controlled-agent-workflow-transcript-missing-task-preset-label.json"
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-workflow-transcript.schema.json"

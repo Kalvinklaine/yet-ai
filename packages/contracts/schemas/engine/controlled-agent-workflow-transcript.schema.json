@@ -15,6 +15,7 @@
     "runId",
     "generatedAt",
     "hostSurface",
+    "taskPresetLabel",
     "localFirst",
     "providerAccess",
     "explicitUserGates",

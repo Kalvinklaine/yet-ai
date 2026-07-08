@@ -59,7 +59,7 @@
       },
       "then": {
         "properties": {
-          "proposal": { "type": "object", "properties": { "decision": { "enum": ["blocked"] } }, "required": ["decision"] },
+          "proposal": { "type": "object", "properties": { "state": { "enum": ["blocked"] }, "decision": { "enum": ["blocked"] } }, "required": ["state", "decision"] },
           "patchPlanReview": { "type": "object", "properties": { "decision": { "enum": ["blocked"] } }, "required": ["decision"] },
           "apply": { "type": "object", "properties": { "state": { "enum": ["blocked", "not_requested"] }, "userConfirmed": { "const": false } }, "required": ["state", "userConfirmed"] },
           "verification": { "type": "object", "properties": { "state": { "enum": ["blocked", "not_requested"] }, "userConfirmed": { "const": false } }, "required": ["state", "userConfirmed"] },

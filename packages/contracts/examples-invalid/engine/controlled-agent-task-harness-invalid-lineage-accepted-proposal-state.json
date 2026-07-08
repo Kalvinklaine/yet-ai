@@ -1,0 +1,124 @@
+{
+  "kind": "controlled_agent_task_harness",
+  "version": "2026-07-08",
+  "authority": "vscode_controlled_task_harness_metadata_only",
+  "cloudRequired": false,
+  "metadataOnly": true,
+  "journeyId": "journey.s125.f1.invalid.accepted.state",
+  "host": {
+    "kind": "vscode",
+    "supportState": "supported",
+    "executionAllowed": true,
+    "partialReason": "none"
+  },
+  "preset": {
+    "presetId": "explain-selected-code",
+    "selectedByUser": true,
+    "selectedAt": "2026-07-08T12:10:00Z",
+    "summary": "User chose a bounded explanation preset."
+  },
+  "contextSelection": {
+    "selectionId": "ctx.s125.f1.jetbrains",
+    "selectedByUser": true,
+    "selectedItemCount": 1,
+    "searchQueryCount": 0,
+    "searchResultCount": 0,
+    "activeFileExcerptCount": 1,
+    "hiddenReadAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "broadWorkspaceScanAllowed": false,
+    "summary": "User picked one visible selected item for review."
+  },
+  "proposal": {
+    "proposalId": "proposal.s125.f1.invalid.accepted.state",
+    "state": "accepted",
+    "detected": false,
+    "reviewedByUser": false,
+    "decision": "blocked",
+    "providerToolsAllowed": false,
+    "providerPayloadStored": false,
+    "rawPromptStored": false,
+    "summary": "Proposal state contradicts blocked invalid lineage metadata."
+  },
+  "patchPlanReview": {
+    "patchPlanId": "patch.s125.f1.jetbrains",
+    "reviewedByUser": false,
+    "decision": "blocked",
+    "fileCount": 0,
+    "replacementByteCount": 0,
+    "rawDiffStored": false,
+    "rawReplacementStored": false,
+    "summary": "Patch plan metadata stayed blocked."
+  },
+  "apply": {
+    "applyId": "apply.s125.f1.jetbrains",
+    "state": "blocked",
+    "userConfirmed": false,
+    "requestIdMintedBy": "none",
+    "assistantMinted": false,
+    "boundedExistingTextFilesOnly": true,
+    "automaticApplyAllowed": false,
+    "summary": "Apply metadata stayed blocked."
+  },
+  "verification": {
+    "bundleId": "verify.s125.f1.jetbrains",
+    "state": "blocked",
+    "userConfirmed": false,
+    "allowlistedCommandIdsOnly": true,
+    "commandCount": 0,
+    "freeformCommandAllowed": false,
+    "automaticVerifyAllowed": false,
+    "rawOutputStored": false,
+    "summary": "Verification metadata stayed blocked."
+  },
+  "followupRecovery": {
+    "state": "blocked",
+    "nextStep": "stop",
+    "requiresUserChoice": true,
+    "automaticRepairAllowed": false,
+    "automaticProviderSendAllowed": false,
+    "automaticRerunAllowed": false,
+    "summary": "Recovery stayed manual and stopped."
+  },
+  "correlation": {
+    "lineageId": "lineage.s125.f1.invalid",
+    "lineageStatus": "mismatched",
+    "duplicateDetected": false,
+    "staleDetected": false,
+    "acceptedAfterInvalidLineage": false
+  },
+  "policyFlags": {
+    "metadataOnly": true,
+    "explicitContextOnly": true,
+    "explicitUserGatesRequired": true,
+    "hiddenReadAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "autoSendAllowed": false,
+    "autoApplyAllowed": false,
+    "autoVerifyAllowed": false,
+    "autoRepairAllowed": false,
+    "arbitraryShellAllowed": false,
+    "gitAllowed": false,
+    "packageInstallAllowed": false,
+    "networkAllowed": false,
+    "providerToolsAllowed": false
+  },
+  "persistence": {
+    "rawPromptStored": false,
+    "fileBodiesStored": false,
+    "diffsStored": false,
+    "replacementTextStored": false,
+    "commandOutputStored": false,
+    "providerPayloadStored": false,
+    "privatePathsStored": false,
+    "secretsStored": false
+  },
+  "claims": {
+    "dogfoodReadyHarness": true,
+    "productionReady": false,
+    "releaseReady": false,
+    "marketplaceReady": false
+  }
+}
