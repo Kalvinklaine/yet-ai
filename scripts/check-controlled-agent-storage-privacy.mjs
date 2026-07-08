@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { findForbiddenEvidenceText, formatForbiddenEvidenceFailures } from "./lib/forbidden-evidence-text.mjs";
 
 const safePaths = [
   "docs/architecture/031-controlled-agent-storage-privacy-inventory.md",
@@ -9,7 +10,8 @@ const safePaths = [
 const unsafePaths = [
   "scripts/fixtures/controlled-agent-storage-privacy/unsafe/raw-prompt-provider.json",
   "scripts/fixtures/controlled-agent-storage-privacy/unsafe/file-diff-command.json",
-  "scripts/fixtures/controlled-agent-storage-privacy/unsafe/storage-path-overclaim.md"
+  "scripts/fixtures/controlled-agent-storage-privacy/unsafe/storage-path-overclaim.md",
+  "scripts/fixtures/controlled-agent-storage-privacy/unsafe/private-path-file-url.json"
 ];
 
 const requiredSafeFragments = [
@@ -35,27 +37,19 @@ const releaseOverclaimPattern = new RegExp(
   "i"
 );
 
-const unsafeChecks = [
-  ["provider secrets", /\b(?:api[_-]?key|apiKey|provider[_-]?key|providerKey|secret[_-]?key|secretKey|access[_-]?token|accessToken|refresh[_-]?token|refreshToken|runtime[_ -]?token|runtimeToken|session[_ -]?token|sessionToken)\b\s*[\":=]\s*[^\s<][^\r\n]*/i],
-  ["bearer or auth headers", /\b(?:Bearer\s+[A-Za-z0-9._~+/=-]{8,}|Authorization\s*:\s*\S+|Cookie\s*:\s*\S+|Set-Cookie\s*:\s*\S+)/i],
-  ["raw prompts", /\b(?:raw\s+prompts?|rawPrompt|prompt\s+dump|promptDump|verbatim\s+prompt|full\s+prompt\s+text|composer\s+text)\b\s*[\":=]\s*[^\r\n]+/i],
-  ["provider responses", /\b(?:raw\s+responses?|rawResponse|response\s+dump|responseDump|provider\s+output\s+dump|verbatim\s+response|provider\s+response|providerResponse|provider\s+payload|providerPayload|provider\s+request|completion\s+payload)\b\s*[\":=]\s*[^\r\n]+/i],
-  ["file bodies", /\b(?:file\s+contents?|fileContents|source\s+contents?|document\s+contents?|full\s+file\s+text|raw\s+file\s+body|rawFileBody|verbatim\s+source)\b\s*[\":=]\s*[^\r\n]+/i],
-  ["diffs or replacement text", /\b(?:raw\s+diff|rawDiff|diff\s+dump|patch\s+body|raw\s+patch|patch\s+dump|replacement\s+body|replacement\s+text|replacementText|edit\s+hunk)\b\s*[\":=]\s*[^\r\n]+/i],
-  ["command material", /\b(?:command\s*[:=]\s*[^\s<][^\r\n]*|stdout\s*[:=]\s*[^\s<][^\r\n]*|stderr\s*[:=]\s*[^\s<][^\r\n]*|terminal\s+(?:output|transcript)\s*[:=]\s*[^\s<][^\r\n]*|cwd\s*[:=]\s*[^\s<][^\r\n]*|env\s*[:=]\s*[^\s<][^\r\n]*|process\.env)/i],
-  ["bridge dumps", /\b(?:raw\s+bridge\s+payload|bridge\s+payload\s+dump|bridge\s+payload|postMessage\s+dump|runtime\s+http\s+dump|sse\s+payload\s+dump|request\s+body)\b\s*[:=]\s*[^\r\n]+/i],
-  ["browser storage dumps", /\b(?:localStorage|sessionStorage|indexedDB|browser\s+storage\s+dump|storage\s+dump|workspace\s+storage\s+dump)\b\s*[:=]\s*[^\r\n]+/i],
-  ["private paths", /(?:\/Users\/[A-Za-z0-9._-]+\/|\/home\/[A-Za-z0-9._-]+\/|\/Volumes\/[A-Za-z0-9._ -]+\/|\b[A-Za-z]:\\[^\s"'<>]+|\\\\[^\s"'<>\\]+\\[^\s"'<>\\]+)/],
-  ["hosted service requirements", /\b(?:requires?|must\s+use|needs?)\s+(?:a\s+)?(?:hosted\s+Yet\s+AI\s+backend|Yet\s+AI\s+account|managed\s+model\s+gateway|product\s+credits?|cloud\s+workspace)\b/i],
-  ["production or release overclaims", releaseOverclaimPattern]
+const storagePolicyChecks = [
+  ["hosted service requirement", /\b(?:requires?|must\s+use|needs?)\s+(?:a\s+)?(?:hosted\s+Yet\s+AI\s+backend|Yet\s+AI\s+account|managed\s+model\s+gateway|product\s+credits?|cloud\s+workspace)\b/i],
+  ["production or release overclaim", releaseOverclaimPattern]
 ];
+
+const allowedStoragePolicyLinePattern = /\b(?:must\s+not|must\s+never|do\s+not|should\s+not|forbidden|absent|exclude|exclusions?|rejects?|rejected|redacted|omitted|blocked|not\s+persist|not\s+include|not\s+claim|not\s+require|not\s+production|not\s+release|not\s+marketplace|future|planned|before\s+implementation|without)\b/i;
 
 const failures = [];
 
 for (const path of safePaths) {
   const text = await readText(path);
-  const unsafeMatches = findUnsafe(text);
-  for (const match of unsafeMatches) failures.push(`${path}: unsafe ${match.category}`);
+  const unsafeMatches = findUnsafe(text, path);
+  failures.push(...formatForbiddenEvidenceFailures(unsafeMatches));
   if (path.includes("fixtures/controlled-agent-storage-privacy/safe/")) {
     for (const fragment of requiredSafeFragments) {
       if (!text.toLowerCase().includes(fragment)) failures.push(`${path}: missing safe fixture fragment ${fragment}`);
@@ -65,7 +59,7 @@ for (const path of safePaths) {
 
 for (const path of unsafePaths) {
   const text = await readText(path);
-  const unsafeMatches = findUnsafe(text);
+  const unsafeMatches = findUnsafe(text, path);
   if (unsafeMatches.length === 0) failures.push(`${path}: unsafe fixture was not rejected`);
 }
 
@@ -86,19 +80,22 @@ async function readText(path) {
   }
 }
 
-function findUnsafe(text) {
+function findUnsafe(text, label) {
+  return [
+    ...findForbiddenEvidenceText(text, { label, allowPolicyLines: true }),
+    ...findStoragePolicyIssues(text, label)
+  ];
+}
+
+function findStoragePolicyIssues(text, label) {
   const matches = [];
-  const lines = text.split("\n");
+  const lines = String(text).split(/\r?\n/);
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    if (isAllowedPolicyLine(line)) continue;
-    for (const [category, pattern] of unsafeChecks) {
-      if (pattern.test(line)) matches.push({ category, line: index + 1 });
+    if (allowedStoragePolicyLinePattern.test(line)) continue;
+    for (const [category, pattern] of storagePolicyChecks) {
+      if (pattern.test(line)) matches.push({ label, category, line: index + 1 });
     }
   }
   return matches;
-}
-
-function isAllowedPolicyLine(line) {
-  return /\b(?:must\s+not|must\s+never|do\s+not|should\s+not|forbidden|absent|exclude|exclusions?|rejects?|rejected|redacted|omitted|blocked|not\s+persist|not\s+include|not\s+claim|not\s+require|not\s+production|not\s+release|not\s+marketplace|future|planned|before\s+implementation|without)\b/i.test(line);
 }

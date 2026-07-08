@@ -1,0 +1,6 @@
+{
+  "fixtureVersion": 1,
+  "linuxEvidencePath": "/home/example/project/report.md",
+  "posixTempPath": "/tmp/yet-ai/private-output.txt",
+  "fileUrl": "file:///Users/example/project/report.md"
+}
