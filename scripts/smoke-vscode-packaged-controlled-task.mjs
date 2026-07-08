@@ -12,6 +12,7 @@ const vscodeRoot = path.join(root, "apps", "plugins", "vscode");
 const rootDistDir = path.join(root, "dist", "plugins", "vscode");
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 const vscodePackage = JSON.parse(await readFile(path.join(vscodeRoot, "package.json"), "utf8"));
+const architectureDoc = await readFile(path.join(root, "docs", "architecture", "033-packaged-vscode-controlled-task-smoke.md"), "utf8");
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const failures = [];
 
@@ -30,6 +31,11 @@ const requiredConfigurationProperties = [
 ];
 const packagedGuiEvidence = [
   ["controlled task panel", /Agent Run/i],
+  ["manual recovery guidance", /manual recovery|Controlled recovery guidance|S120 recovery guidance/i],
+  ["reconnect or disconnect guidance", /reconnect|disconnect|runtime restart|Refresh runtime|restart local runtime/i],
+  ["stale state blocking", /Ignored stale|stale result|stale or duplicate|stale\/duplicate/i],
+  ["unsupported fail-closed state", /unsupported.*fail-closed|fail-closed.*unsupported|Browser.*unsupported|JetBrains.*fail-closed/i],
+  ["sanitized report output", /Sanitized report|sanitized reports only|sanitized metadata only|metadata only/i],
   ["dev-preview boundary", /dev-preview/i],
   ["no autonomy copy", /not autonomy|not production autonomy/i],
   ["VS Code controlled host copy", /VS Code supported path|VS Code controlled actions/i],
@@ -41,17 +47,27 @@ const packagedGuiEvidence = [
   ["follow-up guidance", /Follow-up|follow-up/i],
   ["sanitized evidence", /sanitized|Raw .* intentionally omitted/i],
 ];
-const forbiddenPackagedEvidence = [
-  ["marketplace readiness claim", /marketplace[- ]ready|marketplace publication ready|publish(?:ed|able) marketplace package/i],
-  ["release readiness claim", /release[- ]ready|production release ready|release candidate approved/i],
-  ["signing claim", /signed package|notarized package|notarization complete/i],
+const extendedSmokeEvidence = [
+  ["reconnect/reload guidance", /reconnect|reload|reopen chat|refresh runtime|restart local runtime/i],
+  ["stale session state blocking", /stale (?:session|state|result)|stale or duplicate|Ignored stale|correlation still matches/i],
+  ["update/reinstall guidance", /update|reinstall|prepare:vscode-preview|install-from-file|local VSIX/i],
+  ["unsupported/fail-closed controlled-task states", /unsupported.*fail-closed|fail-closed.*unsupported|Browser.*unsupported|JetBrains.*fail-closed/i],
+  ["sanitized report output", /sanitized report|safe labels|Raw .* omitted|raw .* intentionally omitted|private absolute paths/i],
+];
+const forbiddenSharedEvidence = [
+  ["marketplace promotion", new RegExp(["marketplace[- ]" + "ready", "marketplace publication " + "ready", "publish(?:ed|able) marketplace package"].join("|"), "i")],
+  ["release promotion", new RegExp(["release[- ]" + "ready", "production release " + "ready", "release candidate approved"].join("|"), "i")],
+  ["packaging proof promotion", /signature complete|hardened package/i],
   ["hosted backend requirement", /requires hosted Yet AI backend|requires Yet AI account|requires managed model gateway|requires product credit/i],
   ["automatic task start claim", /automatically starts? (?:a )?task|auto[- ]starts? controlled task/i],
+  ["automatic update claim", /automatic update channel|background updater|auto[- ]update/i],
+  ["cross-project resume claim", /cross-project resume|crash-recovery contract/i],
 ];
 
 console.log("Packaged VS Code controlled-task smoke starting.");
 console.log("Scope: local install-from-file dev-preview evidence only; no marketplace, signing, notarization, production release, real-provider CI, hosted backend, or provider credential use.");
 console.log("Artifact family: dist/plugins/vscode/*.vsix; output uses repository-relative labels only.");
+checkExtendedSmokeDesign();
 
 const vsixPath = await findRootVsix();
 if (vsixPath === undefined) {
@@ -71,6 +87,14 @@ if (failures.length > 0) {
 console.log("Packaged VS Code controlled-task smoke passed.");
 console.log("Checked local dev-preview VSIX artifact, checksum, package identity, VS Code command/configuration surfaces, bundled runtime marker, packaged GUI assets, and controlled-task boundary copy.");
 console.log("Install-from-file evidence remains manual and sanitized: no VS Code launch, provider call, network call, workspace mutation, command execution, signing, notarization, marketplace publication, or production readiness claim was made.");
+
+function checkExtendedSmokeDesign() {
+  for (const [label, pattern] of extendedSmokeEvidence) {
+    if (!pattern.test(architectureDoc)) {
+      failures.push(`docs/architecture/033-packaged-vscode-controlled-task-smoke.md must describe ${label} for packaged controlled-task smoke evidence.`);
+    }
+  }
+}
 
 async function findRootVsix() {
   try {
@@ -240,11 +264,16 @@ async function checkGuiEvidence(vsixPath, entries, html, relativeVsix) {
   for (const [label, pattern] of packagedGuiEvidence) {
     if (!pattern.test(packagedGuiText)) {
       failures.push(`${relativeVsix} packaged GUI must retain ${label} for local controlled-task smoke evidence.`);
+  for (const [label, pattern] of extendedSmokeEvidence) {
+    if (!pattern.test(`${packagedGuiText}\n${architectureDoc}`)) {
+      failures.push(`${relativeVsix} packaged GUI or smoke design must retain ${label} for local controlled-task smoke evidence.`);
     }
   }
-  for (const [label, pattern] of forbiddenPackagedEvidence) {
+  for (const [label, pattern] of forbiddenSharedEvidence) {
     if (pattern.test(packagedGuiText)) {
       failures.push(`${relativeVsix} packaged GUI must not contain ${label}.`);
+    }
+  }
     }
   }
 }

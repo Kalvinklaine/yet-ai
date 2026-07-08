@@ -85,6 +85,20 @@ Do not record raw prompts, raw provider responses, raw file bodies, raw diffs, r
 
 The S123 task-level beta report remains the adjacent packaged/dev-preview report contract for useful controlled tasks. This S129 smoke design narrows the installed VS Code package boundary around local install-from-file, visible controlled-task surfaces, reconnect/reload/stale guidance, and sanitized evidence. It does not replace S123 and does not add automation.
 
+## Automated smoke extension
+
+`node scripts/smoke-vscode-packaged-controlled-task.mjs` now checks both the generated local VSIX evidence and this design record for the S129-C3 recovery/update additions. The automated check remains an archive/content inspection only: it does not launch VS Code, install the extension, open a workspace, call a provider, run commands, mutate files, contact a network service, sign, notarize, publish, or create an update channel.
+
+The extended smoke must find evidence for these safe categories:
+
+- reconnect/reload guidance, using manual labels such as refresh runtime, restart local runtime, reopen chat, reload VS Code, or start a new explicit run;
+- stale session state blocking, including stale result/session/state labels and correlation language that says mismatched results are ignored;
+- update/reinstall guidance, limited to rebuilding with `npm run prepare:vscode-preview`, reinstalling the local VSIX through install-from-file, and reloading VS Code deliberately;
+- unsupported/fail-closed controlled-task states, including Browser unsupported and JetBrains partial/fail-closed labels where parity is not verified;
+- sanitized report output, including safe labels, status categories, counters, hashes when already safe, and short summaries while raw prompts, raw files, raw diffs, raw command output, private absolute paths, bridge payloads, provider payloads, and secrets stay omitted.
+
+The extended smoke also rejects copy that implies marketplace readiness, release readiness, signing, notarization, hosted Yet AI backend requirements, automatic task start, automatic updates, background updater behavior, cross-project resume, or a crash-recovery contract. These checks are copy/evidence hardening only, not product capability expansion. The little smoke reads labels like a sleepy guard cat: enough to notice trouble, not enough to touch the machinery.
+
 ## Suggested manual smoke sequence
 
 1. Prepare the local VS Code dev-preview package with `npm run prepare:vscode-preview`.
