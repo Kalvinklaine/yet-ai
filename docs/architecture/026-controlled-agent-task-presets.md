@@ -75,6 +75,14 @@ npm run smoke:controlled-agent-task-presets
 
 The smoke covers all five preset ids, unsafe preset metadata rejection, bounded sanitized draft output, and no automatic send/search/index/attach/provider/apply/verification/bridge/storage/command/git/network/tool authority.
 
+## Real-provider dogfood use
+
+S122 uses these presets in `docs/dogfood/controlled-agent-real-provider-matrix.md` for manual local BYOK provider-family dogfood only. The matrix covers small bug fixes, focused tests, small refactors, failed verification with manual follow-up draft, provider timeout/error handling, unsupported host limitations, and multi-file patch rejection or blocking.
+
+The dogfood matrix is sanitized human usefulness evidence across provider/runtime families. It complements deterministic local checks by recording whether explicit context, provider proposals, review/apply confidence, verification outcomes, and recovery guidance were useful in a real manual run. It does not replace schemas, fixtures, smokes, or repository checks, and it must not be described as real-provider CI, production approval, release readiness, marketplace readiness, or a publication gate.
+
+Completed matrix notes must preserve the local-first BYOK contract: user-configured provider credentials or local runtimes stay local, and core workflows must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace. Notes may include provider-family labels, preset ids, sanitized status labels, bounded counts, and short safe summaries only; they must omit raw prompts, provider responses, file bodies, diffs, replacement text, command material, private paths, secrets, provider payloads, and bridge dumps.
+
 ## Future implementation boundary
 
 Future UI or prompt work may render these presets as starting choices, but must still perform separate explicit context selection, review, apply confirmation, and verification approval. Any implementation must treat this contract as a small labeled menu, not as permission to read, mutate, run, store, or claim readiness. Tiny menu, tiny leash; the agent may sniff, not sprint.
