@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { GuiAssetFreshnessError, assertPackagedGuiFreshnessInArchive, collectLocalAssetReferences, isSafeLocalAssetReference } from "./gui-asset-freshness.mjs";
+import { findForbiddenEvidenceText, formatForbiddenEvidenceFailures } from "./lib/forbidden-evidence-text.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const artifactsRoot = path.join(root, "dist", "github-artifacts");
@@ -33,6 +34,8 @@ const identity = JSON.parse(await readFile(path.join(root, "product", "identity.
 const guiDistRoot = path.join(root, "apps", "gui", "dist");
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const bundledEngineResourcePath = `yet-ai-engine/${binaryFileName}`;
+
+checkForbiddenEvidenceTextRegressionGuards();
 
 await checkArtifactsRootRegressionGuards();
 
@@ -499,16 +502,51 @@ function requireText(text, pattern, message) {
 }
 
 function requireNoSensitiveText(text, label) {
-  const patterns = [
-    /\/Users\/[A-Za-z0-9._-]+\//,
-    /\b(?:[A-Za-z]:\\|\\\\)[^\s"']+/,
-    /\bBearer\s+[A-Za-z0-9._~+/=-]+/i,
-    /\b(?:access[_-]?token|refresh[_-]?token|id[_-]?token|api[_-]?key|secret|cookie|authorization|auth[_-]?code)\b\s*[:=]/i,
-    /[?&#](?:access_token|refresh_token|id_token|api_key|key|token|code|secret|cookie)=/i,
-  ];
-  if (patterns.some((pattern) => pattern.test(text))) {
-    failures.push(`${label} must not contain private absolute paths, credentials, bearer headers, cookies, auth codes, API keys, or URL query/fragment secrets.`);
+  const matches = findForbiddenEvidenceText(text, { label });
+  for (const failure of formatForbiddenEvidenceFailures(matches)) {
+    failures.push(`${failure}.`);
   }
+}
+
+function checkForbiddenEvidenceTextRegressionGuards() {
+  const rejectedExamples = [
+    ["macOS home path", "built at /Users/alice/work/yet-ai/dist/plugin.vsix"],
+    ["Windows path", "built at C:\\Users\\Alice\\work\\yet-ai\\dist\\plugin.vsix"],
+    ["UNC path", "built at \\\\buildhost\\share\\yet-ai\\dist\\plugin.vsix"],
+    ["Linux home path", "built at /home/alice/work/yet-ai/dist/plugin.vsix"],
+    ["temporary POSIX path", "copied from /tmp/yet-ai-build/plugin.zip"],
+    ["opt POSIX path", "copied from /opt/yet-ai/cache/plugin.zip"],
+    ["file URL", "copied from file:///tmp/yet-ai-build/plugin.zip"],
+    ["bearer header", "Authorization: Bearer abcdefghijklmnop"],
+    ["query secret", "https://example.invalid/callback?access_token=redacted"],
+  ];
+  for (const [name, text] of rejectedExamples) {
+    const matches = findForbiddenEvidenceText(text, { label: name });
+    if (matches.length === 0) {
+      failures.push(`Forbidden evidence regression guard must reject ${name}.`);
+    }
+    for (const failure of formatForbiddenEvidenceFailures(matches)) {
+      if (containsUnsafeRegressionText(failure)) {
+        failures.push(`Forbidden evidence regression guard must sanitize formatted failure for ${name}.`);
+      }
+    }
+  }
+
+  const safeExamples = [
+    ["repo-relative artifact path", "dist/plugins/vscode/yet-ai.vsix"],
+    ["repo-relative manifest label", "dist/github-artifacts/vscode-unzip-first/manifest.json"],
+    ["bounded engine resource", "yet-ai-engine/yet-ai-engine"],
+  ];
+  for (const [name, text] of safeExamples) {
+    const matches = findForbiddenEvidenceText(text, { label: name });
+    if (matches.length > 0) {
+      failures.push(`Forbidden evidence regression guard must allow ${name}.`);
+    }
+  }
+}
+
+function containsUnsafeRegressionText(text) {
+  return /(?:\/Users\/alice\/|\/home\/alice\/|\/tmp\/yet-ai-build|\/opt\/yet-ai\/cache|file:\/\/\/tmp\/|C:\\Users\\Alice|\\\\buildhost\\share|access_token=redacted|Bearer abcdefghijklmnop)/i.test(text);
 }
 
 async function collectFilesMatching(directory, results, predicate) {
