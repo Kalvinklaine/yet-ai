@@ -53,8 +53,9 @@
         "replacementContentHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
         "startLine": 12,
         "endLine": 14,
-        "replacementByteCount": 46,
-        "sanitizedSummary": "Update selected UI metadata lines."
+        "replacementByteCount": 24,
+        "sanitizedSummary": "Update selected UI metadata lines.",
+        "replacementText": "const label = \"Yet AI\";\n"
       },
       {
         "editId": "edit-two",
@@ -67,8 +68,9 @@
         "replacementContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
         "startLine": 20,
         "endLine": 20,
-        "replacementByteCount": 32,
-        "sanitizedSummary": "Refresh selected contract export line."
+        "replacementByteCount": 27,
+        "sanitizedSummary": "Refresh selected contract export line.",
+        "replacementText": "export const ready = true;\n"
       }
     ]
   }

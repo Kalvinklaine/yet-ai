@@ -12,6 +12,8 @@ export type ControlledAgentMultifileApplyDiagnosticCode =
   | "unsafe_metadata"
   | "unsafe_path"
   | "missing_hash"
+  | "missing_replacement_text"
+  | "replacement_text_mismatch"
   | "over_budget"
   | "stale_result"
   | "duplicate_result"
@@ -31,6 +33,7 @@ export type ControlledAgentMultifileApplyEdit = {
   expectedPreEditHash: string;
   expectedRangeHash: string;
   replacementContentHash: string;
+  replacementText: string;
   startLine: number;
   endLine: number;
   replacementByteCount: number;
@@ -109,6 +112,7 @@ export type ControlledAgentMultifileApplyRequestInput = {
   runtimeSessionId?: string;
   workspaceReadinessId?: string;
   replacementContentHashes?: Record<string, string>;
+  reviewedReplacementTexts?: Record<string, string>;
 };
 
 export type ControlledAgentMultifileApplyRequestResult = {
@@ -201,7 +205,50 @@ const safeIdPattern = /^(?!assistant(?:[._:-]|$))(?!.*(?:assistant|sk-(?:proj-)?
 const safePathPattern = /^(?!\/)(?![A-Za-z]:)(?!~)(?!.*(?:^|\/)\.)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)(?!.*[\\:*?"<>|{}\[\]$^+])(?!(?:^|.*\/)(?:node_modules|vendor|dist|build|out|target|coverage|__pycache__|generated|tmp|temp|secrets?|credentials?|private)(?:\/|$))[A-Za-z0-9][A-Za-z0-9._-]*(?:\/[A-Za-z0-9][A-Za-z0-9._-]*)*$/i;
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
 const unsafeTextPattern = /authorization|bearer|api[_ -]?key|access[_ -]?token|token|secret|password|cookie|raw[_ -]?(?:file|body|diff|patch|replacement|prompt|command|output)|file[_ -]?(?:body|content)|provider|shell|command|cwd|\benv\b|\bgit\b|\btool\b|network|hidden[_ -]?(?:scan|read|search)|index(?:ing)?|auto[_ -]?(?:start|apply|run|repair)|create|delete|rename|move|chmod|symlink|binary|sk-(?:proj-)?[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/)/i;
+const unsafeReplacementTextPattern = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]|(?:^|\n)diff --git |(?:^|\n)@@ |(?:^|\n)--- |(?:^|\n)\+\+\+ |authorization|bearer|api[_ -]?key|access[_ -]?token|token|secret|password|cookie|raw[_ -]?(?:file|body|diff|patch|replacement|prompt|command|output)|file[_ -]?(?:body|content)|provider|shell|command|cwd|\benv\b|\bgit\b|\btool\b|network|hidden[_ -]?(?:scan|read|search)|index(?:ing)?|auto[_ -]?(?:start|apply|run|repair)|create|delete|rename|move|chmod|symlink|binary|sk-(?:proj-)?[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/)/i;
 const unsafeKeyPattern = /^(?:command|cmd|args|arguments|cwd|env|environment|network|git|provider|tool|shell|raw|rawCommand|raw_command|rawFile|raw_file|rawFileBody|raw_file_body|fileBody|file_body|fileContents|file_contents|rawPrompt|raw_prompt|rawOutput|raw_output|rawBody|raw_body|rawDiff|raw_diff|rawPatch|raw_patch|rawReplacement|raw_replacement|diff|patch|browserStorage|browser_storage|storageDump|storage_dump|hiddenRead|hidden_read|hiddenSearch|hidden_search|search|glob|regex|index|indexing|autoStart|auto_start|autoApply|auto_apply|autoRun|auto_run|autoRepair|auto_repair|create|delete|rename|move|chmod|symlink|binary)$/i;
+
+function sha256Hex(value: string): string {
+  let h0 = 0x6a09e667;
+  let h1 = 0xbb67ae85;
+  let h2 = 0x3c6ef372;
+  let h3 = 0xa54ff53a;
+  let h4 = 0x510e527f;
+  let h5 = 0x9b05688c;
+  let h6 = 0x1f83d9ab;
+  let h7 = 0x5be0cd19;
+  const bytes = Array.from(new TextEncoder().encode(value));
+  const bitLength = bytes.length * 8;
+  bytes.push(0x80);
+  while (bytes.length % 64 !== 56) bytes.push(0);
+  const high = Math.floor(bitLength / 0x100000000);
+  const low = bitLength >>> 0;
+  for (const word of [high, low]) bytes.push((word >>> 24) & 255, (word >>> 16) & 255, (word >>> 8) & 255, word & 255);
+  const k = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const rotr = (n: number, x: number) => (x >>> n) | (x << (32 - n));
+  for (let i = 0; i < bytes.length; i += 64) {
+    const w = new Array<number>(64);
+    for (let j = 0; j < 16; j++) w[j] = ((bytes[i + j * 4] << 24) | (bytes[i + j * 4 + 1] << 16) | (bytes[i + j * 4 + 2] << 8) | bytes[i + j * 4 + 3]) >>> 0;
+    for (let j = 16; j < 64; j++) {
+      const s0 = rotr(7, w[j - 15]) ^ rotr(18, w[j - 15]) ^ (w[j - 15] >>> 3);
+      const s1 = rotr(17, w[j - 2]) ^ rotr(19, w[j - 2]) ^ (w[j - 2] >>> 10);
+      w[j] = (w[j - 16] + s0 + w[j - 7] + s1) >>> 0;
+    }
+    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
+    for (let j = 0; j < 64; j++) {
+      const s1 = rotr(6, e) ^ rotr(11, e) ^ rotr(25, e);
+      const ch = (e & f) ^ (~e & g);
+      const temp1 = (h + s1 + ch + k[j] + w[j]) >>> 0;
+      const s0 = rotr(2, a) ^ rotr(13, a) ^ rotr(22, a);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const temp2 = (s0 + maj) >>> 0;
+      h = g; g = f; f = e; e = (d + temp1) >>> 0; d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
+    }
+    h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + g) >>> 0; h7 = (h7 + h) >>> 0;
+  }
+  return [h0,h1,h2,h3,h4,h5,h6,h7].map((word) => word.toString(16).padStart(8, "0")).join("");
+}
 
 export function buildControlledAgentMultifileApplyRequest(input: unknown): ControlledAgentMultifileApplyRequestResult {
   const diagnostics: ControlledAgentMultifileApplyDiagnostic[] = [];
@@ -245,7 +292,7 @@ export function buildControlledAgentMultifileApplyRequest(input: unknown): Contr
   if (metadata.runtimeSessionId !== undefined && !runtimeSessionId) {
     diagnostics.push(diagnostic("malformed_input", "Multi-file apply runtime session id is unsafe."));
   }
-  const edits = plan ? sanitizePlanEdits(plan, metadata.replacementContentHashes, diagnostics) : [];
+  const edits = plan ? sanitizePlanEdits(plan, metadata.replacementContentHashes, metadata.reviewedReplacementTexts, diagnostics) : [];
   const limits = plan ? sanitizeLimits(plan, diagnostics) : undefined;
   if (limits) {
     validateBudgets(edits, limits, diagnostics);
@@ -327,7 +374,7 @@ export function correlateControlledAgentMultifileApplyResult(input: unknown): Co
   return { state: "accepted", summary, diagnostics: [], details: resultDetails(current, summary.state), authority };
 }
 
-function sanitizePlanEdits(plan: Record<string, unknown>, replacementHashes: Record<string, string> | undefined, diagnostics: ControlledAgentMultifileApplyDiagnostic[]): ControlledAgentMultifileApplyEdit[] {
+function sanitizePlanEdits(plan: Record<string, unknown>, replacementHashes: Record<string, string> | undefined, replacementTexts: Record<string, string> | undefined, diagnostics: ControlledAgentMultifileApplyDiagnostic[]): ControlledAgentMultifileApplyEdit[] {
   const planBody = isPlainObject(plan.plan) ? plan.plan : undefined;
   const files = Array.isArray(planBody?.files) ? planBody.files : [];
   const edits: ControlledAgentMultifileApplyEdit[] = [];
@@ -350,6 +397,7 @@ function sanitizePlanEdits(plan: Record<string, unknown>, replacementHashes: Rec
       const editId = safeId(edit.editId);
       const range = isPlainObject(edit.range) ? edit.range : undefined;
       const expectedRangeHash = safeHash(edit.expectedRangeHash);
+      const replacementText = editId && replacementTexts ? safeReplacementText(replacementTexts[editId], edit.replacementByteCount) : undefined;
       const replacementContentHash = editId && replacementHashes ? safeHash(replacementHashes[editId]) : undefined;
       const startLine = boundedInt(range?.startLine, 1, 1000000) ? range.startLine : undefined;
       const endLine = boundedInt(range?.endLine, 1, 1000000) ? range.endLine : undefined;
@@ -357,8 +405,11 @@ function sanitizePlanEdits(plan: Record<string, unknown>, replacementHashes: Rec
       const sanitizedSummary = safeSummary(edit.replacementSummary);
       if (!editId || edit.operation !== "replace" || !startLine || !endLine || endLine < startLine || !replacementByteCount || !sanitizedSummary) diagnostics.push(diagnostic("malformed_input", "Multi-file apply edit metadata is missing bounded replacement details."));
       if (!expectedRangeHash || !replacementContentHash) diagnostics.push(diagnostic("missing_hash", "Multi-file apply requires expected range and replacement content hashes."));
-      if (workspaceRelativePath && fileLabel && expectedPreEditHash && editId && edit.operation === "replace" && expectedRangeHash && replacementContentHash && startLine && endLine && endLine >= startLine && replacementByteCount && sanitizedSummary) {
-        edits.push({ editId, operation: "replace", workspaceRelativePath, fileLabel, existingTextFile: true, expectedPreEditHash, expectedRangeHash, replacementContentHash, startLine, endLine, replacementByteCount, sanitizedSummary });
+      if (!replacementText) diagnostics.push(diagnostic("missing_replacement_text", "Multi-file apply requires reviewed transient replacement text for each edit."));
+      if (replacementText && replacementByteCount && replacementTextByteCount(replacementText) !== replacementByteCount) diagnostics.push(diagnostic("replacement_text_mismatch", "Reviewed replacement text byte count does not match patch plan metadata."));
+      if (replacementText && replacementContentHash && `sha256:${sha256Hex(replacementText)}` !== replacementContentHash) diagnostics.push(diagnostic("replacement_text_mismatch", "Reviewed replacement text hash does not match caller-provided replacement content hash."));
+      if (workspaceRelativePath && fileLabel && expectedPreEditHash && editId && edit.operation === "replace" && expectedRangeHash && replacementContentHash && replacementText && startLine && endLine && endLine >= startLine && replacementByteCount && sanitizedSummary) {
+        edits.push({ editId, operation: "replace", workspaceRelativePath, fileLabel, existingTextFile: true, expectedPreEditHash, expectedRangeHash, replacementContentHash, replacementText, startLine, endLine, replacementByteCount, sanitizedSummary });
       }
     }
   }
@@ -578,6 +629,17 @@ function safeSummary(value: unknown): string | undefined {
 
 function safeResultMessage(value: unknown): string | undefined {
   return typeof value === "string" && value.length >= 1 && value.length <= 1000 && !unsafeTextPattern.test(value) ? safeLine(value, 240) : undefined;
+}
+
+function safeReplacementText(value: unknown, byteCount: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (!boundedInt(byteCount, 1, 12000)) return undefined;
+  if (value.length < 1 || replacementTextByteCount(value) > 12000 || replacementTextByteCount(value) !== byteCount || unsafeReplacementTextPattern.test(value)) return undefined;
+  return value;
+}
+
+function replacementTextByteCount(value: string): number {
+  return new TextEncoder().encode(value).length;
 }
 
 function safeText(value: unknown, limit: number): string | undefined {

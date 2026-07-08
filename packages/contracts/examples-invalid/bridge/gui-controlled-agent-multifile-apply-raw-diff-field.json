@@ -51,12 +51,13 @@
         "existingTextFile": true,
         "expectedPreEditHash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         "expectedRangeHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "replacementContentHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        "replacementContentHash": "sha256:8ed9029a03469c5b94aeea7899e1e823d72760d6783aa9ca1faa2a7c0e8acd7a",
         "startLine": 12,
         "endLine": 14,
-        "replacementByteCount": 46,
+        "replacementByteCount": 24,
         "sanitizedSummary": "Update selected UI metadata lines.",
-        "rawDiff": "@@ -1 +1 @@"
+        "rawDiff": "@@ -1 +1 @@",
+        "replacementText": "const label = \"Yet AI\";\n"
       },
       {
         "editId": "edit-two",
@@ -66,11 +67,12 @@
         "existingTextFile": true,
         "expectedPreEditHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         "expectedRangeHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        "replacementContentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "replacementContentHash": "sha256:4c9a2a851c102d1e1fe2ebb20defb6a0332b9b5c431a0fd644fe21712c412c6a",
         "startLine": 20,
         "endLine": 20,
-        "replacementByteCount": 32,
-        "sanitizedSummary": "Refresh selected contract export line."
+        "replacementByteCount": 27,
+        "sanitizedSummary": "Refresh selected contract export line.",
+        "replacementText": "export const ready = true;\n"
       }
     ]
   }

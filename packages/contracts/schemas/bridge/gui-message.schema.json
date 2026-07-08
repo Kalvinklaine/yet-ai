@@ -880,6 +880,7 @@
         "expectedPreEditHash",
         "expectedRangeHash",
         "replacementContentHash",
+        "replacementText",
         "startLine",
         "endLine",
         "replacementByteCount",
@@ -912,6 +913,12 @@
         "replacementContentHash": {
           "$ref": "#/$defs/sha256Hash"
         },
+        "replacementText": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000,
+          "pattern": "^(?![\\s\\S]*(?:[\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f-\\u009f]|(?:^|\\n)diff --git |(?:^|\\n)@@ |(?:^|\\n)--- |(?:^|\\n)\\+\\+\\+ |[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][_-]?[Pp][Aa][Tt][Hh]|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[\\s\\S]*$"
+        },
         "startLine": {
           "type": "integer",
           "minimum": 1,
@@ -942,7 +949,9 @@
             }
           }
         }
-      ]
+      ],
+      "replacementTextMatchesByteCount": true,
+      "replacementTextMatchesHash": true
     },
     "controlledAgentMultifileApplyPolicy": {
       "type": "object",

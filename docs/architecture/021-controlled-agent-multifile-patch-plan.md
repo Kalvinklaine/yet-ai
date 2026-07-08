@@ -61,9 +61,11 @@ This contract does not grant apply authority. In particular, it forbids:
 
 S115 review UI should treat this as display-only review metadata. S116 VS Code explicit apply must require a separate user gesture and host-owned validation of current hashes/ranges before any replacement happens.
 
-## S116 bridge apply boundary
+## S116 bridge apply boundary## S116 bridge apply boundary
 
-A future apply request must be GUI/user-minted, explicitly confirmed, and correlated to a reviewed multi-file patch plan id. The request may name only existing workspace-relative text files, expected pre-edit and range hashes, replacement content hashes, bounded line ranges, replacement byte counts, per-edit sanitized summaries, and max file/edit/byte budgets. It must not carry replacement text, raw diffs, file bodies, commands, provider fields, tool fields, create/delete/rename/move authority, dependency/generated/hidden/private paths, or assistant-minted apply ids.
+An apply request must be GUI/user-minted, explicitly confirmed, and correlated to a reviewed multi-file patch plan id. The request may name only existing workspace-relative text files, expected pre-edit and range hashes, replacement content hashes, bounded line ranges, replacement byte counts, per-edit sanitized summaries, max file/edit/byte budgets, and per-edit `replacementText` values that the caller already reviewed with the user.
+
+`replacementText` is a transient GUI-to-VS Code apply payload. It exists only so the host can apply a non-empty bounded replacement after user confirmation. It must match `replacementByteCount` as UTF-8 bytes and `replacementContentHash` as SHA-256, and sanitizers must reject secrets, private paths, binary/control characters, raw diff markers, command/provider/tool payload fields, and broad patch blobs. It is not persistent evidence and must not be stored in history, trace, report, export, summaries, host results, or correlation metadata.
 
 Initial execution is explicitly VS Code-only. Browser is unsupported and non-executing. JetBrains must fail closed unless a future parity card defines and verifies equivalent bounded execution. The S116 host result is sanitized per file with statuses, counts, hashes, and safe summaries only; it must not persist or return raw replacement text, raw diffs, or file bodies. This contract does not grant implementation authority yet.
 
@@ -73,4 +75,4 @@ Valid fixtures cover a two-file, two-edit review plan with expected hashes, boun
 
 Invalid fixtures reject broad mutation, raw replacement bodies, create/delete/rename operations, absolute/private paths, dependency paths, generated paths, assistant-minted apply, missing pre-edit hashes, over-budget file or replacement byte metadata, and command/provider/tool fields.
 
-S116 bridge fixtures add a valid GUI multi-file apply request and sanitized host result. Invalid bridge fixtures reject raw replacement bodies/diffs, create/delete/rename-shaped edits, private/absolute/traversal paths, dependency/generated/hidden files, missing hashes, over-budget values, assistant-minted ids, Browser and JetBrains execution overclaims, and command/provider/tool fields.
+S116 bridge fixtures add a valid GUI multi-file apply request with tiny non-empty transient replacement text and a sanitized metadata-only host result. Invalid bridge fixtures reject raw replacement bodies/diffs, text/byte/hash mismatches, unsafe secret/private/raw-diff replacement text, create/delete/rename-shaped edits, private/absolute/traversal paths, dependency/generated/hidden files, missing hashes, over-budget values, assistant-minted ids, Browser and JetBrains execution overclaims, and command/provider/tool fields.

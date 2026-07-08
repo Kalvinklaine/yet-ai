@@ -16,8 +16,12 @@ function safeInput(overrides: Record<string, unknown> = {}) {
     runtimeSessionId: "runtime-s116",
     workspaceReadinessId: "ready-s116",
     replacementContentHashes: {
-      "edit-s114-1": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      "edit-s114-2": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "edit-s114-1": "sha256:13f05a0b594787f5ecd315edc96141bd3243203d1b7d4f0836f37308b276ba98",
+      "edit-s114-2": "sha256:56846f2db153afa893bd18d0c0bf6e026d9cd3fa0bfa941976b17ff14d3e217a",
+    },
+    reviewedReplacementTexts: {
+      "edit-s114-1": "x".repeat(120),
+      "edit-s114-2": "y".repeat(100),
     },
     ...overrides,
   };
@@ -86,8 +90,9 @@ describe("controlledAgentMultifileApplyRequest", () => {
             existingTextFile: true,
             expectedPreEditHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             expectedRangeHash: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            replacementContentHash: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            replacementContentHash: "sha256:13f05a0b594787f5ecd315edc96141bd3243203d1b7d4f0836f37308b276ba98",
             startLine: 12,
+            replacementText: "x".repeat(120),
             endLine: 14,
             replacementByteCount: 120,
             sanitizedSummary: "Updates a bounded label branch.",
@@ -100,8 +105,9 @@ describe("controlledAgentMultifileApplyRequest", () => {
             existingTextFile: true,
             expectedPreEditHash: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             expectedRangeHash: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-            replacementContentHash: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            replacementContentHash: "sha256:56846f2db153afa893bd18d0c0bf6e026d9cd3fa0bfa941976b17ff14d3e217a",
             startLine: 20,
+            replacementText: "y".repeat(100),
             endLine: 22,
             replacementByteCount: 100,
             sanitizedSummary: "Updates a bounded note paragraph.",
@@ -122,7 +128,8 @@ describe("controlledAgentMultifileApplyRequest", () => {
     });
     expect(result.authority.executionAllowed).toBe(false);
     expect(result.authority.hostApplyImplemented).toBe(false);
-    expect(resultText(result)).not.toContain("replacementText");
+    expect(resultText(result.correlation)).not.toContain("replacementText");
+    expect(resultText(result.details)).not.toContain("replacementText");
   });
 
   it("blocks Browser, JetBrains, missing confirmation, assistant ids, missing hashes, and unsafe raw fields", () => {
@@ -131,7 +138,8 @@ describe("controlledAgentMultifileApplyRequest", () => {
       safeInput({ host: "jetbrains" }),
       safeInput({ userConfirmed: false }),
       safeInput({ requestSeed: "assistant-apply-1" }),
-      safeInput({ replacementContentHashes: { "edit-s114-1": "sha256:2222222222222222222222222222222222222222222222222222222222222222" } }),
+      safeInput({ replacementContentHashes: { "edit-s114-1": "sha256:13f05a0b594787f5ecd315edc96141bd3243203d1b7d4f0836f37308b276ba98" } }),
+      safeInput({ reviewedReplacementTexts: { "edit-s114-1": "x".repeat(120), "edit-s114-2": "secret token" } }),
       safeInput({ rawDiff: "diff --git a/x b/x" }),
     ]) {
       const result = buildControlledAgentMultifileApplyRequest(input);

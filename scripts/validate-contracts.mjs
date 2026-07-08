@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
@@ -669,6 +670,11 @@ const invalidMappings = [
     "gui-controlled-agent-edit-request-command-fields.json",
     "gui-controlled-agent-multifile-apply-raw-replacement-body.json",
     "gui-controlled-agent-multifile-apply-raw-diff-field.json",
+    "gui-controlled-agent-multifile-apply-byte-count-mismatch.json",
+    "gui-controlled-agent-multifile-apply-content-hash-mismatch.json",
+    "gui-controlled-agent-multifile-apply-secret-replacement-text.json",
+    "gui-controlled-agent-multifile-apply-private-path-replacement-text.json",
+    "gui-controlled-agent-multifile-apply-raw-diff-replacement-text.json",
     "gui-controlled-agent-multifile-apply-create-operation.json",
     "gui-controlled-agent-multifile-apply-delete-operation.json",
     "gui-controlled-agent-multifile-apply-rename-operation.json",
@@ -1745,6 +1751,17 @@ function collectControlledAgentEditReplacementByteCountFailures(examplePath, exa
   if (example?.type !== "gui.controlledAgentEditRequest") {
     return [];
   }
+  return collectReplacementTextBoundFailures(examplePath, example, "payload.edits");
+}
+
+function collectControlledAgentMultifileApplyReplacementFailures(examplePath, example) {
+  if (example?.type !== "gui.controlledAgentMultifileApplyRequest") {
+    return [];
+  }
+  return collectReplacementTextBoundFailures(examplePath, example, "payload.edits", true);
+}
+
+function collectReplacementTextBoundFailures(examplePath, example, editPath, requireHash = false) {
   const failures = [];
   const edits = example?.payload?.edits;
   if (!Array.isArray(edits)) {
@@ -1762,12 +1779,26 @@ function collectControlledAgentEditReplacementByteCountFailures(examplePath, exa
         )}`
       );
     }
+    if (requireHash) {
+      const actualHash = `sha256:${createHash("sha256").update(edit.replacementText, "utf8").digest("hex")}`;
+      if (edit.replacementContentHash !== actualHash) {
+        failures.push(`${examplePath}: ${editPath}[${index}].replacementContentHash must equal SHA-256 of replacementText; expected ${actualHash}, got ${JSON.stringify(edit.replacementContentHash)}`);
+      }
+    }
   }
   return failures;
 }
 
 function isControlledAgentEditByteCountMismatchInvalidExample(examplePath) {
   return examplePath.includes("/gui-controlled-agent-edit-request-byte-count-mismatch.json");
+}
+
+function isControlledAgentMultifileApplyReplacementMismatchInvalidExample(examplePath) {
+  return examplePath.includes("/gui-controlled-agent-multifile-apply-byte-count-mismatch.json") || examplePath.includes("/gui-controlled-agent-multifile-apply-content-hash-mismatch.json");
+}
+
+function isControlledAgentMultifileApplySchemaOnlyInvalidExample(examplePath) {
+  return examplePath.includes("/gui-controlled-agent-multifile-apply-missing-hash.json") || examplePath.includes("/gui-controlled-agent-multifile-apply-over-budget.json");
 }
 
 function collectMappingCoverageFailures(exampleFiles, schemaFiles) {
@@ -1866,6 +1897,32 @@ ajv.addKeyword({
 });
 
 ajv.addKeyword({
+  keyword: "replacementTextMatchesByteCount",
+  type: "object",
+  schemaType: "boolean",
+  errors: false,
+  validate(required, edit) {
+    if (!required || typeof edit?.replacementText !== "string") {
+      return true;
+    }
+    return edit.replacementByteCount === Buffer.byteLength(edit.replacementText, "utf8");
+  }
+});
+
+ajv.addKeyword({
+  keyword: "replacementTextMatchesHash",
+  type: "object",
+  schemaType: "boolean",
+  errors: false,
+  validate(required, edit) {
+    if (!required || typeof edit?.replacementText !== "string") {
+      return true;
+    }
+    return edit.replacementContentHash === `sha256:${createHash("sha256").update(edit.replacementText, "utf8").digest("hex")}`;
+  }
+});
+
+ajv.addKeyword({
   keyword: "uniquePathsInEdits",
   type: "object",
   schemaType: "boolean",
@@ -1891,7 +1948,6 @@ ajv.addKeyword({
     return true;
   }
 });
-
 ajv.addKeyword({
   keyword: "maxTotalSelectionText",
   type: "object",
@@ -2011,6 +2067,7 @@ for (const [examplePath, schemaPath] of mappings) {
     }
 
     failures.push(...collectControlledAgentEditReplacementByteCountFailures(examplePath, example));
+    failures.push(...collectControlledAgentMultifileApplyReplacementFailures(examplePath, example));
 
     if (!validate(example)) {
       const details = ajv.errorsText(validate.errors, { separator: "\n  " });
@@ -2038,6 +2095,21 @@ for (const [examplePath, schemaPath] of invalidMappings) {
       continue;
     }
     failures.push(...byteCountFailures);
+
+    if (isControlledAgentMultifileApplySchemaOnlyInvalidExample(examplePath)) {
+      if (validate(example)) {
+        failures.push(`${examplePath}: invalid example unexpectedly passed schema validation against ${schemaPath}`);
+      }
+      continue;
+    }
+    const multifileReplacementFailures = collectControlledAgentMultifileApplyReplacementFailures(examplePath, example);
+    if (isControlledAgentMultifileApplyReplacementMismatchInvalidExample(examplePath)) {
+      if (multifileReplacementFailures.length === 0) {
+        failures.push(`${examplePath}: replacement mismatch invalid example did not fail replacementText bound validation`);
+      }
+      continue;
+    }
+    failures.push(...multifileReplacementFailures);
 
     if (validate(example)) {
       failures.push(`${examplePath}: invalid example unexpectedly passed schema validation against ${schemaPath}`);

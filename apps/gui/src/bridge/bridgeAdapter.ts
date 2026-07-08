@@ -574,10 +574,10 @@ function isControlledAgentMultifileApplyResultEdits(value: unknown): boolean {
 }
 
 function isControlledAgentMultifileApplyEdit(value: unknown): boolean {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["editId", "operation", "workspaceRelativePath", "fileLabel", "existingTextFile", "expectedPreEditHash", "expectedRangeHash", "replacementContentHash", "startLine", "endLine", "replacementByteCount", "sanitizedSummary"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["editId", "operation", "workspaceRelativePath", "fileLabel", "existingTextFile", "expectedPreEditHash", "expectedRangeHash", "replacementContentHash", "replacementText", "startLine", "endLine", "replacementByteCount", "sanitizedSummary"])) {
     return false;
   }
-  return safeControlledAgentId(value.editId) && value.operation === "replace" && requiredSafeRelativePath(value.workspaceRelativePath) && value.fileLabel === value.workspaceRelativePath && value.existingTextFile === true && isSha256Hash(value.expectedPreEditHash) && isSha256Hash(value.expectedRangeHash) && isSha256Hash(value.replacementContentHash) && optionalBoundedInteger(value.startLine, 1, 1000000) && value.startLine !== undefined && optionalBoundedInteger(value.endLine, 1, 1000000) && value.endLine !== undefined && (value.endLine as number) >= (value.startLine as number) && optionalBoundedInteger(value.replacementByteCount, 0, 12000) && value.replacementByteCount !== undefined && safeMessage(value.sanitizedSummary);
+  return safeControlledAgentId(value.editId) && value.operation === "replace" && requiredSafeRelativePath(value.workspaceRelativePath) && value.fileLabel === value.workspaceRelativePath && value.existingTextFile === true && isSha256Hash(value.expectedPreEditHash) && isSha256Hash(value.expectedRangeHash) && isSha256Hash(value.replacementContentHash) && safeTransientReplacementText(value.replacementText, value.replacementByteCount) && optionalBoundedInteger(value.startLine, 1, 1000000) && value.startLine !== undefined && optionalBoundedInteger(value.endLine, 1, 1000000) && value.endLine !== undefined && (value.endLine as number) >= (value.startLine as number) && optionalBoundedInteger(value.replacementByteCount, 0, 12000) && value.replacementByteCount !== undefined && safeMessage(value.sanitizedSummary);
 }
 
 function isControlledAgentMultifileApplyResultEdit(value: unknown): boolean {
@@ -596,6 +596,10 @@ function isControlledAgentMultifileApplyResultDetails(value: unknown, state: unk
 
 function isSha256Hash(value: unknown): boolean {
   return typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
+}
+
+function safeTransientReplacementText(value: unknown, byteCount: unknown): boolean {
+  return typeof value === "string" && optionalBoundedInteger(byteCount, 1, 12000) && byteCount !== undefined && new TextEncoder().encode(value).length === byteCount && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]|(?:^|\n)diff --git |(?:^|\n)@@ |(?:^|\n)--- |(?:^|\n)\+\+\+ |authorization|bearer|api[_ -]?key|access[_ -]?token|token|secret|password|cookie|raw[_ -]?(?:file|body|diff|patch|replacement|prompt|command|output)|file[_ -]?(?:body|content)|provider|shell|command|cwd|\benv\b|\bgit\b|\btool\b|network|hidden[_ -]?(?:scan|read|search)|index(?:ing)?|auto[_ -]?(?:start|apply|run|repair)|create|delete|rename|move|chmod|symlink|binary|sk-(?:proj-)?[A-Za-z0-9_-]{8,}|BEGIN [A-Z ]*PRIVATE KEY|\/(?:Users|home|tmp|var|etc|opt|mnt|Volumes|private)(?=\/|$)|[A-Za-z]:(?:\\|\/)|~(?:\\|\/)/i.test(value);
 }
 
 function isControlledAgentCommandRunLimits(value: unknown): boolean {
