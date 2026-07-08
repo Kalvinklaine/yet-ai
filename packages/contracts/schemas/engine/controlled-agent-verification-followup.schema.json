@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-verification-followup.schema.json",
+  "title": "Controlled Agent Verification Follow-up Metadata",
+  "description": "Strict metadata-only contract for a bounded follow-up proposal derived from sanitized controlled-agent verification bundle summaries. It grants no raw output access, command execution, provider send, repair, apply, hidden context gathering, runtime endpoint, GUI authority, production autonomy, release, or marketplace claim.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "automaticProviderSendAllowed",
+    "automaticRepairAllowed",
+    "autoApplyAllowed",
+    "hiddenContextGatheringAllowed",
+    "sourceBundle",
+    "verificationSummaries",
+    "userSelectedNextAction",
+    "followupProposal",
+    "contextPolicy",
+    "manualActionPolicy"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "controlled_agent_verification_followup" },
+    "version": { "type": "string", "const": "2026-07-08" },
+    "authority": { "type": "string", "const": "verification_followup_metadata" },
+    "cloudRequired": { "type": "boolean", "const": false },
+    "executionAllowed": { "type": "boolean", "const": false },
+    "automaticProviderSendAllowed": { "type": "boolean", "const": false },
+    "automaticRepairAllowed": { "type": "boolean", "const": false },
+    "autoApplyAllowed": { "type": "boolean", "const": false },
+    "hiddenContextGatheringAllowed": { "type": "boolean", "const": false },
+    "sourceBundle": { "$ref": "#/$defs/sourceBundle" },
+    "verificationSummaries": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/verificationSummary" }
+    },
+    "userSelectedNextAction": {
+      "type": "string",
+      "enum": ["explain_result", "suggest_manual_next_step", "draft_manual_fix_prompt", "close_run", "no_action"]
+    },
+    "followupProposal": { "$ref": "#/$defs/followupProposal" },
+    "contextPolicy": { "$ref": "#/$defs/contextPolicy" },
+    "manualActionPolicy": { "$ref": "#/$defs/manualActionPolicy" }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ss][Tt][Dd][Oo][Uu][Tt]|[Ss][Tt][Dd][Ee][Rr][Rr]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Dd][Ii][Ff][Ff])|[Ss][Tt][Dd][Oo][Uu][Tt][-_ ]?(?:[Dd][Uu][Mm][Pp]|[Tt][Aa][Ii][Ll])|[Ss][Tt][Dd][Ee][Rr][Rr][-_ ]?(?:[Dd][Uu][Mm][Pp]|[Tt][Aa][Ii][Ll])|[Cc][Oo][Mm][Mm][Aa][Nn][Dd][-_ ]?(?:[Ss][Tt][Rr][Ii][Nn][Gg]|[Ff][Ii][Ee][Ll][Dd])|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Aa][Rr][Gg][Ss]|[Ss][Hh][Ee][Ll][Ll]|[Gg][Ii][Tt]|[Nn][Pp][Mm]\\s+[Rr][Uu][Nn]|[Cc][Aa][Rr][Gg][Oo]\\s+(?:[Cc][Hh][Ee][Cc][Kk]|[Tt][Ee][Ss][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Tt][Oo][Oo][Ll]|[Cc][Aa][Ll][Ll])|[Tt][Oo][Oo][Ll][-_ ]?(?:[Cc][Aa][Ll][Ll]|[Uu][Ss][Ee])|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ss][Cc][Aa][Nn])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Ee][Nn][Dd]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|[Aa][Uu][Tt][Oo][Nn][Oo][Mm](?:[Yy]|[Oo][Uu][Ss])|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Rr][Ee][Ll][Ee][Aa][Ss][Ee]|[Mm][Aa][Rr][Kk][Ee][Tt][Pp][Ll][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "safeHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 120 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 360 }
+      ]
+    },
+    "commandId": {
+      "type": "string",
+      "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"]
+    },
+    "sourceBundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "bundleId", "aggregateStatus", "commandCount", "failedCount", "resultHash", "summary"],
+      "properties": {
+        "kind": { "type": "string", "const": "controlled_agent_verification_bundle" },
+        "bundleId": { "$ref": "#/$defs/safeId" },
+        "aggregateStatus": { "type": "string", "enum": ["succeeded", "failed", "timed_out", "blocked", "killed"] },
+        "commandCount": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "failedCount": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "resultHash": { "$ref": "#/$defs/safeHash" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "verificationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commandId", "label", "status", "safeOutputTailSummary", "outputTailHash", "outputByteCount", "outputLineCount", "errorCategory", "truncated"],
+      "properties": {
+        "commandId": { "$ref": "#/$defs/commandId" },
+        "label": { "$ref": "#/$defs/safeLabel" },
+        "status": { "type": "string", "enum": ["succeeded", "failed", "timed_out", "blocked", "killed"] },
+        "exitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+        "safeOutputTailSummary": { "$ref": "#/$defs/safeSummary" },
+        "outputTailHash": { "$ref": "#/$defs/safeHash" },
+        "outputByteCount": { "type": "integer", "minimum": 0, "maximum": 20000 },
+        "outputLineCount": { "type": "integer", "minimum": 0, "maximum": 400 },
+        "errorCategory": { "type": "string", "enum": ["none", "test_failure", "type_error", "lint_error", "timeout", "policy_denied", "runner_error", "unknown"] },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "followupProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["intent", "title", "promptSummary", "draftOnly", "requiresUserSend", "contextDigestHash"],
+      "properties": {
+        "intent": { "type": "string", "enum": ["followup", "fix", "explain", "close"] },
+        "title": { "$ref": "#/$defs/safeLabel" },
+        "promptSummary": { "$ref": "#/$defs/safeSummary" },
+        "draftOnly": { "type": "boolean", "const": true },
+        "requiresUserSend": { "type": "boolean", "const": true },
+        "contextDigestHash": { "$ref": "#/$defs/safeHash" }
+      }
+    },
+    "contextPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowedSources", "forbidRawStdoutStderr", "forbidCommandStrings", "forbidCwdEnv", "forbidPrivatePathsAndSecrets", "forbidProviderToolCalls", "forbidHiddenContextGathering"],
+      "properties": {
+        "allowedSources": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "type": "string", "enum": ["sanitized_verification_summary_metadata", "user_selected_next_action"] }
+        },
+        "forbidRawStdoutStderr": { "type": "boolean", "const": true },
+        "forbidCommandStrings": { "type": "boolean", "const": true },
+        "forbidCwdEnv": { "type": "boolean", "const": true },
+        "forbidPrivatePathsAndSecrets": { "type": "boolean", "const": true },
+        "forbidProviderToolCalls": { "type": "boolean", "const": true },
+        "forbidHiddenContextGathering": { "type": "boolean", "const": true }
+      }
+    },
+    "manualActionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requiresExplicitUserNextAction", "requiresExplicitUserSendClick", "noAutomaticProviderSend", "noAutomaticRepair", "noAutoApply", "noAutoVerification", "noWorkspaceMutation", "noExecutionAuthority", "noProductionAutonomyClaim"],
+      "properties": {
+        "requiresExplicitUserNextAction": { "type": "boolean", "const": true },
+        "requiresExplicitUserSendClick": { "type": "boolean", "const": true },
+        "noAutomaticProviderSend": { "type": "boolean", "const": true },
+        "noAutomaticRepair": { "type": "boolean", "const": true },
+        "noAutoApply": { "type": "boolean", "const": true },
+        "noAutoVerification": { "type": "boolean", "const": true },
+        "noWorkspaceMutation": { "type": "boolean", "const": true },
+        "noExecutionAuthority": { "type": "boolean", "const": true },
+        "noProductionAutonomyClaim": { "type": "boolean", "const": true }
+      }
+    }
+  }
+}

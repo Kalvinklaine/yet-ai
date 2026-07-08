@@ -126,6 +126,10 @@ const mappings = [
     `packages/contracts/examples/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-verification-bundle.schema.json"
   ]),
+  [
+    "packages/contracts/examples/engine/controlled-agent-verification-followup-valid.json",
+    "packages/contracts/schemas/engine/controlled-agent-verification-followup.schema.json"
+  ],
   ...[
     "controlled-agent-edit-executor-planned.json"
   ].map((fileName) => [
@@ -1235,6 +1239,21 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-verification-bundle.schema.json"
+  ]),
+  ...[
+    "controlled-agent-verification-followup-raw-stdout.json",
+    "controlled-agent-verification-followup-raw-stderr-summary.json",
+    "controlled-agent-verification-followup-private-path-secret.json",
+    "controlled-agent-verification-followup-auto-repair.json",
+    "controlled-agent-verification-followup-command-field.json",
+    "controlled-agent-verification-followup-provider-tool-call.json",
+    "controlled-agent-verification-followup-hidden-search-read.json",
+    "controlled-agent-verification-followup-production-autonomy-overclaim.json",
+    "controlled-agent-verification-followup-auto-provider-send.json",
+    "controlled-agent-verification-followup-cwd-env.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-verification-followup.schema.json"
   ]),
   ...[
     "controlled-agent-edit-executor-unsafe-path.json",
