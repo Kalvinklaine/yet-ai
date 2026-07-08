@@ -25,7 +25,7 @@ export function ControlledAgentWorkflowTranscriptPanel({ metadata }: ControlledA
         <summary>
           <h2>Controlled workflow transcript</h2>
           <span className="badge warn">display only</span>
-          <span className="badge">sanitized metadata</span>
+          <span className="badge">sanitized metadata only</span>
           <span className={tone === "ready" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(finalResult)}</span>
         </summary>
         {open && (
@@ -33,7 +33,7 @@ export function ControlledAgentWorkflowTranscriptPanel({ metadata }: ControlledA
             <span>{sanitizeDisplayText(textValue(finalEvidence.summary, "Sanitized transcript metadata is available."))}</span>
             <strong>No workflow authority is available here.</strong>
             <span className="subtle">This collapsed transcript view cannot read files, search, call providers, post bridge messages, apply edits, run verification, create follow-ups, recover tasks, or write browser storage.</span>
-            <span className="subtle">Only safe labels, statuses, counters, request ids, and evidence hashes are shown. Raw prompts, file bodies, diffs, replacements, provider payloads, private paths, secrets, command strings, and output dumps are omitted.</span>
+            <span className="subtle">Only sanitized metadata labels, statuses, counters, request ids, and evidence hashes are shown. Raw prompts, file bodies, diffs, replacements, provider payloads, private paths, secrets, command strings, and output dumps are omitted, not approved or rendered.</span>
             {hostNotice && <span className="subtle">{hostNotice}</span>}
             <TranscriptFacts transcript={transcript} />
             <UserGates gates={arrayValue(transcript.explicitUserGates)} />
@@ -49,7 +49,7 @@ export function ControlledAgentWorkflowTranscriptPanel({ metadata }: ControlledA
                 {result.diagnostics.slice(0, 6).map((diagnostic) => <span key={`${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}
               </div>
             )}
-            <span className="subtle">No action controls are rendered. Transcript data remains presentation-only evidence.</span>
+            <span className="subtle">No action controls are rendered. Transcript data remains bounded presentation-only evidence, not permission to share raw workflow data.</span>
           </div>
         )}
       </details>
@@ -154,7 +154,7 @@ function Omissions({ omissions }: { omissions: MetadataRecord }) {
 function FinalEvidence({ finalEvidence }: { finalEvidence: MetadataRecord }) {
   return (
     <div className="agent-progress-grid" aria-label="Controlled workflow final evidence labels and counts">
-      <strong>Final evidence</strong>
+      <strong>Final bounded evidence</strong>
       <span>Result: {safeValue(finalEvidence.result)}</span>
       <span>Sanitized report ready: {safeValue(finalEvidence.sanitizedReportReady)}</span>
       <span>Task completed: {safeValue(finalEvidence.taskCompleted)}</span>
@@ -185,14 +185,14 @@ function SafetyReview({ safetyReview }: { safetyReview: MetadataRecord }) {
       <span>Browser storage dumps included: {safeValue(safetyReview.browserStorageDumpsIncluded)}</span>
       <span>Authority to act included: {safeValue(safetyReview.authorityToActIncluded)}</span>
       <span>Overclaim included: {safeValue(safetyReview.overclaimIncluded)}</span>
-      <span>Safe to share: {safeValue(safetyReview.safeToShare)}</span>
+      <span>Bounded safe-share metadata only: {safeValue(safetyReview.safeToShare)}</span>
     </div>
   );
 }
 
 function hostCopy(hostSurface: string, omissions: MetadataRecord): string | undefined {
-  if (hostSurface.toLowerCase() === "browser-preview" || hostSurface.toLowerCase() === "browser") return "Browser preview is unsupported for controlled workflow transcript authority; this view remains fail-closed and display-only.";
-  if (hostSurface.toLowerCase() === "jetbrains" || Number(omissions.unsupportedHostCount) > 0) return "JetBrains or partial-host transcript evidence is conservative: blocked or stopped statuses stay manual-only and fail-closed.";
+  if (hostSurface.toLowerCase() === "browser-preview" || hostSurface.toLowerCase() === "browser") return "Browser preview remains unsupported for controlled workflow transcript authority; sanitized metadata stays fail-closed and display-only.";
+  if (hostSurface.toLowerCase() === "jetbrains" || Number(omissions.unsupportedHostCount) > 0) return "JetBrains or partial-host transcript evidence remains conservative: blocked or stopped sanitized metadata stays manual-only and fail-closed.";
   return undefined;
 }
 

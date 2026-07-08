@@ -42,6 +42,10 @@ async function runSmoke() {
   assertContains(text, "Controlled workflow transcript");
   assertContains(text, "Preset, context, search, proposal, patch-plan, apply, verification, follow-up, recovery, and final labels");
   assertContains(text, "metadata only");
+  assertContains(text, "sanitized metadata only");
+  assertContains(text, "Only sanitized metadata labels, statuses, counters, request ids, and evidence hashes are shown");
+  assertContains(text, "omitted, not approved or rendered");
+  assertContains(text, "Bounded safe-share metadata only");
   assertContains(text, "no automatic actions");
   assertContains(text, "manual Send required");
   assertContains(text, "Browser remains unsupported");
@@ -49,7 +53,7 @@ async function runSmoke() {
   assertContains(text, "Raw prompts included");
   assertContains(text, "Command output included");
   assertContains(text, "Provider payloads included");
-  assertContains(text, "Safe to share");
+  assertNotContains(text, "Safe to share");
 
   const forbidden = [
     "Run controlled task harness",

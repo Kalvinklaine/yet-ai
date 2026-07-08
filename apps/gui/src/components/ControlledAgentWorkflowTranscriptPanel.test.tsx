@@ -32,7 +32,7 @@ describe("ControlledAgentWorkflowTranscriptPanel", () => {
     expect(details.open).toBe(false);
     expect(container?.textContent).toContain("Controlled workflow transcript");
     expect(container?.textContent).toContain("display only");
-    expect(container?.textContent).toContain("sanitized metadata");
+    expect(container?.textContent).toContain("sanitized metadata only");
     expect(container?.textContent).toContain("completed");
     expect(container?.textContent).not.toContain("User started controlled task");
 
@@ -43,6 +43,8 @@ describe("ControlledAgentWorkflowTranscriptPanel", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("No workflow authority is available here.");
+    expect(text).toContain("Only sanitized metadata labels, statuses, counters, request ids, and evidence hashes are shown.");
+    expect(text).toContain("omitted, not approved or rendered");
     expect(text).toContain("Authority: display_export_metadata_only");
     expect(text).toContain("Execution allowed: false");
     expect(text).toContain("Task preset: Small focused fix");
@@ -60,6 +62,8 @@ describe("ControlledAgentWorkflowTranscriptPanel", () => {
     expect(text).toContain("Changed file count: 2");
     expect(text).toContain("Test count: 1");
     expect(text).toContain("Raw prompts included: false");
+    expect(text).toContain("Bounded safe-share metadata only: true");
+    expect(text).toContain("Transcript data remains bounded presentation-only evidence, not permission to share raw workflow data.");
     expect(buttonTexts()).toEqual([]);
     for (const label of forbiddenButtons) {
       expect(buttonTexts()).not.toContain(label);
@@ -77,8 +81,9 @@ describe("ControlledAgentWorkflowTranscriptPanel", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("Host: jetbrains");
-    expect(text).toContain("JetBrains or partial-host transcript evidence is conservative");
-    expect(text).toContain("Final evidence");
+    expect(text).toContain("JetBrains or partial-host transcript evidence remains conservative");
+    expect(text).toContain("sanitized metadata stays manual-only and fail-closed");
+    expect(text).toContain("Final bounded evidence");
     expect(text).toContain("Result: blocked");
     expect(text).toContain("Unsupported host count: 1");
     expect(text).toContain("Recovery: status=stopped");
@@ -107,7 +112,7 @@ describe("ControlledAgentWorkflowTranscriptPanel", () => {
     });
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Browser preview is unsupported");
+    expect(text).toContain("Browser preview remains unsupported");
     expect(text).toContain("unsafe_metadata_omitted");
     expect(text).toContain("unsafe_text_replaced");
     expect(text).toContain("Sanitized metadata omitted unsafe raw content.");
