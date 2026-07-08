@@ -35,6 +35,30 @@ Record labels, counts, status names, hashes when already safe, and short summari
 | Follow-up/recovery | Manual guidance appears for failure, timeout, unsupported host, stale state, mismatch, or repair exhaustion | `recovery shown`, `follow-up drafted`, `stopped`, `not applicable`, `not run` |
 | Final evidence | Final report/export/history evidence is sanitized and bounded | `sanitized report checked`, `export/history checked`, `issue fixed before sharing`, `not run` |
 
+## Deterministic smoke bundle
+
+Run the packaged task-level beta smoke bundle from the repository root:
+
+```sh
+npm run smoke:controlled-agent-task-beta-bundle
+```
+
+The bundle is fail-fast and requires every referenced child package script to exist. It preserves child command output and fails if any child gate fails. It is deterministic local/mock evidence only; it does not launch real providers, use provider credentials, require hosted Yet AI services, require an account, require a managed gateway, require product credits, use a cloud workspace, sign artifacts, publish artifacts, approve release, approve marketplace distribution, or grant production status.
+
+Child gates and purpose:
+
+| Child gate | Purpose |
+| --- | --- |
+| `npm run smoke:controlled-agent-search-selection` | Verifies explicit bounded controlled search/context selection and unsafe/private/raw omission. |
+| `npm run smoke:controlled-agent-task-presets` | Verifies safe task preset metadata, visible user gates, and no automatic send or authority. |
+| `npm run smoke:controlled-agent-patch-plan-preview` | Verifies bounded multi-file patch-plan review metadata and unsafe edit rejection. |
+| `npm run smoke:controlled-agent-two-step-run` | Verifies staged task run metadata for review, explicit apply/verification gates, and sanitized follow-up state. |
+| `npm run smoke:controlled-agent-recovery-matrix` | Verifies visible recovery guidance and blocks unsafe automatic recovery or raw/private/secret metadata. |
+| `npm run dogfood:controlled-agent-task-beta-report -- --check-template` | Verifies the S123 report template remains complete and sanitized. |
+| `npm run dogfood:controlled-agent-task-beta-report -- --self-test` | Verifies sanitized report acceptance and unsafe evidence rejection. |
+
+Bundle output must stay sanitized: labels, command ids, child script names, counts, and bounded summaries are allowed; raw prompts, responses, file bodies, diffs, replacements, commands, output dumps, cwd/env/process material, private paths, secrets, provider payloads, bridge dumps, and browser-storage dumps are not allowed.
+
 ## Report template
 
 Use the validator command to print the current template:
