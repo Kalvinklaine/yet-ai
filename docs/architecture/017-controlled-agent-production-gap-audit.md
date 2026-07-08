@@ -38,6 +38,22 @@ The next decisions before any later production-like gate are:
 5. Decide the real-provider dogfood policy for sanitized local BYOK reports across provider families and failure/recovery paths, with no credentials, raw prompts, raw responses, private paths, or hosted Yet AI backend/account/gateway requirement.
 6. Decide the UX/recovery review scope for consent, Start/Stop, edit review, verification, one repair attempt, repair exhaustion, disconnects, stale results, provider timeout, rollback review, and final report comprehension across supported and unsupported hosts.
 
+## Through-S124 useful multi-file controlled agent status
+
+S124 adds `docs/architecture/028-useful-multifile-controlled-agent-decision.md` as the decision evidence summary for S109-S123. The through-S124 status remains **blocked for any production-like or release-like agent decision** and **partial/pass only for narrow VS Code-first controlled dev-preview hardening**.
+
+Evidence now available after S109-S123:
+
+- **S109 authority registry**: source-of-truth authority vocabulary, schema, safe fixture, unsafe fixtures, and `npm run check:controlled-agent-authority-registry` evidence for deny-by-default routing. This is a pass for dev-preview evidence vocabulary, not runtime permission or production autonomy.
+- **S110-S112 explicit lexical search and selection**: contract/local smoke evidence for bounded literal search and GUI-local user selection, plus focused VS Code executor evidence for real lexical search. This is partial because Browser remains unsupported, JetBrains remains fail-closed, and no hidden indexing or broad search is approved.
+- **S113 search-informed proposal**: contract and fixture evidence for provider proposal metadata informed only by explicit selected evidence. This is partial because no provider-call implementation or real-provider CI proof is added.
+- **S114-S116 multi-file patch review/apply**: bounded review metadata, GUI request construction, bridge fixtures, and VS Code-focused apply evidence. This is partial because apply remains explicit VS Code-only and packaged parity, rollback, long-run, Browser, and JetBrains evidence remain incomplete.
+- **S117-S118 verification bundle and follow-up**: schema/fixture evidence for allowlisted command-id bundles and manual follow-up metadata. This is partial because there is no production runner, shell authority, automatic repair, or real command-output redaction proof across all surfaces.
+- **S119-S121 two-step state, recovery matrix, and task presets**: deterministic local/mock GUI and contract evidence for staged review/execution gates, visible recovery guidance, and safe task-starting presets. These pass as display-only or metadata lanes and remain partial for executable orchestration.
+- **S122-S123 dogfood and beta gate**: manual local BYOK real-provider matrix template/check/self-test and packaged task-level beta report validator plus `npm run smoke:controlled-agent-task-beta-bundle`. These pass as sanitized template/local bundle evidence and remain partial because they are not real-provider CI, packaged install proof, release approval, or marketplace approval.
+
+Through-S124 decision recommendation: continue with **hardening** before broader autonomy/search expansion or release work. Required next evidence remains host-owned VS Code execution proof for currently displayed lanes, stable deterministic CI/quarantine policy, storage/privacy inventory, support-useful observability and export redaction, packaged install/update/recovery evidence, and repeatable sanitized manual BYOK reports across provider/runtime families.
+
 ## Current known gaps
 
 ### UX, CI, and host parity focus
