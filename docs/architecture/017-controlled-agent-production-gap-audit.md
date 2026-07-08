@@ -54,6 +54,30 @@ Evidence now available after S109-S123:
 
 Through-S124 decision recommendation: continue with **hardening** before broader autonomy/search expansion or release work. Required next evidence remains host-owned VS Code execution proof for currently displayed lanes, stable deterministic CI/quarantine policy, storage/privacy inventory, support-useful observability and export redaction, packaged install/update/recovery evidence, and repeatable sanitized manual BYOK reports across provider/runtime families.
 
+## S135 residual-risk capture
+
+S131-S135 close a verification-evidence hygiene wave for controlled-agent hardening. The result remains **dev-preview hardening evidence only**: it does not approve production use, release readiness, marketplace publication, signing or notarization, managed support, real-provider CI, real IDE install success, broader autonomy, hidden search, unattended repair, or expanded authority.
+
+Immediate follow-up card candidates are limited to gaps that are actionable in the next roadmap lane and can produce bounded, sanitized evidence without claiming production readiness:
+
+| Follow-up candidate | Why it is immediate | Evidence boundary |
+| --- | --- | --- |
+| Real VS Code install-from-file launch and recovery report | The packaged smoke currently inspects the dev-preview VSIX archive and packaged GUI copy, but it does not prove a real VS Code session can install, launch, reconnect, reload, or recover from stale host results in a disposable trusted workspace. | Manual or local/mock harness evidence only; safe labels, artifact family, host/version/OS, reconnect/reload/update/stale-result observations, and sanitized outcomes. No private paths, raw bridge payloads, raw command output, provider data, screenshots with secrets, marketplace claims, signing claims, or release approval. |
+| Repeatable sanitized BYOK real-provider dogfood reports | The templates and validators are ready, but actual provider-family/local-runtime observations are still absent from tracked evidence. | Manual local BYOK reports across selected provider/runtime families and failure paths. No credentials, raw prompts, raw responses, provider payloads, private paths, command output dumps, hosted Yet AI backend/account/gateway requirement, or CI approval wording. |
+| Support/export redaction validation for controlled-agent evidence | Current transcript/report/storage checks prove important sanitized metadata boundaries, but support-bundle/export-style aggregation is not yet proven support-useful and raw-data-safe across GUI, runtime, bridge, host, provider, recovery, package diagnostics, and dogfood surfaces. | Deterministic local validator and unsafe fixtures for trace/report/support-bundle/export shapes, with explicit rejection of raw prompts, file bodies, diffs, replacements, command material, provider payloads, bridge payloads, secrets, tokens, cookies, private paths, stack traces, and output dumps. |
+
+The remaining reviewed gaps are recorded residual risks rather than immediate cards until a later roadmap lane approves owners, scope, and acceptance evidence:
+
+| Residual risk | Current disposition | Revisit trigger |
+| --- | --- | --- |
+| Signing, notarization, production release, update channels, rollback policy, marketplace publication, SBOM/provenance, support and incident-response operations | Recorded as release-operations residuals. Current artifacts remain unsigned, unpublished, install-from-file dev-preview evidence only. | Revisit only when a release-candidate or marketplace-preparation lane is explicitly approved with signing identities, marketplace accounts, artifact policy, support owner, and final publish approval criteria. |
+| Long-run reliability, performance, large-workspace behavior, packaged startup budgets, memory growth, and sustained recovery behavior | Recorded as production-readiness residuals. Current evidence is deterministic local/mock or short manual dev-preview evidence, not sustained operations proof. | Revisit when controlled-agent workflows are stable enough for budget definition and regression thresholds, or before any production-like enablement decision. |
+| JetBrains parity and Browser unsupported-state proof beyond current fail-closed/dev-preview labels | Recorded as host-parity residuals. VS Code remains the first controlled execution host; Browser remains unsupported for trusted workspace execution; JetBrains remains partial/fail-closed where execution proof is absent. | Revisit when a host-parity lane is approved with explicit Browser unsupported-state tests and either JetBrains parity evidence or maintained fail-closed evidence. |
+| Cross-platform packaged install/update/recovery proof | Recorded as artifact/release residual. Current packaged evidence is local dev-preview archive/static inspection and CI artifact structure checks, not real cross-platform user-machine install proof. | Revisit after the VS Code-first real install/reconnect evidence shape is proven and a platform matrix owner is assigned. |
+| Production-like support process and managed incident response | Recorded as support-operations residual. No support escalation path, managed telemetry, hosted support backend, or production incident process is approved. | Revisit only with a support/process lane that preserves local-first BYOK and sanitized local evidence boundaries. |
+
+No vague backlog card is implied by this section. A future card must name the surface, owner area, sanitized evidence artifact, forbidden raw-data classes, verification command or manual checklist, and the exact non-production boundary it preserves.
+
 ## Current known gaps
 
 ### UX, CI, and host parity focus
