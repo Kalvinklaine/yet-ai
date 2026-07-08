@@ -25,6 +25,7 @@ import type { ProposalHistory } from "../services/proposalHistory";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
 import { buildControlledAgentTaskPresetGuidance, controlledAgentTaskPresets, type ControlledAgentTaskPresetGuidance, type ControlledAgentTaskPresetId } from "../services/controlledAgentTaskPresets";
+import type { ControlledAgentTaskHarnessSummary } from "../services/controlledAgentTaskHarness";
 
 export type AgentRunPanelProps = {
   input: unknown;
@@ -81,9 +82,10 @@ export type AgentRunPanelProps = {
   onRequestControlledSearch?: () => void;
   onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
   controlledTwoStepRunState?: ControlledAgentTwoStepRunState;
+  controlledTaskHarness?: ControlledAgentTaskHarnessSummary;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, controlledVerificationFollowupDraft, onRequestControlledVerificationBundle, onDraftControlledVerificationFollowup, onDraftControlledVerificationFix, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, controlledVerificationFollowupDraft, onRequestControlledVerificationBundle, onDraftControlledVerificationFollowup, onDraftControlledVerificationFix, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState, controlledTaskHarness }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -257,6 +259,34 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <div className="attached-context-preview" aria-label="Controlled agent task preset draft prompt"><pre>{sanitizeDisplayText(taskPresetGuidance.draftPrompt).slice(0, 320)}</pre></div>
         </div> : <span className="subtle">Choose a preset to generate a visible draft. Nothing starts until the user reviews and sends later, if they choose. Cozy boundaries, no surprise zoomies.</span>}
       </div>
+      {controlledTaskHarness && <section className={`readiness-card ${controlledTaskHarness.state === "ready" || controlledTaskHarness.state === "followup_ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled task harness journey metadata" data-testid="controlled-task-harness-panel">
+        <div className="row">
+          <strong>Controlled task journey harness</strong>
+          <span className={controlledTaskHarness.host === "vscode" && controlledTaskHarness.state === "ready" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(controlledTaskHarness.statusLabel)}</span>
+          <span className="badge">metadata only</span>
+          <span className="badge">no automatic actions</span>
+        </div>
+        <span>Preset, context, search, proposal, patch-plan, apply, verification, follow-up, recovery, and final labels are display-only evidence from the local/mock controlled task journey.</span>
+        <span className="subtle">No hidden read, search, indexing, send, provider call, apply, verification, repair, rollback, bridge post, runtime call, raw data persistence, or browser storage write starts from this harness panel.</span>
+        <div className="agent-progress-grid" aria-label="Controlled task harness counters and gates">
+          <span>Host: {sanitizeDisplayText(controlledTaskHarness.host)}</span>
+          <span>State: {sanitizeDisplayText(controlledTaskHarness.state.replace(/_/g, " "))}</span>
+          <span>Preset id: {sanitizeDisplayText(controlledTaskHarness.presetId)}</span>
+          <span>Selected context: {controlledTaskHarness.counters.selectedItemCount}</span>
+          <span>Search queries: {controlledTaskHarness.counters.searchQueryCount}</span>
+          <span>Search results: {controlledTaskHarness.counters.searchResultCount}</span>
+          <span>Patch files: {controlledTaskHarness.counters.patchFileCount}</span>
+          <span>Replacement bytes: {controlledTaskHarness.counters.replacementByteCount}</span>
+          <span>Verification commands: {controlledTaskHarness.counters.verificationCommandCount}</span>
+          <span>Unsafe omitted: {controlledTaskHarness.counters.unsafeOmittedCount}</span>
+          <span>Gates: preset {String(controlledTaskHarness.gates.presetSelected)} · context {String(controlledTaskHarness.gates.contextSelected)} · proposal {String(controlledTaskHarness.gates.proposalReviewed)} · patch plan {String(controlledTaskHarness.gates.patchPlanReviewed)} · apply {String(controlledTaskHarness.gates.applyConfirmed)} · verification {String(controlledTaskHarness.gates.verificationConfirmed)}</span>
+          <span>Authority: auto-send {String(controlledTaskHarness.policy.canAutoSend)} · hidden read {String(controlledTaskHarness.policy.canReadHiddenFiles)} · hidden search {String(controlledTaskHarness.policy.canSearchHiddenFiles)} · indexing {String(controlledTaskHarness.policy.canIndexWorkspace)} · auto-apply {String(controlledTaskHarness.policy.canAutoApply)} · auto-verify {String(controlledTaskHarness.policy.canAutoVerify)} · auto-repair {String(controlledTaskHarness.policy.canAutoRepair)} · provider tools {String(controlledTaskHarness.policy.canUseProviderTools)} · browser storage {String(controlledTaskHarness.policy.canStoreBrowserData)}</span>
+        </div>
+        {controlledTaskHarness.labels.length > 0 && <span>Journey labels: {controlledTaskHarness.labels.map((label) => sanitizeDisplayText(label)).join(" · ")}</span>}
+        {controlledTaskHarness.host === "browser" && <span className="subtle">Browser remains unsupported and fail-closed for controlled task execution.</span>}
+        {controlledTaskHarness.host === "jetbrains" && <span className="subtle">JetBrains remains partial/fail-closed until controlled workflow parity is verified.</span>}
+        {controlledTaskHarness.diagnostics.length > 0 && <span className="subtle">Harness diagnostics: {controlledTaskHarness.diagnostics.map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span>}
+      </section>}
       {controlledTwoStepRunState && <section className={`readiness-card ${controlledTwoStepRunState.phase === "failed" || controlledTwoStepRunState.phase === "stopped" ? "warn" : "ready"} stack`} role="status" aria-label="Two-step controlled run staged evidence">
         <div className="row">
           <strong>S119 two-step run staged evidence</strong>

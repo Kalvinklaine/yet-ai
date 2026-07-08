@@ -18,6 +18,10 @@ import hostEditApplied from "../../../packages/contracts/examples/bridge/host-co
 import hostLexicalSearchSucceeded from "../../../packages/contracts/examples/bridge/host-controlled-agent-lexical-search-result-succeeded.json";
 import plannedVerificationBundle from "../../../packages/contracts/examples/engine/controlled-agent-verification-bundle-planned.json";
 import succeededVerificationBundle from "../../../packages/contracts/examples/engine/controlled-agent-verification-bundle-succeeded.json";
+import taskHarnessHappyFixture from "../../../packages/contracts/examples/engine/controlled-agent-task-harness-vscode-happy-path.json";
+import taskHarnessJetBrainsFixture from "../../../packages/contracts/examples/engine/controlled-agent-task-harness-jetbrains-partial.json";
+import workflowTranscriptCompletedFixture from "../../../packages/contracts/examples/engine/controlled-agent-workflow-transcript-completed.json";
+import workflowTranscriptBlockedFixture from "../../../packages/contracts/examples/engine/controlled-agent-workflow-transcript-blocked.json";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -453,6 +457,44 @@ describe("runtime refresh feedback", () => {
     expect(findButton("Clear pending read")).toBeDefined();
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("controlled_agent_file_read");
+  });
+
+  it("renders controlled task harness and transcript journey without pre-gate authority", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentTaskHarness: taskHarnessHappyFixture, controlledAgentWorkflowTranscript: workflowTranscriptCompletedFixture }) });
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Controlled task journey harness");
+    expect(container?.textContent).toContain("Preset, context, search, proposal, patch-plan, apply, verification, follow-up, recovery, and final labels");
+    expect(container?.textContent).toContain("Preset id: fix-small-bug");
+    expect(container?.textContent).toContain("Search results: 2");
+    expect(container?.textContent).toContain("Controlled workflow transcript");
+    expect(container?.textContent).toContain("completed");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest" || message.type === "gui.controlledAgentLexicalSearchRequest" || message.type === "gui.controlledAgentMultifileApplyRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_task_harness");
+    expect(browserStorageDump()).not.toContain("controlled_agent_workflow_transcript");
+  });
+
+  it("keeps JetBrains controlled task journey partial and fail-closed", async () => {
+    const postMessage = vi.fn();
+    const parent = { postMessage };
+    Object.defineProperty(Document.prototype, "referrer", { configurable: true, get: () => "https://wrapper.example/shell.html" });
+    Object.defineProperty(window, "parent", { configurable: true, value: parent });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentTaskHarness: taskHarnessJetBrainsFixture, controlledAgentWorkflowTranscript: workflowTranscriptBlockedFixture }) });
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("JetBrains partial/fail-closed");
+    expect(container?.textContent).toContain("Partial host; metadata fail-closed");
+    expect(container?.textContent).toContain("JetBrains or partial-host transcript evidence is conservative");
+    expect(container?.textContent).toContain("blocked");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    if (appParentDescriptor) Object.defineProperty(window, "parent", appParentDescriptor);
+    if (appReferrerDescriptor) Object.defineProperty(Document.prototype, "referrer", appReferrerDescriptor);
   });
 
   it("posts controlled verification bundle only after explicit click and renders sanitized result", async () => {

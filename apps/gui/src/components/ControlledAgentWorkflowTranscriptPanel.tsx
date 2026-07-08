@@ -53,6 +53,7 @@ export function ControlledAgentWorkflowTranscriptPanel({ metadata }: ControlledA
           </div>
         )}
       </details>
+      {hostNotice && <span className="subtle">{hostNotice}</span>}
     </section>
   );
 }

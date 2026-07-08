@@ -16,6 +16,8 @@ import { controlledAgentTaskPresets } from "../services/controlledAgentTaskPrese
 import plannedVerificationBundle from "../../../../packages/contracts/examples/engine/controlled-agent-verification-bundle-planned.json";
 import succeededVerificationBundle from "../../../../packages/contracts/examples/engine/controlled-agent-verification-bundle-succeeded.json";
 import { buildControlledAgentVerificationBundleRequest, evaluateControlledAgentVerificationBundle } from "../services/controlledAgentVerificationBundle";
+import { evaluateControlledAgentTaskHarness } from "../services/controlledAgentTaskHarness";
+import taskHarnessHappyFixture from "../../../../packages/contracts/examples/engine/controlled-agent-task-harness-vscode-happy-path.json";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -289,6 +291,24 @@ afterEach(() => {
 });
 
 describe("AgentRunPanel", () => {
+  it("renders controlled task harness journey as metadata-only display evidence", () => {
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledTaskHarness: evaluateControlledAgentTaskHarness(taskHarnessHappyFixture),
+    });
+
+    expect(panelText()).toContain("Controlled task journey harness");
+    expect(panelText()).toContain("Preset, context, search, proposal, patch-plan, apply, verification, follow-up, recovery, and final labels");
+    expect(panelText()).toContain("Selected context: 3");
+    expect(panelText()).toContain("Search queries: 1");
+    expect(panelText()).toContain("Verification commands: 2");
+    expect(panelText()).toContain("auto-send false");
+    expect(panelText()).toContain("auto-apply false");
+    expect(panelText()).toContain("auto-verify false");
+    expect(actionButtonLabels()).not.toContain("Run controlled task harness");
+    expect(browserStorageDump()).toBe("");
+  });
+
   it("renders explicit controlled verification bundle review and posts only after click", () => {
     const onRequestControlledVerificationBundle = vi.fn();
     const bundle = evaluateControlledAgentVerificationBundle(plannedVerificationBundle);
@@ -1758,6 +1778,7 @@ type PanelTestProps = {
   onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
   controlledRunHistory?: any;
   controlledTwoStepRunState?: any;
+  controlledTaskHarness?: any;
 };
 
 
@@ -1826,6 +1847,7 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onRequestControlledSearch={props.onRequestControlledSearch}
         onControlledSearchResultSelectionChange={props.onControlledSearchResultSelectionChange}
         controlledTwoStepRunState={props.controlledTwoStepRunState}
+        controlledTaskHarness={props.controlledTaskHarness}
       />,
     );
   });
