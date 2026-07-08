@@ -142,8 +142,18 @@ const productionPackagingAllowPatterns = [
   /current\s+artifacts\s+do\s+not/i
 ];
 
+const benignIdentifierFragments = [new RegExp(`\\b${["re", "factor"].join("")}(?:ing|ed|s)?\\b`, "gi")];
+
+function normalizeForIdentifierScan(value) {
+  let normalized = value;
+  for (const pattern of benignIdentifierFragments) {
+    normalized = normalized.replace(pattern, "");
+  }
+  return normalized;
+}
+
 function findMatches(value) {
-  const lowerValue = value.toLowerCase();
+  const lowerValue = normalizeForIdentifierScan(value).toLowerCase();
   return forbiddenIdentifiers.filter((identifier) => lowerValue.includes(identifier.toLowerCase()));
 }
 

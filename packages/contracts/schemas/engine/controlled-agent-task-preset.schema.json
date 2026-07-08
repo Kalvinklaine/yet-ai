@@ -1,0 +1,258 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-task-preset.schema.json",
+  "title": "Controlled Agent Task Preset Metadata",
+  "description": "Strict metadata-only contract for user-started controlled coding task presets. Presets classify intent and allowed gated capability lanes only; they grant no hidden read, indexing, provider tool, shell, git, free-form command, automatic apply, automatic verification, raw payload persistence, production, release, or autonomous execution authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "presetSetId",
+    "presets",
+    "policyFlags",
+    "persistence",
+    "claims",
+    "recovery"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "controlled_agent_task_preset_set" },
+    "version": { "type": "string", "const": "2026-07-08" },
+    "authority": { "type": "string", "const": "intent_metadata_only" },
+    "cloudRequired": { "type": "boolean", "const": false },
+    "executionAllowed": { "type": "boolean", "const": false },
+    "presetSetId": { "$ref": "#/$defs/safeId" },
+    "presets": {
+      "type": "array",
+      "minItems": 5,
+      "maxItems": 5,
+      "items": { "$ref": "#/$defs/preset" }
+    },
+    "policyFlags": { "$ref": "#/$defs/policyFlags" },
+    "persistence": { "$ref": "#/$defs/persistence" },
+    "claims": { "$ref": "#/$defs/claims" },
+    "recovery": { "$ref": "#/$defs/recovery" }
+  },
+  "allOf": [
+    { "properties": { "presets": { "type": "array", "contains": { "type": "object", "required": ["presetId"], "properties": { "presetId": { "const": "fix-small-bug" } } } } } },
+    { "properties": { "presets": { "type": "array", "contains": { "type": "object", "required": ["presetId"], "properties": { "presetId": { "const": "add-focused-test" } } } } } },
+    { "properties": { "presets": { "type": "array", "contains": { "type": "object", "required": ["presetId"], "properties": { "presetId": { "const": "refactor-small-function" } } } } } },
+    { "properties": { "presets": { "type": "array", "contains": { "type": "object", "required": ["presetId"], "properties": { "presetId": { "const": "explain-selected-code" } } } } } },
+    { "properties": { "presets": { "type": "array", "contains": { "type": "object", "required": ["presetId"], "properties": { "presetId": { "const": "improve-copy-or-typing" } } } } } }
+  ],
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Dd][Ii][Ff][Ff]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr](?:[-_ ]?(?:[Tt][Oo][Oo][Ll]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]))?|[Ss][Hh][Ee][Ll][Ll]|[Gg][Ii][Tt]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee][-_ ]?[Ii][Nn][Ss][Tt][Aa][Ll][Ll]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx])|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Rr][Ee][Ll][Ee][Aa][Ss][Ee]|[Mm][Aa][Rr][Kk][Ee][Tt][Pp][Ll][Aa][Cc][Ee]|[Aa][Rr][Bb][Ii][Tt][Rr][Aa][Rr][Yy]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 80 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 240 }
+      ]
+    },
+    "presetId": {
+      "type": "string",
+      "enum": [
+        "fix-small-bug",
+        "add-focused-test",
+        "refactor-small-function",
+        "explain-selected-code",
+        "improve-copy-or-typing"
+      ]
+    },
+    "workflowClass": {
+      "type": "string",
+      "enum": ["fix", "test", "refactor", "inspect", "improve"]
+    },
+    "preset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "presetId",
+        "label",
+        "intent",
+        "workflowClass",
+        "contextSelection",
+        "proposal",
+        "apply",
+        "verification",
+        "userGates",
+        "recovery"
+      ],
+      "properties": {
+        "presetId": { "$ref": "#/$defs/presetId" },
+        "label": { "$ref": "#/$defs/safeLabel" },
+        "intent": { "$ref": "#/$defs/safeSummary" },
+        "workflowClass": { "$ref": "#/$defs/workflowClass" },
+        "contextSelection": { "$ref": "#/$defs/contextSelection" },
+        "proposal": { "$ref": "#/$defs/proposal" },
+        "apply": { "$ref": "#/$defs/apply" },
+        "verification": { "$ref": "#/$defs/verification" },
+        "userGates": { "$ref": "#/$defs/userGates" },
+        "recovery": { "$ref": "#/$defs/recovery" }
+      }
+    },
+    "contextSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "explicitUserSelectionRequired",
+        "allowedSources",
+        "searchSelectionRequired",
+        "hiddenReadAllowed",
+        "hiddenSearchAllowed",
+        "indexingAllowed",
+        "broadWorkspaceScanAllowed"
+      ],
+      "properties": {
+        "explicitUserSelectionRequired": { "type": "boolean", "const": true },
+        "allowedSources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 4,
+          "items": { "type": "string", "enum": ["active_file_excerpt", "selected_range", "user_selected_files", "user_selected_search_results"] },
+          "uniqueItems": true
+        },
+        "searchSelectionRequired": { "type": "boolean" },
+        "hiddenReadAllowed": { "type": "boolean", "const": false },
+        "hiddenSearchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "broadWorkspaceScanAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["providerProposalAllowed", "dryRunPlanRequired", "providerToolsAllowed", "rawProviderPayloadStored"],
+      "properties": {
+        "providerProposalAllowed": { "type": "boolean", "const": true },
+        "dryRunPlanRequired": { "type": "boolean", "const": true },
+        "providerToolsAllowed": { "type": "boolean", "const": false },
+        "rawProviderPayloadStored": { "type": "boolean", "const": false }
+      }
+    },
+    "apply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported", "workspaceMutationScope", "maxFiles", "requiresReview", "requiresUserConfirmation", "automaticApplyAllowed", "broadWorkspaceMutationAllowed"],
+      "properties": {
+        "supported": { "type": "boolean" },
+        "workspaceMutationScope": { "type": "string", "enum": ["none", "bounded_existing_text_files"] },
+        "maxFiles": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "requiresReview": { "type": "boolean", "const": true },
+        "requiresUserConfirmation": { "type": "boolean", "const": true },
+        "automaticApplyAllowed": { "type": "boolean", "const": false },
+        "broadWorkspaceMutationAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported", "allowedCommandMode", "requiresUserApproval", "freeformCommandAllowed", "automaticRunAllowed"],
+      "properties": {
+        "supported": { "type": "boolean" },
+        "allowedCommandMode": { "type": "string", "enum": ["none", "fixed_allowlisted_ids"] },
+        "requiresUserApproval": { "type": "boolean", "const": true },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "automaticRunAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "userGates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["startRequiresUser", "contextRequiresUser", "applyRequiresUser", "verificationRequiresUser", "recoveryRequiresUser"],
+      "properties": {
+        "startRequiresUser": { "type": "boolean", "const": true },
+        "contextRequiresUser": { "type": "boolean", "const": true },
+        "applyRequiresUser": { "type": "boolean", "const": true },
+        "verificationRequiresUser": { "type": "boolean", "const": true },
+        "recoveryRequiresUser": { "type": "boolean", "const": true }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["guidanceOnly", "requiresUserNextStep", "automaticRepairAllowed"],
+      "properties": {
+        "guidanceOnly": { "type": "boolean", "const": true },
+        "requiresUserNextStep": { "type": "boolean", "const": true },
+        "automaticRepairAllowed": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "intentMetadataOnly",
+        "explicitContextOnly",
+        "providerProposalDryRunOnly",
+        "reviewBeforeApplyRequired",
+        "verificationUserApprovalRequired",
+        "hiddenReadAllowed",
+        "hiddenSearchAllowed",
+        "indexingAllowed",
+        "arbitraryShellAllowed",
+        "freeformCommandAllowed",
+        "providerToolsAllowed",
+        "automaticApplyAllowed",
+        "automaticRunAllowed",
+        "broadWorkspaceMutationAllowed"
+      ],
+      "properties": {
+        "intentMetadataOnly": { "type": "boolean", "const": true },
+        "explicitContextOnly": { "type": "boolean", "const": true },
+        "providerProposalDryRunOnly": { "type": "boolean", "const": true },
+        "reviewBeforeApplyRequired": { "type": "boolean", "const": true },
+        "verificationUserApprovalRequired": { "type": "boolean", "const": true },
+        "hiddenReadAllowed": { "type": "boolean", "const": false },
+        "hiddenSearchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "arbitraryShellAllowed": { "type": "boolean", "const": false },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "providerToolsAllowed": { "type": "boolean", "const": false },
+        "automaticApplyAllowed": { "type": "boolean", "const": false },
+        "automaticRunAllowed": { "type": "boolean", "const": false },
+        "broadWorkspaceMutationAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawPromptStored", "fileBodiesStored", "diffsStored", "providerPayloadStored", "commandOutputStored"],
+      "properties": {
+        "rawPromptStored": { "type": "boolean", "const": false },
+        "fileBodiesStored": { "type": "boolean", "const": false },
+        "diffsStored": { "type": "boolean", "const": false },
+        "providerPayloadStored": { "type": "boolean", "const": false },
+        "commandOutputStored": { "type": "boolean", "const": false }
+      }
+    },
+    "claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["productionReady", "releaseReady", "marketplaceReady"],
+      "properties": {
+        "productionReady": { "type": "boolean", "const": false },
+        "releaseReady": { "type": "boolean", "const": false },
+        "marketplaceReady": { "type": "boolean", "const": false }
+      }
+    }
+  }
+}

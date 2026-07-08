@@ -143,6 +143,10 @@ const mappings = [
     `packages/contracts/examples/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-recovery-matrix.schema.json"
   ]),
+  [
+    "packages/contracts/examples/engine/controlled-agent-task-presets.json",
+    "packages/contracts/schemas/engine/controlled-agent-task-preset.schema.json"
+  ],
   ...[
     "controlled-agent-edit-executor-planned.json"
   ].map((fileName) => [
@@ -1296,6 +1300,18 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-recovery-matrix.schema.json"
+  ]),
+  ...[
+    "controlled-agent-task-presets-broad-workspace-mutation.json",
+    "controlled-agent-task-presets-free-form-command.json",
+    "controlled-agent-task-presets-hidden-search.json",
+    "controlled-agent-task-presets-missing-user-gates.json",
+    "controlled-agent-task-presets-production-claims.json",
+    "controlled-agent-task-presets-raw-persistence.json",
+    "controlled-agent-task-presets-unsafe-authority.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-task-preset.schema.json"
   ]),
   ...[
     "controlled-agent-edit-executor-unsafe-path.json",

@@ -1,0 +1,294 @@
+{
+  "kind": "controlled_agent_task_preset_set",
+  "version": "2026-07-08",
+  "authority": "intent_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "presetSetId": "presets-s121",
+  "presets": [
+    {
+      "presetId": "fix-small-bug",
+      "label": "Fix small bug",
+      "intent": "Investigate a focused defect using only user selected context and propose a bounded change.",
+      "workflowClass": "fix",
+      "contextSelection": {
+        "explicitUserSelectionRequired": true,
+        "allowedSources": ["active_file_excerpt", "selected_range", "user_selected_files", "user_selected_search_results"],
+        "searchSelectionRequired": false,
+        "hiddenReadAllowed": false,
+        "hiddenSearchAllowed": false,
+        "indexingAllowed": false,
+        "broadWorkspaceScanAllowed": false
+      },
+      "proposal": {
+        "providerProposalAllowed": true,
+        "dryRunPlanRequired": true,
+        "providerToolsAllowed": false,
+        "rawProviderPayloadStored": false
+      },
+      "apply": {
+        "supported": true,
+        "workspaceMutationScope": "bounded_existing_text_files",
+        "maxFiles": 3,
+        "requiresReview": true,
+        "requiresUserConfirmation": true,
+        "automaticApplyAllowed": false,
+        "broadWorkspaceMutationAllowed": false
+      },
+      "verification": {
+        "supported": true,
+        "allowedCommandMode": "fixed_allowlisted_ids",
+        "requiresUserApproval": true,
+        "freeformCommandAllowed": false,
+        "automaticRunAllowed": false
+      },
+      "userGates": {
+        "startRequiresUser": true,
+        "contextRequiresUser": true,
+        "applyRequiresUser": true,
+        "verificationRequiresUser": true,
+        "recoveryRequiresUser": true
+      },
+      "recovery": {
+        "guidanceOnly": true,
+        "requiresUserNextStep": true,
+        "automaticRepairAllowed": false,
+        "summary": "If blocked, show the missing context or verification choice and wait for the user."
+      }
+    },
+    {
+      "presetId": "add-focused-test",
+      "label": "Add focused test",
+      "intent": "Propose a narrow test addition for behavior the user selected or described.",
+      "workflowClass": "test",
+      "contextSelection": {
+        "explicitUserSelectionRequired": true,
+        "allowedSources": ["active_file_excerpt", "selected_range", "user_selected_files", "user_selected_search_results"],
+        "searchSelectionRequired": false,
+        "hiddenReadAllowed": false,
+        "hiddenSearchAllowed": false,
+        "indexingAllowed": false,
+        "broadWorkspaceScanAllowed": false
+      },
+      "proposal": {
+        "providerProposalAllowed": true,
+        "dryRunPlanRequired": true,
+        "providerToolsAllowed": false,
+        "rawProviderPayloadStored": false
+      },
+      "apply": {
+        "supported": true,
+        "workspaceMutationScope": "bounded_existing_text_files",
+        "maxFiles": 2,
+        "requiresReview": true,
+        "requiresUserConfirmation": true,
+        "automaticApplyAllowed": false,
+        "broadWorkspaceMutationAllowed": false
+      },
+      "verification": {
+        "supported": true,
+        "allowedCommandMode": "fixed_allowlisted_ids",
+        "requiresUserApproval": true,
+        "freeformCommandAllowed": false,
+        "automaticRunAllowed": false
+      },
+      "userGates": {
+        "startRequiresUser": true,
+        "contextRequiresUser": true,
+        "applyRequiresUser": true,
+        "verificationRequiresUser": true,
+        "recoveryRequiresUser": true
+      },
+      "recovery": {
+        "guidanceOnly": true,
+        "requiresUserNextStep": true,
+        "automaticRepairAllowed": false,
+        "summary": "If no safe test location is selected, request a user chosen file or search result."
+      }
+    },
+    {
+      "presetId": "refactor-small-function",
+      "label": "Refactor small function",
+      "intent": "Improve the shape of one small selected function without changing intended behavior.",
+      "workflowClass": "refactor",
+      "contextSelection": {
+        "explicitUserSelectionRequired": true,
+        "allowedSources": ["active_file_excerpt", "selected_range", "user_selected_files"],
+        "searchSelectionRequired": false,
+        "hiddenReadAllowed": false,
+        "hiddenSearchAllowed": false,
+        "indexingAllowed": false,
+        "broadWorkspaceScanAllowed": false
+      },
+      "proposal": {
+        "providerProposalAllowed": true,
+        "dryRunPlanRequired": true,
+        "providerToolsAllowed": false,
+        "rawProviderPayloadStored": false
+      },
+      "apply": {
+        "supported": true,
+        "workspaceMutationScope": "bounded_existing_text_files",
+        "maxFiles": 1,
+        "requiresReview": true,
+        "requiresUserConfirmation": true,
+        "automaticApplyAllowed": false,
+        "broadWorkspaceMutationAllowed": false
+      },
+      "verification": {
+        "supported": true,
+        "allowedCommandMode": "fixed_allowlisted_ids",
+        "requiresUserApproval": true,
+        "freeformCommandAllowed": false,
+        "automaticRunAllowed": false
+      },
+      "userGates": {
+        "startRequiresUser": true,
+        "contextRequiresUser": true,
+        "applyRequiresUser": true,
+        "verificationRequiresUser": true,
+        "recoveryRequiresUser": true
+      },
+      "recovery": {
+        "guidanceOnly": true,
+        "requiresUserNextStep": true,
+        "automaticRepairAllowed": false,
+        "summary": "If behavior risk is high, stop at explanation and ask for a smaller selection."
+      }
+    },
+    {
+      "presetId": "explain-selected-code",
+      "label": "Explain selected code",
+      "intent": "Explain only the user selected code and optionally cite selected search results.",
+      "workflowClass": "inspect",
+      "contextSelection": {
+        "explicitUserSelectionRequired": true,
+        "allowedSources": ["active_file_excerpt", "selected_range", "user_selected_search_results"],
+        "searchSelectionRequired": false,
+        "hiddenReadAllowed": false,
+        "hiddenSearchAllowed": false,
+        "indexingAllowed": false,
+        "broadWorkspaceScanAllowed": false
+      },
+      "proposal": {
+        "providerProposalAllowed": true,
+        "dryRunPlanRequired": true,
+        "providerToolsAllowed": false,
+        "rawProviderPayloadStored": false
+      },
+      "apply": {
+        "supported": false,
+        "workspaceMutationScope": "none",
+        "maxFiles": 0,
+        "requiresReview": true,
+        "requiresUserConfirmation": true,
+        "automaticApplyAllowed": false,
+        "broadWorkspaceMutationAllowed": false
+      },
+      "verification": {
+        "supported": false,
+        "allowedCommandMode": "none",
+        "requiresUserApproval": true,
+        "freeformCommandAllowed": false,
+        "automaticRunAllowed": false
+      },
+      "userGates": {
+        "startRequiresUser": true,
+        "contextRequiresUser": true,
+        "applyRequiresUser": true,
+        "verificationRequiresUser": true,
+        "recoveryRequiresUser": true
+      },
+      "recovery": {
+        "guidanceOnly": true,
+        "requiresUserNextStep": true,
+        "automaticRepairAllowed": false,
+        "summary": "If context is insufficient, ask the user to select another range or result."
+      }
+    },
+    {
+      "presetId": "improve-copy-or-typing",
+      "label": "Improve copy or typing",
+      "intent": "Suggest a small improvement to wording or type annotations in user selected files.",
+      "workflowClass": "improve",
+      "contextSelection": {
+        "explicitUserSelectionRequired": true,
+        "allowedSources": ["active_file_excerpt", "selected_range", "user_selected_files"],
+        "searchSelectionRequired": false,
+        "hiddenReadAllowed": false,
+        "hiddenSearchAllowed": false,
+        "indexingAllowed": false,
+        "broadWorkspaceScanAllowed": false
+      },
+      "proposal": {
+        "providerProposalAllowed": true,
+        "dryRunPlanRequired": true,
+        "providerToolsAllowed": false,
+        "rawProviderPayloadStored": false
+      },
+      "apply": {
+        "supported": true,
+        "workspaceMutationScope": "bounded_existing_text_files",
+        "maxFiles": 2,
+        "requiresReview": true,
+        "requiresUserConfirmation": true,
+        "automaticApplyAllowed": false,
+        "broadWorkspaceMutationAllowed": false
+      },
+      "verification": {
+        "supported": true,
+        "allowedCommandMode": "fixed_allowlisted_ids",
+        "requiresUserApproval": true,
+        "freeformCommandAllowed": false,
+        "automaticRunAllowed": false
+      },
+      "userGates": {
+        "startRequiresUser": true,
+        "contextRequiresUser": true,
+        "applyRequiresUser": true,
+        "verificationRequiresUser": true,
+        "recoveryRequiresUser": true
+      },
+      "recovery": {
+        "guidanceOnly": true,
+        "requiresUserNextStep": true,
+        "automaticRepairAllowed": false,
+        "summary": "If the requested improvement is too broad, ask the user to narrow the selected files."
+      }
+    }
+  ],
+  "policyFlags": {
+    "intentMetadataOnly": true,
+    "explicitContextOnly": true,
+    "providerProposalDryRunOnly": true,
+    "reviewBeforeApplyRequired": true,
+    "verificationUserApprovalRequired": true,
+    "hiddenReadAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "arbitraryShellAllowed": false,
+    "freeformCommandAllowed": false,
+    "providerToolsAllowed": false,
+    "automaticApplyAllowed": false,
+    "automaticRunAllowed": false,
+    "broadWorkspaceMutationAllowed": false
+  },
+  "persistence": {
+    "rawPromptStored": false,
+    "fileBodiesStored": false,
+    "diffsStored": false,
+    "providerPayloadStored": false,
+    "commandOutputStored": false
+  },
+  "claims": {
+    "productionReady": false,
+    "releaseReady": false,
+    "marketplaceReady": false
+  },
+  "recovery": {
+    "guidanceOnly": true,
+    "requiresUserNextStep": true,
+    "automaticRepairAllowed": false,
+    "summary": "Recovery guidance is display metadata and waits for explicit user direction."
+  }
+}
