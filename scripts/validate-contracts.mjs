@@ -131,6 +131,13 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-verification-followup.schema.json"
   ],
   ...[
+    "controlled-agent-recovery-matrix-v1.json",
+    "controlled-agent-recovery-matrix-stop-and-unsupported.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-recovery-matrix.schema.json"
+  ]),
+  ...[
     "controlled-agent-edit-executor-planned.json"
   ].map((fileName) => [
     `packages/contracts/examples/engine/${fileName}`,
@@ -1254,6 +1261,18 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-verification-followup.schema.json"
+  ]),
+  ...[
+    "controlled-agent-recovery-matrix-auto-retry-rollback.json",
+    "controlled-agent-recovery-matrix-hidden-repair.json",
+    "controlled-agent-recovery-matrix-private-path-secret.json",
+    "controlled-agent-recovery-matrix-raw-output.json",
+    "controlled-agent-recovery-matrix-stale-result-accepted.json",
+    "controlled-agent-recovery-matrix-unbounded-attempts.json",
+    "controlled-agent-recovery-matrix-unsupported-host-overclaim.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-recovery-matrix.schema.json"
   ]),
   ...[
     "controlled-agent-edit-executor-unsafe-path.json",
