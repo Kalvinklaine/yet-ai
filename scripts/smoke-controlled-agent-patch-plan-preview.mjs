@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { requireGuiTypescript } from "./lib/require-gui-typescript.mjs";
 
 const smokeName = "S102 controlled patch plan preview smoke";
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -121,8 +121,7 @@ function assertNoRawMarkers(value, source) {
 }
 
 function requireTypescript() {
-  const require = createRequire(import.meta.url);
-  return require(join(repoRoot, "apps", "gui", "node_modules", "typescript"));
+  return requireGuiTypescript({ repoRoot, smokeName });
 }
 
 async function importPatchPlanPreviewService() {

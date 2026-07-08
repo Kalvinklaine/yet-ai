@@ -1,17 +1,16 @@
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { requireGuiTypescript } from "./lib/require-gui-typescript.mjs";
 
 const repoRoot = resolve(new URL("..", import.meta.url).pathname);
 const guiSrcRoot = join(repoRoot, "apps", "gui", "src");
 const rawMarkers = ["sk-proj", "PRIVATE_PATH_SENTINEL", "/Users/alice/private", "raw prompt", "raw file body", "raw diff", "raw command", "provider payload", "browser storage dump"];
 
 function requireTypescript() {
-  const require = createRequire(import.meta.url);
-  return require(join(repoRoot, "apps", "gui", "node_modules", "typescript"));
+  return requireGuiTypescript({ repoRoot, smokeName: "Controlled agent task presets smoke" });
 }
 
 async function transpileGuiServices(entries) {
