@@ -20,6 +20,7 @@ The current controlled-agent status remains VS Code-first local dev-preview hard
 - `docs/architecture/017-controlled-agent-production-gap-audit.md` for the S107/S124 persistence/privacy gap category.
 - `docs/architecture/022-controlled-agent-verification-bundles.md` for fixed command-id verification metadata and raw output exclusions.
 - `docs/architecture/027-controlled-agent-task-level-beta-gate.md` and `docs/architecture/028-useful-multifile-controlled-agent-decision.md` for packaged beta/report evidence and hardening-next residual risks.
+- `scripts/lib/forbidden-evidence-text.mjs` for sanitized forbidden-evidence labels covering private paths, secret/auth material, raw payload dumps, browser storage dumps, and raw command/output markers.
 - `docs/dogfood/controlled-agent-real-provider-matrix.md`, `docs/dogfood/agent-run-one-step.md`, and controlled-agent dev-preview fixtures for sanitized manual dogfood/report boundaries.
 - `apps/engine/src/storage.rs`, provider/auth/history/memory storage modules, GUI trace/report services, VS Code plugin README/package settings, and JetBrains runtime/settings sources for implemented storage and log surfaces.
 
@@ -47,12 +48,14 @@ The current controlled-agent status remains VS Code-first local dev-preview hard
 Controlled-agent storage, logs, reports, exports, docs, dogfood evidence, fixtures, package artifacts, and GUI-facing responses must not persist or expose these raw categories:
 
 - provider credentials, API keys, OAuth material, auth codes, bearer tokens, runtime session tokens, cookies, auth headers, account identifiers, or secret-store records;
-- raw user prompts, composer text, hidden/system instructions, provider request payloads, model transcripts, raw provider responses, provider tool payloads, or raw model tool-call data;
+- raw user prompts, composer text, hidden/system instructions, provider request payloads, model transcripts, raw provider responses, provider tool payloads, completion payloads, or raw model tool-call data;
 - raw file bodies, selected excerpts beyond visible in-memory use, hidden workspace data, indexed workspace content, generated/dependency traversal content, binary content, or symlink targets;
 - replacement text, raw diffs, patch bodies, before/after file bodies, rollback file bodies, edit hunks, or workspace mutation payload dumps;
-- free-form command strings, args, cwd, env, shell scripts, git commands, package commands, process environments, full stdout, full stderr, terminal transcripts, or unbounded output tails;
-- private absolute paths, home directories, usernames, checkout roots, file URLs, temp roots, stack traces with private locations, runtime URLs with userinfo/query/fragment data, or bridge payload dumps;
-- browser storage dumps, IndexedDB dumps, webview postMessage dumps, runtime HTTP/SSE payload dumps, support-bundle dumps, or CI logs containing the categories above;
+- free-form command strings, args, cwd values, env values, shell scripts, git/package commands, process environment markers, full stdout, full stderr, terminal transcripts, or unbounded output tails;
+- private absolute paths, including macOS, Linux home, Windows, network-share, POSIX temp/cache/mount-style roots, checkout roots, symlink targets, stack traces with private locations, or `file:` URL references;
+- runtime URLs or file URLs containing userinfo, query secrets, fragment secrets, token-like parameters, authorization codes, API-key fields, cookie values, or verifier values;
+- browser storage dumps, IndexedDB dumps, webview postMessage dumps, bridge payload dumps, runtime HTTP/SSE payload dumps, request-body dumps, support-bundle dumps, or CI logs containing the categories above;
+- provider/bridge payload dumps labeled as raw responses, response dumps, provider output dumps, provider requests, provider payloads, bridge payloads, postMessage dumps, runtime HTTP dumps, SSE payload dumps, or raw requests;
 - production, release, marketplace, signing, notarization, publication, real-provider CI, hosted-service, account, managed gateway, product-credit, or cloud-workspace claims for this dev-preview path.
 
 If future code receives one of these categories while producing controlled-agent metadata, it must fail closed, omit the unsafe value, and record only a bounded safe label such as `blocked_unsafe_payload`, `redacted`, `omitted_private_path`, or `artifact_omitted_unsafe`. Do not hash-and-display raw sensitive text unless a later security review explicitly approves the derived field.
