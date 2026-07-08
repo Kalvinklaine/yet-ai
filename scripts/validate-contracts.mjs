@@ -120,6 +120,13 @@ const mappings = [
     "packages/contracts/schemas/engine/controlled-agent-command-runner.schema.json"
   ]),
   ...[
+    "controlled-agent-verification-bundle-planned.json",
+    "controlled-agent-verification-bundle-succeeded.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-verification-bundle.schema.json"
+  ]),
+  ...[
     "controlled-agent-edit-executor-planned.json"
   ].map((fileName) => [
     `packages/contracts/examples/engine/${fileName}`,
@@ -1211,6 +1218,23 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-command-runner.schema.json"
+  ]),
+  ...[
+    "controlled-agent-verification-bundle-freeform-command.json",
+    "controlled-agent-verification-bundle-args-cwd-env-shell.json",
+    "controlled-agent-verification-bundle-git-package-network-fields.json",
+    "controlled-agent-verification-bundle-unknown-command-id.json",
+    "controlled-agent-verification-bundle-unbounded-sequence.json",
+    "controlled-agent-verification-bundle-unbounded-timeout-output.json",
+    "controlled-agent-verification-bundle-raw-output-dump.json",
+    "controlled-agent-verification-bundle-private-path-output.json",
+    "controlled-agent-verification-bundle-secret-output.json",
+    "controlled-agent-verification-bundle-auto-run-claim.json",
+    "controlled-agent-verification-bundle-production-release-overclaim.json",
+    "controlled-agent-verification-bundle-provider-tool-field.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-verification-bundle.schema.json"
   ]),
   ...[
     "controlled-agent-edit-executor-unsafe-path.json",
