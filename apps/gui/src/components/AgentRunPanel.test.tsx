@@ -13,6 +13,9 @@ import twoStepCompletedFixture from "../../../../packages/contracts/examples/eng
 import { controlledAgentSearchSelectionResultId, createControlledAgentSearchSelection } from "../services/controlledAgentSearchSelection";
 import type { ControlledAgentLexicalSearchSnippet, ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
 import { controlledAgentTaskPresets } from "../services/controlledAgentTaskPresets";
+import plannedVerificationBundle from "../../../../packages/contracts/examples/engine/controlled-agent-verification-bundle-planned.json";
+import succeededVerificationBundle from "../../../../packages/contracts/examples/engine/controlled-agent-verification-bundle-succeeded.json";
+import { buildControlledAgentVerificationBundleRequest, evaluateControlledAgentVerificationBundle } from "../services/controlledAgentVerificationBundle";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -286,6 +289,57 @@ afterEach(() => {
 });
 
 describe("AgentRunPanel", () => {
+  it("renders explicit controlled verification bundle review and posts only after click", () => {
+    const onRequestControlledVerificationBundle = vi.fn();
+    const bundle = evaluateControlledAgentVerificationBundle(plannedVerificationBundle);
+    const request = buildControlledAgentVerificationBundleRequest({ host: "vscode", bundleMetadata: plannedVerificationBundle, userConfirmed: true });
+
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledVerificationBundle: bundle,
+      controlledVerificationBundleRequest: request,
+      onRequestControlledVerificationBundle,
+    });
+
+    expect(panelText()).toContain("Controlled verification bundle");
+    expect(panelText()).toContain("fixed command ids only");
+    expect(panelText()).toContain("Step 1: repository-check");
+    expect(panelText()).toContain("Step 2: gui-app-tests");
+    expect(panelText()).toContain("Step 3: engine-chat-tests");
+    expect(panelText()).toContain("Raw output persisted/rendered: false");
+    expect(onRequestControlledVerificationBundle).not.toHaveBeenCalled();
+
+    act(() => {
+      findButton("Run controlled verification bundle").click();
+    });
+
+    expect(onRequestControlledVerificationBundle).toHaveBeenCalledTimes(1);
+    expect(browserStorageDump()).toBe("");
+  });
+
+  it("renders controlled verification bundle sanitized result and unsupported host copy", () => {
+    const onRequestControlledVerificationBundle = vi.fn();
+    const bundle = evaluateControlledAgentVerificationBundle(succeededVerificationBundle);
+    const request = buildControlledAgentVerificationBundleRequest({ host: "jetbrains", bundleMetadata: plannedVerificationBundle, userConfirmed: true });
+
+    renderPanel(undefined, {
+      host: "jetbrains",
+      controlledVerificationBundle: bundle,
+      controlledVerificationBundleRequest: request,
+      onRequestControlledVerificationBundle,
+    });
+
+    expect(panelText()).toContain("JetBrains verification bundle execution remains fail-closed");
+    expect(panelText()).toContain("Status: succeeded");
+    expect(panelText()).toContain("Step 1: repository-check");
+    expect(panelText()).toContain("Sanitized summary tail: Repository check completed with bounded sanitized evidence.");
+    expect(panelText()).toContain("Omitted unsafe output tails: 0");
+    expect(findButton("Run controlled verification bundle").disabled).toBe(true);
+    expect(onRequestControlledVerificationBundle).not.toHaveBeenCalled();
+    expect(panelText()).not.toContain("/Users/");
+    expect(panelText()).not.toContain("Authorization");
+  });
+
   it("renders task preset choices and generates user-reviewed draft guidance after explicit selection", () => {
     const onApplyReviewedPatch = vi.fn();
     const onRunAllowlistedVerification = vi.fn();
@@ -1623,6 +1677,11 @@ type PanelTestProps = {
   onConfirmControlledMultifileApply?: () => void;
   onRequestControlledMultifileApply?: () => void;
   onClearControlledMultifileApply?: () => void;
+  controlledVerificationBundle?: any;
+  controlledVerificationBundleRequest?: any;
+  controlledVerificationBundleNote?: string | null;
+  pendingControlledVerificationBundle?: boolean;
+  onRequestControlledVerificationBundle?: () => void;
   controlledSearchResultId?: string;
   selectedControlledSearchResultIds?: string[];
   controlledSearchSelection?: any;
@@ -1684,6 +1743,11 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onConfirmControlledMultifileApply={props.onConfirmControlledMultifileApply}
         onRequestControlledMultifileApply={props.onRequestControlledMultifileApply}
         onClearControlledMultifileApply={props.onClearControlledMultifileApply}
+        controlledVerificationBundle={props.controlledVerificationBundle}
+        controlledVerificationBundleRequest={props.controlledVerificationBundleRequest}
+        controlledVerificationBundleNote={props.controlledVerificationBundleNote}
+        pendingControlledVerificationBundle={props.pendingControlledVerificationBundle}
+        onRequestControlledVerificationBundle={props.onRequestControlledVerificationBundle}
         controlledSearchResultId={props.controlledSearchResultId}
         selectedControlledSearchResultIds={props.selectedControlledSearchResultIds}
         controlledSearchSelection={props.controlledSearchSelection}

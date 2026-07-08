@@ -52,6 +52,7 @@ import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCom
 import { evaluateControlledAgentPatchPlanPreview } from "./services/controlledAgentPatchPlanPreview";
 import { evaluateControlledAgentMultifilePatchPlan } from "./services/controlledAgentMultifilePatchPlan";
 import { buildControlledAgentMultifileApplyRequest, correlateControlledAgentMultifileApplyResult, type ControlledAgentMultifileApplyCorrelation, type ControlledAgentMultifileApplySummary } from "./services/controlledAgentMultifileApplyRequest";
+import { buildControlledAgentVerificationBundleRequest, correlateControlledAgentVerificationBundleResult, evaluateControlledAgentVerificationBundle, type ControlledAgentVerificationBundleEvaluation, type ControlledAgentVerificationBundleRequestCorrelation, type ControlledAgentVerificationBundleRequestResult } from "./services/controlledAgentVerificationBundle";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
 import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp";
 import { evaluateControlledAgentRuntimeSession } from "./services/controlledAgentRuntimeSession";
@@ -465,6 +466,8 @@ export function App() {
   const controlledLexicalSearchCorrelationRef = useRef<ControlledAgentLexicalSearchCorrelation | null>(null);
   const controlledMultifileApplyCorrelationRef = useRef<ControlledAgentMultifileApplyCorrelation | null>(null);
   const controlledMultifileApplyCompletedRequestIdRef = useRef<string | null>(null);
+  const controlledVerificationBundleCorrelationRef = useRef<ControlledAgentVerificationBundleRequestCorrelation | null>(null);
+  const controlledVerificationBundleCompletedRequestIdRef = useRef<string | null>(null);
   const oneStepFileReadRequestIdRef = useRef<string | null>(null);
   const oneStepEditRequestIdRef = useRef<string | null>(null);
   const oneStepCommandRunRequestIdRef = useRef<string | null>(null);
@@ -496,6 +499,10 @@ export function App() {
   const [pendingControlledMultifileApplyRequestId, setPendingControlledMultifileApplyRequestId] = useState<string | null>(null);
   const [controlledMultifileApplyNote, setControlledMultifileApplyNote] = useState<string | null>(null);
   const [controlledMultifileApplyConfirmed, setControlledMultifileApplyConfirmed] = useState(false);
+  const [controlledVerificationBundleResult, setControlledVerificationBundleResult] = useState<ControlledAgentVerificationBundleEvaluation | undefined>(undefined);
+  const [controlledVerificationBundleRequest, setControlledVerificationBundleRequest] = useState<ControlledAgentVerificationBundleRequestResult | undefined>(undefined);
+  const [pendingControlledVerificationBundleRequestId, setPendingControlledVerificationBundleRequestId] = useState<string | null>(null);
+  const [controlledVerificationBundleNote, setControlledVerificationBundleNote] = useState<string | null>(null);
   const [controlledLexicalSearchResultId, setControlledLexicalSearchResultId] = useState<string | undefined>(undefined);
   const [selectedControlledSearchResultIds, setSelectedControlledSearchResultIds] = useState<string[]>([]);
   const [oneStepLoopState, setOneStepLoopState] = useState<ControlledOneStepAgentLoopState>(() => createControlledOneStepAgentLoopState());
@@ -668,6 +675,9 @@ export function App() {
   const controlledAgentFileReadTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentFileReadTraceEntry(effectiveControlledAgentFileReadMetadata), [effectiveControlledAgentFileReadMetadata]);
   const controlledAgentTwoStepRunMetadata = activeCaps?.controlledAgentTwoStepRun;
   const controlledAgentTwoStepRunState = useMemo(() => controlledAgentTwoStepRunMetadata === undefined ? createControlledAgentTwoStepRunState() : evaluateControlledAgentTwoStepRun(controlledAgentTwoStepRunMetadata), [controlledAgentTwoStepRunMetadata]);
+  const controlledAgentVerificationBundleMetadata = activeCaps?.controlledAgentVerificationBundle;
+  const controlledAgentVerificationBundle = useMemo(() => controlledAgentVerificationBundleMetadata === undefined ? undefined : evaluateControlledAgentVerificationBundle(controlledAgentVerificationBundleMetadata), [controlledAgentVerificationBundleMetadata]);
+  const effectiveControlledVerificationBundle = controlledVerificationBundleResult ?? controlledAgentVerificationBundle;
   const controlledAgentCommandRunnerMetadata = activeCaps?.controlledAgentCommandRunner;
   const effectiveControlledAgentCommandRunnerMetadata = controlledCommandRunResultMetadata ?? controlledAgentCommandRunnerMetadata;
   const controlledAgentCommandRunTraceEntry = useMemo<CodingSessionTraceEntry | null>(() => createControlledAgentCommandRunTraceEntry(effectiveControlledAgentCommandRunnerMetadata), [effectiveControlledAgentCommandRunnerMetadata]);
@@ -821,6 +831,12 @@ export function App() {
     userGestureId: "agent-run-controlled-search-button",
     requestSeed: "agent-run-controlled-search",
   }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata]);
+  const controlledAgentVerificationBundleRequest = useMemo(() => buildControlledAgentVerificationBundleRequest({
+    host: bridgeHost,
+    bundleMetadata: controlledAgentVerificationBundleMetadata,
+    userConfirmed: true,
+    requestSeed: "s117-verification-bundle",
+  }), [bridgeHost, controlledAgentVerificationBundleMetadata]);
   const controlledAgentMultifileApplyRequest = useMemo(() => buildControlledAgentMultifileApplyRequest({
     host: bridgeHost,
     patchPlanMetadata: controlledAgentMultifilePatchPlanMetadata,
@@ -1237,6 +1253,40 @@ export function App() {
           setSelectedControlledSearchResultIds([]);
           appendTrace({ family: "controlledAgent.fileReadResult", title: "Controlled lexical search result accepted", status: "succeeded", summary: "Sanitized lexical search result metadata accepted for explicit user selection.", requestId: current.requestId, details: correlation.details });
         }
+      } else if (message.type === "host.controlledAgentVerificationBundleResult") {
+        const requestId = message.requestId ?? "unknown";
+        const current = controlledVerificationBundleCorrelationRef.current;
+        if (controlledVerificationBundleCompletedRequestIdRef.current === requestId) {
+          setControlledVerificationBundleNote("Ignored duplicate verification bundle result.");
+          return;
+        }
+        if (!current) {
+          setControlledVerificationBundleNote("Ignored stale verification bundle result.");
+          return;
+        }
+        const correlation = correlateControlledAgentVerificationBundleResult({ current, bundleResult: message.payload, existingResult: controlledVerificationBundleResult });
+        if (correlation.state === "accepted" && correlation.bundle) {
+          controlledVerificationBundleCompletedRequestIdRef.current = requestId;
+          controlledVerificationBundleCorrelationRef.current = null;
+          setPendingControlledVerificationBundleRequestId(null);
+          setControlledVerificationBundleResult(correlation.bundle);
+          setControlledVerificationBundleNote(`Verification bundle result accepted: ${correlation.bundle.status ?? "accepted"}.`);
+          appendTrace({ family: "controlledAgent.verificationBundleResult", title: "Controlled verification bundle result received", status: correlation.bundle.status === "succeeded" ? "succeeded" : correlation.bundle.status === "running" ? "in_progress" : "failed", summary: "Sanitized sequence-aware verification bundle metadata accepted.", requestId, details: correlation.details });
+          return;
+        }
+        if (correlation.state === "duplicate") {
+          controlledVerificationBundleCorrelationRef.current = null;
+          setPendingControlledVerificationBundleRequestId(null);
+          setControlledVerificationBundleNote("Ignored duplicate verification bundle result.");
+          return;
+        }
+        if (correlation.state === "ignored") {
+          setControlledVerificationBundleNote("Ignored stale verification bundle result.");
+          return;
+        }
+        controlledVerificationBundleCorrelationRef.current = null;
+        setPendingControlledVerificationBundleRequestId(null);
+        setControlledVerificationBundleNote(correlation.diagnostics[0]?.message ?? "Verification bundle result was blocked.");
       } else if (message.type === "host.controlledAgentMultifileApplyResult") {
         const requestId = message.requestId ?? "unknown";
         const current = controlledMultifileApplyCorrelationRef.current;
@@ -2506,6 +2556,22 @@ export function App() {
     appendTrace({ family: "controlledAgent.fileReadPlanned", title: "Controlled lexical search requested", status: "pending", summary: "User clicked explicit controlled lexical search; sanitized snippet metadata only is expected.", requestId: controlledAgentLexicalSearchRequest.bridgeRequest.requestId, details: controlledAgentLexicalSearchRequest.details });
   }, [addTimeline, appendTrace, controlledAgentLexicalSearchRequest]);
 
+  const requestControlledVerificationBundle = useCallback(() => {
+    setControlledVerificationBundleRequest(controlledAgentVerificationBundleRequest);
+    if (controlledAgentVerificationBundleRequest.state !== "ready" || !controlledAgentVerificationBundleRequest.bridgeRequest || !controlledAgentVerificationBundleRequest.correlation || controlledVerificationBundleCorrelationRef.current || pendingControlledVerificationBundleRequestId) {
+      setControlledVerificationBundleNote(controlledAgentVerificationBundleRequest.diagnostics[0]?.message ?? "Verification bundle request is not ready.");
+      return;
+    }
+    controlledVerificationBundleCorrelationRef.current = controlledAgentVerificationBundleRequest.correlation;
+    controlledVerificationBundleCompletedRequestIdRef.current = null;
+    setPendingControlledVerificationBundleRequestId(controlledAgentVerificationBundleRequest.bridgeRequest.requestId);
+    setControlledVerificationBundleResult(undefined);
+    setControlledVerificationBundleNote("Verification bundle request posted after explicit user click.");
+    bridgeAdapterRef.current?.post(controlledAgentVerificationBundleRequest.bridgeRequest);
+    addTimeline(`Controlled verification bundle requested ${controlledAgentVerificationBundleRequest.bridgeRequest.requestId}`);
+    appendTrace({ family: "controlledAgent.verificationBundleRequested", title: "Controlled verification bundle requested", status: "pending", summary: "User clicked explicit controlled verification bundle run.", requestId: controlledAgentVerificationBundleRequest.bridgeRequest.requestId, details: controlledAgentVerificationBundleRequest.details });
+  }, [addTimeline, appendTrace, controlledAgentVerificationBundleRequest, pendingControlledVerificationBundleRequestId]);
+
   const confirmControlledMultifileApplyReview = useCallback(() => {
     setControlledMultifileApplyConfirmed(true);
     setControlledMultifileApplyNote("Multi-file apply review confirmed. Use the explicit apply button only if the bounded VS Code request is ready.");
@@ -3441,7 +3507,7 @@ export function App() {
             </div>
             <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-tools">
-                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} controlledLexicalSearch={controlledLexicalSearchResult} controlledMultifilePatchPlan={controlledAgentMultifilePatchPlanPreview} controlledMultifileApplyRequest={controlledAgentMultifileApplyRequest} controlledMultifileApplyResult={controlledMultifileApplyResult} controlledMultifileApplyNote={controlledMultifileApplyNote} pendingControlledMultifileApply={pendingControlledMultifileApplyRequestId !== null} controlledMultifileApplyConfirmed={controlledMultifileApplyConfirmed} onConfirmControlledMultifileApply={confirmControlledMultifileApplyReview} onRequestControlledMultifileApply={requestControlledMultifileApply} onClearControlledMultifileApply={clearControlledMultifileApplyState} controlledSearchResultId={controlledLexicalSearchResultId} selectedControlledSearchResultIds={selectedControlledSearchResultIds} controlledSearchSelection={controlledSearchSelection} controlledSearchRequestState={controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledLexicalSearchResult !== undefined ? controlledAgentLexicalSearchRequest.state : undefined} pendingControlledSearch={controlledLexicalSearchCorrelationRef.current !== null} onRequestControlledSearch={requestControlledLexicalSearch} onControlledSearchResultSelectionChange={updateControlledSearchSelection} controlledTwoStepRunState={controlledAgentTwoStepRunMetadata !== undefined ? controlledAgentTwoStepRunState : undefined} />
+                <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} controlledLexicalSearch={controlledLexicalSearchResult} controlledMultifilePatchPlan={controlledAgentMultifilePatchPlanPreview} controlledMultifileApplyRequest={controlledAgentMultifileApplyRequest} controlledMultifileApplyResult={controlledMultifileApplyResult} controlledMultifileApplyNote={controlledMultifileApplyNote} pendingControlledMultifileApply={pendingControlledMultifileApplyRequestId !== null} controlledMultifileApplyConfirmed={controlledMultifileApplyConfirmed} onConfirmControlledMultifileApply={confirmControlledMultifileApplyReview} onRequestControlledMultifileApply={requestControlledMultifileApply} onClearControlledMultifileApply={clearControlledMultifileApplyState} controlledVerificationBundle={effectiveControlledVerificationBundle} controlledVerificationBundleRequest={controlledAgentVerificationBundleMetadata !== undefined || controlledVerificationBundleRequest !== undefined ? controlledVerificationBundleRequest ?? controlledAgentVerificationBundleRequest : undefined} controlledVerificationBundleNote={controlledVerificationBundleNote} pendingControlledVerificationBundle={pendingControlledVerificationBundleRequestId !== null} onRequestControlledVerificationBundle={requestControlledVerificationBundle} controlledSearchResultId={controlledLexicalSearchResultId} selectedControlledSearchResultIds={selectedControlledSearchResultIds} controlledSearchSelection={controlledSearchSelection} controlledSearchRequestState={controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledLexicalSearchResult !== undefined ? controlledAgentLexicalSearchRequest.state : undefined} pendingControlledSearch={controlledLexicalSearchCorrelationRef.current !== null} onRequestControlledSearch={requestControlledLexicalSearch} onControlledSearchResultSelectionChange={updateControlledSearchSelection} controlledTwoStepRunState={controlledAgentTwoStepRunMetadata !== undefined ? controlledAgentTwoStepRunState : undefined} />
                 {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} capabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} twoStepRunState={controlledAgentTwoStepRunMetadata !== undefined ? controlledAgentTwoStepRunState : undefined} onStop={stopControlledAgentRun} />}
                 {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}
                 {(controlledAgentFileReadMetadata !== undefined || controlledAgentFileReadRequest.state !== "blocked") && <ControlledAgentFileReadPanel metadata={effectiveControlledAgentFileReadMetadata} evaluatedRead={controlledAgentFileReadSummary} request={controlledAgentFileReadRequest} pendingRequestId={pendingControlledFileReadRequestId} note={controlledFileReadNote} onRequest={submitControlledFileRead} onClearPending={clearPendingControlledFileReadState} />}

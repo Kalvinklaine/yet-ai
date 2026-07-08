@@ -16,6 +16,8 @@ import editExecutorPlanned from "../../../packages/contracts/examples/engine/con
 import controlledPatchPlan from "../../../packages/contracts/examples/engine/controlled-agent-patch-plan.json";
 import hostEditApplied from "../../../packages/contracts/examples/bridge/host-controlled-agent-edit-result-applied.json";
 import hostLexicalSearchSucceeded from "../../../packages/contracts/examples/bridge/host-controlled-agent-lexical-search-result-succeeded.json";
+import plannedVerificationBundle from "../../../packages/contracts/examples/engine/controlled-agent-verification-bundle-planned.json";
+import succeededVerificationBundle from "../../../packages/contracts/examples/engine/controlled-agent-verification-bundle-succeeded.json";
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -451,6 +453,51 @@ describe("runtime refresh feedback", () => {
     expect(findButton("Clear pending read")).toBeDefined();
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("controlled_agent_file_read");
+  });
+
+  it("posts controlled verification bundle only after explicit click and renders sanitized result", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentVerificationBundle: plannedVerificationBundle }) });
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Controlled verification bundle");
+    expect(container?.textContent).toContain("Step 1: repository-check");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Run controlled verification bundle").click();
+    });
+
+    const bundleRequests = postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest");
+    expect(bundleRequests).toHaveLength(1);
+    const request = bundleRequests[0][0] as { requestId: string; payload: Record<string, unknown> };
+    expect(request.payload).toMatchObject({ requestIdMintedBy: "gui", assistantMinted: false, commandIds: ["repository-check", "gui-app-tests", "engine-chat-tests"] });
+    expect(request.payload).not.toHaveProperty("command");
+    expect(request.payload).not.toHaveProperty("cwd");
+    expect(request.payload).not.toHaveProperty("env");
+
+    const result = JSON.parse(JSON.stringify(succeededVerificationBundle)) as Record<string, any>;
+    result.workspace.controlledWorkspaceId = request.payload.controlledWorkspaceId;
+    result.workspace.runId = request.payload.runId;
+    result.workspace.workspaceReadinessId = request.payload.workspaceReadinessId;
+    result.bundle.bundleId = request.payload.bundleId;
+    result.bundle.requestedCommandCount = 3;
+    result.bundle.commands.push({ ...result.bundle.commands[1], stepId: "step-s117-engine", sequenceIndex: 2, commandId: "engine-chat-tests", resultHash: "sha256:3333333333333333333333333333333333333333333333333333333333333333", outputTail: "Engine chat tests completed with bounded sanitized evidence.", summary: "Engine chat tests passed with local deterministic evidence." });
+    result.aggregateResult.commandCount = 3;
+    result.aggregateResult.succeededCount = 3;
+    await dispatchHostMessage({ version: bridgeVersion, type: "host.controlledAgentVerificationBundleResult", requestId: request.requestId, payload: result });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Verification bundle result accepted: succeeded.");
+    expect(container?.textContent).toContain("Sanitized summary tail: Repository check completed with bounded sanitized evidence.");
+    expect(agentRunPanel().textContent).not.toContain("/Users/");
+    expect(agentRunPanel().textContent).not.toContain("Authorization");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("controlled_agent_verification_bundle");
   });
 
   it("posts controlled lexical search only after explicit click and selection stays local", async () => {

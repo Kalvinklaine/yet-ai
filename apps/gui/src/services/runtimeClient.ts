@@ -53,6 +53,7 @@ export type CapsResponse = {
   controlledAgentMultifileApply?: unknown;
   controlledAgentRuntimeSession?: unknown;
   controlledAgentTwoStepRun?: unknown;
+  controlledAgentVerificationBundle?: unknown;
 };
 
 export type ModelCapabilities = {

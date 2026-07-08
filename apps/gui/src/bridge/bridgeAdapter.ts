@@ -105,7 +105,7 @@ export type IdeActionResultPayload = {
 
 export type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentMultifileApplyRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest";
+  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentMultifileApplyRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest" | "gui.controlledAgentVerificationBundleRequest";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
@@ -128,7 +128,7 @@ export type HostRuntimeStatusPayload = {
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult" | "host.controlledAgentVerificationBundleResult";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload | HostRuntimeStatusPayload;
 };
@@ -234,6 +234,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.controlledAgentMultifileApplyResult",
   "host.controlledAgentCommandRunResult",
   "host.controlledAgentLexicalSearchResult",
+  "host.controlledAgentVerificationBundleResult",
 ]);
 const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.ready",
@@ -246,6 +247,7 @@ const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.controlledAgentMultifileApplyRequest",
   "gui.controlledAgentCommandRunRequest",
   "gui.controlledAgentLexicalSearchRequest",
+  "gui.controlledAgentVerificationBundleRequest",
 ]);
 
 function expectedParentOrigin(): string | undefined {
@@ -423,6 +425,9 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   if (value.type === "gui.controlledAgentLexicalSearchRequest") {
     return typeof value.requestId === "string" && isControlledAgentLexicalSearchRequestPayload(value.payload) && value.payload.requestId === value.requestId;
   }
+  if (value.type === "gui.controlledAgentVerificationBundleRequest") {
+    return typeof value.requestId === "string" && isControlledAgentVerificationBundleRequestPayload(value.payload) && value.payload.requestId === value.requestId;
+  }
   return value.type === "gui.applyWorkspaceEditRequest" && typeof value.requestId === "string" && isApplyWorkspaceEditPayload(value.payload);
 }
 
@@ -547,6 +552,25 @@ export function isControlledAgentLexicalSearchResultPayload(value: unknown): val
   return false;
 }
 
+export function isControlledAgentVerificationBundleRequestPayload(value: unknown): value is Record<string, unknown> & { requestId: string } {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "workspaceReadinessId", "bundleId", "userConfirmed", "confirmationKind", "commandIds", "limits", "policyFlags"])) {
+    return false;
+  }
+  return safeControlledAgentId(value.requestId) &&
+    value.requestIdMintedBy === "gui" &&
+    value.source === "gui" &&
+    value.assistantMinted === false &&
+    safeControlledAgentId(value.controlledWorkspaceId) &&
+    safeControlledAgentId(value.runId) &&
+    (value.workspaceReadinessId === undefined || safeControlledAgentId(value.workspaceReadinessId)) &&
+    safeControlledAgentId(value.bundleId) &&
+    value.userConfirmed === true &&
+    value.confirmationKind === "explicit_user_verification_bundle" &&
+    isControlledAgentVerificationBundleCommandIds(value.commandIds) &&
+    isControlledAgentVerificationBundleLimits(value.limits) &&
+    isControlledAgentVerificationBundlePolicyFlags(value.policyFlags);
+}
+
 function isControlledAgentMultifileApplyLimits(value: unknown): boolean {
   return isPlainObject(value) && hasOnlyKeys(value, ["maxFiles", "maxEdits", "maxReplacementBytesPerEdit", "maxTotalReplacementBytes"]) &&
     optionalBoundedInteger(value.maxFiles, 1, 4) && value.maxFiles !== undefined &&
@@ -621,6 +645,29 @@ function isControlledAgentCommandRunPolicyFlags(value: unknown): boolean {
     return false;
   }
   return keys.every((key) => key === "allowlistedCommandIdOnly" ? value[key] === true : value[key] === false);
+}
+
+function isControlledAgentVerificationBundleCommandIds(value: unknown): boolean {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 3 && value.every(isVerificationCommandId);
+}
+
+function isControlledAgentVerificationBundleLimits(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["maxCommands", "maxTimeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"]) &&
+    value.maxCommands === 3 &&
+    value.maxTimeoutMs === 1800000 &&
+    value.maxOutputBytes === 20000 &&
+    value.maxOutputLines === 400 &&
+    value.tailOnly === true &&
+    value.commandStringAllowed === false &&
+    value.argsAllowed === false &&
+    value.cwdAllowed === false &&
+    value.envAllowed === false &&
+    value.shellAllowed === false;
+}
+
+function isControlledAgentVerificationBundlePolicyFlags(value: unknown): boolean {
+  const keys = ["allowlistedCommandIdsOnly", "boundedSequenceOnly", "explicitUserConfirmationRequired", "freeformCommandAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed", "gitAllowed", "networkAllowed", "providerAllowed", "toolAllowed", "packageInstallAllowed", "fileReadAllowed", "fileWriteAllowed", "hiddenSearchAllowed", "indexingAllowed", "autoStartAllowed", "autoApplyAllowed", "autoRunAllowed", "autoVerifyAllowed", "autoFixAllowed", "productionClaimAllowed", "releaseClaimAllowed"];
+  return isPlainObject(value) && hasOnlyKeys(value, keys) && keys.every((key) => key === "allowlistedCommandIdsOnly" || key === "boundedSequenceOnly" || key === "explicitUserConfirmationRequired" ? value[key] === true : value[key] === false);
 }
 
 function isControlledAgentLexicalSearchScope(value: unknown): boolean {
@@ -733,6 +780,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   }
   if (value.type === "host.controlledAgentLexicalSearchResult") {
     return typeof value.requestId === "string" && isControlledAgentLexicalSearchResultPayload(value.payload) && value.payload.requestId === value.requestId;
+  }
+  if (value.type === "host.controlledAgentVerificationBundleResult") {
+    return typeof value.requestId === "string" && isPlainObject(value.payload);
   }
   return value.type === "host.openedFromCommand" && value.requestId === undefined && isEmptyPayload(value.payload);
 }

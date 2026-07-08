@@ -15,6 +15,7 @@ import type { ControlledRunContextBundle, ControlledRunContextReport } from "../
 import type { ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
 import type { ControlledAgentMultifilePatchPlanResult } from "../services/controlledAgentMultifilePatchPlan";
 import type { ControlledAgentMultifileApplyRequestResult, ControlledAgentMultifileApplySummary } from "../services/controlledAgentMultifileApplyRequest";
+import type { ControlledAgentVerificationBundleEvaluation, ControlledAgentVerificationBundleRequestResult } from "../services/controlledAgentVerificationBundle";
 import type { ControlledAgentTwoStepRunState } from "../services/controlledAgentTwoStepRun";
 import { controlledAgentSearchSelectionResultId, type ControlledAgentSearchSelectionResult } from "../services/controlledAgentSearchSelection";
 import { evaluateControlledAgentRecoveryMatrix, type ControlledAgentRecoveryEvaluation, type ControlledAgentRecoveryVisibleState } from "../services/controlledAgentRecoveryMatrix";
@@ -63,6 +64,11 @@ export type AgentRunPanelProps = {
   onConfirmControlledMultifileApply?: () => void;
   onRequestControlledMultifileApply?: () => void;
   onClearControlledMultifileApply?: () => void;
+  controlledVerificationBundle?: ControlledAgentVerificationBundleEvaluation;
+  controlledVerificationBundleRequest?: ControlledAgentVerificationBundleRequestResult;
+  controlledVerificationBundleNote?: string | null;
+  pendingControlledVerificationBundle?: boolean;
+  onRequestControlledVerificationBundle?: () => void;
   controlledSearchResultId?: string;
   selectedControlledSearchResultIds?: string[];
   controlledSearchSelection?: ControlledAgentSearchSelectionResult;
@@ -73,7 +79,7 @@ export type AgentRunPanelProps = {
   controlledTwoStepRunState?: ControlledAgentTwoStepRunState;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, onRequestControlledVerificationBundle, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -188,6 +194,9 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const showControlledMultifileApply = controlledMultifilePatchPlan !== undefined || controlledMultifileApplyResult !== undefined;
   const canConfirmControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "blocked" && !controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onConfirmControlledMultifileApply);
   const canRequestControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "ready" && controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onRequestControlledMultifileApply);
+  const showControlledVerificationBundle = controlledVerificationBundle !== undefined || controlledVerificationBundleRequest !== undefined;
+  const canRequestControlledVerificationBundle = host === "vscode" && controlledVerificationBundle?.state === "accepted" && controlledVerificationBundle.status === "planned" && controlledVerificationBundleRequest?.state === "ready" && !pendingControlledVerificationBundle && Boolean(onRequestControlledVerificationBundle);
+  const controlledVerificationUnsafeOmitted = controlledVerificationBundle?.commands.filter((command) => command.outputTail === undefined && (command.outputByteCount !== undefined || command.outputLineCount !== undefined || command.truncated)).length ?? 0;
   const [selectedTaskPresetId, setSelectedTaskPresetId] = useState<ControlledAgentTaskPresetId | null>(null);
   const [taskPresetGuidance, setTaskPresetGuidance] = useState<ControlledAgentTaskPresetGuidance | null>(null);
   const selectTaskPreset = (presetId: ControlledAgentTaskPresetId) => {
@@ -376,6 +385,45 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span>Unsafe or malformed multi-file patch plan metadata is blocked and non-actionable. No apply, bridge post, provider call, command, file operation, browser storage write, or auto-action was introduced.</span>
           {controlledMultifilePatchPlan.diagnostics.map((diagnostic) => <span key={`${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}
         </>}
+      </div>}
+      {showControlledVerificationBundle && <div className={`readiness-card ${canRequestControlledVerificationBundle || controlledVerificationBundle?.status === "succeeded" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled verification bundle review and run">
+        <div className="row">
+          <strong>Controlled verification bundle</strong>
+          <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code explicit run" : host === "jetbrains" ? "JetBrains fail-closed" : "browser unsupported"}</span>
+          <span className="badge">fixed command ids only</span>
+          <span className="badge">sequence-aware</span>
+          <span className="badge">sanitized summaries</span>
+          {pendingControlledVerificationBundle && <span className="badge warn">pending</span>}
+        </div>
+        <span>{host === "vscode" ? "Review the bounded fixed command ids below, then run the bundle only with the explicit button." : host === "jetbrains" ? "JetBrains verification bundle execution remains fail-closed and posts no bridge request until parity is verified." : "Browser preview cannot request verification bundle execution and posts no bridge request."}</span>
+        <span className="subtle">No verification bundle starts on render, provider proposal, apply result, search selection, or history load. No command strings, args, cwd, env, shell, git, package, network, provider, tool, file read, file write, raw output, private path, or secret authority is exposed.</span>
+        <div className="agent-progress-grid" aria-label="Controlled verification bundle status">
+          <span>Bundle id: {controlledVerificationBundle?.bundleId ? sanitizeDisplayText(controlledVerificationBundle.bundleId) : "not accepted"}</span>
+          <span>Run id: {controlledVerificationBundle?.runId ? sanitizeDisplayText(controlledVerificationBundle.runId) : "not accepted"}</span>
+          <span>Status: {sanitizeDisplayText(controlledVerificationBundle?.status ?? controlledVerificationBundleRequest?.state ?? "missing")}</span>
+          <span>Command count: {controlledVerificationBundle?.commandCount ?? 0}</span>
+          <span>Request state: {sanitizeDisplayText(controlledVerificationBundleRequest?.state ?? "missing")}</span>
+          <span>Omitted unsafe output tails: {controlledVerificationUnsafeOmitted}</span>
+          <span>Raw output persisted/rendered: false</span>
+          <span>Free-form command authority: false</span>
+        </div>
+        {controlledVerificationBundleRequest?.diagnostics.length ? <span className="subtle">Bundle request diagnostics: {controlledVerificationBundleRequest.diagnostics.slice(0, 4).map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span> : null}
+        {controlledVerificationBundle?.diagnostics.length ? <span className="subtle">Bundle diagnostics: {controlledVerificationBundle.diagnostics.slice(0, 4).map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span> : null}
+        {controlledVerificationBundle?.commands.map((command) => <div className="provider-item stack" key={command.stepId}>
+          <div className="row">
+            <strong>Step {command.sequenceIndex + 1}: {sanitizeDisplayText(command.commandId)}</strong>
+            <span className={command.status === "succeeded" ? "badge ok" : command.status === "planned" || command.status === "running" ? "badge" : "badge warn"}>{sanitizeDisplayText(command.status)}</span>
+            <span className="badge">timeout {command.timeoutMs}ms</span>
+          </div>
+          <span>{sanitizeDisplayText(command.summary)}</span>
+          <span>Limits: {command.maxOutputBytes} bytes · {command.maxOutputLines} lines · tail only true · args/cwd/env/shell false</span>
+          {(command.exitCode !== undefined || command.durationMs !== undefined || command.resultHash) && <span>Result metadata: exit {String(command.exitCode ?? "none")} · duration {String(command.durationMs ?? "none")}ms · hash {sanitizeDisplayText(command.resultHash ?? "not reported")} · truncated {String(command.truncated ?? false)}</span>}
+          {command.outputTail ? <span>Sanitized summary tail: {sanitizeDisplayText(command.outputTail)}</span> : <span className="subtle">Raw stdout/stderr is omitted; only safe summaries and hashes may appear.</span>}
+        </div>)}
+        {controlledVerificationBundleNote && <span>{sanitizeDisplayText(controlledVerificationBundleNote)}</span>}
+        <div className="row" role="group" aria-label="Controlled verification bundle actions">
+          <button type="button" onClick={onRequestControlledVerificationBundle} disabled={!canRequestControlledVerificationBundle}>{pendingControlledVerificationBundle ? "Verification bundle pending" : "Run controlled verification bundle"}</button>
+        </div>
       </div>}
       {showControlledMultifileApply && <div className={`readiness-card ${canRequestControlledMultifileApply || controlledMultifileApplyResult?.state === "applied" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled multi-file apply confirmation">
         <div className="row">
