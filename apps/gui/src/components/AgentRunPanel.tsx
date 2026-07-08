@@ -12,6 +12,7 @@ import type { ControlledAgentRepairLoopEvaluation } from "../services/controlled
 import type { ControlledRunHistoryItem } from "../services/controlledRunHistory";
 import type { ControlledRunContextBundle, ControlledRunContextReport } from "../services/controlledRunContext";
 import type { ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
+import type { ControlledAgentMultifilePatchPlanResult } from "../services/controlledAgentMultifilePatchPlan";
 import { controlledAgentSearchSelectionResultId, type ControlledAgentSearchSelectionResult } from "../services/controlledAgentSearchSelection";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
@@ -48,6 +49,7 @@ export type AgentRunPanelProps = {
   onIncludeControlledRunContextChange?: (include: boolean) => void;
   controlledRunHistory?: ControlledRunHistoryItem[];
   controlledLexicalSearch?: ControlledAgentLexicalSearchSummary;
+  controlledMultifilePatchPlan?: ControlledAgentMultifilePatchPlanResult;
   controlledSearchResultId?: string;
   selectedControlledSearchResultIds?: string[];
   controlledSearchSelection?: ControlledAgentSearchSelectionResult;
@@ -57,7 +59,7 @@ export type AgentRunPanelProps = {
   onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -252,6 +254,45 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
             {sanitizeDisplayText(snippet.pathLabel)} · {snippet.range.start.line}:{snippet.range.start.character}-{snippet.range.end.line}:{snippet.range.end.character} · {sanitizeDisplayText(snippet.languageId ?? "unknown")} · {snippet.snippetByteCount} bytes · {snippet.matchCount} matches{id ? ` · ${sanitizeDisplayText(id)}` : ""}
           </label>
         ))}
+      </div>}
+      {controlledMultifilePatchPlan && <div className={`readiness-card ${controlledMultifilePatchPlan.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled multi-file patch dry-run review">
+        <div className="row">
+          <strong>Multi-file patch dry-run review</strong>
+          <span className={controlledMultifilePatchPlan.state === "ready" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(controlledMultifilePatchPlan.state)}</span>
+          <span className="badge">review only</span>
+          <span className="badge">metadata only</span>
+          <span className="badge">no multi-file apply</span>
+        </div>
+        <span>This bounded multi-file patch plan is dry-run review evidence only. It cannot apply, create, delete, rename, run commands, call providers or tools, read files, write files, send chat, verify, or persist raw payloads.</span>
+        <span className="subtle">Raw replacement text, raw diffs, raw file bodies, provider/tool payloads, private paths, secrets, and command output are intentionally omitted. Browser preview and JetBrains remain display-only/fail-closed for this S115 review path.</span>
+        {controlledMultifilePatchPlan.state === "ready" ? <>
+          <span>{sanitizeDisplayText(controlledMultifilePatchPlan.preview.summary)}</span>
+          <div className="agent-progress-grid" aria-label="Controlled multi-file patch dry-run counts">
+            <span>Plan id: {sanitizeDisplayText(controlledMultifilePatchPlan.preview.planId)}</span>
+            <span>Workspace: {sanitizeDisplayText(controlledMultifilePatchPlan.preview.workspaceLabel)}</span>
+            <span>Files: {controlledMultifilePatchPlan.preview.fileCount}/{controlledMultifilePatchPlan.preview.budgets.maxFiles}</span>
+            <span>Edits: {controlledMultifilePatchPlan.preview.editCount}/{controlledMultifilePatchPlan.preview.budgets.maxEdits}</span>
+            <span>Total replacement bytes: {controlledMultifilePatchPlan.preview.totalReplacementBytes}/{controlledMultifilePatchPlan.preview.budgets.maxTotalReplacementBytes}</span>
+            <span>Per-edit byte budget: {controlledMultifilePatchPlan.preview.budgets.maxReplacementBytesPerEdit}</span>
+            <span>Automatic apply allowed: {String(controlledMultifilePatchPlan.preview.automaticApplyAllowed)}</span>
+            <span>Assistant apply authority: {String(controlledMultifilePatchPlan.preview.assistantMintedApplyAllowed)}</span>
+          </div>
+          <span>Safe touched path labels: {controlledMultifilePatchPlan.preview.touchedPathLabels.map((item) => sanitizeDisplayText(item)).join(" · ")}</span>
+          {controlledMultifilePatchPlan.preview.files.map((file) => <div className="provider-item stack" key={file.workspaceRelativePath}>
+            <div className="row">
+              <strong>{sanitizeDisplayText(file.fileLabel)}</strong>
+              <span className={file.riskLabel === "low" ? "badge ok" : "badge warn"}>risk {sanitizeDisplayText(file.riskLabel)}</span>
+              <span className="badge">{file.editCount} edits</span>
+              <span className="badge">{file.replacementByteTotal} bytes</span>
+            </div>
+            <span>{sanitizeDisplayText(file.fileSummary)}</span>
+            <span className="subtle">Expected pre-edit hash: {sanitizeDisplayText(file.expectedPreEditHashLabel)}</span>
+            {file.edits.map((edit) => <span key={edit.editId}>{sanitizeDisplayText(edit.editId)} · {sanitizeDisplayText(edit.operation)} · {sanitizeDisplayText(edit.rangeLabel)} · {edit.replacementByteCount} bytes · expected {sanitizeDisplayText(edit.expectedRangeHashLabel)} · {sanitizeDisplayText(edit.replacementSummary)}</span>)}
+          </div>)}
+        </> : <>
+          <span>Unsafe or malformed multi-file patch plan metadata is blocked and non-actionable. No apply, bridge post, provider call, command, file operation, browser storage write, or auto-action was introduced.</span>
+          {controlledMultifilePatchPlan.diagnostics.map((diagnostic) => <span key={`${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}
+        </>}
       </div>}
       {(showOneStepLoop || showRepairLoop) && (      <div className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">

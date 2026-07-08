@@ -7,6 +7,7 @@ import type { VerificationCommandId } from "../bridge/bridgeAdapter";
 import { createProposalHistory, type ProposalHistory } from "../services/proposalHistory";
 import { evaluateControlledAgentRepairLoop } from "../services/controlledAgentRepairLoop";
 import { createControlledRunHistoryItem } from "../services/controlledRunHistory";
+import { evaluateControlledAgentMultifilePatchPlan } from "../services/controlledAgentMultifilePatchPlan";
 import { controlledAgentSearchSelectionResultId, createControlledAgentSearchSelection } from "../services/controlledAgentSearchSelection";
 import type { ControlledAgentLexicalSearchSnippet, ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
 
@@ -189,6 +190,33 @@ function lexicalSearch(snippets: ControlledAgentLexicalSearchSnippet[] = [lexica
   };
 }
 
+function multifilePatchPlan(overrides: Record<string, unknown> = {}) {
+  return {
+    kind: "controlled_agent_multifile_patch_plan",
+    version: "2026-07-07",
+    authority: "review_only_multifile_replacement_metadata",
+    cloudRequired: false,
+    reviewOnly: true,
+    applyAuthority: { automaticApplyAllowed: false, assistantMintedApplyAllowed: false, requiresFutureExplicitHostApply: true, modelMintedApplyAuthorityAllowed: false },
+    workspace: { controlledWorkspaceId: "controlled-workspace-s115", runId: "controlled-run-s115", workspaceMode: "worktree", host: "vscode", privatePathExposed: false, workspaceLabel: "controlled worktree" },
+    limits: { maxFiles: 3, maxEdits: 6, maxReplacementBytesPerEdit: 800, maxTotalReplacementBytes: 1600 },
+    plan: {
+      planId: "multifile-plan-s115",
+      status: "review_pending",
+      summary: "Two bounded text replacements are ready for user review.",
+      fileCount: 2,
+      editCount: 2,
+      totalReplacementBytes: 220,
+      files: [
+        { workspaceRelativePath: "apps/gui/src/SafePanel.tsx", fileLabel: "apps/gui/src/SafePanel.tsx", existingTextFileRequired: true, expectedPreEditHash: `sha256:${"a".repeat(64)}`, fileSummary: "Adjusts a small display label for review.", riskLabel: "low", edits: [{ editId: "edit-s115-1", operation: "replace", range: { startLine: 12, endLine: 14 }, expectedRangeHash: `sha256:${"b".repeat(64)}`, replacementByteCount: 120, replacementSummary: "Updates a bounded label branch.", rawReplacementIncluded: false, rawDiffIncluded: false }] },
+        { workspaceRelativePath: "docs/architecture/safe-note.md", fileLabel: "docs/architecture/safe-note.md", existingTextFileRequired: true, expectedPreEditHash: `sha256:${"c".repeat(64)}`, fileSummary: "Refreshes a short architecture note.", riskLabel: "medium", edits: [{ editId: "edit-s115-2", operation: "replace", range: { startLine: 20, endLine: 22 }, expectedRangeHash: `sha256:${"d".repeat(64)}`, replacementByteCount: 100, replacementSummary: "Updates a bounded note paragraph.", rawReplacementIncluded: false, rawDiffIncluded: false }] },
+      ],
+    },
+    policyFlags: { metadataOnly: true, reviewOnly: true, existingFileReplacementOnly: true, rawReplacementBodiesAllowed: false, rawDiffsAllowed: false, rawBodiesInReportExportHistoryAllowed: false, createAllowed: false, deleteAllowed: false, renameAllowed: false, moveAllowed: false, chmodAllowed: false, binaryEditAllowed: false, symlinkEditAllowed: false, generatedFileEditAllowed: false, dependencyEditAllowed: false, hiddenPathEditAllowed: false, privatePathAllowed: false, assistantMintedApplyAllowed: false, modelMintedApplyAuthorityAllowed: false, automaticApplyAllowed: false, commandExecutionAllowed: false, providerToolCallingAllowed: false, localToolAuthorityAllowed: false, shellAllowed: false, gitAllowed: false, networkAllowed: false, packageInstallAllowed: false },
+    ...overrides,
+  };
+}
+
 
 const readyInput: AgentRunInput = {
   goal: { id: "goal-1", title: "Add safe panel", summary: "Add safe panel" },
@@ -337,6 +365,58 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("JetBrains fail-closed");
     expect(panelText()).toContain("JetBrains controlled lexical search selection is display-only and fail-closed until host parity is verified.");
     expect(optionalButton("Request controlled lexical search")?.disabled).toBe(true);
+  });
+
+  it("renders multi-file patch dry-run review metadata without apply authority or auto-action", () => {
+    const onApplyReviewedPatch = vi.fn();
+    const onRunAllowlistedVerification = vi.fn();
+    const preview = evaluateControlledAgentMultifilePatchPlan(multifilePatchPlan());
+
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledMultifilePatchPlan: preview,
+      onApplyReviewedPatch,
+      onRunAllowlistedVerification,
+    });
+
+    expect(panelText()).toContain("Multi-file patch dry-run review");
+    expect(panelText()).toContain("review only");
+    expect(panelText()).toContain("no multi-file apply");
+    expect(panelText()).toContain("It cannot apply, create, delete, rename, run commands, call providers or tools, read files, write files, send chat, verify, or persist raw payloads.");
+    expect(panelText()).toContain("Files: 2/3");
+    expect(panelText()).toContain("Edits: 2/6");
+    expect(panelText()).toContain("Total replacement bytes: 220/1600");
+    expect(panelText()).toContain("apps/gui/src/SafePanel.tsx");
+    expect(panelText()).toContain("lines 12-14");
+    expect(panelText()).toContain("risk medium");
+    expect(panelText()).toContain("Automatic apply allowed: false");
+    expect(panelText()).toContain("Assistant apply authority: false");
+    expect(actionButtonLabels()).not.toContain("Apply multi-file patch");
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+    expect(onApplyReviewedPatch).not.toHaveBeenCalled();
+    expect(onRunAllowlistedVerification).not.toHaveBeenCalled();
+    expect(browserStorageDump()).toBe("");
+  });
+
+  it("renders unsafe multi-file patch plans as blocked sanitized review-only state", () => {
+    const unsafePlan = multifilePatchPlan({ rawDiff: "diff --git a/private b/private" });
+    const preview = evaluateControlledAgentMultifilePatchPlan(unsafePlan);
+
+    renderPanel(undefined, {
+      host: "browser",
+      controlledMultifilePatchPlan: preview,
+    });
+
+    expect(panelText()).toContain("Multi-file patch dry-run review");
+    expect(panelText()).toContain("blocked");
+    expect(panelText()).toContain("Unsafe or malformed multi-file patch plan metadata is blocked and non-actionable.");
+    expect(panelText()).toContain("No apply, bridge post, provider call, command, file operation, browser storage write, or auto-action was introduced.");
+    expect(panelText()).toContain("unsafe_metadata");
+    expect(panelText()).toContain("Browser preview and JetBrains remain display-only/fail-closed");
+    expect(panelText()).not.toContain("diff --git");
+    expect(optionalButton("Apply multi-file patch")).toBeUndefined();
+    expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
+    expect(browserStorageDump()).toBe("");
   });
 
   it("renders idle state", () => {
@@ -1303,6 +1383,7 @@ type PanelTestProps = {
   includeControlledRunContext?: boolean;
   onIncludeControlledRunContextChange?: (include: boolean) => void;
   controlledLexicalSearch?: ControlledAgentLexicalSearchSummary;
+  controlledMultifilePatchPlan?: ReturnType<typeof evaluateControlledAgentMultifilePatchPlan>;
   controlledSearchResultId?: string;
   selectedControlledSearchResultIds?: string[];
   controlledSearchSelection?: any;
@@ -1354,6 +1435,7 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onIncludeControlledRunContextChange={props.onIncludeControlledRunContextChange}
         controlledRunHistory={props.controlledRunHistory}
         controlledLexicalSearch={props.controlledLexicalSearch}
+        controlledMultifilePatchPlan={props.controlledMultifilePatchPlan}
         controlledSearchResultId={props.controlledSearchResultId}
         selectedControlledSearchResultIds={props.selectedControlledSearchResultIds}
         controlledSearchSelection={props.controlledSearchSelection}
