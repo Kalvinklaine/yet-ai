@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-recovery-matrix.schema.json",
+  "title": "Controlled Agent Recovery Matrix Metadata",
+  "description": "Strict docs-only recovery matrix metadata for user-visible controlled-agent recovery states. It grants no execution, hidden retry, automatic rollback, unbounded repair, raw output persistence, private path persistence, secret persistence, or production/release authority.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "implementationAdded",
+    "matrixId",
+    "scope",
+    "policyFlags",
+    "states"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "controlled_agent_recovery_matrix" },
+    "version": { "type": "string", "const": "2026-07-08" },
+    "authority": { "type": "string", "const": "recovery_matrix_metadata" },
+    "cloudRequired": { "type": "boolean", "const": false },
+    "executionAllowed": { "type": "boolean", "const": false },
+    "implementationAdded": { "type": "boolean", "const": false },
+    "matrixId": { "$ref": "#/$defs/safeId" },
+    "scope": { "$ref": "#/$defs/scope" },
+    "policyFlags": { "$ref": "#/$defs/policyFlags" },
+    "states": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/recoveryState" }
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Ff][Ii][Ll][Ee]|[Dd][Ii][Ff][Ff])|[Pp][Rr][Ii][Vv][Aa][Tt][Ee][-_ ]?[Pp][Aa][Tt][Hh]|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee])|[Cc][Hh][Aa][Ii][Nn][-_ ]?[Oo][Ff][-_ ]?[Tt][Hh][Oo][Uu][Gg][Hh][Tt]|[Ss][Hh][Ee][Ll][Ll]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Tt][Rr][Yy]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Aa][Uu][Tt][Oo][-_ ]?(?:[Rr][Ee][Tt][Rr][Yy]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn])|[Uu][Nn][Bb][Oo][Uu][Nn][Dd][Ee][Dd]|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Rr][Ee][Ll][Ee][Aa][Ss][Ee]|[Mm][Aa][Rr][Kk][Ee][Tt][Pp][Ll][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 120 }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 260 }
+      ]
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hostSurface", "docsOnly", "runtimeMutationAllowed", "backendRequired", "productionClaimAllowed"],
+      "properties": {
+        "hostSurface": { "type": "string", "enum": ["vscode", "jetbrains", "browser", "unsupported"] },
+        "docsOnly": { "type": "boolean", "const": true },
+        "runtimeMutationAllowed": { "type": "boolean", "const": false },
+        "backendRequired": { "type": "boolean", "const": false },
+        "productionClaimAllowed": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "userVisibleStateRequired",
+        "manualActionRequiredForRetry",
+        "hiddenRetryAllowed",
+        "automaticRollbackAllowed",
+        "hiddenRepairAllowed",
+        "unboundedRepairAllowed",
+        "rawOutputPersistenceAllowed",
+        "privatePathPersistenceAllowed",
+        "secretPersistenceAllowed",
+        "staleResultAccepted",
+        "unsupportedHostClaimsSupport",
+        "productionClaimAllowed",
+        "releaseClaimAllowed"
+      ],
+      "properties": {
+        "userVisibleStateRequired": { "type": "boolean", "const": true },
+        "manualActionRequiredForRetry": { "type": "boolean", "const": true },
+        "hiddenRetryAllowed": { "type": "boolean", "const": false },
+        "automaticRollbackAllowed": { "type": "boolean", "const": false },
+        "hiddenRepairAllowed": { "type": "boolean", "const": false },
+        "unboundedRepairAllowed": { "type": "boolean", "const": false },
+        "rawOutputPersistenceAllowed": { "type": "boolean", "const": false },
+        "privatePathPersistenceAllowed": { "type": "boolean", "const": false },
+        "secretPersistenceAllowed": { "type": "boolean", "const": false },
+        "staleResultAccepted": { "type": "boolean", "const": false },
+        "unsupportedHostClaimsSupport": { "type": "boolean", "const": false },
+        "productionClaimAllowed": { "type": "boolean", "const": false },
+        "releaseClaimAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "recoveryState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stateId",
+        "userVisibleState",
+        "category",
+        "terminal",
+        "resultAccepted",
+        "hostSupportClaimed",
+        "attemptBudget",
+        "allowedNextActions",
+        "forbiddenActions",
+        "privacy",
+        "summary"
+      ],
+      "properties": {
+        "stateId": { "$ref": "#/$defs/safeId" },
+        "userVisibleState": {
+          "type": "string",
+          "enum": [
+            "stop_requested",
+            "stop_completed",
+            "stale_duplicate_result",
+            "host_disconnect_runtime_restart",
+            "provider_timeout",
+            "edit_hash_mismatch",
+            "verification_bundle_failure",
+            "repair_followup_exhausted",
+            "checkpoint_rollback_review",
+            "unsupported_host"
+          ]
+        },
+        "category": { "type": "string", "enum": ["stop", "stale", "disconnect", "timeout", "edit_mismatch", "verification_failure", "repair_exhausted", "rollback_review", "unsupported_host"] },
+        "terminal": { "type": "boolean" },
+        "resultAccepted": { "type": "boolean", "const": false },
+        "hostSupportClaimed": { "type": "boolean", "const": false },
+        "attemptBudget": { "$ref": "#/$defs/attemptBudget" },
+        "allowedNextActions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["acknowledge", "start_new_run", "manual_retry", "review_checkpoint", "request_user_choice", "open_safe_summary", "dismiss", "contact_owner", "no_action"] }
+        },
+        "forbiddenActions": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 12,
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["hidden_retry", "auto_rollback", "hidden_repair", "accept_stale_result", "persist_raw_output", "persist_private_path", "persist_secret", "unbounded_attempts", "claim_unsupported_host_support", "claim_production_ready", "claim_release_ready", "mutate_workspace"] }
+        },
+        "privacy": { "$ref": "#/$defs/privacy" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "attemptBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxAttempts", "attemptsUsed", "moreAttemptsAllowed", "requiresUserConfirmation"],
+      "properties": {
+        "maxAttempts": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "attemptsUsed": { "type": "integer", "minimum": 0, "maximum": 2 },
+        "moreAttemptsAllowed": { "type": "boolean" },
+        "requiresUserConfirmation": { "type": "boolean", "const": true }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sanitizedOnly", "rawOutputStored", "privatePathStored", "secretStored"],
+      "properties": {
+        "sanitizedOnly": { "type": "boolean", "const": true },
+        "rawOutputStored": { "type": "boolean", "const": false },
+        "privatePathStored": { "type": "boolean", "const": false },
+        "secretStored": { "type": "boolean", "const": false },
+        "note": { "$ref": "#/$defs/safeLabel" }
+      }
+    }
+  }
+}
