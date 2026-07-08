@@ -1,0 +1,124 @@
+{
+  "kind": "controlled_agent_task_harness",
+  "version": "2026-07-08",
+  "authority": "vscode_controlled_task_harness_metadata_only",
+  "cloudRequired": false,
+  "metadataOnly": true,
+  "journeyId": "journey.s125.c1.vscode",
+  "host": {
+    "kind": "vscode",
+    "supportState": "supported",
+    "executionAllowed": true,
+    "partialReason": "none"
+  },
+  "preset": {
+    "presetId": "fix-small-bug",
+    "selectedByUser": true,
+    "selectedAt": "2026-07-08T12:00:00Z",
+    "summary": "User chose a focused bug fix preset."
+  },
+  "contextSelection": {
+    "selectionId": "ctx.s125.c1",
+    "selectedByUser": true,
+    "selectedItemCount": 3,
+    "searchQueryCount": 1,
+    "searchResultCount": 2,
+    "activeFileExcerptCount": 1,
+    "hiddenReadAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "broadWorkspaceScanAllowed": false,
+    "summary": "User picked one visible excerpt and two visible result cards."
+  },
+  "proposal": {
+    "proposalId": "proposal.s125.c1",
+    "state": "accepted",
+    "detected": true,
+    "reviewedByUser": true,
+    "decision": "accepted",
+    "providerToolsAllowed": false,
+    "providerPayloadStored": false,
+    "rawPromptStored": false,
+    "summary": "User accepted bounded proposal metadata."
+  },
+  "patchPlanReview": {
+    "patchPlanId": "patch.s125.c1",
+    "reviewedByUser": true,
+    "decision": "accepted",
+    "fileCount": 2,
+    "replacementByteCount": 320,
+    "rawDiffStored": false,
+    "rawReplacementStored": false,
+    "summary": "User reviewed bounded patch plan metadata."
+  },
+  "apply": {
+    "applyId": "apply.s125.c1",
+    "state": "applied",
+    "userConfirmed": true,
+    "requestIdMintedBy": "gui",
+    "assistantMinted": false,
+    "boundedExistingTextFilesOnly": true,
+    "automaticApplyAllowed": false,
+    "summary": "User approved bounded existing text file changes."
+  },
+  "verification": {
+    "bundleId": "verify.s125.c1",
+    "state": "succeeded",
+    "userConfirmed": true,
+    "allowlistedCommandIdsOnly": true,
+    "commandCount": 2,
+    "freeformCommandAllowed": false,
+    "automaticVerifyAllowed": false,
+    "rawOutputStored": false,
+    "summary": "User approved two allowlisted checks and saw sanitized status."
+  },
+  "followupRecovery": {
+    "state": "ready",
+    "nextStep": "manual_followup",
+    "requiresUserChoice": true,
+    "automaticRepairAllowed": false,
+    "automaticProviderSendAllowed": false,
+    "automaticRerunAllowed": false,
+    "summary": "Follow-up is available only as a user chosen next step."
+  },
+  "correlation": {
+    "lineageId": "lineage.s125.c1",
+    "lineageStatus": "valid",
+    "duplicateDetected": false,
+    "staleDetected": false,
+    "acceptedAfterInvalidLineage": false
+  },
+  "policyFlags": {
+    "metadataOnly": true,
+    "explicitContextOnly": true,
+    "explicitUserGatesRequired": true,
+    "hiddenReadAllowed": false,
+    "hiddenSearchAllowed": false,
+    "indexingAllowed": false,
+    "autoSendAllowed": false,
+    "autoApplyAllowed": false,
+    "autoVerifyAllowed": false,
+    "autoRepairAllowed": false,
+    "arbitraryShellAllowed": false,
+    "gitAllowed": false,
+    "packageInstallAllowed": false,
+    "networkAllowed": false,
+    "providerToolsAllowed": false
+  },
+  "persistence": {
+    "rawPromptStored": false,
+    "fileBodiesStored": false,
+    "diffsStored": false,
+    "replacementTextStored": false,
+    "commandOutputStored": false,
+    "providerPayloadStored": false,
+    "privatePathsStored": false,
+    "secretsStored": false
+  },
+  "claims": {
+    "dogfoodReadyHarness": true,
+    "productionReady": true,
+    "releaseReady": true,
+    "marketplaceReady": false
+  }
+}

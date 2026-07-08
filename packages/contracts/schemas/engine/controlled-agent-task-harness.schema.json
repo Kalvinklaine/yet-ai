@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-task-harness.schema.json",
+  "title": "Controlled Agent Task Harness Metadata",
+  "description": "Strict metadata-only contract for one VS Code-first controlled task journey. It records task preset, explicit context/search selection, proposal review, patch-plan review, explicit apply, verification bundle, follow-up/recovery, and stale or duplicate correlation fail-closed states without raw prompts, file bodies, diffs, replacements, command output, provider payloads, private paths, secrets, hidden reads/search, automatic apply, automatic verification, automatic repair, arbitrary shell/git/package/network/tool authority, production claims, release claims, or marketplace claims.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "metadataOnly",
+    "journeyId",
+    "host",
+    "preset",
+    "contextSelection",
+    "proposal",
+    "patchPlanReview",
+    "apply",
+    "verification",
+    "followupRecovery",
+    "correlation",
+    "policyFlags",
+    "persistence",
+    "claims"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "controlled_agent_task_harness" },
+    "version": { "type": "string", "const": "2026-07-08" },
+    "authority": { "type": "string", "const": "vscode_controlled_task_harness_metadata_only" },
+    "cloudRequired": { "type": "boolean", "const": false },
+    "metadataOnly": { "type": "boolean", "const": true },
+    "journeyId": { "$ref": "#/$defs/safeId" },
+    "host": { "$ref": "#/$defs/host" },
+    "preset": { "$ref": "#/$defs/preset" },
+    "contextSelection": { "$ref": "#/$defs/contextSelection" },
+    "proposal": { "$ref": "#/$defs/proposal" },
+    "patchPlanReview": { "$ref": "#/$defs/patchPlanReview" },
+    "apply": { "$ref": "#/$defs/apply" },
+    "verification": { "$ref": "#/$defs/verification" },
+    "followupRecovery": { "$ref": "#/$defs/followupRecovery" },
+    "correlation": { "$ref": "#/$defs/correlation" },
+    "policyFlags": { "$ref": "#/$defs/policyFlags" },
+    "persistence": { "$ref": "#/$defs/persistence" },
+    "claims": { "$ref": "#/$defs/claims" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "correlation": {
+            "type": "object",
+            "properties": { "lineageStatus": { "enum": ["stale", "duplicate", "missing", "mismatched"] } },
+            "required": ["lineageStatus"]
+          }
+        },
+        "required": ["correlation"]
+      },
+      "then": {
+        "properties": {
+          "proposal": { "type": "object", "properties": { "decision": { "enum": ["blocked"] } }, "required": ["decision"] },
+          "patchPlanReview": { "type": "object", "properties": { "decision": { "enum": ["blocked"] } }, "required": ["decision"] },
+          "apply": { "type": "object", "properties": { "state": { "enum": ["blocked", "not_requested"] }, "userConfirmed": { "const": false } }, "required": ["state", "userConfirmed"] },
+          "verification": { "type": "object", "properties": { "state": { "enum": ["blocked", "not_requested"] }, "userConfirmed": { "const": false } }, "required": ["state", "userConfirmed"] },
+          "followupRecovery": { "type": "object", "properties": { "state": { "enum": ["blocked", "ready"] }, "automaticRepairAllowed": { "const": false } }, "required": ["state", "automaticRepairAllowed"] }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Rr][Aa][Ww][-_ ]?(?:[Ff][Ii][Ll][Ee]|[Pp][Rr][Oo][Mm][Pp][Tt]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ll][Oo][Gg]|[Dd][Ii][Ff][Ff]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd])|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr](?:[-_ ]?(?:[Tt][Oo][Oo][Ll]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]))?|[Ss][Hh][Ee][Ll][Ll]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Gg][Ii][Tt]|[Tt][Oo][Oo][Ll]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Pp][Aa][Cc][Kk][Aa][Gg][Ee][-_ ]?[Ii][Nn][Ss][Tt][Aa][Ll][Ll]|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Ss][Cc][Aa][Nn]|[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh])|[Ii][Nn][Dd][Ee][Xx](?:[Ii][Nn][Gg])?|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Tt][Aa][Rr][Tt]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr])|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Rr][Ee][Ll][Ee][Aa][Ss][Ee]|[Mm][Aa][Rr][Kk][Ee][Tt][Pp][Ll][Aa][Cc][Ee]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)))[\\s\\S]*$"
+    },
+    "safeId": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^(?!assistant(?:[._-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "safeLabel": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "type": "string", "minLength": 1, "maxLength": 100 }] },
+    "safeSummary": { "allOf": [{ "$ref": "#/$defs/safeText" }, { "type": "string", "minLength": 1, "maxLength": 240 }] },
+    "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$", "maxLength": 32 },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "supportState", "executionAllowed", "partialReason"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["vscode", "jetbrains"] },
+        "supportState": { "type": "string", "enum": ["supported", "partial_fail_closed"] },
+        "executionAllowed": { "type": "boolean" },
+        "partialReason": { "type": "string", "enum": ["none", "non_vscode_host"] }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "vscode" } }, "required": ["kind"] }, "then": { "properties": { "supportState": { "const": "supported" }, "executionAllowed": { "const": true }, "partialReason": { "const": "none" } } } },
+        { "if": { "properties": { "kind": { "const": "jetbrains" } }, "required": ["kind"] }, "then": { "properties": { "supportState": { "const": "partial_fail_closed" }, "executionAllowed": { "const": false }, "partialReason": { "const": "non_vscode_host" } } } }
+      ]
+    },
+    "preset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["presetId", "selectedByUser", "selectedAt", "summary"],
+      "properties": {
+        "presetId": { "type": "string", "enum": ["fix-small-bug", "add-focused-test", "refactor-small-function", "explain-selected-code", "improve-copy-or-typing"] },
+        "selectedByUser": { "type": "boolean", "const": true },
+        "selectedAt": { "$ref": "#/$defs/utcTimestamp" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "contextSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["selectionId", "selectedByUser", "selectedItemCount", "searchQueryCount", "searchResultCount", "activeFileExcerptCount", "hiddenReadAllowed", "hiddenSearchAllowed", "indexingAllowed", "broadWorkspaceScanAllowed", "summary"],
+      "properties": {
+        "selectionId": { "$ref": "#/$defs/safeId" },
+        "selectedByUser": { "type": "boolean", "const": true },
+        "selectedItemCount": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "searchQueryCount": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "searchResultCount": { "type": "integer", "minimum": 0, "maximum": 16 },
+        "activeFileExcerptCount": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "hiddenReadAllowed": { "type": "boolean", "const": false },
+        "hiddenSearchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "broadWorkspaceScanAllowed": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "proposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proposalId", "state", "detected", "reviewedByUser", "decision", "providerToolsAllowed", "providerPayloadStored", "rawPromptStored", "summary"],
+      "properties": {
+        "proposalId": { "$ref": "#/$defs/safeId" },
+        "state": { "type": "string", "enum": ["detected", "accepted", "rejected", "blocked"] },
+        "detected": { "type": "boolean" },
+        "reviewedByUser": { "type": "boolean" },
+        "decision": { "type": "string", "enum": ["accepted", "rejected", "blocked"] },
+        "providerToolsAllowed": { "type": "boolean", "const": false },
+        "providerPayloadStored": { "type": "boolean", "const": false },
+        "rawPromptStored": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "patchPlanReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["patchPlanId", "reviewedByUser", "decision", "fileCount", "replacementByteCount", "rawDiffStored", "rawReplacementStored", "summary"],
+      "properties": {
+        "patchPlanId": { "$ref": "#/$defs/safeId" },
+        "reviewedByUser": { "type": "boolean" },
+        "decision": { "type": "string", "enum": ["accepted", "rejected", "blocked"] },
+        "fileCount": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "replacementByteCount": { "type": "integer", "minimum": 0, "maximum": 50000 },
+        "rawDiffStored": { "type": "boolean", "const": false },
+        "rawReplacementStored": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "apply": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["applyId", "state", "userConfirmed", "requestIdMintedBy", "assistantMinted", "boundedExistingTextFilesOnly", "automaticApplyAllowed", "summary"],
+      "properties": {
+        "applyId": { "$ref": "#/$defs/safeId" },
+        "state": { "type": "string", "enum": ["not_requested", "requested", "applied", "rejected", "blocked"] },
+        "userConfirmed": { "type": "boolean" },
+        "requestIdMintedBy": { "type": "string", "enum": ["none", "gui", "host"] },
+        "assistantMinted": { "type": "boolean", "const": false },
+        "boundedExistingTextFilesOnly": { "type": "boolean", "const": true },
+        "automaticApplyAllowed": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundleId", "state", "userConfirmed", "allowlistedCommandIdsOnly", "commandCount", "freeformCommandAllowed", "automaticVerifyAllowed", "rawOutputStored", "summary"],
+      "properties": {
+        "bundleId": { "$ref": "#/$defs/safeId" },
+        "state": { "type": "string", "enum": ["not_requested", "planned", "running", "succeeded", "failed", "blocked"] },
+        "userConfirmed": { "type": "boolean" },
+        "allowlistedCommandIdsOnly": { "type": "boolean", "const": true },
+        "commandCount": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "freeformCommandAllowed": { "type": "boolean", "const": false },
+        "automaticVerifyAllowed": { "type": "boolean", "const": false },
+        "rawOutputStored": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "followupRecovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "nextStep", "requiresUserChoice", "automaticRepairAllowed", "automaticProviderSendAllowed", "automaticRerunAllowed", "summary"],
+      "properties": {
+        "state": { "type": "string", "enum": ["not_needed", "ready", "blocked"] },
+        "nextStep": { "type": "string", "enum": ["none", "manual_followup", "manual_retry", "stop"] },
+        "requiresUserChoice": { "type": "boolean", "const": true },
+        "automaticRepairAllowed": { "type": "boolean", "const": false },
+        "automaticProviderSendAllowed": { "type": "boolean", "const": false },
+        "automaticRerunAllowed": { "type": "boolean", "const": false },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "correlation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lineageId", "lineageStatus", "duplicateDetected", "staleDetected", "acceptedAfterInvalidLineage"],
+      "properties": {
+        "lineageId": { "$ref": "#/$defs/safeId" },
+        "lineageStatus": { "type": "string", "enum": ["valid", "stale", "duplicate", "missing", "mismatched"] },
+        "duplicateDetected": { "type": "boolean" },
+        "staleDetected": { "type": "boolean" },
+        "acceptedAfterInvalidLineage": { "type": "boolean", "const": false }
+      },
+      "allOf": [
+        { "if": { "properties": { "lineageStatus": { "const": "valid" } }, "required": ["lineageStatus"] }, "then": { "properties": { "duplicateDetected": { "const": false }, "staleDetected": { "const": false } } } },
+        { "if": { "properties": { "lineageStatus": { "const": "stale" } }, "required": ["lineageStatus"] }, "then": { "properties": { "staleDetected": { "const": true } } } },
+        { "if": { "properties": { "lineageStatus": { "const": "duplicate" } }, "required": ["lineageStatus"] }, "then": { "properties": { "duplicateDetected": { "const": true } } } }
+      ]
+    },
+    "policyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metadataOnly", "explicitContextOnly", "explicitUserGatesRequired", "hiddenReadAllowed", "hiddenSearchAllowed", "indexingAllowed", "autoSendAllowed", "autoApplyAllowed", "autoVerifyAllowed", "autoRepairAllowed", "arbitraryShellAllowed", "gitAllowed", "packageInstallAllowed", "networkAllowed", "providerToolsAllowed"],
+      "properties": {
+        "metadataOnly": { "type": "boolean", "const": true },
+        "explicitContextOnly": { "type": "boolean", "const": true },
+        "explicitUserGatesRequired": { "type": "boolean", "const": true },
+        "hiddenReadAllowed": { "type": "boolean", "const": false },
+        "hiddenSearchAllowed": { "type": "boolean", "const": false },
+        "indexingAllowed": { "type": "boolean", "const": false },
+        "autoSendAllowed": { "type": "boolean", "const": false },
+        "autoApplyAllowed": { "type": "boolean", "const": false },
+        "autoVerifyAllowed": { "type": "boolean", "const": false },
+        "autoRepairAllowed": { "type": "boolean", "const": false },
+        "arbitraryShellAllowed": { "type": "boolean", "const": false },
+        "gitAllowed": { "type": "boolean", "const": false },
+        "packageInstallAllowed": { "type": "boolean", "const": false },
+        "networkAllowed": { "type": "boolean", "const": false },
+        "providerToolsAllowed": { "type": "boolean", "const": false }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawPromptStored", "fileBodiesStored", "diffsStored", "replacementTextStored", "commandOutputStored", "providerPayloadStored", "privatePathsStored", "secretsStored"],
+      "properties": {
+        "rawPromptStored": { "type": "boolean", "const": false },
+        "fileBodiesStored": { "type": "boolean", "const": false },
+        "diffsStored": { "type": "boolean", "const": false },
+        "replacementTextStored": { "type": "boolean", "const": false },
+        "commandOutputStored": { "type": "boolean", "const": false },
+        "providerPayloadStored": { "type": "boolean", "const": false },
+        "privatePathsStored": { "type": "boolean", "const": false },
+        "secretsStored": { "type": "boolean", "const": false }
+      }
+    },
+    "claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dogfoodReadyHarness", "productionReady", "releaseReady", "marketplaceReady"],
+      "properties": {
+        "dogfoodReadyHarness": { "type": "boolean", "const": true },
+        "productionReady": { "type": "boolean", "const": false },
+        "releaseReady": { "type": "boolean", "const": false },
+        "marketplaceReady": { "type": "boolean", "const": false }
+      }
+    }
+  }
+}

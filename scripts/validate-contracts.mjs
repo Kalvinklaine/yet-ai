@@ -193,6 +193,10 @@ const mappings = [
     "packages/contracts/examples/engine/controlled-agent-lexical-search-succeeded.json",
     "packages/contracts/schemas/engine/controlled-agent-lexical-search.schema.json"
   ],
+  [
+    "packages/contracts/examples/engine/controlled-agent-task-harness-vscode-happy-path.json",
+    "packages/contracts/schemas/engine/controlled-agent-task-harness.schema.json"
+  ],
   ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
@@ -1412,6 +1416,16 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-authority-registry.schema.json"
+  ]),
+  ...[
+    "controlled-agent-task-harness-raw-data.json",
+    "controlled-agent-task-harness-hidden-authority.json",
+    "controlled-agent-task-harness-unsupported-browser-host.json",
+    "controlled-agent-task-harness-stale-lineage-accepted.json",
+    "controlled-agent-task-harness-production-overclaim.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-task-harness.schema.json"
   ]),
   ...[
     "controlled-agent-lexical-search-assistant-minted.json",
