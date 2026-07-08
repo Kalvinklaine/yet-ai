@@ -5,6 +5,7 @@
     "check": "node scripts/check.mjs",
     "check:controlled-agent-authority-registry": "node scripts/check-controlled-agent-authority-registry.mjs",
     "check:controlled-agent-storage-privacy": "node scripts/check-controlled-agent-storage-privacy.mjs",
+    "check:forbidden-evidence-text": "node scripts/check-forbidden-evidence-text.mjs",
     "check:useful-multifile-agent-decision": "node scripts/check-useful-multifile-agent-decision.mjs",
     "audit:controlled-autonomy-wording": "node scripts/audit-controlled-autonomy-wording.mjs",
     "check:agent-readiness-docs": "node scripts/check-agent-readiness-docs.mjs",
