@@ -97,6 +97,7 @@
     "dogfood:real-provider-report": "node scripts/dogfood-real-provider-report.mjs",
     "dogfood:controlled-beta-report": "node scripts/dogfood-controlled-beta-report.mjs",
     "dogfood:controlled-agent-real-provider-matrix": "node scripts/dogfood-controlled-agent-real-provider-matrix.mjs",
+    "dogfood:controlled-agent-task-beta-report": "node scripts/dogfood-controlled-agent-task-beta-report.mjs",
     "report:agent-run-rc": "node scripts/dogfood-agent-run-rc-report.mjs",
     "smoke:vscode-preview": "node scripts/smoke-vscode-preview.mjs",
     "smoke:vscode-wrapper-browser": "node scripts/smoke-vscode-wrapper-browser.mjs",
