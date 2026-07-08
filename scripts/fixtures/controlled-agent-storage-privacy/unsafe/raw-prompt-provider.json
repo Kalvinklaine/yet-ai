@@ -1,0 +1,6 @@
+{
+  "fixtureVersion": 1,
+  "rawPrompt": "Please rewrite the selected private implementation exactly as pasted.",
+  "providerResponse": "Here is the complete model response body.",
+  "apiKey": "example-provider-secret"
+}

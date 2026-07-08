@@ -1,0 +1,32 @@
+{
+  "fixtureVersion": 1,
+  "kind": "controlled-agent-storage-privacy-safe-history-entry",
+  "scope": "dev-preview",
+  "host": "vscode",
+  "summary": "sanitized controlled-agent metadata only",
+  "context": {
+    "selectionCaptured": false,
+    "rawPromptsAbsent": true,
+    "privatePathsAbsent": true
+  },
+  "proposal": {
+    "providerPayloadCaptured": false,
+    "rawResponseCaptured": false
+  },
+  "verification": {
+    "commandId": "repository-check",
+    "outputCaptured": false,
+    "status": "passed"
+  },
+  "storage": {
+    "browserStorageDumpCaptured": false,
+    "bridgeDumpCaptured": false,
+    "sanitized": true
+  },
+  "claims": {
+    "productionReady": false,
+    "releaseReady": false,
+    "marketplaceReady": false,
+    "devPreviewOnly": true
+  }
+}

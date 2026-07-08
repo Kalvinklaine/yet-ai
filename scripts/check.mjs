@@ -8,6 +8,7 @@ const validators = [
   ["scripts/audit-controlled-autonomy-wording.mjs"],
   ["scripts/validate-contracts.mjs"],
   ["scripts/check-controlled-agent-authority-registry.mjs"],
+  ["scripts/check-controlled-agent-storage-privacy.mjs"],
   ["scripts/check-useful-multifile-agent-decision.mjs"],
   ["scripts/smoke-controlled-agent-lexical-search.mjs"],
   ["scripts/validate-controlled-agent-dev-preview-fixtures.mjs"],

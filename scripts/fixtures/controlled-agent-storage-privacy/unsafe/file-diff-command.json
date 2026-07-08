@@ -1,0 +1,8 @@
+{
+  "fixtureVersion": 1,
+  "fileContents": "function secretImplementation() { return 1; }",
+  "rawDiff": "@@ -1 +1 @@",
+  "replacementText": "function secretImplementation() { return 2; }",
+  "command": "npm run check",
+  "stdout": "full terminal output dump"
+}
