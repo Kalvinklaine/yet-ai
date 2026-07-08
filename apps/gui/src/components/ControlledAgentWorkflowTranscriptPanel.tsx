@@ -16,7 +16,7 @@ export function ControlledAgentWorkflowTranscriptPanel({ metadata }: ControlledA
   const finalEvidence = recordValue(transcript.finalEvidence);
   const omissions = recordValue(transcript.omissions);
   const finalResult = textValue(finalEvidence.result, "unknown");
-  const tone = finalResult === "completed" ? "ready" : "warn";
+  const tone = finalResult === "completed" || finalResult === "completed_with_followup" ? "ready" : "warn";
   const hostNotice = hostCopy(hostSurface, omissions);
 
   return (
@@ -190,7 +190,7 @@ function SafetyReview({ safetyReview }: { safetyReview: MetadataRecord }) {
 }
 
 function hostCopy(hostSurface: string, omissions: MetadataRecord): string | undefined {
-  if (hostSurface.toLowerCase() === "browser") return "Browser preview is unsupported for controlled workflow transcript authority; this view remains fail-closed and display-only.";
+  if (hostSurface.toLowerCase() === "browser-preview" || hostSurface.toLowerCase() === "browser") return "Browser preview is unsupported for controlled workflow transcript authority; this view remains fail-closed and display-only.";
   if (hostSurface.toLowerCase() === "jetbrains" || Number(omissions.unsupportedHostCount) > 0) return "JetBrains or partial-host transcript evidence is conservative: blocked or stopped statuses stay manual-only and fail-closed.";
   return undefined;
 }

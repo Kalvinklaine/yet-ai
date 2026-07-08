@@ -88,7 +88,7 @@ describe("ControlledAgentWorkflowTranscriptPanel", () => {
 
   it("omits unsafe raw data and does not leak prompts, paths, diffs, commands, output, provider payloads, or secrets", () => {
     const unsafe = clone(completedFixture) as Record<string, unknown>;
-    unsafe.hostSurface = "browser";
+    unsafe.hostSurface = "browser-preview";
     unsafe.rawPrompt = "Please use raw prompt /Users/alice/private sk-proj-123456789";
     unsafe.taskPresetLabel = "Small focused fix /Users/alice/private";
     (unsafe.contextSearch as Record<string, unknown>).selectedContextLabels = ["safe label", "/Users/alice/private/file.ts"];
@@ -119,6 +119,18 @@ describe("ControlledAgentWorkflowTranscriptPanel", () => {
     expect(text).not.toContain("command output");
     expect(text).not.toContain("production release marketplace");
     expect(text).not.toContain("rawPrompt");
+    expect(buttonTexts()).toEqual([]);
+  });
+
+  it("renders completed with follow-up as ready sanitized evidence", () => {
+    const completedWithFollowup = clone(completedFixture) as Record<string, unknown>;
+    (completedWithFollowup.finalEvidence as Record<string, unknown>).result = "completed_with_followup";
+
+    renderPanel(completedWithFollowup);
+
+    const panel = container?.querySelector<HTMLElement>("[data-testid='controlled-agent-workflow-transcript-panel']");
+    expect(panel?.className).toContain("ready");
+    expect(container?.textContent).toContain("completed_with_followup");
     expect(buttonTexts()).toEqual([]);
   });
 

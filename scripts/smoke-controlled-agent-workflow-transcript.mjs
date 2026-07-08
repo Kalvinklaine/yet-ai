@@ -1,22 +1,17 @@
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
+import { requireGuiTypescript } from "./lib/require-gui-typescript.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(__dirname, "..");
 const guiSrcRoot = join(repoRoot, "apps", "gui", "src");
 const rawLeakMarkers = ["/Users/alice", "sk-proj", "Raw prompt body", "command output", "provider payload", "bridge dump", "localStorage", "production release marketplace"];
 
-function requireTypescript() {
-  const require = createRequire(import.meta.url);
-  return require(join(repoRoot, "apps", "gui", "node_modules", "typescript"));
-}
-
 async function transpileGuiServices(entries) {
-  const ts = requireTypescript();
+  const ts = requireGuiTypescript({ repoRoot, smokeName: "Controlled agent workflow transcript smoke" });
   const outRoot = await mkdtemp(join(tmpdir(), "yet-controlled-workflow-transcript-smoke-ts-"));
   const queue = entries.map((entry) => join(guiSrcRoot, entry));
   const seen = new Set();
@@ -72,7 +67,7 @@ async function runSmoke() {
     "engine/controlled-agent-workflow-transcript-missing-task-preset-label.json",
   ];
   for (const expected of ["raw-data", "private-path", "command-output", "bridge-dump", "browser-storage-dump", "overclaim", "missing-task-preset-label"]) {
-    assert.equal(invalidNames.some((name) => name.includes(expected)), true, `missing invalid fixture coverage for ${expected}`);
+    assert.equal(invalidNames.some((name) => name.includes(expected)), true, `missing invalid fixture label coverage for ${expected}`);
   }
 
   const { imports, cleanup } = await transpileGuiServices(["services/controlledAgentWorkflowTranscript.ts"]);
@@ -110,10 +105,22 @@ async function runSmoke() {
     assert.equal(isControlledAgentWorkflowTranscriptSafe(unsafeResult.transcript), true);
     assertSanitized(unsafeResult, "unsafe transcript");
 
+    const contradictory = clone(completed);
+    contradictory.verification.commandCount = 1;
+    contradictory.verification.commandIds = ["repository-check", "gui-app-tests"];
+    contradictory.verification.passedCount = 1;
+    contradictory.verification.failedCount = 1;
+    const contradictoryResult = buildControlledAgentWorkflowTranscript(contradictory);
+    assert.equal(contradictoryResult.diagnostics.some((item) => item.code === "inconsistent_verification_counts"), true);
+    assert.deepEqual(contradictoryResult.transcript.verification.commandIds, []);
+    assert.equal(contradictoryResult.transcript.verification.commandCount, 0);
+    assert.equal(isControlledAgentWorkflowTranscriptSafe(contradictoryResult.transcript), true);
+    assertSanitized(contradictoryResult, "contradictory verification transcript");
+
     return {
       contractFixtures: 2,
       invalidFixtureGroups: invalidNames.length,
-      guiScenarios: ["completed", "blocked", "unsafe-raw-markers"],
+      guiScenarios: ["completed", "blocked", "unsafe-raw-markers", "contradictory-verification-counts"],
       hostExecution: false,
       providerCalls: false,
       workspaceMutation: false,
@@ -129,7 +136,7 @@ async function runSmoke() {
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const report = await runSmoke();
   console.log("Controlled agent workflow transcript smoke passed.");
-  console.log(`Verified ${report.contractFixtures} safe fixtures, ${report.invalidFixtureGroups} invalid fixture labels, and ${report.guiScenarios.length} local/mock GUI-service scenarios with sanitized metadata only.`);
+  console.log(`Verified ${report.contractFixtures} safe fixtures, ${report.invalidFixtureGroups} invalid fixture label names, and ${report.guiScenarios.length} local/mock GUI-service scenarios with sanitized metadata only.`);
 }
 
 export { runSmoke };

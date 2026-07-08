@@ -1,6 +1,6 @@
 import { sanitizeTimelineText } from "./redaction";
 
-export type ControlledAgentWorkflowTranscriptDiagnosticCode = "malformed_input" | "unsafe_metadata_omitted" | "unsafe_text_replaced";
+export type ControlledAgentWorkflowTranscriptDiagnosticCode = "malformed_input" | "unsafe_metadata_omitted" | "unsafe_text_replaced" | "inconsistent_verification_counts";
 
 export type ControlledAgentWorkflowTranscriptDiagnostic = {
   code: ControlledAgentWorkflowTranscriptDiagnosticCode;
@@ -126,6 +126,7 @@ export function buildControlledAgentWorkflowTranscript(input: unknown): Controll
   const metadata = isPlainObject(input) ? input : {};
   const transcript: Record<string, unknown> = {};
   for (const key of transcriptKeys) transcript[key] = sanitizeValue(metadata[key], fallbackFor(key), diagnostics, key);
+  sanitizeVerificationCounts(transcript, diagnostics);
   return { transcript, diagnostics: dedupeDiagnostics(diagnostics) };
 }
 
@@ -250,6 +251,24 @@ function safetyReview(): Record<string, boolean> {
     overclaimIncluded: false,
     safeToShare: true,
   };
+}
+
+function sanitizeVerificationCounts(transcript: Record<string, unknown>, diagnostics: ControlledAgentWorkflowTranscriptDiagnostic[]): void {
+  const verification = isPlainObject(transcript.verification) ? transcript.verification : undefined;
+  if (!verification) return;
+  const commandIds = Array.isArray(verification.commandIds) ? verification.commandIds : [];
+  const commandCount = boundedCountValue(verification.commandCount);
+  const passedCount = boundedCountValue(verification.passedCount);
+  const failedCount = boundedCountValue(verification.failedCount);
+  if (commandCount === undefined || passedCount === undefined || failedCount === undefined) return;
+  if (commandCount !== commandIds.length || passedCount > commandCount || failedCount > commandCount || passedCount + failedCount > commandCount) {
+    diagnostics.push(diagnostic("inconsistent_verification_counts", "Contradictory verification count metadata was replaced with safe bounded metadata."));
+    transcript.verification = fallbackFor("verification");
+  }
+}
+
+function boundedCountValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
 }
 
 function hasUnsafeMarker(value: unknown): boolean {

@@ -56,4 +56,25 @@ describe("buildControlledAgentWorkflowTranscript", () => {
     expect(rendered).not.toContain("command output");
     expect(rendered).not.toContain("production release marketplace");
   });
+
+  it("replaces contradictory verification count metadata with safe diagnostics", () => {
+    const contradictory = clone(completedFixture) as Record<string, unknown>;
+    (contradictory.verification as Record<string, unknown>).commandIds = ["repository-check", "gui-app-tests"];
+    (contradictory.verification as Record<string, unknown>).commandCount = 1;
+    (contradictory.verification as Record<string, unknown>).passedCount = 1;
+    (contradictory.verification as Record<string, unknown>).failedCount = 1;
+
+    const result = buildControlledAgentWorkflowTranscript(contradictory);
+    const verification = result.transcript.verification as Record<string, unknown>;
+
+    expect(result.diagnostics).toContainEqual({
+      code: "inconsistent_verification_counts",
+      message: "Contradictory verification count metadata was replaced with safe bounded metadata.",
+    });
+    expect(verification.commandIds).toEqual([]);
+    expect(verification.commandCount).toBe(0);
+    expect(verification.passedCount).toBe(0);
+    expect(verification.failedCount).toBe(0);
+    expect(isControlledAgentWorkflowTranscriptSafe(result.transcript)).toBe(true);
+  });
 });
