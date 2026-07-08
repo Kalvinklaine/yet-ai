@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-workflow-transcript.schema.json",
+  "title": "Controlled Agent Workflow Transcript",
+  "description": "Sanitized display/export-only transcript metadata for the controlled coding workflow. It records explicit gates, stage transitions, safe context/search labels, summaries, omitted/unsafe statuses, counters, hashes, and final evidence without raw prompts, files, diffs, replacements, commands, output, provider payloads, private paths, secrets, bridge dumps, browser storage dumps, or authority to act.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "authority",
+    "cloudRequired",
+    "executionAllowed",
+    "transcriptId",
+    "runId",
+    "generatedAt",
+    "hostSurface",
+    "localFirst",
+    "providerAccess",
+    "explicitUserGates",
+    "stageTransitions",
+    "contextSearch",
+    "proposal",
+    "patchPlan",
+    "apply",
+    "verification",
+    "followup",
+    "recovery",
+    "omissions",
+    "finalEvidence",
+    "safetyReview"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "controlled_agent_workflow_transcript" },
+    "version": { "type": "string", "const": "2026-07-08" },
+    "authority": { "type": "string", "const": "display_export_metadata_only" },
+    "cloudRequired": { "type": "boolean", "const": false },
+    "executionAllowed": { "type": "boolean", "const": false },
+    "transcriptId": { "$ref": "#/$defs/safeId" },
+    "runId": { "$ref": "#/$defs/safeId" },
+    "generatedAt": { "$ref": "#/$defs/utcTimestamp" },
+    "hostSurface": { "type": "string", "enum": ["vscode", "jetbrains", "browser-preview", "local-mock"] },
+    "taskPresetLabel": { "$ref": "#/$defs/safeLabel" },
+    "localFirst": { "type": "boolean", "const": true },
+    "providerAccess": { "type": "string", "enum": ["direct-local-user-configured", "mock-none", "not-used"] },
+    "explicitUserGates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/userGate" }
+    },
+    "stageTransitions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": { "$ref": "#/$defs/stageTransition" }
+    },
+    "contextSearch": { "$ref": "#/$defs/contextSearchSummary" },
+    "proposal": { "$ref": "#/$defs/proposalSummary" },
+    "patchPlan": { "$ref": "#/$defs/patchPlanSummary" },
+    "apply": { "$ref": "#/$defs/applySummary" },
+    "verification": { "$ref": "#/$defs/verificationSummary" },
+    "followup": { "$ref": "#/$defs/followupSummary" },
+    "recovery": { "$ref": "#/$defs/recoverySummary" },
+    "omissions": { "$ref": "#/$defs/omissionSummary" },
+    "finalEvidence": { "$ref": "#/$defs/finalEvidence" },
+    "safetyReview": { "$ref": "#/$defs/safetyReview" }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "pattern": "^(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Kk][Cc][Ee]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh]|[Rr][Aa][Ww][-_ ]?(?:[Pp][Rr][Oo][Mm][Pp][Tt]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd]|[Oo][Uu][Tt][Pp][Uu][Tt]|[Ss][Tt][Dd][Oo][Uu][Tt]|[Ss][Tt][Dd][Ee][Rr][Rr]|[Ff][Ii][Ll][Ee]|[Dd][Ii][Ff][Ff]|[Pp][Aa][Tt][Cc][Hh]|[Ll][Oo][Gg])|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?(?:[Pp][Aa][Yy][Ll][Oo][Aa][Dd]|[Rr][Ee][Ss][Pp][Oo][Nn][Ss][Ee]|[Bb][Oo][Dd][Yy]|[Tt][Oo][Oo][Ll]|[Cc][Aa][Ll][Ll])|[Bb][Rr][Ii][Dd][Gg][Ee][-_ ]?(?:[Dd][Uu][Mm][Pp]|[Pp][Aa][Yy][Ll][Oo][Aa][Dd])|[Bb][Rr][Oo][Ww][Ss][Ee][Rr][-_ ]?(?:[Ss][Tt][Oo][Rr][Aa][Gg][Ee]|[Ll][Oo][Cc][Aa][Ll][Ss][Tt][Oo][Rr][Aa][Gg][Ee]|[Ss][Ee][Ss][Ss][Ii][Oo][Nn][Ss][Tt][Oo][Rr][Aa][Gg][Ee]|[Dd][Uu][Mm][Pp])|[Ll][Oo][Cc][Aa][Ll][Ss][Tt][Oo][Rr][Aa][Gg][Ee]|[Ss][Ee][Ss][Ss][Ii][Oo][Nn][Ss][Tt][Oo][Rr][Aa][Gg][Ee]|[Ff][Ii][Ll][Ee][-_ ]?(?:[Bb][Oo][Dd][Yy]|[Cc][Oo][Nn][Tt][Ee][Nn][Tt])|[Rr][Ee][Pp][Ll][Aa][Cc][Ee][Mm][Ee][Nn][T][-_ ]?(?:[Tt][Ee][Xx][Tt]|[Bb][Oo][Dd][Yy])|[Dd][Ii][Ff][Ff]|[Pp][Aa][Tt][Cc][Hh]|[Cc][Oo][Mm][Mm][Aa][Nn][Dd][-_ ]?(?:[Ss][Tt][Rr][Ii][Nn][Gg]|[Oo][Uu][Tt][Pp][Uu][Tt])|[Ss][Tt][Dd][Oo][Uu][Tt]|[Ss][Tt][Dd][Ee][Rr][Rr]|[Cc][Ww][Dd]|[Ee][Nn][Vv]|[Aa][Rr][Gg][Ss]|[Ss][Hh][Ee][Ll][Ll]|[Gg][Ii][Tt]|[Nn][Ee][Tt][Ww][Oo][Rr][Kk]|[Nn][Pp][Mm]\\s+[Rr][Uu][Nn]|[Cc][Aa][Rr][Gg][Oo]\\s+(?:[Cc][Hh][Ee][Cc][Kk]|[Tt][Ee][Ss][Tt])|[Tt][Oo][Oo][Ll][-_ ]?(?:[Cc][Aa][Ll][Ll]|[Uu][Ss][Ee])|[Hh][Ii][Dd][Dd][Ee][Nn][-_ ]?(?:[Rr][Ee][Aa][Dd]|[Ss][Ee][Aa][Rr][Cc][Hh]|[Ss][Cc][Aa][Nn])|[Ii][Nn][Dd][Ee][Xx][-_ ]?[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|[Bb][Rr][Oo][Aa][Dd][-_ ]?[Ww][Oo][Rr][Kk][Ss][Pp][Aa][Cc][Ee]|[Aa][Uu][Tt][Oo][-_ ]?(?:[Ss][Ee][Nn][Dd]|[Aa][Pp][Pp][Ll][Yy]|[Rr][Uu][Nn]|[Vv][Ee][Rr][Ii][Ff][Yy]|[Ff][Ii][Xx]|[Rr][Ee][Pp][Aa][Ii][Rr]|[Rr][Oo][Ll][Ll][Bb][Aa][Cc][Kk])|[Aa][Uu][Tt][Oo][Nn][Oo][Mm](?:[Yy]|[Oo][Uu][Ss])|[Pp][Rr][Oo][Dd][Uu][Cc][Tt][Ii][Oo][Nn]|[Rr][Ee][Ll][Ee][Aa][Ss][Ee]|[Mm][Aa][Rr][Kk][Ee][Tt][Pp][Ll][Aa][Cc][Ee]|[Pp][Uu][Bb][Ll][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|[Ss][Ii][Gg][Nn][Ii][Nn][Gg]|[Nn][Oo][Tt][Aa][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Rr][Ee][Aa][Ll][-_ ]?[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_ ]?[Cc][Ii]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?=/|$|[^A-Za-z0-9_])|/[Hh][Oo][Mm][Ee](?=/|$|[^A-Za-z0-9_])|/[Tt][Mm][Pp](?=/|$|[^A-Za-z0-9_])|/[Vv][Aa][Rr](?=/|$|[^A-Za-z0-9_])|/[Ee][Tt][Cc](?=/|$|[^A-Za-z0-9_])|/[Oo][Pp][Tt](?=/|$|[^A-Za-z0-9_])|/[Mm][Nn][Tt](?=/|$|[^A-Za-z0-9_])|/[Vv][Oo][Ll][Uu][Mm][Ee][Ss](?=/|$|[^A-Za-z0-9_])|/[Pp][Rr][Ii][Vv][Aa][Tt][Ee](?=/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|[Bb][Ee][Gg][Ii][Nn] [A-Za-z ]*[Pp][Rr][Ii][Vv][Aa][Tt][Ee] [Kk][Ee][Yy]))[\\s\\S]*$"
+    },
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^(?!assistant(?:[._:-]|$))(?!.*(?:[Aa][Ss][Ss][Ii][Ss][Tt][Aa][Nn][Tt]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?))[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "safeHash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "utcTimestamp": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "durationMs": { "type": "integer", "minimum": 0, "maximum": 86400000 },
+    "boundedCount": { "type": "integer", "minimum": 0, "maximum": 100000 },
+    "safeLabel": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^\\r\\n\\t\\u0000-\\u001f\\u007f]+$" }
+      ]
+    },
+    "safeSummary": {
+      "allOf": [
+        { "$ref": "#/$defs/safeText" },
+        { "type": "string", "minLength": 1, "maxLength": 360, "pattern": "^[^\\u0000-\\u001f\\u007f]+$" }
+      ]
+    },
+    "stage": {
+      "type": "string",
+      "enum": ["draft", "context_selection", "search_selection", "provider_proposal", "proposal_review", "patch_plan_review", "apply_review", "verification", "followup", "recovery", "final_evidence", "blocked", "stopped"]
+    },
+    "stageStatus": {
+      "type": "string",
+      "enum": ["not_started", "ready", "in_review", "confirmed", "succeeded", "failed", "blocked", "skipped", "omitted", "unsafe_omitted", "stale", "unsupported", "stopped"]
+    },
+    "userGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gate", "confirmed", "assistantMinted", "requestId", "at", "label"],
+      "properties": {
+        "gate": { "type": "string", "enum": ["start", "context_search_selection", "provider_send", "proposal_review", "patch_plan_review", "apply", "verification", "followup", "recovery_choice", "final_export"] },
+        "confirmed": { "type": "boolean" },
+        "assistantMinted": { "type": "boolean", "const": false },
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "at": { "$ref": "#/$defs/utcTimestamp" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "stageTransition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["at", "from", "to", "status", "durationMs", "label"],
+      "properties": {
+        "at": { "$ref": "#/$defs/utcTimestamp" },
+        "from": { "$ref": "#/$defs/stage" },
+        "to": { "$ref": "#/$defs/stage" },
+        "status": { "$ref": "#/$defs/stageStatus" },
+        "durationMs": { "$ref": "#/$defs/durationMs" },
+        "label": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "contextSearchSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["explicitSelectionOnly", "selectedContextLabels", "selectedSearchLabels", "contextItemCount", "searchResultCount", "omittedUnsafeCount", "evidenceHash"],
+      "properties": {
+        "explicitSelectionOnly": { "type": "boolean", "const": true },
+        "selectedContextLabels": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/safeLabel" } },
+        "selectedSearchLabels": { "type": "array", "maxItems": 12, "items": { "$ref": "#/$defs/safeLabel" } },
+        "contextItemCount": { "$ref": "#/$defs/boundedCount" },
+        "searchResultCount": { "$ref": "#/$defs/boundedCount" },
+        "selectedByteCount": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "selectedLineCount": { "type": "integer", "minimum": 0, "maximum": 5000 },
+        "omittedUnsafeCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "evidenceHash": { "$ref": "#/$defs/safeHash" }
+      }
+    },
+    "proposalSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "providerLabel", "summary", "citedEvidenceCount", "riskCount", "proposalHash"],
+      "properties": {
+        "status": { "$ref": "#/$defs/stageStatus" },
+        "providerLabel": { "$ref": "#/$defs/safeLabel" },
+        "summary": { "$ref": "#/$defs/safeSummary" },
+        "citedEvidenceCount": { "$ref": "#/$defs/boundedCount" },
+        "riskCount": { "$ref": "#/$defs/boundedCount" },
+        "proposalHash": { "$ref": "#/$defs/safeHash" }
+      }
+    },
+    "patchPlanSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "fileCount", "editCount", "replacementByteCount", "reviewLabel", "planHash"],
+      "properties": {
+        "status": { "$ref": "#/$defs/stageStatus" },
+        "fileCount": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "editCount": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "replacementByteCount": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "reviewLabel": { "$ref": "#/$defs/safeLabel" },
+        "planHash": { "$ref": "#/$defs/safeHash" }
+      }
+    },
+    "applySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "requestId", "appliedFileCount", "blockedFileCount", "resultHash", "summary"],
+      "properties": {
+        "status": { "$ref": "#/$defs/stageStatus" },
+        "requestId": { "$ref": "#/$defs/safeId" },
+        "appliedFileCount": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "blockedFileCount": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "resultHash": { "$ref": "#/$defs/safeHash" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "verificationSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "bundleId", "commandIds", "commandCount", "passedCount", "failedCount", "outputTailStored", "resultHash", "summary"],
+      "properties": {
+        "status": { "$ref": "#/$defs/stageStatus" },
+        "bundleId": { "$ref": "#/$defs/safeId" },
+        "commandIds": { "type": "array", "minItems": 0, "maxItems": 3, "items": { "type": "string", "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"] } },
+        "commandCount": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "passedCount": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "failedCount": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "outputTailStored": { "type": "boolean", "const": false },
+        "resultHash": { "$ref": "#/$defs/safeHash" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "followupSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "draftOnly", "requiresUserSend", "actionLabel", "summaryHash"],
+      "properties": {
+        "status": { "$ref": "#/$defs/stageStatus" },
+        "draftOnly": { "type": "boolean", "const": true },
+        "requiresUserSend": { "type": "boolean", "const": true },
+        "actionLabel": { "$ref": "#/$defs/safeLabel" },
+        "summaryHash": { "$ref": "#/$defs/safeHash" }
+      }
+    },
+    "recoverySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "recoveryLabel", "manualOnly", "attemptCount", "summary"],
+      "properties": {
+        "status": { "$ref": "#/$defs/stageStatus" },
+        "recoveryLabel": { "$ref": "#/$defs/safeLabel" },
+        "manualOnly": { "type": "boolean", "const": true },
+        "attemptCount": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "omissionSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawDataOmitted", "unsafeItemCount", "privatePathCount", "secretCount", "unsupportedHostCount", "staleEvidenceCount", "omissionHash"],
+      "properties": {
+        "rawDataOmitted": { "type": "boolean", "const": true },
+        "unsafeItemCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "privatePathCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "secretCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "unsupportedHostCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "staleEvidenceCount": { "type": "integer", "minimum": 0, "maximum": 1000 },
+        "omissionHash": { "$ref": "#/$defs/safeHash" }
+      }
+    },
+    "finalEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result", "sanitizedReportReady", "taskCompleted", "changedFileCount", "testCount", "verificationCommandCount", "evidenceHash", "summary"],
+      "properties": {
+        "result": { "type": "string", "enum": ["completed", "completed_with_followup", "failed", "blocked", "stopped", "unsupported"] },
+        "sanitizedReportReady": { "type": "boolean", "const": true },
+        "taskCompleted": { "type": "boolean" },
+        "changedFileCount": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "testCount": { "type": "integer", "minimum": 0, "maximum": 10000 },
+        "verificationCommandCount": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "evidenceHash": { "$ref": "#/$defs/safeHash" },
+        "summary": { "$ref": "#/$defs/safeSummary" }
+      }
+    },
+    "safetyReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawPromptsIncluded", "rawProviderResponsesIncluded", "fileBodiesIncluded", "diffsIncluded", "replacementTextIncluded", "commandStringsIncluded", "commandOutputIncluded", "providerPayloadsIncluded", "privatePathsIncluded", "secretsIncluded", "bridgeDumpsIncluded", "browserStorageDumpsIncluded", "authorityToActIncluded", "overclaimIncluded", "safeToShare"],
+      "properties": {
+        "rawPromptsIncluded": { "type": "boolean", "const": false },
+        "rawProviderResponsesIncluded": { "type": "boolean", "const": false },
+        "fileBodiesIncluded": { "type": "boolean", "const": false },
+        "diffsIncluded": { "type": "boolean", "const": false },
+        "replacementTextIncluded": { "type": "boolean", "const": false },
+        "commandStringsIncluded": { "type": "boolean", "const": false },
+        "commandOutputIncluded": { "type": "boolean", "const": false },
+        "providerPayloadsIncluded": { "type": "boolean", "const": false },
+        "privatePathsIncluded": { "type": "boolean", "const": false },
+        "secretsIncluded": { "type": "boolean", "const": false },
+        "bridgeDumpsIncluded": { "type": "boolean", "const": false },
+        "browserStorageDumpsIncluded": { "type": "boolean", "const": false },
+        "authorityToActIncluded": { "type": "boolean", "const": false },
+        "overclaimIncluded": { "type": "boolean", "const": false },
+        "safeToShare": { "type": "boolean", "const": true }
+      }
+    }
+  }
+}

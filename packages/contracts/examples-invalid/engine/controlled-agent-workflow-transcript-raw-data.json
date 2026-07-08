@@ -1,0 +1,194 @@
+{
+  "kind": "controlled_agent_workflow_transcript",
+  "version": "2026-07-08",
+  "authority": "display_export_metadata_only",
+  "cloudRequired": false,
+  "executionAllowed": false,
+  "transcriptId": "transcript-2026-07-08-001",
+  "runId": "controlled-run-001",
+  "generatedAt": "2026-07-08T14:30:00Z",
+  "hostSurface": "vscode",
+  "taskPresetLabel": "Small focused fix",
+  "localFirst": true,
+  "providerAccess": "direct-local-user-configured",
+  "explicitUserGates": [
+    {
+      "gate": "start",
+      "confirmed": true,
+      "assistantMinted": false,
+      "requestId": "gate-start-001",
+      "at": "2026-07-08T14:00:00Z",
+      "label": "User started controlled task"
+    },
+    {
+      "gate": "context_search_selection",
+      "confirmed": true,
+      "assistantMinted": false,
+      "requestId": "gate-context-001",
+      "at": "2026-07-08T14:02:00Z",
+      "label": "User selected bounded context"
+    },
+    {
+      "gate": "provider_send",
+      "confirmed": true,
+      "assistantMinted": false,
+      "requestId": "gate-send-001",
+      "at": "2026-07-08T14:05:00Z",
+      "label": "User sent reviewed task"
+    },
+    {
+      "gate": "apply",
+      "confirmed": true,
+      "assistantMinted": false,
+      "requestId": "gate-apply-001",
+      "at": "2026-07-08T14:16:00Z",
+      "label": "User confirmed reviewed changes"
+    },
+    {
+      "gate": "verification",
+      "confirmed": true,
+      "assistantMinted": false,
+      "requestId": "gate-verify-001",
+      "at": "2026-07-08T14:22:00Z",
+      "label": "User confirmed allowlisted check"
+    }
+  ],
+  "stageTransitions": [
+    {
+      "at": "2026-07-08T14:00:00Z",
+      "from": "draft",
+      "to": "context_selection",
+      "status": "confirmed",
+      "durationMs": 1200,
+      "label": "Task draft accepted"
+    },
+    {
+      "at": "2026-07-08T14:04:00Z",
+      "from": "context_selection",
+      "to": "provider_proposal",
+      "status": "confirmed",
+      "durationMs": 4800,
+      "label": "Selected evidence summarized"
+    },
+    {
+      "at": "2026-07-08T14:14:00Z",
+      "from": "proposal_review",
+      "to": "patch_plan_review",
+      "status": "in_review",
+      "durationMs": 2500,
+      "label": "Bounded plan shown"
+    },
+    {
+      "at": "2026-07-08T14:25:00Z",
+      "from": "verification",
+      "to": "final_evidence",
+      "status": "succeeded",
+      "durationMs": 1100,
+      "label": "Sanitized result ready"
+    }
+  ],
+  "contextSearch": {
+    "explicitSelectionOnly": true,
+    "selectedContextLabels": [
+      "active file excerpt",
+      "memory note"
+    ],
+    "selectedSearchLabels": [
+      "literal match label",
+      "reviewed snippet label"
+    ],
+    "contextItemCount": 2,
+    "searchResultCount": 2,
+    "selectedByteCount": 9400,
+    "selectedLineCount": 180,
+    "omittedUnsafeCount": 1,
+    "evidenceHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "proposal": {
+    "status": "confirmed",
+    "providerLabel": "User configured local provider",
+    "summary": "Raw prompt body was pasted into the transcript.",
+    "citedEvidenceCount": 4,
+    "riskCount": 1,
+    "proposalHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "patchPlan": {
+    "status": "confirmed",
+    "fileCount": 2,
+    "editCount": 4,
+    "replacementByteCount": 3200,
+    "reviewLabel": "Two existing files reviewed",
+    "planHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "apply": {
+    "status": "succeeded",
+    "requestId": "apply-result-001",
+    "appliedFileCount": 2,
+    "blockedFileCount": 0,
+    "resultHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "summary": "Host reported reviewed changes accepted with metadata only."
+  },
+  "verification": {
+    "status": "succeeded",
+    "bundleId": "verify-bundle-001",
+    "commandIds": [
+      "repository-check"
+    ],
+    "commandCount": 1,
+    "passedCount": 1,
+    "failedCount": 0,
+    "outputTailStored": false,
+    "resultHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "summary": "Allowlisted check passed and only result counters were kept."
+  },
+  "followup": {
+    "status": "skipped",
+    "draftOnly": true,
+    "requiresUserSend": true,
+    "actionLabel": "No follow up requested",
+    "summaryHash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  },
+  "recovery": {
+    "status": "skipped",
+    "recoveryLabel": "No recovery needed",
+    "manualOnly": true,
+    "attemptCount": 0,
+    "summary": "No recovery action was selected."
+  },
+  "omissions": {
+    "rawDataOmitted": true,
+    "unsafeItemCount": 1,
+    "privatePathCount": 0,
+    "secretCount": 0,
+    "unsupportedHostCount": 0,
+    "staleEvidenceCount": 0,
+    "omissionHash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "finalEvidence": {
+    "result": "completed",
+    "sanitizedReportReady": true,
+    "taskCompleted": true,
+    "changedFileCount": 2,
+    "testCount": 1,
+    "verificationCommandCount": 1,
+    "evidenceHash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "summary": "Task completed with sanitized local metadata evidence only."
+  },
+  "safetyReview": {
+    "rawPromptsIncluded": false,
+    "rawProviderResponsesIncluded": false,
+    "fileBodiesIncluded": false,
+    "diffsIncluded": false,
+    "replacementTextIncluded": false,
+    "commandStringsIncluded": false,
+    "commandOutputIncluded": false,
+    "providerPayloadsIncluded": false,
+    "privatePathsIncluded": false,
+    "secretsIncluded": false,
+    "bridgeDumpsIncluded": false,
+    "browserStorageDumpsIncluded": false,
+    "authorityToActIncluded": false,
+    "overclaimIncluded": false,
+    "safeToShare": true
+  }
+}

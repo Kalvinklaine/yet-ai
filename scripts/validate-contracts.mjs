@@ -197,6 +197,10 @@ const mappings = [
     "packages/contracts/examples/engine/controlled-agent-task-harness-vscode-happy-path.json",
     "packages/contracts/schemas/engine/controlled-agent-task-harness.schema.json"
   ],
+  [
+    "packages/contracts/examples/engine/controlled-agent-workflow-transcript-completed.json",
+    "packages/contracts/schemas/engine/controlled-agent-workflow-transcript.schema.json"
+  ],
   ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
@@ -1426,6 +1430,17 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-task-harness.schema.json"
+  ]),
+  ...[
+    "controlled-agent-workflow-transcript-raw-data.json",
+    "controlled-agent-workflow-transcript-private-path.json",
+    "controlled-agent-workflow-transcript-command-output.json",
+    "controlled-agent-workflow-transcript-bridge-dump.json",
+    "controlled-agent-workflow-transcript-browser-storage-dump.json",
+    "controlled-agent-workflow-transcript-overclaim.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-workflow-transcript.schema.json"
   ]),
   ...[
     "controlled-agent-lexical-search-assistant-minted.json",
