@@ -28,7 +28,9 @@ const validators = [
   ["scripts/dogfood-agent-run-rc-report.mjs", "--check-template"],
   ["scripts/dogfood-agent-run-rc-report.mjs", "--self-test"],
   ["scripts/dogfood-controlled-beta-report.mjs", "--check-template"],
-  ["scripts/dogfood-controlled-beta-report.mjs", "--self-test"]
+  ["scripts/dogfood-controlled-beta-report.mjs", "--self-test"],
+  ["scripts/dogfood-controlled-agent-real-provider-matrix.mjs", "--check-template"],
+  ["scripts/dogfood-controlled-agent-real-provider-matrix.mjs", "--self-test"]
 ];
 
 for (const validator of validators) {
