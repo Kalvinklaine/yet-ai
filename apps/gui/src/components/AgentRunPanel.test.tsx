@@ -703,6 +703,39 @@ describe("AgentRunPanel", () => {
     expect(actionButtonLabels()).toEqual(["Start one-step Agent Run", "Stop one-step Agent Run", "Manually apply reviewed patch", "Manually run allowlisted verification", "Manually review rollback"]);
   });
 
+  it("renders stop and repair-exhausted recovery guidance without automatic actions", () => {
+    renderPanel(undefined, {
+      host: "vscode",
+      oneStepLoopState: stoppedOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+    });
+
+    expect(panelText()).toContain("Controlled recovery guidance");
+    expect(panelText()).toContain("stale duplicate result");
+    expect(panelText()).toContain("host disconnect runtime restart");
+    expect(panelText()).toContain("provider timeout");
+    expect(panelText()).toContain("edit hash mismatch");
+    expect(panelText()).toContain("verification bundle failure");
+    expect(panelText()).toContain("checkpoint rollback review");
+    expect(panelText()).toContain("no auto retry/rollback/repair");
+    expect(panelText()).toContain("Execution allowed: false");
+    expect(panelText()).toContain("Raw output/private paths/secrets persisted: false");
+    expect(panelText()).toContain("stop completed");
+    expect(panelText()).toContain("The stopped run is closed. Start a new run only after an explicit user choice.");
+    expect(panelText()).not.toMatch(/Run repair/i);
+
+    renderPanel(undefined, {
+      host: "vscode",
+      repairLoop: { ...evaluateControlledAgentRepairLoop(failedVerificationLoop), state: "exhausted", attemptCount: 1, canAttemptRepair: false },
+    });
+
+    expect(panelText()).toContain("repair followup exhausted");
+    expect(panelText()).toContain("The repair budget is exhausted. Stop repair guidance and wait for a new user-started run.");expect(panelText()).toContain("The repair budget is exhausted. Stop repair guidance and wait for a new user-started run.");
+    expect(optionalButton("Confirm one repair attempt")?.disabled).toBe(true);
+  });
+
   it("keeps controlled dev-preview report limitations visible and unsafe report data omitted", () => {
     const secret = "sk-" + "z".repeat(40);
     renderPanel(undefined, {

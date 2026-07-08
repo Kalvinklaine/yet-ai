@@ -55,6 +55,15 @@ describe("ControlledAgentRunPanel", () => {
     expect(text).toContain("Execution allowed: false");
     expect(text).toContain("Agent start allowed: false");
     expect(text).toContain("Can run commands: false");
+    expect(text).toContain("S120 recovery guidance");
+    expect(text).toContain("stale duplicate result");
+    expect(text).toContain("host disconnect runtime restart");
+    expect(text).toContain("provider timeout");
+    expect(text).toContain("edit hash mismatch");
+    expect(text).toContain("verification bundle failure");
+    expect(text).toContain("checkpoint rollback review");
+    expect(text).toContain("unsupported host");
+    expect(text).toContain("No automatic retry, rollback, repair, apply, verification, provider call, hidden read");
     expect(buttonTexts()).toContain("Start controlled dev-preview");
     expect(buttonTexts()).toContain("Stop controlled run");
     for (const label of forbiddenButtons) {
@@ -203,6 +212,8 @@ describe("ControlledAgentRunPanel", () => {
     expect(text).toContain("Phase: stopped");
     expect(text).toContain("Current step: Stopped by user");
     expect(text).toContain("Stop reason: user stop");
+    expect(text).toContain("stop completed");
+    expect(text).toContain("The stopped run is closed. Start a new run only after an explicit user choice.");
     expect(text).toContain("Controlled run stopped from the S76 skeleton UI.");
     expect(findButton("Stop controlled run").disabled).toBe(true);
     expect(localStorage.length).toBe(0);
@@ -219,6 +230,18 @@ describe("ControlledAgentRunPanel", () => {
     expect(text).not.toContain("s".repeat(64));
     expect(text).not.toContain("npm test");
     expect(findButton("Stop controlled run").disabled).toBe(true);
+  });
+
+  it("renders repair exhausted guidance without enabling automatic repair", () => {
+    const exhausted = { ...readyState(), counters: { ...readyState().counters, repairAttempts: 1 } };
+    renderPanel(exhausted, "vscode");
+
+    const text = panelText();
+    expect(text).toContain("repair followup exhausted");
+    expect(text).toContain("The repair budget is exhausted. Stop repair guidance and wait for a new user-started run.");
+    expect(text).toContain("manual recovery");
+    expect(text).not.toMatch(/Run repair/i);
+    expect(findButton("Start controlled dev-preview").disabled).toBe(true);
   });
 });
 

@@ -59,8 +59,20 @@ The schema intentionally rejects:
 - unsupported host support overclaims;
 - runtime mutation or production/release claims.
 
+## GUI integration
+
+S120-C3 renders recovery matrix guidance in `AgentRunPanel` and `ControlledAgentRunPanel` as display-only UX. The panels show the required stop, stale/duplicate, host disconnect/runtime restart, provider timeout, edit mismatch, verification failure, repair exhausted, checkpoint rollback review, and unsupported-host states with sanitized guidance and manual next-action labels.
+
+The GUI integration does not add recovery execution authority. It does not automatically retry, roll back, repair, apply, verify, call providers, read hidden workspace data, run commands, use tools/git/network, persist browser storage, or expose raw output, private paths, or secrets. Browser remains unsupported for controlled recovery execution. JetBrains remains partial/fail-closed until host parity is separately verified.
+
 ## Deterministic evidence
 
-The fixtures are local deterministic contract evidence. They prove schema shape and rejection behavior only. They do not prove real recovery behavior, real provider behavior, real IDE integration, CI readiness, production autonomy, release readiness, marketplace publication, or rollback safety.
+The fixtures are local deterministic contract evidence. They prove schema shape and rejection behavior only. The S120-C3 GUI smoke is:
+
+```sh
+npm run smoke:controlled-agent-recovery-matrix
+```
+
+It transpiles the pure GUI recovery evaluator locally, exercises all recovery states, checks unsafe automatic recovery and unsafe evidence fail closed, and verifies the UI source keeps limitation/no-auto copy visible without automatic recovery handlers. It does not prove real recovery behavior, real provider behavior, real IDE integration, CI readiness, production autonomy, release readiness, marketplace publication, or rollback safety.
 
 Future implementation work must keep the same boundary: make every recovery state visible, require explicit user choice before retry-like action, keep rollback review separate from rollback execution, preserve bounded repair, reject stale results, store only sanitized summaries, and fail closed on unsupported hosts. The leash is short on purpose; it keeps the furniture mostly intact.
