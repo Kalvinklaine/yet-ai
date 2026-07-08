@@ -32,6 +32,7 @@ async function main(): Promise<void> {
     const webview = await import("./webview");
     assert.equal(webview.isPrivilegedGuiMessageType("gui.controlledAgentEditRequest"), true);
     assert.equal(webview.isPrivilegedGuiMessageType("gui.controlledAgentCommandRunRequest"), true);
+    assert.equal(webview.isPrivilegedGuiMessageType("gui.controlledAgentVerificationBundleRequest"), true);
     assert.equal(webview.isPrivilegedGuiMessageType("gui.ready"), false);
     assert.equal(webview.isPrivilegedGuiMessageAllowed({ guiReady: false }), false);
     assert.equal(webview.isPrivilegedGuiMessageAllowed({ guiReady: true }), true);
@@ -46,6 +47,7 @@ async function main(): Promise<void> {
     assertIframeValidatorRejectsVerificationRequests(webview);
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
     await assertPreReadyControlledCommandRunRejectsWithoutExecution(webview);
+    await assertPreReadyControlledVerificationBundleRejectsWithoutExecution(webview);
     assertFrameReadinessBlocksStaleHostReady(webview);
     assertControlledLexicalSearchRejectsRawOutputAtWebviewGate(webview);
   } finally {
@@ -253,6 +255,25 @@ async function assertPreReadyControlledCommandRunRejectsWithoutExecution(webview
   assert.equal(result.payload?.policyFlags?.shellAllowed, false);
 }
 
+async function assertPreReadyControlledVerificationBundleRejectsWithoutExecution(webview: typeof import("./webview")): Promise<void> {
+  const messages: unknown[] = [];
+  const testWebview = {
+    postMessage(message: unknown) {
+      messages.push(message);
+      return Promise.resolve(true);
+    },
+  };
+  await webview.rejectPrivilegedGuiMessageBeforeReady(testWebview as never, controlledVerificationBundleMessage("bundle-before-ready") as never);
+  assert.equal(messages.length, 1);
+  const result = messages[0] as { type?: string; requestId?: string; payload?: { status?: string; freeformCommandAllowed?: boolean; policyFlags?: { allowlistedCommandIdsOnly?: boolean; shellAllowed?: boolean } } };
+  assert.equal(result.type, "host.controlledAgentVerificationBundleResult");
+  assert.equal(result.requestId, "bundle-before-ready");
+  assert.equal(result.payload?.status, "blocked");
+  assert.equal(result.payload?.freeformCommandAllowed, false);
+  assert.equal(result.payload?.policyFlags?.allowlistedCommandIdsOnly, true);
+  assert.equal(result.payload?.policyFlags?.shellAllowed, false);
+}
+
 function assertFrameReadinessBlocksStaleHostReady(webview: typeof import("./webview")): void {
   assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-old", latestHostReadyRequestId: "ready-new" }), false);
   assert.equal(webview.isFramePrivilegedGuiMessageAllowed({ frameReady: true, frameReadyRequestId: "ready-new", latestHostReadyRequestId: "ready-new" }), true);
@@ -261,6 +282,65 @@ function assertFrameReadinessBlocksStaleHostReady(webview: typeof import("./webv
 function assertControlledLexicalSearchRejectsRawOutputAtWebviewGate(webview: typeof import("./webview")): void {
   const message = controlledLexicalSearchMessage("raw output");
   assert.equal(webview.isGuiMessage(message), false);
+}
+
+function controlledVerificationBundleMessage(requestId: string) {
+  return {
+    version: "2026-05-15",
+    type: "gui.controlledAgentVerificationBundleRequest",
+    requestId,
+    payload: {
+      requestId,
+      requestIdMintedBy: "gui",
+      source: "gui",
+      assistantMinted: false,
+      controlledWorkspaceId: "workspace-bundle-safe",
+      runId: "run-bundle-safe",
+      workspaceReadinessId: "ready-bundle-safe",
+      bundleId: "bundle-safe",
+      userConfirmed: true,
+      confirmationKind: "explicit_user_verification_bundle",
+      commandIds: ["repository-check"],
+      limits: {
+        maxCommands: 3,
+        maxTimeoutMs: 5000,
+        maxOutputBytes: 2000,
+        maxOutputLines: 40,
+        tailOnly: true,
+        commandStringAllowed: false,
+        argsAllowed: false,
+        cwdAllowed: false,
+        envAllowed: false,
+        shellAllowed: false,
+      },
+      policyFlags: {
+        allowlistedCommandIdsOnly: true,
+        boundedSequenceOnly: true,
+        explicitUserConfirmationRequired: true,
+        freeformCommandAllowed: false,
+        argsAllowed: false,
+        cwdAllowed: false,
+        envAllowed: false,
+        shellAllowed: false,
+        gitAllowed: false,
+        networkAllowed: false,
+        providerAllowed: false,
+        toolAllowed: false,
+        packageInstallAllowed: false,
+        fileReadAllowed: false,
+        fileWriteAllowed: false,
+        hiddenSearchAllowed: false,
+        indexingAllowed: false,
+        autoStartAllowed: false,
+        autoApplyAllowed: false,
+        autoRunAllowed: false,
+        autoVerifyAllowed: false,
+        autoFixAllowed: false,
+        productionClaimAllowed: false,
+        releaseClaimAllowed: false,
+      },
+    },
+  };
 }
 
 function controlledLexicalSearchMessage(query: string) {

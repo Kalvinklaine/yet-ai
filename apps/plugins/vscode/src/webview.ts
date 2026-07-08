@@ -7,13 +7,14 @@ import { isControlledFileReadGuiMessage, isInvalidControlledFileReadRequestMessa
 import { isControlledAgentEditGuiMessage, isInvalidControlledAgentEditRequestMessage, runControlledAgentEditRequest } from "./controlledEdit";
 import { isControlledAgentMultifileApplyGuiMessage, isInvalidControlledAgentMultifileApplyRequestMessage, runControlledAgentMultifileApplyRequest } from "./controlledMultifileEdit";
 import { isControlledCommandRunGuiMessage, isInvalidControlledCommandRunRequestMessage, runControlledCommandRunRequest } from "./controlledCommandRun";
+import { isControlledVerificationBundleGuiMessage, isInvalidControlledVerificationBundleRequestMessage, runControlledVerificationBundleRequest } from "./controlledVerificationBundle";
 import { isControlledLexicalSearchGuiMessage, isInvalidControlledLexicalSearchRequestMessage, runControlledLexicalSearchRequest } from "./controlledLexicalSearch";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
 
 export type HostMessage =
   | { version: string; type: "host.ready"; requestId?: string; payload?: Record<string, unknown> }
   | { version: string; type: "host.openedFromCommand" | "host.runtimeStatus"; requestId?: never; payload?: Record<string, unknown> }
-  | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult"; requestId?: string; payload?: Record<string, unknown> };
+  | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentVerificationBundleResult" | "host.controlledAgentLexicalSearchResult"; requestId?: string; payload?: Record<string, unknown> };
 
 type RuntimeStatusLifecycle = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
 type RuntimeStatusLaunchMode = "auto" | "connect" | "launch" | "preview" | "manual" | "unknown";
@@ -81,7 +82,7 @@ type HostContextPayload = {
 
 type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentMultifileApplyRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest";
+  type: "gui.ready" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentMultifileApplyRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentVerificationBundleRequest" | "gui.controlledAgentLexicalSearchRequest";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
@@ -173,6 +174,7 @@ const maxForwardedControlledFileReadMessageBytes = 8192;
 const maxForwardedControlledAgentEditMessageBytes = 65536;
 const maxForwardedControlledAgentMultifileApplyMessageBytes = 65536;
 const maxForwardedControlledCommandRunMessageBytes = 8192;
+const maxForwardedControlledVerificationBundleMessageBytes = 8192;
 const maxForwardedControlledLexicalSearchMessageBytes = 8192;
 const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;
 const maxActiveFileExcerptTextLength = 8000;
@@ -264,6 +266,11 @@ export function openYetAiWebview(
         void runControlledCommandRunRequest({ version: bridgeVersion, type: "gui.controlledAgentCommandRunRequest", requestId, payload: {} }, []).then((result) => panel.webview.postMessage(result));
         return;
       }
+      if (isInvalidControlledVerificationBundleRequestMessage(message)) {
+        const requestId = (message as { requestId: string }).requestId;
+        void runControlledVerificationBundleRequest({ version: bridgeVersion, type: "gui.controlledAgentVerificationBundleRequest", requestId, payload: {} }, []).then((result) => panel.webview.postMessage(result));
+        return;
+      }
       if (isInvalidControlledLexicalSearchRequestMessage(message)) {
         const requestId = (message as { requestId: string }).requestId;
         void runControlledLexicalSearchRequest({ version: bridgeVersion, type: "gui.controlledAgentLexicalSearchRequest", requestId, payload: {} }, []).then((result) => panel.webview.postMessage(result));
@@ -299,6 +306,10 @@ export function openYetAiWebview(
     }
     if (message.type === "gui.controlledAgentCommandRunRequest") {
       void handleControlledCommandRunRequest(panel.webview, message);
+      return;
+    }
+    if (message.type === "gui.controlledAgentVerificationBundleRequest") {
+      void handleControlledVerificationBundleRequest(panel.webview, message);
       return;
     }
     if (message.type === "gui.controlledAgentLexicalSearchRequest") {
@@ -337,6 +348,7 @@ export function isPrivilegedGuiMessageType(type: GuiMessage["type"]): type is Pr
     type === "gui.controlledAgentEditRequest" ||
     type === "gui.controlledAgentMultifileApplyRequest" ||
     type === "gui.controlledAgentCommandRunRequest" ||
+    type === "gui.controlledAgentVerificationBundleRequest" ||
     type === "gui.controlledAgentLexicalSearchRequest";
 }
 
@@ -376,6 +388,11 @@ export async function rejectPrivilegedGuiMessageBeforeReady(webview: vscode.Webv
   if (message.type === "gui.controlledAgentCommandRunRequest") {
     const result = await runControlledCommandRunRequest({ version: bridgeVersion, type: "gui.controlledAgentCommandRunRequest", requestId, payload: {} }, []);
     await webview.postMessage(result);
+  }
+  if (message.type === "gui.controlledAgentVerificationBundleRequest") {
+    const result = await runControlledVerificationBundleRequest({ version: bridgeVersion, type: "gui.controlledAgentVerificationBundleRequest", requestId, payload: {} }, []);
+    await webview.postMessage(result);
+    return;
   }
   if (message.type === "gui.controlledAgentLexicalSearchRequest") {
     const result = await runControlledLexicalSearchRequest({ version: bridgeVersion, type: "gui.controlledAgentLexicalSearchRequest", requestId, payload: {} }, []);
@@ -429,6 +446,19 @@ export async function handleControlledCommandRunRequest(webview: vscode.Webview,
   const result = await runControlledCommandRunRequest({
     version: message.version,
     type: "gui.controlledAgentCommandRunRequest",
+    requestId: message.requestId,
+    payload: message.payload,
+  }, workspaceRoots);
+  await webview.postMessage(result);
+}
+
+export async function handleControlledVerificationBundleRequest(webview: vscode.Webview, message: GuiMessage): Promise<void> {
+  const workspaceRoots = (vscode.workspace.workspaceFolders ?? [])
+    .filter((folder) => folder.uri.scheme === "file")
+    .map((folder) => folder.uri.fsPath);
+  const result = await runControlledVerificationBundleRequest({
+    version: message.version,
+    type: "gui.controlledAgentVerificationBundleRequest",
     requestId: message.requestId,
     payload: message.payload,
   }, workspaceRoots);
@@ -1681,6 +1711,7 @@ const maxForwardedControlledFileReadMessageBytes = ${maxForwardedControlledFileR
 const maxForwardedControlledAgentEditMessageBytes = ${maxForwardedControlledAgentEditMessageBytes};
 const maxForwardedControlledAgentMultifileApplyMessageBytes = ${maxForwardedControlledAgentMultifileApplyMessageBytes};
 const maxForwardedControlledCommandRunMessageBytes = ${maxForwardedControlledCommandRunMessageBytes};
+const maxForwardedControlledVerificationBundleMessageBytes = ${maxForwardedControlledVerificationBundleMessageBytes};
 const maxForwardedControlledLexicalSearchMessageBytes = ${maxForwardedControlledLexicalSearchMessageBytes};
 let latestHostReady;
 let frameReady = false;
@@ -1731,6 +1762,13 @@ const isBoundedForwardedControlledCommandRunMessage = (value) => {
     return false;
   }
 };
+const isBoundedForwardedControlledVerificationBundleMessage = (value) => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedControlledVerificationBundleMessageBytes;
+  } catch {
+    return false;
+  }
+};
 const isBoundedForwardedControlledLexicalSearchMessage = (value) => {
   try {
     return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedControlledLexicalSearchMessageBytes;
@@ -1765,6 +1803,10 @@ const isControlledCommandRunId = (value) => typeof value === "string" && /^[A-Za
 const isControlledCommandRunLimits = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["timeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"].includes(key)) && Number.isInteger(value.timeoutMs) && value.timeoutMs >= 1000 && value.timeoutMs <= 1800000 && Number.isInteger(value.maxOutputBytes) && value.maxOutputBytes >= 1 && value.maxOutputBytes <= 20000 && Number.isInteger(value.maxOutputLines) && value.maxOutputLines >= 1 && value.maxOutputLines <= 400 && value.tailOnly === true && value.commandStringAllowed === false && value.argsAllowed === false && value.cwdAllowed === false && value.envAllowed === false && value.shellAllowed === false;
 const isControlledCommandRunCorrelation = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["origin", "confirmedBy", "confirmationId", "hostCorrelationId"].includes(key)) && value.origin === "user" && value.confirmedBy === "user" && isControlledCommandRunId(value.confirmationId) && isControlledCommandRunId(value.hostCorrelationId) && value.confirmationId !== value.hostCorrelationId;
 const isControlledCommandRunPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "correlation", "commandId", "limits"].includes(key)) && isControlledCommandRunId(payload.requestId) && payload.requestIdMintedBy === "gui" && payload.source === "gui" && payload.assistantMinted === false && isControlledCommandRunId(payload.controlledWorkspaceId) && isControlledCommandRunId(payload.runId) && (payload.runtimeSessionId === undefined || isControlledCommandRunId(payload.runtimeSessionId)) && (payload.sessionId === undefined || isControlledCommandRunId(payload.sessionId)) && isControlledCommandRunId(payload.workspaceReadinessId) && payload.userConfirmed === true && isControlledCommandRunCorrelation(payload.correlation) && isVerificationCommandId(payload.commandId) && isControlledCommandRunLimits(payload.limits);
+const isControlledVerificationBundleLimits = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["maxCommands", "maxTimeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"].includes(key)) && value.maxCommands === 3 && Number.isInteger(value.maxTimeoutMs) && value.maxTimeoutMs >= 1000 && value.maxTimeoutMs <= 1800000 && Number.isInteger(value.maxOutputBytes) && value.maxOutputBytes >= 1 && value.maxOutputBytes <= 20000 && Number.isInteger(value.maxOutputLines) && value.maxOutputLines >= 1 && value.maxOutputLines <= 400 && value.tailOnly === true && value.commandStringAllowed === false && value.argsAllowed === false && value.cwdAllowed === false && value.envAllowed === false && value.shellAllowed === false;
+const controlledVerificationBundlePolicy = { allowlistedCommandIdsOnly: true, boundedSequenceOnly: true, explicitUserConfirmationRequired: true, freeformCommandAllowed: false, argsAllowed: false, cwdAllowed: false, envAllowed: false, shellAllowed: false, gitAllowed: false, networkAllowed: false, providerAllowed: false, toolAllowed: false, packageInstallAllowed: false, fileReadAllowed: false, fileWriteAllowed: false, hiddenSearchAllowed: false, indexingAllowed: false, autoStartAllowed: false, autoApplyAllowed: false, autoRunAllowed: false, autoVerifyAllowed: false, autoFixAllowed: false, productionClaimAllowed: false, releaseClaimAllowed: false };
+const isControlledVerificationBundlePolicy = (value) => isPlainObject(value) && Object.keys(value).every((key) => Object.prototype.hasOwnProperty.call(controlledVerificationBundlePolicy, key)) && Object.entries(controlledVerificationBundlePolicy).every(([key, expected]) => value[key] === expected);
+const isControlledVerificationBundlePayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "workspaceReadinessId", "bundleId", "userConfirmed", "confirmationKind", "commandIds", "limits", "policyFlags"].includes(key)) && isControlledCommandRunId(payload.requestId) && payload.requestIdMintedBy === "gui" && payload.source === "gui" && payload.assistantMinted === false && isControlledCommandRunId(payload.controlledWorkspaceId) && isControlledCommandRunId(payload.runId) && (payload.workspaceReadinessId === undefined || isControlledCommandRunId(payload.workspaceReadinessId)) && isControlledCommandRunId(payload.bundleId) && payload.userConfirmed === true && payload.confirmationKind === "explicit_user_verification_bundle" && Array.isArray(payload.commandIds) && payload.commandIds.length >= 1 && payload.commandIds.length <= 3 && payload.commandIds.every(isVerificationCommandId) && isControlledVerificationBundleLimits(payload.limits) && isControlledVerificationBundlePolicy(payload.policyFlags);
 const isControlledLexicalSearchId = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value) && !/assistant|sk-(?:proj-)?/i.test(value);
 const isControlledLexicalSearchQuery = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && /\S/.test(value) && !/[\u0000-\u001f\u007f-\u009f]|[*/\\~]|\.\.|[{}[\]()^$+?|]|[;&\`$<>]|\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b|authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|[A-Za-z]:|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
 const isControlledLexicalSearchPath = (value) => isControlledFileReadPath(value);
@@ -1778,7 +1820,7 @@ const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).ever
 const isVerificationCommandId = (value) => value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
 const isWorkspaceSnippetSearchQuery = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && /\S/.test(value) && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/[*/\\~]/.test(value) && !value.includes("..") && !/[{}[\]()^$+?|]/.test(value) && !/[;&\`$<>]/.test(value) && !/\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/.test(value) && !/[A-Za-z]:/.test(value);
 const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)) || (Object.keys(payload).every((key) => key === "action" || key === "query") && payload.action === "searchWorkspaceSnippets" && isWorkspaceSnippetSearchQuery(payload.query)));
-const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)) || (message.type === "gui.controlledAgentFileReadRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledFileReadMessage(message) && isControlledFileReadPayload(message.payload)) || (message.type === "gui.controlledAgentEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentEditMessage(message) && isControlledAgentEditPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentMultifileApplyRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentMultifileApplyMessage(message) && isControlledAgentMultifileApplyPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentCommandRunRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledCommandRunMessage(message) && isControlledCommandRunPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentLexicalSearchRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledLexicalSearchMessage(message) && isControlledLexicalSearchPayload(message.payload) && message.payload.requestId === message.requestId));
+const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)) || (message.type === "gui.controlledAgentFileReadRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledFileReadMessage(message) && isControlledFileReadPayload(message.payload)) || (message.type === "gui.controlledAgentEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentEditMessage(message) && isControlledAgentEditPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentMultifileApplyRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentMultifileApplyMessage(message) && isControlledAgentMultifileApplyPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentCommandRunRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledCommandRunMessage(message) && isControlledCommandRunPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentVerificationBundleRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledVerificationBundleMessage(message) && isControlledVerificationBundlePayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentLexicalSearchRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledLexicalSearchMessage(message) && isControlledLexicalSearchPayload(message.payload) && message.payload.requestId === message.requestId));
 const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0);
 const isSafeRuntimeStatusText = (value) => typeof value === "string" && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => key === "protocolVersion" || key === "surface" || key === "lifecycle" || key === "runtimeOwner" || key === "launchMode" || key === "tokenState" || key === "processState" || key === "diagnosis" || key === "nextAction" || key === "cloudRequired" || key === "authority") && payload.protocolVersion === "2026-06-21" && payload.surface === "vscode" && ["unknown", "checking", "starting", "connected", "degraded", "disconnected", "restarting", "stopped", "auth_mismatch", "invalid_settings", "failed"].includes(payload.lifecycle) && ["ide_host", "external", "user", "test_harness"].includes(payload.runtimeOwner) && ["auto", "connect", "launch", "preview", "manual", "unknown"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "checking", "starting", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeRuntimeStatusText(payload.diagnosis) && isSafeRuntimeStatusText(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
@@ -1788,7 +1830,7 @@ const sendToFrame = (message) => {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
   }
 };
-const isPrivilegedGuiMessageType = (type) => type === "gui.ideActionRequest" || type === "gui.applyWorkspaceEditRequest" || type === "gui.controlledAgentFileReadRequest" || type === "gui.controlledAgentEditRequest" || type === "gui.controlledAgentMultifileApplyRequest" || type === "gui.controlledAgentCommandRunRequest" || type === "gui.controlledAgentLexicalSearchRequest";
+const isPrivilegedGuiMessageType = (type) => type === "gui.ideActionRequest" || type === "gui.applyWorkspaceEditRequest" || type === "gui.controlledAgentFileReadRequest" || type === "gui.controlledAgentEditRequest" || type === "gui.controlledAgentMultifileApplyRequest" || type === "gui.controlledAgentCommandRunRequest" || type === "gui.controlledAgentVerificationBundleRequest" || type === "gui.controlledAgentLexicalSearchRequest";
 const canForwardPrivilegedGuiMessage = () => frameReady && frameReadyRequestId !== undefined && latestHostReady && latestHostReady.requestId === frameReadyRequestId;
 const replayHostReady = () => {
   if (canForwardPrivilegedGuiMessage()) {
@@ -2040,6 +2082,7 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
       (record.type === "gui.controlledAgentEditRequest" && isBoundedForwardedControlledAgentEditMessage(record) && isControlledAgentEditGuiMessage(record)) ||
       (record.type === "gui.controlledAgentMultifileApplyRequest" && isBoundedForwardedControlledAgentMultifileApplyMessage(record) && isControlledAgentMultifileApplyGuiMessage(record)) ||
       (record.type === "gui.controlledAgentCommandRunRequest" && isBoundedForwardedControlledCommandRunMessage(record) && isControlledCommandRunGuiMessage(record)) ||
+      (record.type === "gui.controlledAgentVerificationBundleRequest" && isBoundedForwardedControlledVerificationBundleMessage(record) && isControlledVerificationBundleGuiMessage(record)) ||
       (record.type === "gui.controlledAgentLexicalSearchRequest" && isBoundedForwardedControlledLexicalSearchMessage(record) && isControlledLexicalSearchGuiMessage(record)))
   );
 }
@@ -2132,6 +2175,14 @@ function isBoundedForwardedControlledAgentMultifileApplyMessage(value: Record<st
 function isBoundedForwardedControlledCommandRunMessage(value: Record<string, unknown>): boolean {
   try {
     return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedControlledCommandRunMessageBytes;
+  } catch {
+    return false;
+  }
+}
+
+function isBoundedForwardedControlledVerificationBundleMessage(value: Record<string, unknown>): boolean {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedControlledVerificationBundleMessageBytes;
   } catch {
     return false;
   }

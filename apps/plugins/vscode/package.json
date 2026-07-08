@@ -97,7 +97,7 @@
     "copy:gui": "node scripts/copy-gui-dist.mjs",
     "copy:identity": "node scripts/copy-product-identity.mjs",
     "compile": "tsc -p . && npm run check:identity && npm run check:webview-safety && npm run check:engine-connection",
-    "test": "node out/controlledFileRead.test.js && node out/controlledEdit.test.js && node out/controlledMultifileEdit.test.js && node out/controlledCommandRun.test.js && node out/controlledLexicalSearch.test.js && node out/webview.test.js",
+    "test": "node out/controlledFileRead.test.js && node out/controlledEdit.test.js && node out/controlledMultifileEdit.test.js && node out/controlledCommandRun.test.js && node out/controlledVerificationBundle.test.js && node out/controlledLexicalSearch.test.js && node out/webview.test.js",
     "prepare:preview": "npm run copy:gui && npm run copy:identity && npm run compile"
   },
   "devDependencies": {
