@@ -4,6 +4,7 @@
   "scripts": {
     "check": "node scripts/check.mjs",
     "check:controlled-agent-authority-registry": "node scripts/check-controlled-agent-authority-registry.mjs",
+    "check:useful-multifile-agent-decision": "node scripts/check-useful-multifile-agent-decision.mjs",
     "audit:controlled-autonomy-wording": "node scripts/audit-controlled-autonomy-wording.mjs",
     "check:agent-readiness-docs": "node scripts/check-agent-readiness-docs.mjs",
     "check:gui-asset-freshness": "node scripts/check-gui-asset-freshness.mjs",
