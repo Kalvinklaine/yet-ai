@@ -42,6 +42,8 @@ afterEach(() => {
   sessionStorage.clear();
   delete window.acquireVsCodeApi;
   delete window.postIntellijMessage;
+  if (appParentDescriptor) Object.defineProperty(window, "parent", appParentDescriptor);
+  if (appReferrerDescriptor) Object.defineProperty(Document.prototype, "referrer", appReferrerDescriptor);
   vi.restoreAllMocks();
 });
 
@@ -490,7 +492,7 @@ describe("runtime refresh feedback", () => {
 
     expect(container?.textContent).toContain("JetBrains partial/fail-closed");
     expect(container?.textContent).toContain("Partial host; metadata fail-closed");
-    expect(container?.textContent).toContain("JetBrains or partial-host transcript evidence is conservative");
+    expect(container?.textContent).toContain("JetBrains or partial-host transcript evidence remains conservative");
     expect(container?.textContent).toContain("blocked");
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
     if (appParentDescriptor) Object.defineProperty(window, "parent", appParentDescriptor);
@@ -9747,6 +9749,10 @@ describe("edit proposal preview", () => {
   });
 
   it("keeps exact Demo Mode edit envelope preview-only in browser mode", async () => {
+    delete window.postIntellijMessage;
+    delete window.acquireVsCodeApi;
+    if (appParentDescriptor) Object.defineProperty(window, "parent", appParentDescriptor);
+    if (appReferrerDescriptor) Object.defineProperty(Document.prototype, "referrer", appReferrerDescriptor);
     const proposal = demoModeSafeEditProposalPayload();
     const envelope = demoModeSafeEditProposalEnvelope(proposal);
     mockRuntimeResponses({
@@ -11027,6 +11033,10 @@ describe("edit proposal preview", () => {
 
   it("renders project snippet search as browser preview-only without posting", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    delete window.postIntellijMessage;
+    delete window.acquireVsCodeApi;
+    if (appParentDescriptor) Object.defineProperty(window, "parent", appParentDescriptor);
+    if (appReferrerDescriptor) Object.defineProperty(Document.prototype, "referrer", appReferrerDescriptor);
     mockRuntimeResponses();
     renderApp();
     await flushAsync();

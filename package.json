@@ -146,6 +146,7 @@
     "verify:controlled-agent-vscode": "node scripts/verify-controlled-agent-vscode.mjs",
     "verify:controlled-agent-packaged": "node scripts/verify-controlled-agent-packaged.mjs",
     "verify:controlled-agent-repo-hygiene": "node scripts/verify-controlled-agent-repo-hygiene.mjs",
+    "verify:controlled-agent-hardening-final": "node scripts/verify-controlled-agent-hardening-final.mjs",
     "validate:icon-assets": "node scripts/validate-icon-assets.mjs",
     "smoke:controlled-run-observability": "node scripts/smoke-controlled-run-observability.mjs",
     "smoke:controlled-run-history": "node scripts/smoke-controlled-run-history.mjs",
