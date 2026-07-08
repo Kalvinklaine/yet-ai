@@ -66,3 +66,12 @@ npm run check
 ```
 
 These commands validate schema and fixture coverage only. They do not prove GUI rendering, runtime execution, provider behavior, or host apply/repair behavior.
+
+For the GUI follow-up draft wiring, also run:
+
+```sh
+cd apps/gui && npm test -- App AgentRunPanel controlledAgentVerificationFollowup
+npm run smoke:controlled-agent-verification-followup
+```
+
+The GUI and smoke checks cover explicit-click local draft creation, stale/unsafe fail-closed behavior, and no automatic send, bridge, provider, repair, apply, verification, or raw-output behavior.

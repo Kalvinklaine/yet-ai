@@ -16,6 +16,7 @@ import type { ControlledAgentLexicalSearchSummary } from "../services/controlled
 import type { ControlledAgentMultifilePatchPlanResult } from "../services/controlledAgentMultifilePatchPlan";
 import type { ControlledAgentMultifileApplyRequestResult, ControlledAgentMultifileApplySummary } from "../services/controlledAgentMultifileApplyRequest";
 import type { ControlledAgentVerificationBundleEvaluation, ControlledAgentVerificationBundleRequestResult } from "../services/controlledAgentVerificationBundle";
+import type { ControlledAgentVerificationFollowupDraft } from "../services/controlledAgentVerificationFollowup";
 import type { ControlledAgentTwoStepRunState } from "../services/controlledAgentTwoStepRun";
 import { controlledAgentSearchSelectionResultId, type ControlledAgentSearchSelectionResult } from "../services/controlledAgentSearchSelection";
 import { evaluateControlledAgentRecoveryMatrix, type ControlledAgentRecoveryEvaluation, type ControlledAgentRecoveryVisibleState } from "../services/controlledAgentRecoveryMatrix";
@@ -68,7 +69,10 @@ export type AgentRunPanelProps = {
   controlledVerificationBundleRequest?: ControlledAgentVerificationBundleRequestResult;
   controlledVerificationBundleNote?: string | null;
   pendingControlledVerificationBundle?: boolean;
+  controlledVerificationFollowupDraft?: ControlledAgentVerificationFollowupDraft;
   onRequestControlledVerificationBundle?: () => void;
+  onDraftControlledVerificationFollowup?: () => void;
+  onDraftControlledVerificationFix?: () => void;
   controlledSearchResultId?: string;
   selectedControlledSearchResultIds?: string[];
   controlledSearchSelection?: ControlledAgentSearchSelectionResult;
@@ -79,7 +83,7 @@ export type AgentRunPanelProps = {
   controlledTwoStepRunState?: ControlledAgentTwoStepRunState;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, onRequestControlledVerificationBundle, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, controlledVerificationFollowupDraft, onRequestControlledVerificationBundle, onDraftControlledVerificationFollowup, onDraftControlledVerificationFix, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -196,6 +200,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const canRequestControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "ready" && controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onRequestControlledMultifileApply);
   const showControlledVerificationBundle = controlledVerificationBundle !== undefined || controlledVerificationBundleRequest !== undefined;
   const canRequestControlledVerificationBundle = host === "vscode" && controlledVerificationBundle?.state === "accepted" && controlledVerificationBundle.status === "planned" && controlledVerificationBundleRequest?.state === "ready" && !pendingControlledVerificationBundle && Boolean(onRequestControlledVerificationBundle);
+  const canDraftControlledVerificationFollowup = host === "vscode" && controlledVerificationBundle?.state === "accepted" && isTerminalControlledVerificationStatus(controlledVerificationBundle.status) && Boolean(onDraftControlledVerificationFollowup);
+  const canDraftControlledVerificationFix = host === "vscode" && controlledVerificationBundle?.state === "accepted" && controlledVerificationBundle.status !== "succeeded" && isTerminalControlledVerificationStatus(controlledVerificationBundle.status) && Boolean(onDraftControlledVerificationFix);
   const controlledVerificationUnsafeOmitted = controlledVerificationBundle?.commands.filter((command) => command.outputTail === undefined && (command.outputByteCount !== undefined || command.outputLineCount !== undefined || command.truncated)).length ?? 0;
   const [selectedTaskPresetId, setSelectedTaskPresetId] = useState<ControlledAgentTaskPresetId | null>(null);
   const [taskPresetGuidance, setTaskPresetGuidance] = useState<ControlledAgentTaskPresetGuidance | null>(null);
@@ -406,6 +412,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span>Omitted unsafe output tails: {controlledVerificationUnsafeOmitted}</span>
           <span>Raw output persisted/rendered: false</span>
           <span>Free-form command authority: false</span>
+          <span>Follow-up draft authority: {controlledVerificationFollowupDraft ? "local draft only · manual Send required" : "not drafted"}</span>
         </div>
         {controlledVerificationBundleRequest?.diagnostics.length ? <span className="subtle">Bundle request diagnostics: {controlledVerificationBundleRequest.diagnostics.slice(0, 4).map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span> : null}
         {controlledVerificationBundle?.diagnostics.length ? <span className="subtle">Bundle diagnostics: {controlledVerificationBundle.diagnostics.slice(0, 4).map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span> : null}
@@ -420,9 +427,21 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           {(command.exitCode !== undefined || command.durationMs !== undefined || command.resultHash) && <span>Result metadata: exit {String(command.exitCode ?? "none")} · duration {String(command.durationMs ?? "none")}ms · hash {sanitizeDisplayText(command.resultHash ?? "not reported")} · truncated {String(command.truncated ?? false)}</span>}
           {command.outputTail ? <span>Sanitized summary tail: {sanitizeDisplayText(command.outputTail)}</span> : <span className="subtle">Raw stdout/stderr is omitted; only safe summaries and hashes may appear.</span>}
         </div>)}
+        {controlledVerificationFollowupDraft && <div className="provider-item stack" aria-label="Controlled verification follow-up draft">
+          <div className="row">
+            <strong>{sanitizeDisplayText(controlledVerificationFollowupDraft.followupProposal.title)}</strong>
+            <span className="badge ok">draft only</span>
+            <span className="badge">manual Send required</span>
+          </div>
+          <span>{sanitizeDisplayText(controlledVerificationFollowupDraft.followupProposal.promptSummary)}</span>
+          <span>Source bundle: {sanitizeDisplayText(controlledVerificationFollowupDraft.sourceBundle.bundleId)} · {sanitizeDisplayText(controlledVerificationFollowupDraft.sourceBundle.aggregateStatus)} · failed {controlledVerificationFollowupDraft.sourceBundle.failedCount}</span>
+          <span>No auto-send, provider call, repair, apply, verify, bridge post, raw output, command string, cwd/env, file/diff payload, private path, or secret is included.</span>
+        </div>}
         {controlledVerificationBundleNote && <span>{sanitizeDisplayText(controlledVerificationBundleNote)}</span>}
         <div className="row" role="group" aria-label="Controlled verification bundle actions">
           <button type="button" onClick={onRequestControlledVerificationBundle} disabled={!canRequestControlledVerificationBundle}>{pendingControlledVerificationBundle ? "Verification bundle pending" : "Run controlled verification bundle"}</button>
+          <button type="button" onClick={onDraftControlledVerificationFollowup} disabled={!canDraftControlledVerificationFollowup}>Draft sanitized verification follow-up</button>
+          <button type="button" onClick={onDraftControlledVerificationFix} disabled={!canDraftControlledVerificationFix}>Draft manual fix prompt</button>
         </div>
       </div>}
       {showControlledMultifileApply && <div className={`readiness-card ${canRequestControlledMultifileApply || controlledMultifileApplyResult?.state === "applied" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled multi-file apply confirmation">
@@ -1230,6 +1249,10 @@ function verificationStatus(details: Record<string, string | number | boolean | 
     return "Verification running";
   }
   return details.verificationRequested === true ? "Verification running" : "not requested";
+}
+
+function isTerminalControlledVerificationStatus(status: ControlledAgentVerificationBundleEvaluation["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "timed_out" || status === "killed" || status === "blocked";
 }
 
 function twoStepRunManualGateCopy(state: ControlledAgentTwoStepRunState): string {

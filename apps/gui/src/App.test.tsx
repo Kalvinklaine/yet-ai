@@ -493,11 +493,102 @@ describe("runtime refresh feedback", () => {
 
     expect(container?.textContent).toContain("Verification bundle result accepted: succeeded.");
     expect(container?.textContent).toContain("Sanitized summary tail: Repository check completed with bounded sanitized evidence.");
+    expect(findButton("Draft sanitized verification follow-up").disabled).toBe(false);
+    expect(findButton("Draft manual fix prompt").disabled).toBe(true);
+    const fetchCallsBeforeDraft = fetchMock.mock.calls.length;
+    await act(async () => {
+      findButton("Draft sanitized verification follow-up").click();
+    });
+
+    expect(chatInput().value).toContain("Suggest manual next step");
+    expect(chatInput().value).toContain("Use only the sanitized verification summary metadata below");
+    expect(chatInput().value).toContain("Step 1 Repository check");
+    expect(container?.textContent).toContain("Suggest manual next step created as a local draft.");
+    expect(container?.textContent).toContain("manual Send required");
     expect(agentRunPanel().textContent).not.toContain("/Users/");
     expect(agentRunPanel().textContent).not.toContain("Authorization");
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+    expect(chatInput().value).not.toContain("/Users/");
+    expect(chatInput().value).not.toContain("Authorization");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")).toHaveLength(1);
+    expect(fetchMock.mock.calls).toHaveLength(fetchCallsBeforeDraft);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("controlled_agent_verification_bundle");
+  });
+
+  it("drafts a manual fix prompt after failed controlled verification bundle only by click", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentVerificationBundle: plannedVerificationBundle }) });
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Run controlled verification bundle").click();
+    });
+    const request = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    const result = JSON.parse(JSON.stringify(succeededVerificationBundle)) as Record<string, any>;
+    result.workspace.controlledWorkspaceId = request.payload.controlledWorkspaceId;
+    result.workspace.runId = request.payload.runId;
+    result.workspace.workspaceReadinessId = request.payload.workspaceReadinessId;
+    result.bundle.bundleId = request.payload.bundleId;
+    result.bundle.commands[1].status = "failed";
+    result.bundle.commands[1].exitCode = 1;
+    result.bundle.commands[1].summary = "GUI app tests failed with bounded local evidence.";
+    result.bundle.commands[1].outputTail = "GUI app tests reported a bounded failure category.";
+    result.bundle.commands.push({ ...result.bundle.commands[1], stepId: "step-s117-engine", sequenceIndex: 2, commandId: "engine-chat-tests", status: "succeeded", exitCode: 0, resultHash: "sha256:3333333333333333333333333333333333333333333333333333333333333333", outputTail: "Engine chat tests completed with bounded sanitized evidence.", summary: "Engine chat tests passed with local deterministic evidence." });
+    result.bundle.requestedCommandCount = 3;
+    result.bundle.summary = "One user approved check reported a bounded failure category.";
+    result.aggregateResult.status = "failed";
+    result.aggregateResult.succeededCount = 1;
+    result.aggregateResult.failedCount = 1;
+    result.aggregateResult.truncated = true;
+    result.aggregateResult.commandCount = 3;
+    result.aggregateResult.summary = "One user approved check reported a bounded failure category.";
+    await dispatchHostMessage({ version: bridgeVersion, type: "host.controlledAgentVerificationBundleResult", requestId: request.requestId, payload: result });
+    await flushAsync();
+
+    expect(findButton("Draft manual fix prompt").disabled).toBe(false);
+    expect(chatInput().value).toBe("");
+    const fetchCallsBeforeDraft = fetchMock.mock.calls.length;
+    await act(async () => {
+      findButton("Draft manual fix prompt").click();
+    });
+
+    expect(chatInput().value).toContain("Draft manual fix prompt");
+    expect(chatInput().value).toContain("failed");
+    expect(chatInput().value).toContain("GUI app tests failed with bounded local evidence.");
+    expect(container?.textContent).toContain("Draft manual fix prompt created as a local draft.");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")).toHaveLength(1);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls).toHaveLength(fetchCallsBeforeDraft);
+    expect(localSetItem).not.toHaveBeenCalled();
+  });
+
+  it("blocks stale controlled verification bundle lineage before follow-up drafting", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentVerificationBundle: plannedVerificationBundle }) });
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Run controlled verification bundle").click();
+    });
+    const request = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    const result = JSON.parse(JSON.stringify(succeededVerificationBundle)) as Record<string, any>;
+    result.workspace.controlledWorkspaceId = "other-workspace";
+    result.workspace.runId = request.payload.runId;
+    result.workspace.workspaceReadinessId = request.payload.workspaceReadinessId;
+    result.bundle.bundleId = request.payload.bundleId;
+    await dispatchHostMessage({ version: bridgeVersion, type: "host.controlledAgentVerificationBundleResult", requestId: request.requestId, payload: result });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Ignored stale verification bundle result.");
+    expect(findButton("Draft sanitized verification follow-up").disabled).toBe(true);
+    expect(chatInput().value).toBe("");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")).toHaveLength(1);
   });
 
   it("posts controlled lexical search only after explicit click and selection stays local", async () => {

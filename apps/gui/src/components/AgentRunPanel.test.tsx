@@ -340,6 +340,70 @@ describe("AgentRunPanel", () => {
     expect(panelText()).not.toContain("Authorization");
   });
 
+  it("renders controlled verification follow-up CTAs as explicit draft-only actions", () => {
+    const onDraftControlledVerificationFollowup = vi.fn();
+    const onDraftControlledVerificationFix = vi.fn();
+    const bundle = evaluateControlledAgentVerificationBundle(succeededVerificationBundle);
+
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledVerificationBundle: bundle,
+      onDraftControlledVerificationFollowup,
+      onDraftControlledVerificationFix,
+    });
+
+    expect(findButton("Draft sanitized verification follow-up").disabled).toBe(false);
+    expect(findButton("Draft manual fix prompt").disabled).toBe(true);
+    act(() => {
+      findButton("Draft sanitized verification follow-up").click();
+    });
+    expect(onDraftControlledVerificationFollowup).toHaveBeenCalledTimes(1);
+    expect(onDraftControlledVerificationFix).not.toHaveBeenCalled();
+    expect(panelText()).toContain("Follow-up draft authority: not drafted");
+  });
+
+  it("renders failed verification manual fix draft without raw leakage or auto-actions", () => {
+    const onDraftControlledVerificationFix = vi.fn();
+    const failedBundleInput = JSON.parse(JSON.stringify(succeededVerificationBundle)) as Record<string, any>;
+    failedBundleInput.bundle.commands[1].status = "failed";
+    failedBundleInput.bundle.commands[1].exitCode = 1;
+    failedBundleInput.bundle.commands[1].summary = "GUI app tests failed with bounded local evidence.";
+    failedBundleInput.bundle.commands.push({ ...failedBundleInput.bundle.commands[1], stepId: "step-s117-engine", sequenceIndex: 2, commandId: "engine-chat-tests", status: "succeeded", exitCode: 0, resultHash: "sha256:3333333333333333333333333333333333333333333333333333333333333333", outputTail: "Engine chat tests completed with bounded sanitized evidence.", summary: "Engine chat tests passed with local deterministic evidence." });
+    failedBundleInput.bundle.requestedCommandCount = 3;
+    failedBundleInput.bundle.summary = "One user approved check reported a bounded failure category.";
+    failedBundleInput.aggregateResult.status = "failed";
+    failedBundleInput.aggregateResult.failedCount = 1;
+    failedBundleInput.aggregateResult.succeededCount = 1;
+    failedBundleInput.aggregateResult.truncated = true;
+    failedBundleInput.aggregateResult.commandCount = 3;
+    const bundle = evaluateControlledAgentVerificationBundle(failedBundleInput);
+    const draft = {
+      kind: "controlled_agent_verification_followup",
+      version: "2026-07-08",
+      followupProposal: { title: "Draft manual fix prompt", promptSummary: "Prepare a manual fix prompt from sanitized failed verification metadata." },
+      sourceBundle: { bundleId: "bundle-s117", aggregateStatus: "failed", failedCount: 1 },
+    };
+
+    renderPanel(undefined, {
+      host: "vscode",
+      controlledVerificationBundle: bundle,
+      controlledVerificationFollowupDraft: draft,
+      onDraftControlledVerificationFix,
+    });
+
+    expect(findButton("Draft manual fix prompt").disabled).toBe(false);
+    expect(panelText()).toContain("Draft manual fix prompt");
+    expect(panelText()).toContain("draft only");
+    expect(panelText()).toContain("manual Send required");
+    expect(panelText()).toContain("No auto-send, provider call, repair, apply, verify, bridge post");
+    expect(panelText()).not.toContain("/Users/");
+    expect(panelText()).not.toContain("Authorization");
+    act(() => {
+      findButton("Draft manual fix prompt").click();
+    });
+    expect(onDraftControlledVerificationFix).toHaveBeenCalledTimes(1);
+  });
+
   it("renders task preset choices and generates user-reviewed draft guidance after explicit selection", () => {
     const onApplyReviewedPatch = vi.fn();
     const onRunAllowlistedVerification = vi.fn();
@@ -1681,7 +1745,10 @@ type PanelTestProps = {
   controlledVerificationBundleRequest?: any;
   controlledVerificationBundleNote?: string | null;
   pendingControlledVerificationBundle?: boolean;
+  controlledVerificationFollowupDraft?: any;
   onRequestControlledVerificationBundle?: () => void;
+  onDraftControlledVerificationFollowup?: () => void;
+  onDraftControlledVerificationFix?: () => void;
   controlledSearchResultId?: string;
   selectedControlledSearchResultIds?: string[];
   controlledSearchSelection?: any;
@@ -1747,7 +1814,10 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         controlledVerificationBundleRequest={props.controlledVerificationBundleRequest}
         controlledVerificationBundleNote={props.controlledVerificationBundleNote}
         pendingControlledVerificationBundle={props.pendingControlledVerificationBundle}
+        controlledVerificationFollowupDraft={props.controlledVerificationFollowupDraft}
         onRequestControlledVerificationBundle={props.onRequestControlledVerificationBundle}
+        onDraftControlledVerificationFollowup={props.onDraftControlledVerificationFollowup}
+        onDraftControlledVerificationFix={props.onDraftControlledVerificationFix}
         controlledSearchResultId={props.controlledSearchResultId}
         selectedControlledSearchResultIds={props.selectedControlledSearchResultIds}
         controlledSearchSelection={props.controlledSearchSelection}
