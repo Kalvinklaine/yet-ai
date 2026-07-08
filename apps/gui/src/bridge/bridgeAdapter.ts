@@ -105,7 +105,7 @@ export type IdeActionResultPayload = {
 
 export type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest";
+  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentMultifileApplyRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
@@ -128,7 +128,7 @@ export type HostRuntimeStatusPayload = {
 
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult";
   requestId?: string;
   payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload | HostRuntimeStatusPayload;
 };
@@ -231,6 +231,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.runtimeStatus",
   "host.controlledAgentFileReadResult",
   "host.controlledAgentEditResult",
+  "host.controlledAgentMultifileApplyResult",
   "host.controlledAgentCommandRunResult",
   "host.controlledAgentLexicalSearchResult",
 ]);
@@ -242,6 +243,7 @@ const guiMessageTypes = new Set<GuiMessage["type"]>([
   "gui.applyWorkspaceEditRequest",
   "gui.controlledAgentFileReadRequest",
   "gui.controlledAgentEditRequest",
+  "gui.controlledAgentMultifileApplyRequest",
   "gui.controlledAgentCommandRunRequest",
   "gui.controlledAgentLexicalSearchRequest",
 ]);
@@ -412,6 +414,9 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   if (value.type === "gui.controlledAgentEditRequest") {
     return typeof value.requestId === "string" && isPlainObject(value.payload);
   }
+  if (value.type === "gui.controlledAgentMultifileApplyRequest") {
+    return typeof value.requestId === "string" && isControlledAgentMultifileApplyRequestPayload(value.payload) && value.payload.requestId === value.requestId;
+  }
   if (value.type === "gui.controlledAgentCommandRunRequest") {
     return typeof value.requestId === "string" && isControlledAgentCommandRunRequestPayload(value.payload) && value.payload.requestId === value.requestId;
   }
@@ -421,6 +426,49 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
   return value.type === "gui.applyWorkspaceEditRequest" && typeof value.requestId === "string" && isApplyWorkspaceEditPayload(value.payload);
 }
 
+
+export function isControlledAgentMultifileApplyRequestPayload(value: unknown): value is Record<string, unknown> & { requestId: string } {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "workspaceReadinessId", "patchPlanId", "userConfirmed", "confirmationKind", "limits", "policy", "edits"])) {
+    return false;
+  }
+  return safeControlledAgentId(value.requestId) &&
+    value.requestIdMintedBy === "gui" &&
+    value.source === "gui" &&
+    value.assistantMinted === false &&
+    safeControlledAgentId(value.controlledWorkspaceId) &&
+    safeControlledAgentId(value.runId) &&
+    (value.runtimeSessionId === undefined || safeControlledAgentId(value.runtimeSessionId)) &&
+    safeControlledAgentId(value.workspaceReadinessId) &&
+    safeControlledAgentId(value.patchPlanId) &&
+    value.userConfirmed === true &&
+    value.confirmationKind === "explicit_user_multifile_apply" &&
+    isControlledAgentMultifileApplyLimits(value.limits) &&
+    isControlledAgentMultifileApplyPolicy(value.policy) &&
+    isControlledAgentMultifileApplyEdits(value.edits);
+}
+
+export function isControlledAgentMultifileApplyResultPayload(value: unknown): value is Record<string, unknown> & { requestId: string } {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["type", "schemaVersion", "state", "authority", "cloudRequired", "controlledWorkspaceId", "runId", "runtimeSessionId", "workspaceReadinessId", "requestId", "requestIdMintedBy", "userConfirmed", "patchPlanId", "limits", "edits", "policyFlags", "result"])) {
+    return false;
+  }
+  return value.type === "controlled_agent_multifile_apply" &&
+    value.schemaVersion === "2026-07-07" &&
+    (value.state === "applied" || value.state === "blocked" || value.state === "failed") &&
+    value.authority === "vscode_bounded_multifile_replacement_apply" &&
+    value.cloudRequired === false &&
+    safeControlledAgentId(value.controlledWorkspaceId) &&
+    safeControlledAgentId(value.runId) &&
+    (value.runtimeSessionId === undefined || safeControlledAgentId(value.runtimeSessionId)) &&
+    safeControlledAgentId(value.workspaceReadinessId) &&
+    safeControlledAgentId(value.requestId) &&
+    value.requestIdMintedBy === "gui" &&
+    value.userConfirmed === true &&
+    safeControlledAgentId(value.patchPlanId) &&
+    isControlledAgentMultifileApplyLimits(value.limits) &&
+    isControlledAgentMultifileApplyResultEdits(value.edits) &&
+    isControlledAgentMultifileApplyPolicyFlags(value.policyFlags) &&
+    isControlledAgentMultifileApplyResultDetails(value.result, value.state);
+}
 
 export function isControlledAgentCommandRunRequestPayload(value: unknown): value is Record<string, unknown> & { requestId: string } {
   if (!isPlainObject(value) || !hasOnlyKeys(value, ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "commandId", "limits", "policyFlags"])) {
@@ -497,6 +545,57 @@ export function isControlledAgentLexicalSearchResultPayload(value: unknown): val
     return value.searchAllowed === false && value.resultCount === 0 && value.totalMatchCount === 0 && value.totalSnippetBytes === 0 && value.truncated === false && value.resultHash === undefined && Array.isArray(value.snippets) && value.snippets.length === 0 && (value.blockedReason === undefined || isControlledAgentLexicalSearchBlockedReason(value.blockedReason));
   }
   return false;
+}
+
+function isControlledAgentMultifileApplyLimits(value: unknown): boolean {
+  return isPlainObject(value) && hasOnlyKeys(value, ["maxFiles", "maxEdits", "maxReplacementBytesPerEdit", "maxTotalReplacementBytes"]) &&
+    optionalBoundedInteger(value.maxFiles, 1, 4) && value.maxFiles !== undefined &&
+    optionalBoundedInteger(value.maxEdits, 1, 12) && value.maxEdits !== undefined &&
+    optionalBoundedInteger(value.maxReplacementBytesPerEdit, 1, 12000) && value.maxReplacementBytesPerEdit !== undefined &&
+    optionalBoundedInteger(value.maxTotalReplacementBytes, 1, 48000) && value.maxTotalReplacementBytes !== undefined;
+}
+
+function isControlledAgentMultifileApplyPolicy(value: unknown): boolean {
+  const keys = ["host", "browserSupported", "jetbrainsSupported", "vscodeExecutionOnly", "existingTextFilesOnly", "boundedReplacementOnly", "rawReplacementIncluded", "rawDiffIncluded", "fileBodyIncluded", "createAllowed", "deleteAllowed", "renameAllowed", "moveAllowed", "dependencyEditAllowed", "generatedEditAllowed", "hiddenPathAllowed", "commandAllowed", "providerAllowed", "toolAllowed", "automaticApplyAllowed"];
+  return isPlainObject(value) && hasOnlyKeys(value, keys) && value.host === "vscode" && keys.every((key) => key === "host" ? true : key === "vscodeExecutionOnly" || key === "existingTextFilesOnly" || key === "boundedReplacementOnly" ? value[key] === true : value[key] === false);
+}
+
+function isControlledAgentMultifileApplyPolicyFlags(value: unknown): boolean {
+  const keys = ["vscodeExecutionOnly", "browserSupported", "jetbrainsSupported", "existingTextFilesOnly", "boundedReplacementOnly", "rawReplacementIncluded", "rawDiffIncluded", "fileBodyIncluded", "createAllowed", "deleteAllowed", "renameAllowed", "moveAllowed", "dependencyEditAllowed", "generatedEditAllowed", "hiddenPathAllowed", "commandAllowed", "providerAllowed", "toolAllowed", "automaticApplyAllowed"];
+  return isPlainObject(value) && hasOnlyKeys(value, keys) && keys.every((key) => key === "vscodeExecutionOnly" || key === "existingTextFilesOnly" || key === "boundedReplacementOnly" ? value[key] === true : value[key] === false);
+}
+
+function isControlledAgentMultifileApplyEdits(value: unknown): boolean {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 12 && value.every(isControlledAgentMultifileApplyEdit);
+}
+
+function isControlledAgentMultifileApplyResultEdits(value: unknown): boolean {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 12 && value.every(isControlledAgentMultifileApplyResultEdit);
+}
+
+function isControlledAgentMultifileApplyEdit(value: unknown): boolean {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["editId", "operation", "workspaceRelativePath", "fileLabel", "existingTextFile", "expectedPreEditHash", "expectedRangeHash", "replacementContentHash", "startLine", "endLine", "replacementByteCount", "sanitizedSummary"])) {
+    return false;
+  }
+  return safeControlledAgentId(value.editId) && value.operation === "replace" && requiredSafeRelativePath(value.workspaceRelativePath) && value.fileLabel === value.workspaceRelativePath && value.existingTextFile === true && isSha256Hash(value.expectedPreEditHash) && isSha256Hash(value.expectedRangeHash) && isSha256Hash(value.replacementContentHash) && optionalBoundedInteger(value.startLine, 1, 1000000) && value.startLine !== undefined && optionalBoundedInteger(value.endLine, 1, 1000000) && value.endLine !== undefined && (value.endLine as number) >= (value.startLine as number) && optionalBoundedInteger(value.replacementByteCount, 0, 12000) && value.replacementByteCount !== undefined && safeMessage(value.sanitizedSummary);
+}
+
+function isControlledAgentMultifileApplyResultEdit(value: unknown): boolean {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["editId", "operation", "workspaceRelativePath", "fileLabel", "status", "expectedPreEditHash", "expectedRangeHash", "replacementContentHash", "actualPostEditHash", "startLine", "endLine", "replacementByteCount", "sanitizedSummary"])) {
+    return false;
+  }
+  return safeControlledAgentId(value.editId) && value.operation === "replace" && requiredSafeRelativePath(value.workspaceRelativePath) && value.fileLabel === value.workspaceRelativePath && (value.status === "applied" || value.status === "blocked" || value.status === "failed") && isSha256Hash(value.expectedPreEditHash) && isSha256Hash(value.expectedRangeHash) && isSha256Hash(value.replacementContentHash) && (value.actualPostEditHash === undefined || isSha256Hash(value.actualPostEditHash)) && optionalBoundedInteger(value.startLine, 1, 1000000) && value.startLine !== undefined && optionalBoundedInteger(value.endLine, 1, 1000000) && value.endLine !== undefined && (value.endLine as number) >= (value.startLine as number) && optionalBoundedInteger(value.replacementByteCount, 0, 12000) && value.replacementByteCount !== undefined && safeMessage(value.sanitizedSummary);
+}
+
+function isControlledAgentMultifileApplyResultDetails(value: unknown, state: unknown): boolean {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["status", "cloudRequired", "privatePathExposed", "rawReplacementIncluded", "rawDiffIncluded", "fileBodyIncluded", "message", "appliedFileCount", "appliedEditCount", "blockedFileCount", "failedEditCount", "affectedFiles"])) {
+    return false;
+  }
+  return value.status === state && value.cloudRequired === false && value.privatePathExposed === false && value.rawReplacementIncluded === false && value.rawDiffIncluded === false && value.fileBodyIncluded === false && safeMessage(value.message) && optionalBoundedInteger(value.appliedFileCount, 0, 4) && value.appliedFileCount !== undefined && optionalBoundedInteger(value.appliedEditCount, 0, 12) && value.appliedEditCount !== undefined && optionalBoundedInteger(value.blockedFileCount, 0, 4) && value.blockedFileCount !== undefined && optionalBoundedInteger(value.failedEditCount, 0, 12) && value.failedEditCount !== undefined && (value.affectedFiles === undefined || (Array.isArray(value.affectedFiles) && value.affectedFiles.length <= 4 && value.affectedFiles.every(requiredSafeRelativePath)));
+}
+
+function isSha256Hash(value: unknown): boolean {
+  return typeof value === "string" && /^sha256:[a-f0-9]{64}$/.test(value);
 }
 
 function isControlledAgentCommandRunLimits(value: unknown): boolean {
@@ -621,6 +720,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   }
   if (value.type === "host.controlledAgentEditResult") {
     return typeof value.requestId === "string" && isPlainObject(value.payload);
+  }
+  if (value.type === "host.controlledAgentMultifileApplyResult") {
+    return typeof value.requestId === "string" && isControlledAgentMultifileApplyResultPayload(value.payload) && value.payload.requestId === value.requestId;
   }
   if (value.type === "host.controlledAgentCommandRunResult") {
     return typeof value.requestId === "string" && isControlledAgentCommandRunResultPayload(value.payload) && value.payload.requestId === value.requestId;

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isControlledHostCapabilitiesPayload, isGuiMessage, isHostMessage, isHostRuntimeStatusPayload, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
+import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isControlledAgentMultifileApplyRequestPayload, isControlledAgentMultifileApplyResultPayload, isControlledHostCapabilitiesPayload, isGuiMessage, isHostMessage, isHostRuntimeStatusPayload, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
 import guiReadyWithFrameNonceMessage from "../../../../packages/contracts/examples/bridge/gui-ready-with-frame-nonce.json";
 import guiUnloadedMessage from "../../../../packages/contracts/examples/bridge/gui-unloaded-message.json";
@@ -85,6 +85,11 @@ import hostControlledAgentLexicalSearchResultBrowserSuccessMessage from "../../.
 import hostControlledAgentLexicalSearchResultPrivatePathMessage from "../../../../packages/contracts/examples-invalid/bridge/host-controlled-agent-lexical-search-result-private-path.json";
 import hostControlledAgentLexicalSearchResultRawContentFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-controlled-agent-lexical-search-result-raw-content-field.json";
 import hostControlledAgentLexicalSearchResultSecretSnippetMessage from "../../../../packages/contracts/examples-invalid/bridge/host-controlled-agent-lexical-search-result-secret-snippet.json";
+import guiControlledAgentMultifileApplyRequestMessage from "../../../../packages/contracts/examples/bridge/gui-controlled-agent-multifile-apply-request.json";
+import hostControlledAgentMultifileApplyResultAppliedMessage from "../../../../packages/contracts/examples/bridge/host-controlled-agent-multifile-apply-result-applied.json";
+import guiControlledAgentMultifileApplyAssistantMintedMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-controlled-agent-multifile-apply-assistant-minted.json";
+import guiControlledAgentMultifileApplyRawDiffMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-controlled-agent-multifile-apply-raw-diff-field.json";
+import hostControlledAgentMultifileApplyResultRawDiffMessage from "../../../../packages/contracts/examples-invalid/bridge/host-controlled-agent-multifile-apply-result-raw-diff.json";
 
 const bridgeVersion = "2026-05-15";
 const parentDescriptor = Object.getOwnPropertyDescriptor(window, "parent");
@@ -1142,6 +1147,19 @@ describe("bridgeAdapter", () => {
     expect(logs.join("\n")).not.toContain("README.md");
     expect(logs.join("\n")).not.toContain("replaceRange");
     adapter.dispose();
+  });
+
+  it("validates controlled multi-file apply bridge requests and sanitized host results", () => {
+    expect(isControlledAgentMultifileApplyRequestPayload(guiControlledAgentMultifileApplyRequestMessage.payload)).toBe(true);
+    expect(isGuiMessage(guiControlledAgentMultifileApplyRequestMessage)).toBe(true);
+    expect(isControlledAgentMultifileApplyResultPayload(hostControlledAgentMultifileApplyResultAppliedMessage.payload)).toBe(true);
+    expect(isHostMessage(hostControlledAgentMultifileApplyResultAppliedMessage)).toBe(true);
+  });
+
+  it("rejects unsafe controlled multi-file apply bridge metadata", () => {
+    expect(isGuiMessage(guiControlledAgentMultifileApplyAssistantMintedMessage)).toBe(false);
+    expect(isGuiMessage(guiControlledAgentMultifileApplyRawDiffMessage)).toBe(false);
+    expect(isHostMessage(hostControlledAgentMultifileApplyResultRawDiffMessage)).toBe(false);
   });
 
   it("validates controlled command-run bridge requests and sanitized host results", () => {
