@@ -7,7 +7,7 @@ const templatePath = "docs/dogfood/controlled-agent-real-provider-matrix.md";
 
 const fallbackTemplate = `# Yet AI Controlled Agent Real-Provider Dogfood Matrix
 
-Manual local BYOK evidence only. This matrix is not CI evidence, not automation evidence, not production autonomy evidence, not release evidence, not marketplace evidence, not real-provider CI evidence, and not a publication gate. Keep untested cells as \`not run\`. Do not paste secrets, raw prompts, raw responses, raw file bodies, raw diffs, raw replacement text, raw commands, stdout, cwd, env, private paths, provider payloads, bridge payload dumps, hosted backend/account/gateway/credit/cloud workspace requirements, production claims, release claims, marketplace claims, or publication claims.
+Manual local BYOK evidence only. This matrix is not CI evidence, not automation evidence, not production autonomy evidence, not release evidence, not marketplace evidence, not real-provider CI evidence, and not a publication gate. Keep untested cells as \`not run\`. Do not paste secrets, raw prompts, raw responses, raw file bodies, raw diffs, raw replacement text, raw commands, stdout, stderr, output dumps, cwd, env, private paths, provider payloads, bridge payload dumps, hosted backend/account/gateway/credit/cloud workspace requirements, production claims, release claims, marketplace claims, or publication claims.
 
 Use this matrix after explicit user-run local dogfood with a user-configured provider key or local runtime. Keep completed evidence in ignored local evidence locations unless a task explicitly asks for a sanitized tracked excerpt.
 
@@ -32,7 +32,7 @@ Use this matrix after explicit user-run local dogfood with a user-configured pro
 - Raw prompts absent: <checked | issue fixed before sharing | not run>
 - Raw responses absent: <checked | issue fixed before sharing | not run>
 - Raw file bodies, diffs, and replacement text absent: <checked | issue fixed before sharing | not run>
-- Raw commands, stdout, cwd, and env absent: <checked | issue fixed before sharing | not run>
+- Raw commands, stdout, stderr, output dumps, cwd, and env absent: <checked | issue fixed before sharing | not run>
 - Private paths absent: <checked | issue fixed before sharing | not run>
 - Provider payloads absent: <checked | issue fixed before sharing | not run>
 - Bridge payload dumps absent: <checked | issue fixed before sharing | not run>
@@ -75,7 +75,7 @@ const requiredPatterns = [
   ["raw prompts check", /- Raw prompts absent:/],
   ["raw responses check", /- Raw responses absent:/],
   ["raw bodies diffs replacements check", /- Raw file bodies, diffs, and replacement text absent:/],
-  ["raw command material check", /- Raw commands, stdout, cwd, and env absent:/],
+  ["raw command material check", /- Raw commands, stdout, stderr, output dumps, cwd, and env absent:/],
   ["private paths check", /- Private paths absent:/],
   ["provider payloads check", /- Provider payloads absent:/],
   ["bridge dumps check", /- Bridge payload dumps absent:/],
@@ -117,7 +117,7 @@ const unsafeChecks = [
   ["raw responses", /\b(?:raw\s+responses?|response\s+dump|provider\s+output\s+dump|verbatim\s+response|full\s+assistant\s+response|assistant\s+response\s+dump)\b\s*[:=]/i],
   ["raw file bodies", /\b(?:file\s+contents?|source\s+contents?|document\s+contents?|full\s+file\s+text|raw\s+file\s+body|verbatim\s+source)\b\s*[:=]/i],
   ["raw diffs or replacement text", /\b(?:raw\s+diff|diff\s+dump|patch\s+body|raw\s+patch|patch\s+dump|verbatim\s+diff|replacement\s+body|replacement\s+text)\b\s*[:=]/i],
-  ["raw commands stdout cwd env", /\b(?:command\s*[:=]\s*[^\s<][^\r\n]*|stdout\s*[:=]\s*[^\s<][^\r\n]*|stderr\s*[:=]\s*[^\s<][^\r\n]*|terminal\s+output\s*[:=]\s*[^\s<][^\r\n]*|cwd\s*[:=]\s*[^\s<][^\r\n]*|env\s*[:=]\s*[^\s<][^\r\n]*|process\.env)/i],
+  ["raw commands stdout stderr output cwd env", /\b(?:command\s*[:=]\s*[^\s<][^\r\n]*|stdout\s*[:=]\s*[^\s<][^\r\n]*|stderr\s*[:=]\s*[^\s<][^\r\n]*|terminal\s+output\s*[:=]\s*[^\s<][^\r\n]*|cwd\s*[:=]\s*[^\s<][^\r\n]*|env\s*[:=]\s*[^\s<][^\r\n]*|process\.env)/i],
   ["provider payloads", /\b(?:provider\s+payload|provider\s+request|provider\s+response|provider\s+json|completion\s+response|chat\s+completion\s+payload)\b\s*[:=]/i],
   ["bridge payload dumps", /\b(?:raw\s+bridge\s+payload|bridge\s+payload\s+dump|bridge\s+payload|postMessage\s+dump|request\s+body|raw\s+request)\b\s*[:=]/i],
   ["browser-storage dumps", /\b(?:localStorage|sessionStorage|indexedDB|browser\s+storage\s+dump|storage\s+dump|workspace\s+storage\s+dump)\b\s*[:=]/i],
@@ -243,10 +243,12 @@ function selfTestFailures() {
     ["raw file bodies", "file contents: const value = 1;"],
     ["raw diffs or replacement text", "raw diff: @@ -1 +1"],
     ["raw diffs or replacement text", "replacement text: new body"],
-    ["raw commands stdout cwd env", "command: npm test"],
-    ["raw commands stdout cwd env", "stdout: full output"],
-    ["raw commands stdout cwd env", "cwd=/Users/example/project"],
-    ["raw commands stdout cwd env", "env=TOKEN=redacted"],
+    ["raw commands stdout stderr output cwd env", "command: npm test"],
+    ["raw commands stdout stderr output cwd env", "stdout: full output"],
+    ["raw commands stdout stderr output cwd env", "stderr: full output"],
+    ["raw commands stdout stderr output cwd env", "terminal output: full output"],
+    ["raw commands stdout stderr output cwd env", "cwd=/Users/example/project"],
+    ["raw commands stdout stderr output cwd env", "env=TOKEN=redacted"],
     ["provider payloads", "provider payload: {}"],
     ["bridge payload dumps", "bridge payload: { action: send }"],
     ["browser-storage dumps", "localStorage: { token: redacted }"],

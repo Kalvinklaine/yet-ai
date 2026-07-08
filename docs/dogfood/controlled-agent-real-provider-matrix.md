@@ -1,6 +1,6 @@
 # Yet AI Controlled Agent Real-Provider Dogfood Matrix
 
-Manual local BYOK evidence only. This matrix is not CI evidence, not automation evidence, not production autonomy evidence, not release evidence, not marketplace evidence, not real-provider CI evidence, and not a publication gate. Keep untested cells as `not run`. Do not paste secrets, raw prompts, raw responses, raw file bodies, raw diffs, raw replacement text, raw commands, stdout, cwd, env, private paths, provider payloads, bridge payload dumps, hosted backend/account/gateway/credit/cloud workspace requirements, production claims, release claims, marketplace claims, or publication claims.
+Manual local BYOK evidence only. This matrix is not CI evidence, not automation evidence, not production autonomy evidence, not release evidence, not marketplace evidence, not real-provider CI evidence, and not a publication gate. Keep untested cells as `not run`. Do not paste secrets, raw prompts, raw responses, raw file bodies, raw diffs, raw replacement text, raw commands, stdout, stderr, output dumps, cwd, env, private paths, provider payloads, bridge payload dumps, hosted backend/account/gateway/credit/cloud workspace requirements, production claims, release claims, marketplace claims, or publication claims.
 
 Use this matrix after explicit user-run local dogfood with a user-configured provider key or local runtime. Keep completed evidence in ignored local evidence locations unless a task explicitly asks for a sanitized tracked excerpt. Manual real-provider evidence complements deterministic local checks by sampling provider-family behavior, latency, refusal/error handling, and proposal usefulness that mock fixtures cannot judge. Deterministic checks remain the repeatable safety gate; this matrix is human observation, not approval.
 
@@ -74,7 +74,7 @@ Use this section to summarize recovery coverage across provider families and pre
 - Raw prompts absent: <checked | issue fixed before sharing | not run>
 - Raw responses absent: <checked | issue fixed before sharing | not run>
 - Raw file bodies, diffs, and replacement text absent: <checked | issue fixed before sharing | not run>
-- Raw commands, stdout, cwd, and env absent: <checked | issue fixed before sharing | not run>
+- Raw commands, stdout, stderr, output dumps, cwd, and env absent: <checked | issue fixed before sharing | not run>
 - Private paths absent: <checked | issue fixed before sharing | not run>
 - Provider payloads absent: <checked | issue fixed before sharing | not run>
 - Bridge payload dumps absent: <checked | issue fixed before sharing | not run>

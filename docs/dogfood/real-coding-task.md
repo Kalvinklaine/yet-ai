@@ -20,8 +20,8 @@ Out of scope:
 
 - Production/default account login remains unavailable/blocked; ChatGPT/OpenAI account-login claims, provider web-session reuse, browser profile import, or private provider endpoints are out of scope.
 - Hosted Yet AI backend requirements, Yet AI accounts, managed model gateways, product credit balances, cloud workspaces, cloud sync, or cloud-required task execution.
-- Auto-send, auto-apply, auto-run verification, shell/git/tool execution, workspace indexing, hidden file reads, background autonomy, publishing, signing, notarization, marketplace release, or real-provider CI.
-- Raw provider credentials, runtime tokens, auth codes, cookies, request bodies, raw provider responses, raw prompts, raw file bodies, private absolute paths, or bridge payload dumps in tracked docs or shareable reports.
+- Auto-send, auto-apply, auto-run verification, shell/git/tool execution, workspace indexing, hidden file reads, background autonomy, publishing, signing, notarization, marketplace release, real-provider CI, or release approval.
+- Raw provider credentials, runtime tokens, auth codes, cookies, request bodies, provider payloads, raw provider responses, raw prompts, raw file bodies, raw patch bodies, raw replacement text, raw command/output bodies, private absolute paths, or bridge payload dumps in tracked docs or shareable reports.
 
 ## Manual run checklist
 
