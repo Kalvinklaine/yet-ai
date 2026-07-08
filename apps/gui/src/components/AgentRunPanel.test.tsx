@@ -8,6 +8,8 @@ import { createProposalHistory, type ProposalHistory } from "../services/proposa
 import { evaluateControlledAgentRepairLoop } from "../services/controlledAgentRepairLoop";
 import { createControlledRunHistoryItem } from "../services/controlledRunHistory";
 import { evaluateControlledAgentMultifilePatchPlan } from "../services/controlledAgentMultifilePatchPlan";
+import { evaluateControlledAgentTwoStepRun } from "../services/controlledAgentTwoStepRun";
+import twoStepCompletedFixture from "../../../../packages/contracts/examples/engine/controlled-agent-two-step-run-completed.json";
 import { controlledAgentSearchSelectionResultId, createControlledAgentSearchSelection } from "../services/controlledAgentSearchSelection";
 import type { ControlledAgentLexicalSearchSnippet, ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
 import { controlledAgentTaskPresets } from "../services/controlledAgentTaskPresets";
@@ -162,6 +164,10 @@ const capabilityMatrixFixture = {
 } as const;
 
 const searchHash = `sha256:${"a".repeat(64)}`;
+
+function twoStepFixture(overrides: Record<string, unknown> = {}) {
+  return { ...(JSON.parse(JSON.stringify(twoStepCompletedFixture)) as Record<string, unknown>), ...overrides };
+}
 
 function lexicalSnippet(overrides: Partial<ControlledAgentLexicalSearchSnippet> = {}): ControlledAgentLexicalSearchSnippet {
   const snippet = overrides.snippet ?? "function ChatComposer() {\n  return null;\n}";
@@ -1469,6 +1475,49 @@ describe("AgentRunPanel", () => {
     expect(browserStorageDump()).not.toContain("history-run-1");
   });
 
+  it("renders S119 two-step run staged evidence with explicit gates and no action authority", () => {
+    const state = evaluateControlledAgentTwoStepRun(twoStepFixture());
+
+    renderPanel(undefined, { host: "vscode", controlledTwoStepRunState: state });
+
+    const text = panelText();
+    expect(text).toContain("S119 two-step run staged evidence");
+    expect(text).toContain("completed");
+    expect(text).toContain("Planning, review, execution, apply, and verification evidence are complete after explicit user gates.");
+    expect(text).toContain("Planning gate: user confirmed");
+    expect(text).toContain("Plan review gate: user reviewed");
+    expect(text).toContain("Execution gate: user requested execution");
+    expect(text).toContain("Verification gate: user requested verification");
+    expect(text).toContain("Authority flags: execute false · apply without click false · verify without click false · repair without click false · read false · write false · command false · provider false · tools false");
+    expect(text).toContain("Browser is unsupported for trusted execution and JetBrains remains fail-closed");
+    expect(actionButtonLabels()).not.toContain("Start two-step run");
+    expect(browserStorageDump()).not.toContain("controlled_agent_two_step_run");
+  });
+
+  it("renders S119 blocked gate diagnostics without raw leakage", () => {
+    const secret = "sk-" + "z".repeat(40);
+    const unsafe = evaluateControlledAgentTwoStepRun(twoStepFixture({ rawPayload: `raw payload ${secret} /Users/alice/private.ts` }));
+    const missingGate = evaluateControlledAgentTwoStepRun(twoStepFixture({ gates: { planningRequest: { satisfied: false } } }));
+
+    renderPanel(undefined, { host: "browser", controlledTwoStepRunState: unsafe });
+
+    let text = panelText();
+    expect(text).toContain("S119 two-step run staged evidence");
+    expect(text).toContain("failed");
+    expect(text).toContain("Blocked safely: unsafe metadata");
+    expect(text).toContain("Unsafe, missing, stale, duplicate, or failed metadata blocked the two-step run safely.");
+    expect(text).not.toContain(secret);
+    expect(text).not.toContain("/Users/alice");
+
+    renderPanel(undefined, { host: "jetbrains", controlledTwoStepRunState: missingGate });
+    text = panelText();
+    expect(text).toContain("Blocked safely: missing user gate");
+    expect(text).toContain("Planning gate: waiting for explicit user request");
+    expect(text).toContain("Execution gate: execution not requested");
+    expect(text).toContain("JetBrains remains fail-closed");
+    expect(browserStorageDump()).not.toContain(secret);
+  });
+
   it("does not persist run internals or expose raw unsafe data", () => {
     const secret = "sk-" + "x".repeat(40);
     renderPanel({
@@ -1549,6 +1598,7 @@ type PanelTestProps = {
   onRequestControlledSearch?: () => void;
   onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
   controlledRunHistory?: any;
+  controlledTwoStepRunState?: any;
 };
 
 
@@ -1608,6 +1658,7 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         pendingControlledSearch={props.pendingControlledSearch}
         onRequestControlledSearch={props.onRequestControlledSearch}
         onControlledSearchResultSelectionChange={props.onControlledSearchResultSelectionChange}
+        controlledTwoStepRunState={props.controlledTwoStepRunState}
       />,
     );
   });

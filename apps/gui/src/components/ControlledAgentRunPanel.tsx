@@ -7,6 +7,7 @@ import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledA
 import type { ControlledLocalAgentMvpReport } from "../services/controlledLocalAgentMvp";
 import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
 import { evaluateControlledAgentAuthorityRegistry } from "../services/controlledAgentAuthorityRegistry";
+import type { ControlledAgentTwoStepRunState } from "../services/controlledAgentTwoStepRun";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
 
@@ -16,10 +17,11 @@ export type ControlledAgentRunPanelProps = {
   mvpReport?: ControlledLocalAgentMvpReport;
   host?: BridgeHost | "unknown";
   capabilityMatrix?: ControlledHostCapabilityMatrixDisplay;
+  twoStepRunState?: ControlledAgentTwoStepRunState;
   onStop: () => void;
 };
 
-export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host = "unknown", capabilityMatrix, onStop }: ControlledAgentRunPanelProps) {
+export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host = "unknown", capabilityMatrix, twoStepRunState, onStop }: ControlledAgentRunPanelProps) {
   const phaseLabel = sanitizeDisplayText(state.phase.replace(/_/g, " "));
   const stopReason = state.stop?.reason ? sanitizeDisplayText(state.stop.reason.replace(/_/g, " ")) : "none";
   const currentStep = currentStepLabel(state);
@@ -85,6 +87,19 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         <span className={state.stopped ? "badge warn" : "badge ok"}>{phaseLabel}</span>
       </div>
       <span>{sanitizeDisplayText(state.summary)}</span>
+      {twoStepRunState && <section className={`readiness-card ${twoStepRunState.phase === "failed" || twoStepRunState.phase === "stopped" ? "warn" : "ready"} stack`} role="status" aria-label="Controlled two-step run state">
+        <div className="row">
+          <strong>S119 two-step run state</strong>
+          <span className={twoStepRunState.phase === "failed" || twoStepRunState.phase === "stopped" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(twoStepRunState.phase.replace(/_/g, " "))}</span>
+          <span className="badge">staged review</span>
+          <span className="badge">no auto apply/verify/repair</span>
+        </div>
+        <span>{sanitizeDisplayText(twoStepRunState.summary)}</span>
+        <span>Gates: planning {twoStepRunState.correlation.planningGateId ? "confirmed" : "waiting"} · review {twoStepRunState.correlation.planReviewGateId ? "confirmed" : "waiting"} · execution {twoStepRunState.correlation.executionGateId ? "confirmed" : "waiting"} · verification {twoStepRunState.correlation.verificationGateId ? "confirmed" : "waiting"}</span>
+        <span>Outcomes: files {twoStepRunState.counters.filesTouched} · edit bytes {twoStepRunState.counters.editBytes} · verification commands {twoStepRunState.counters.verificationCommands} · stale/duplicate blocks {twoStepRunState.counters.staleOrDuplicateEvents}</span>
+        {twoStepRunState.stop && <span>Blocked safely: {sanitizeDisplayText(twoStepRunState.stop.reason.replace(/_/g, " "))}</span>}
+        <span className="subtle">This is sanitized GUI evidence only. It does not start planning, acquire hidden context, post bridge requests, apply edits, run verification, draft repair, write storage, or call providers/tools.</span>
+      </section>}
       {capabilityMatrix && (
         <section className="readiness-card warn stack" role="status" aria-label="Controlled run host capability matrix">
           <div className="row">

@@ -15,6 +15,7 @@ import type { ControlledRunContextBundle, ControlledRunContextReport } from "../
 import type { ControlledAgentLexicalSearchSummary } from "../services/controlledAgentLexicalSearch";
 import type { ControlledAgentMultifilePatchPlanResult } from "../services/controlledAgentMultifilePatchPlan";
 import type { ControlledAgentMultifileApplyRequestResult, ControlledAgentMultifileApplySummary } from "../services/controlledAgentMultifileApplyRequest";
+import type { ControlledAgentTwoStepRunState } from "../services/controlledAgentTwoStepRun";
 import { controlledAgentSearchSelectionResultId, type ControlledAgentSearchSelectionResult } from "../services/controlledAgentSearchSelection";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
@@ -68,9 +69,10 @@ export type AgentRunPanelProps = {
   pendingControlledSearch?: boolean;
   onRequestControlledSearch?: () => void;
   onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
+  controlledTwoStepRunState?: ControlledAgentTwoStepRunState;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -236,6 +238,40 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <div className="attached-context-preview" aria-label="Controlled agent task preset draft prompt"><pre>{sanitizeDisplayText(taskPresetGuidance.draftPrompt).slice(0, 320)}</pre></div>
         </div> : <span className="subtle">Choose a preset to generate a visible draft. Nothing starts until the user reviews and sends later, if they choose. Cozy boundaries, no surprise zoomies.</span>}
       </div>
+      {controlledTwoStepRunState && <section className={`readiness-card ${controlledTwoStepRunState.phase === "failed" || controlledTwoStepRunState.phase === "stopped" ? "warn" : "ready"} stack`} role="status" aria-label="Two-step controlled run staged evidence">
+        <div className="row">
+          <strong>S119 two-step run staged evidence</strong>
+          <span className={controlledTwoStepRunState.phase === "failed" || controlledTwoStepRunState.phase === "stopped" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(controlledTwoStepRunState.phase.replace(/_/g, " "))}</span>
+          <span className="badge">display only</span>
+          <span className="badge">metadata only</span>
+          <span className="badge">no unattended autonomy</span>
+        </div>
+        <span>{sanitizeDisplayText(controlledTwoStepRunState.summary)}</span>
+        <span>{twoStepRunManualGateCopy(controlledTwoStepRunState)}</span>
+        <div className="agent-progress-grid" aria-label="Two-step controlled run gates">
+          <span>Planning gate: {controlledTwoStepRunState.correlation.planningGateId ? "user confirmed" : "waiting for explicit user request"}</span>
+          <span>Plan review gate: {controlledTwoStepRunState.correlation.planReviewGateId ? "user reviewed" : "blocked until user review"}</span>
+          <span>Execution gate: {controlledTwoStepRunState.correlation.executionGateId ? "user requested execution" : "execution not requested"}</span>
+          <span>Verification gate: {controlledTwoStepRunState.correlation.verificationGateId ? "user requested verification" : "verification not requested"}</span>
+          <span>Next user action: {sanitizeDisplayText(controlledTwoStepRunState.nextUserAction.replace(/_/g, " "))}</span>
+          <span>Run id: {sanitizeDisplayText(controlledTwoStepRunState.correlation.runId ?? "missing")}</span>
+        </div>
+        <div className="agent-progress-grid" aria-label="Two-step controlled run counters">
+          <span>Planner steps: {controlledTwoStepRunState.counters.plannerSteps}/{controlledTwoStepRunState.budgets.maxPlannerSteps}</span>
+          <span>Selected context: {controlledTwoStepRunState.counters.selectedContextItems}/{controlledTwoStepRunState.budgets.maxSelectedContextItems}</span>
+          <span>Selected search: {controlledTwoStepRunState.counters.searchResults}/{controlledTwoStepRunState.budgets.maxSearchResults}</span>
+          <span>Touched files: {controlledTwoStepRunState.counters.filesTouched}/{controlledTwoStepRunState.budgets.maxTouchedFiles}</span>
+          <span>Edit bytes: {controlledTwoStepRunState.counters.editBytes}/{controlledTwoStepRunState.budgets.maxEditBytes}</span>
+          <span>Verification commands: {controlledTwoStepRunState.counters.verificationCommands}/{controlledTwoStepRunState.budgets.maxVerificationCommands}</span>
+          <span>User turns: {controlledTwoStepRunState.counters.userTurns}</span>
+          <span>Stale or duplicate events: {controlledTwoStepRunState.counters.staleOrDuplicateEvents}</span>
+        </div>
+        <span>Authority flags: execute {String(controlledTwoStepRunState.executionAllowed)} · apply without click {String(controlledTwoStepRunState.autoApplyAllowed)} · verify without click {String(controlledTwoStepRunState.autoVerifyAllowed)} · repair without click {String(controlledTwoStepRunState.autoRepairAllowed)} · read {String(controlledTwoStepRunState.canReadFiles)} · write {String(controlledTwoStepRunState.canWriteFiles)} · command {String(controlledTwoStepRunState.canRunCommands)} · provider {String(controlledTwoStepRunState.canCallProvider)} · tools {String(controlledTwoStepRunState.canUseTools)}</span>
+        {controlledTwoStepRunState.stop && <span>Blocked safely: {sanitizeDisplayText(controlledTwoStepRunState.stop.reason.replace(/_/g, " "))} · recoverable {String(controlledTwoStepRunState.stop.recoverable)}</span>}
+        {controlledTwoStepRunState.diagnostics.length > 0 && <span>Diagnostics: {controlledTwoStepRunState.diagnostics.slice(0, 4).map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span>}
+        <span className="subtle">Planning complete does not imply execution. Execution requested does not imply verification. Apply, verification, and follow-up outcomes stay separate user-reviewed evidence; Browser is unsupported for trusted execution and JetBrains remains fail-closed where parity is not verified.</span>
+      </section>}
+
       {showControlledRunContextSelector && <div className={`readiness-card ${controlledRunContextEnabled ? "ready" : "warn"} stack`} role="status" aria-label="Explicit controlled-run context selector">
         <div className="row">
           <strong>Explicit controlled-run context</strong>
@@ -1097,4 +1133,17 @@ function verificationStatus(details: Record<string, string | number | boolean | 
     return "Verification running";
   }
   return details.verificationRequested === true ? "Verification running" : "not requested";
+}
+
+function twoStepRunManualGateCopy(state: ControlledAgentTwoStepRunState): string {
+  if (state.phase === "planning_requested") return "Planning was requested by the user; sanitized plan evidence must be reviewed before execution can be requested.";
+  if (state.phase === "waiting_for_user_review") return "Planning complete; waiting for explicit user review before any execution request.";
+  if (state.phase === "execution_requested") return "Execution was separately requested by the user; apply outcome is still staged evidence, not automatic verification.";
+  if (state.phase === "applying_edits") return "Apply outcome metadata is visible; allowlisted verification still needs its own explicit user gate.";
+  if (state.phase === "running_verification_bundle") return "Verification was separately requested by the user; follow-up remains manual review only.";
+  if (state.phase === "followup_ready") return "A sanitized follow-up is ready for manual review; the panel does not send it.";
+  if (state.phase === "completed") return "Planning, review, execution, apply, and verification evidence are complete after explicit user gates.";
+  if (state.phase === "failed") return "Unsafe, missing, stale, duplicate, or failed metadata blocked the two-step run safely.";
+  if (state.phase === "stopped") return "The two-step run stopped after an explicit user or policy stop signal.";
+  return "Two-step run is idle until the user explicitly requests planning.";
 }

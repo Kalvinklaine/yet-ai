@@ -3,7 +3,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import worktreeReadiness from "../../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
 import authorityRegistry from "../../../../packages/contracts/examples/engine/controlled-agent-authority-registry-v1.json";
+import twoStepCompletedFixture from "../../../../packages/contracts/examples/engine/controlled-agent-two-step-run-completed.json";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "../services/controlledAgentRunState";
+import { evaluateControlledAgentTwoStepRun } from "../services/controlledAgentTwoStepRun";
 import { ControlledAgentRunPanel } from "./ControlledAgentRunPanel";
 
 let root: Root | undefined;
@@ -87,6 +89,22 @@ describe("ControlledAgentRunPanel", () => {
     expect(text).toContain("Capabilities: Start: unsupported fail-closed · Read: unsupported fail-closed · Edit: unsupported fail-closed · Verification: unsupported fail-closed · Repair: unsupported fail-closed");
     expect(text).toContain("These labels are safe display evidence only; unsupported hosts remain disabled and fail-closed.");
     expect(findButton("Start controlled dev-preview").disabled).toBe(true);
+  });
+
+  it("renders S119 two-step state as display-only staged evidence", () => {
+    const twoStepRunState = evaluateControlledAgentTwoStepRun(twoStepCompletedFixture);
+    renderPanelWithTwoStep(readyState(), twoStepRunState, "vscode");
+
+    const text = panelText();
+    expect(text).toContain("S119 two-step run state");
+    expect(text).toContain("completed");
+    expect(text).toContain("Gates: planning confirmed · review confirmed · execution confirmed · verification confirmed");
+    expect(text).toContain("Outcomes: files 1 · edit bytes 320 · verification commands 1 · stale/duplicate blocks 0");
+    expect(text).toContain("does not start planning, acquire hidden context, post bridge requests, apply edits, run verification, draft repair, write storage, or call providers/tools");
+    expect(findButton("Start controlled dev-preview").disabled).toBe(true);
+    expect(buttonTexts()).not.toContain("Start two-step run");
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
   });
 
   it("renders S109 authority registry evidence as sanitized display-only status", () => {
@@ -275,6 +293,20 @@ function renderPanelWithMatrix(state: ControlledAgentRunState, host: "browser" |
       authorityLabels: ["Metadata only"],
       summary: "Display evidence only.",
     }} onStop={stopSpy} />);
+  });
+}
+
+function renderPanelWithTwoStep(state: ControlledAgentRunState, twoStepRunState: any, host: "browser" | "vscode" | "jetbrains" | "unknown" = "unknown") {
+  if (root) {
+    act(() => root?.unmount());
+  }
+  root = undefined;
+  container?.remove();
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() => {
+    root?.render(<ControlledAgentRunPanel state={state} host={host} twoStepRunState={twoStepRunState} onStop={stopSpy} />);
   });
 }
 
