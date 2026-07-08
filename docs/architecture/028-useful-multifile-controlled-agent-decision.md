@@ -80,3 +80,44 @@ npm run check:useful-multifile-agent-decision
 npm run check
 git diff --check
 ```
+
+## S124-C3 final verification bundle and postmortem
+
+Final verification was run from the repository root on 2026-07-08 for the S109-S124 useful multi-file controlled agent program. Evidence below is sanitized: it records command names, exit status, pass/fail summaries, and bounded counts only. It does not include raw prompts, provider responses, file bodies, diffs, replacement text, command output dumps, private paths, secrets, provider payloads, bridge dumps, browser-storage dumps, release approval, marketplace approval, signing, notarization, publication approval, or production autonomy claims.
+
+### Final command results
+
+| Command | Result | Sanitized evidence |
+| --- | --- | --- |
+| `npm run validate:contracts` | Pass | Contract validation passed for 65 schemas, 202 examples, and 803 invalid examples. |
+| `npm run check` | Pass after local dependency symlink restoration | First attempt failed before repository validation completed because ignored worktree dependency folders were absent and the controlled lexical-search smoke could not resolve GUI TypeScript. After restoring ignored local symlinks to already-installed dependency folders, the full repository validation passed, including product identity, public hygiene, docs index, agent readiness docs, controlled-autonomy wording audit, contracts, authority registry, useful multi-file decision validator, controlled lexical search, dev-preview fixtures, sandbox checkpoint, explicit context, memory attachment, observability, history, patch-plan preview, IDE artifact/surface checks, npm spawn, icon assets, GUI asset freshness, model proposal, and dogfood template checks. |
+| Key S109-S123 smoke bundle: `npm run check:controlled-agent-authority-registry && npm run smoke:controlled-agent-search-selection && npm run smoke:controlled-agent-patch-plan-preview && npm run smoke:controlled-agent-real-multifile-edit && npm run smoke:controlled-agent-two-step-run && npm run smoke:controlled-agent-recovery-matrix && npm run smoke:controlled-agent-task-presets && npm run smoke:controlled-agent-task-beta-bundle` | Pass | Authority registry, explicit search selection, patch-plan preview, VS Code-focused multi-file edit, two-step run state, recovery matrix, task presets, and packaged task-level beta local/mock bundle all passed. The S123 bundle passed 7 child gates and stayed dev-preview/local/mock-only. |
+| GUI focused typecheck/tests: `cd apps/gui && npm run typecheck && npm test -- controlledAgentSearchSelection controlledAgentTaskPresets controlledAgentMultifilePatchPlan controlledAgentTwoStepRun controlledAgentRecoveryMatrix` | Pass | GUI TypeScript completed, and 5 focused service test files passed with 48 tests for controlled search selection, task presets, multi-file patch plan, two-step run, and recovery matrix surfaces. |
+| VS Code plugin compile/tests: `cd apps/plugins/vscode && npm run compile && npm test` | Pass | Plugin TypeScript compile, identity/webview/engine-connection checks, and host-surface tests passed for controlled file read, edit, multi-file edit, command run, verification bundle, lexical search, and webview surfaces. |
+| `git diff --check && git status --short` | Required final gate | Run after this postmortem update to confirm whitespace and final changed files. |
+
+### Skipped commands
+
+No available final-verification command from the S124-C3 expected set was intentionally skipped. Manual BYOK dogfood collection remains out of scope for this automation pass: S122/S123 template and self-test validators are included in the repository checks, but real-provider evidence still requires local user-run reports and separate review.
+
+### Failures and follow-up status
+
+The only failure observed during this card was an environment/setup failure: `npm run check` could not resolve the GUI TypeScript dependency because ignored worktree dependency folders were missing. It was remediated by restoring ignored local symlinks to the main checkout's installed dependency folders and rerunning the command successfully. No product code or tracked dependency state was changed for that setup fix.
+
+No new blocker follow-up card is required from the final bundle. Existing residual risks remain: production/release readiness is blocked, real-provider dogfood is manual and not CI evidence, Browser remains unsupported for trusted execution, JetBrains remains partial/fail-closed for controlled execution parity, and hardening should continue before broader autonomy or release-oriented work.
+
+### Postmortem
+
+What went well:
+
+- The S109-S123 deterministic gates compose into a repeatable final verification path with conservative local/mock evidence.
+- The S123 task-level beta bundle gives a useful compact regression signal for task preset, search/selection, patch-plan review, staged verification/follow-up metadata, recovery guidance, and sanitized report validation.
+- GUI and VS Code focused checks passed without changing production code, which supports the current partial/hardening-next decision.
+
+What remains intentionally unresolved:
+
+- The evidence still does not approve production, release, marketplace publication, signing, notarization, publication, broader autonomy, hidden search, automatic repair, arbitrary shell, or real-provider CI.
+- Manual local BYOK real-provider reports need to be collected separately using the S122/S123 templates before usefulness claims can become stronger.
+- Dependency availability in isolated worktrees remains a local setup concern; ignored dependency symlinks may need restoration before running GUI-dependent smokes.
+
+Decision after final verification: keep **Overall decision status: partial** and keep **hardening next** as the roadmap recommendation. The little verification cat brought back a mouse, not a release certificate.
