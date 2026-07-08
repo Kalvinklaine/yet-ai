@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { EngineConnection, getLoopbackOrigin, isBridgeSafeSessionToken, redactRuntimeDiagnosticText, validateRuntimeUrl } from "./engineConnection";
 import { isControlledFileReadGuiMessage, isInvalidControlledFileReadRequestMessage, runControlledFileReadRequest } from "./controlledFileRead";
 import { isControlledAgentEditGuiMessage, isInvalidControlledAgentEditRequestMessage, runControlledAgentEditRequest } from "./controlledEdit";
+import { isControlledAgentMultifileApplyGuiMessage, isInvalidControlledAgentMultifileApplyRequestMessage, runControlledAgentMultifileApplyRequest } from "./controlledMultifileEdit";
 import { isControlledCommandRunGuiMessage, isInvalidControlledCommandRunRequestMessage, runControlledCommandRunRequest } from "./controlledCommandRun";
 import { isControlledLexicalSearchGuiMessage, isInvalidControlledLexicalSearchRequestMessage, runControlledLexicalSearchRequest } from "./controlledLexicalSearch";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
@@ -12,7 +13,7 @@ import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity"
 export type HostMessage =
   | { version: string; type: "host.ready"; requestId?: string; payload?: Record<string, unknown> }
   | { version: string; type: "host.openedFromCommand" | "host.runtimeStatus"; requestId?: never; payload?: Record<string, unknown> }
-  | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult"; requestId?: string; payload?: Record<string, unknown> };
+  | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult"; requestId?: string; payload?: Record<string, unknown> };
 
 type RuntimeStatusLifecycle = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
 type RuntimeStatusLaunchMode = "auto" | "connect" | "launch" | "preview" | "manual" | "unknown";
@@ -80,7 +81,7 @@ type HostContextPayload = {
 
 type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest";
+  type: "gui.ready" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentMultifileApplyRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentLexicalSearchRequest";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
@@ -170,6 +171,7 @@ const maxForwardedApplyWorkspaceEditMessageBytes = 65536;
 const maxForwardedIdeActionMessageBytes = 8192;
 const maxForwardedControlledFileReadMessageBytes = 8192;
 const maxForwardedControlledAgentEditMessageBytes = 65536;
+const maxForwardedControlledAgentMultifileApplyMessageBytes = 65536;
 const maxForwardedControlledCommandRunMessageBytes = 8192;
 const maxForwardedControlledLexicalSearchMessageBytes = 8192;
 const maxControlledIdeActionFileBytes = 2 * 1024 * 1024;
@@ -252,6 +254,11 @@ export function openYetAiWebview(
         void runControlledAgentEditRequest({ version: bridgeVersion, type: "gui.controlledAgentEditRequest", requestId, payload: {} }, []).then((result) => panel.webview.postMessage(result));
         return;
       }
+      if (isInvalidControlledAgentMultifileApplyRequestMessage(message)) {
+        const requestId = (message as { requestId: string }).requestId;
+        void runControlledAgentMultifileApplyRequest({ version: bridgeVersion, type: "gui.controlledAgentMultifileApplyRequest", requestId, payload: {} }, []).then((result) => panel.webview.postMessage(result));
+        return;
+      }
       if (isInvalidControlledCommandRunRequestMessage(message)) {
         const requestId = (message as { requestId: string }).requestId;
         void runControlledCommandRunRequest({ version: bridgeVersion, type: "gui.controlledAgentCommandRunRequest", requestId, payload: {} }, []).then((result) => panel.webview.postMessage(result));
@@ -284,6 +291,10 @@ export function openYetAiWebview(
     }
     if (message.type === "gui.controlledAgentEditRequest") {
       void handleControlledAgentEditRequest(panel.webview, message);
+      return;
+    }
+    if (message.type === "gui.controlledAgentMultifileApplyRequest") {
+      void handleControlledAgentMultifileApplyRequest(panel.webview, message);
       return;
     }
     if (message.type === "gui.controlledAgentCommandRunRequest") {
@@ -324,6 +335,7 @@ export function isPrivilegedGuiMessageType(type: GuiMessage["type"]): type is Pr
     type === "gui.applyWorkspaceEditRequest" ||
     type === "gui.controlledAgentFileReadRequest" ||
     type === "gui.controlledAgentEditRequest" ||
+    type === "gui.controlledAgentMultifileApplyRequest" ||
     type === "gui.controlledAgentCommandRunRequest" ||
     type === "gui.controlledAgentLexicalSearchRequest";
 }
@@ -353,6 +365,11 @@ export async function rejectPrivilegedGuiMessageBeforeReady(webview: vscode.Webv
   }
   if (message.type === "gui.controlledAgentEditRequest") {
     const result = await runControlledAgentEditRequest({ version: bridgeVersion, type: "gui.controlledAgentEditRequest", requestId, payload: {} }, []);
+    await webview.postMessage(result);
+    return;
+  }
+  if (message.type === "gui.controlledAgentMultifileApplyRequest") {
+    const result = await runControlledAgentMultifileApplyRequest({ version: bridgeVersion, type: "gui.controlledAgentMultifileApplyRequest", requestId, payload: {} }, []);
     await webview.postMessage(result);
     return;
   }
@@ -386,6 +403,19 @@ export async function handleControlledAgentEditRequest(webview: vscode.Webview, 
   const result = await runControlledAgentEditRequest({
     version: message.version,
     type: "gui.controlledAgentEditRequest",
+    requestId: message.requestId,
+    payload: message.payload,
+  }, workspaceRoots);
+  await webview.postMessage(result);
+}
+
+export async function handleControlledAgentMultifileApplyRequest(webview: vscode.Webview, message: GuiMessage): Promise<void> {
+  const workspaceRoots = (vscode.workspace.workspaceFolders ?? [])
+    .filter((folder) => folder.uri.scheme === "file")
+    .map((folder) => folder.uri.fsPath);
+  const result = await runControlledAgentMultifileApplyRequest({
+    version: message.version,
+    type: "gui.controlledAgentMultifileApplyRequest",
     requestId: message.requestId,
     payload: message.payload,
   }, workspaceRoots);
@@ -1649,6 +1679,7 @@ const maxForwardedApplyWorkspaceEditMessageBytes = ${maxForwardedApplyWorkspaceE
 const maxForwardedIdeActionMessageBytes = ${maxForwardedIdeActionMessageBytes};
 const maxForwardedControlledFileReadMessageBytes = ${maxForwardedControlledFileReadMessageBytes};
 const maxForwardedControlledAgentEditMessageBytes = ${maxForwardedControlledAgentEditMessageBytes};
+const maxForwardedControlledAgentMultifileApplyMessageBytes = ${maxForwardedControlledAgentMultifileApplyMessageBytes};
 const maxForwardedControlledCommandRunMessageBytes = ${maxForwardedControlledCommandRunMessageBytes};
 const maxForwardedControlledLexicalSearchMessageBytes = ${maxForwardedControlledLexicalSearchMessageBytes};
 let latestHostReady;
@@ -1686,6 +1717,13 @@ const isBoundedForwardedControlledAgentEditMessage = (value) => {
     return false;
   }
 };
+const isBoundedForwardedControlledAgentMultifileApplyMessage = (value) => {
+  try {
+    return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedControlledAgentMultifileApplyMessageBytes;
+  } catch {
+    return false;
+  }
+};
 const isBoundedForwardedControlledCommandRunMessage = (value) => {
   try {
     return new TextEncoder().encode(JSON.stringify(value)).length <= maxForwardedControlledCommandRunMessageBytes;
@@ -1718,6 +1756,11 @@ const isControlledAgentEditSafeSummary = (value) => typeof value === "string" &&
 const isControlledAgentEditLimits = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["maxFiles", "maxEdits", "maxPatchBytes"].includes(key)) && Number.isInteger(value.maxFiles) && value.maxFiles >= 1 && value.maxFiles <= 4 && Number.isInteger(value.maxEdits) && value.maxEdits >= 1 && value.maxEdits <= 16 && Number.isInteger(value.maxPatchBytes) && value.maxPatchBytes >= 1 && value.maxPatchBytes <= 12000;
 const isControlledAgentReplacementEdit = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["operation", "workspaceRelativePath", "fileLabel", "expectedContentHash", "startLine", "endLine", "replacementText", "replacementByteCount", "sanitizedSummary"].includes(key)) && value.operation === "replace" && isControlledAgentEditPath(value.workspaceRelativePath) && value.fileLabel === value.workspaceRelativePath && isSha256Hash(value.expectedContentHash) && Number.isInteger(value.startLine) && value.startLine >= 1 && value.startLine <= 1000000 && Number.isInteger(value.endLine) && value.endLine >= value.startLine && value.endLine <= 1000000 && typeof value.replacementText === "string" && new TextEncoder().encode(value.replacementText).length <= 12000 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(value.replacementText) && !/(?:authorization|bearer|api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|credential|cookie|BEGIN [A-Z ]*PRIVATE KEY|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value.replacementText) && Number.isInteger(value.replacementByteCount) && value.replacementByteCount >= 0 && value.replacementByteCount <= 12000 && new TextEncoder().encode(value.replacementText).length === value.replacementByteCount && isControlledAgentEditSafeSummary(value.sanitizedSummary);
 const isControlledAgentEditPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "sessionId", "workspaceReadinessId", "userConfirmed", "limits", "edits"].includes(key)) && isControlledAgentEditId(payload.requestId) && payload.requestIdMintedBy === "gui" && payload.source === "gui" && payload.assistantMinted === false && isControlledAgentEditId(payload.controlledWorkspaceId) && isControlledAgentEditId(payload.runId) && (payload.runtimeSessionId === undefined || isControlledAgentEditId(payload.runtimeSessionId)) && (payload.sessionId === undefined || isControlledAgentEditId(payload.sessionId)) && isControlledAgentEditId(payload.workspaceReadinessId) && payload.userConfirmed === true && isControlledAgentEditLimits(payload.limits) && Array.isArray(payload.edits) && payload.edits.length >= 1 && payload.edits.length <= payload.limits.maxEdits && new Set(payload.edits.map((edit) => isPlainObject(edit) ? edit.workspaceRelativePath : undefined)).size <= payload.limits.maxFiles && payload.edits.reduce((total, edit) => total + (isPlainObject(edit) && Number.isInteger(edit.replacementByteCount) ? edit.replacementByteCount : 12001), 0) <= payload.limits.maxPatchBytes && payload.edits.every(isControlledAgentReplacementEdit);
+const controlledAgentMultifileApplyPolicy = { host: "vscode", browserSupported: false, jetbrainsSupported: false, vscodeExecutionOnly: true, existingTextFilesOnly: true, boundedReplacementOnly: true, rawReplacementIncluded: false, rawDiffIncluded: false, fileBodyIncluded: false, createAllowed: false, deleteAllowed: false, renameAllowed: false, moveAllowed: false, dependencyEditAllowed: false, generatedEditAllowed: false, hiddenPathAllowed: false, commandAllowed: false, providerAllowed: false, toolAllowed: false, automaticApplyAllowed: false };
+const isControlledAgentMultifileApplyPolicy = (value) => isPlainObject(value) && Object.keys(value).every((key) => Object.prototype.hasOwnProperty.call(controlledAgentMultifileApplyPolicy, key)) && Object.entries(controlledAgentMultifileApplyPolicy).every(([key, expected]) => value[key] === expected);
+const isControlledAgentMultifileApplyLimits = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["maxFiles", "maxEdits", "maxReplacementBytesPerEdit", "maxTotalReplacementBytes"].includes(key)) && Number.isInteger(value.maxFiles) && value.maxFiles >= 1 && value.maxFiles <= 4 && Number.isInteger(value.maxEdits) && value.maxEdits >= 1 && value.maxEdits <= 12 && Number.isInteger(value.maxReplacementBytesPerEdit) && value.maxReplacementBytesPerEdit >= 1 && value.maxReplacementBytesPerEdit <= 12000 && Number.isInteger(value.maxTotalReplacementBytes) && value.maxTotalReplacementBytes >= 1 && value.maxTotalReplacementBytes <= 48000;
+const isControlledAgentMultifileApplyEdit = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["editId", "operation", "workspaceRelativePath", "fileLabel", "existingTextFile", "expectedPreEditHash", "expectedRangeHash", "replacementContentHash", "replacementText", "startLine", "endLine", "replacementByteCount", "sanitizedSummary"].includes(key)) && isControlledAgentEditId(value.editId) && value.operation === "replace" && isControlledAgentEditPath(value.workspaceRelativePath) && value.fileLabel === value.workspaceRelativePath && value.existingTextFile === true && isSha256Hash(value.expectedPreEditHash) && isSha256Hash(value.expectedRangeHash) && isSha256Hash(value.replacementContentHash) && Number.isInteger(value.startLine) && value.startLine >= 1 && value.startLine <= 1000000 && Number.isInteger(value.endLine) && value.endLine >= value.startLine && value.endLine <= 1000000 && typeof value.replacementText === "string" && new TextEncoder().encode(value.replacementText).length <= 12000 && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/.test(value.replacementText) && !/(?:^|\n)(?:diff --git |@@ |--- |\+\+\+ )/.test(value.replacementText) && !/(?:authorization|bearer|cookie|api[_-]?key|access[_-]?token|auth[_-]?token|secret|password|credential|private[_-]?path|BEGIN [A-Z ]*PRIVATE KEY|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value.replacementText) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value.replacementText) && Number.isInteger(value.replacementByteCount) && value.replacementByteCount >= 0 && value.replacementByteCount <= 12000 && new TextEncoder().encode(value.replacementText).length === value.replacementByteCount && isControlledAgentEditSafeSummary(value.sanitizedSummary);
+const isControlledAgentMultifileApplyPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => ["requestId", "requestIdMintedBy", "source", "assistantMinted", "controlledWorkspaceId", "runId", "runtimeSessionId", "workspaceReadinessId", "patchPlanId", "userConfirmed", "confirmationKind", "limits", "policy", "edits"].includes(key)) && isControlledAgentEditId(payload.requestId) && payload.requestIdMintedBy === "gui" && payload.source === "gui" && payload.assistantMinted === false && isControlledAgentEditId(payload.controlledWorkspaceId) && isControlledAgentEditId(payload.runId) && (payload.runtimeSessionId === undefined || isControlledAgentEditId(payload.runtimeSessionId)) && isControlledAgentEditId(payload.workspaceReadinessId) && isControlledAgentEditId(payload.patchPlanId) && payload.userConfirmed === true && payload.confirmationKind === "explicit_user_multifile_apply" && isControlledAgentMultifileApplyLimits(payload.limits) && isControlledAgentMultifileApplyPolicy(payload.policy) && Array.isArray(payload.edits) && payload.edits.length >= 1 && payload.edits.length <= payload.limits.maxEdits && new Set(payload.edits.map((edit) => isPlainObject(edit) ? edit.workspaceRelativePath : undefined)).size <= payload.limits.maxFiles && payload.edits.reduce((total, edit) => total + (isPlainObject(edit) && Number.isInteger(edit.replacementByteCount) ? edit.replacementByteCount : 12001), 0) <= payload.limits.maxTotalReplacementBytes && payload.edits.every((edit) => isControlledAgentMultifileApplyEdit(edit) && edit.replacementByteCount <= payload.limits.maxReplacementBytesPerEdit);
 const isControlledCommandRunId = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(value) && !/assistant|sk-(?:proj-)?/i.test(value);
 const isControlledCommandRunLimits = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["timeoutMs", "maxOutputBytes", "maxOutputLines", "tailOnly", "commandStringAllowed", "argsAllowed", "cwdAllowed", "envAllowed", "shellAllowed"].includes(key)) && Number.isInteger(value.timeoutMs) && value.timeoutMs >= 1000 && value.timeoutMs <= 1800000 && Number.isInteger(value.maxOutputBytes) && value.maxOutputBytes >= 1 && value.maxOutputBytes <= 20000 && Number.isInteger(value.maxOutputLines) && value.maxOutputLines >= 1 && value.maxOutputLines <= 400 && value.tailOnly === true && value.commandStringAllowed === false && value.argsAllowed === false && value.cwdAllowed === false && value.envAllowed === false && value.shellAllowed === false;
 const isControlledCommandRunCorrelation = (value) => isPlainObject(value) && Object.keys(value).every((key) => ["origin", "confirmedBy", "confirmationId", "hostCorrelationId"].includes(key)) && value.origin === "user" && value.confirmedBy === "user" && isControlledCommandRunId(value.confirmationId) && isControlledCommandRunId(value.hostCorrelationId) && value.confirmationId !== value.hostCorrelationId;
@@ -1735,17 +1778,17 @@ const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).ever
 const isVerificationCommandId = (value) => value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
 const isWorkspaceSnippetSearchQuery = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && /\S/.test(value) && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/[*/\\~]/.test(value) && !value.includes("..") && !/[{}[\]()^$+?|]/.test(value) && !/[;&\`$<>]/.test(value) && !/\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/.test(value) && !/[A-Za-z]:/.test(value);
 const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)) || (Object.keys(payload).every((key) => key === "action" || key === "query") && payload.action === "searchWorkspaceSnippets" && isWorkspaceSnippetSearchQuery(payload.query)));
-const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)) || (message.type === "gui.controlledAgentFileReadRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledFileReadMessage(message) && isControlledFileReadPayload(message.payload)) || (message.type === "gui.controlledAgentEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentEditMessage(message) && isControlledAgentEditPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentCommandRunRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledCommandRunMessage(message) && isControlledCommandRunPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentLexicalSearchRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledLexicalSearchMessage(message) && isControlledLexicalSearchPayload(message.payload) && message.payload.requestId === message.requestId));
+const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)) || (message.type === "gui.controlledAgentFileReadRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledFileReadMessage(message) && isControlledFileReadPayload(message.payload)) || (message.type === "gui.controlledAgentEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentEditMessage(message) && isControlledAgentEditPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentMultifileApplyRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentMultifileApplyMessage(message) && isControlledAgentMultifileApplyPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentCommandRunRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledCommandRunMessage(message) && isControlledCommandRunPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentLexicalSearchRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledLexicalSearchMessage(message) && isControlledLexicalSearchPayload(message.payload) && message.payload.requestId === message.requestId));
 const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0);
 const isSafeRuntimeStatusText = (value) => typeof value === "string" && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => key === "protocolVersion" || key === "surface" || key === "lifecycle" || key === "runtimeOwner" || key === "launchMode" || key === "tokenState" || key === "processState" || key === "diagnosis" || key === "nextAction" || key === "cloudRequired" || key === "authority") && payload.protocolVersion === "2026-06-21" && payload.surface === "vscode" && ["unknown", "checking", "starting", "connected", "degraded", "disconnected", "restarting", "stopped", "auth_mismatch", "invalid_settings", "failed"].includes(payload.lifecycle) && ["ide_host", "external", "user", "test_harness"].includes(payload.runtimeOwner) && ["auto", "connect", "launch", "preview", "manual", "unknown"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "checking", "starting", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeRuntimeStatusText(payload.diagnosis) && isSafeRuntimeStatusText(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
-const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : message.type === "host.runtimeStatus" ? message.requestId === undefined && isHostRuntimeStatusPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentCommandRunResult" || message.type === "host.controlledAgentLexicalSearchResult"));
+const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : message.type === "host.runtimeStatus" ? message.requestId === undefined && isHostRuntimeStatusPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentMultifileApplyResult" || message.type === "host.controlledAgentCommandRunResult" || message.type === "host.controlledAgentLexicalSearchResult"));
 const sendToFrame = (message) => {
   if (frame && frame.contentWindow && frameTargetOrigin) {
     frame.contentWindow.postMessage(message, frameTargetOrigin);
   }
 };
-const isPrivilegedGuiMessageType = (type) => type === "gui.ideActionRequest" || type === "gui.applyWorkspaceEditRequest" || type === "gui.controlledAgentFileReadRequest" || type === "gui.controlledAgentEditRequest" || type === "gui.controlledAgentCommandRunRequest" || type === "gui.controlledAgentLexicalSearchRequest";
+const isPrivilegedGuiMessageType = (type) => type === "gui.ideActionRequest" || type === "gui.applyWorkspaceEditRequest" || type === "gui.controlledAgentFileReadRequest" || type === "gui.controlledAgentEditRequest" || type === "gui.controlledAgentMultifileApplyRequest" || type === "gui.controlledAgentCommandRunRequest" || type === "gui.controlledAgentLexicalSearchRequest";
 const canForwardPrivilegedGuiMessage = () => frameReady && frameReadyRequestId !== undefined && latestHostReady && latestHostReady.requestId === frameReadyRequestId;
 const replayHostReady = () => {
   if (canForwardPrivilegedGuiMessage()) {
@@ -1995,6 +2038,7 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
       (record.type === "gui.applyWorkspaceEditRequest" && isBoundedForwardedApplyWorkspaceEditMessage(record) && parseApplyWorkspaceEditRequest(record as GuiMessage) !== undefined) ||
       (record.type === "gui.controlledAgentFileReadRequest" && isBoundedForwardedControlledFileReadMessage(record) && isControlledFileReadGuiMessage(record)) ||
       (record.type === "gui.controlledAgentEditRequest" && isBoundedForwardedControlledAgentEditMessage(record) && isControlledAgentEditGuiMessage(record)) ||
+      (record.type === "gui.controlledAgentMultifileApplyRequest" && isBoundedForwardedControlledAgentMultifileApplyMessage(record) && isControlledAgentMultifileApplyGuiMessage(record)) ||
       (record.type === "gui.controlledAgentCommandRunRequest" && isBoundedForwardedControlledCommandRunMessage(record) && isControlledCommandRunGuiMessage(record)) ||
       (record.type === "gui.controlledAgentLexicalSearchRequest" && isBoundedForwardedControlledLexicalSearchMessage(record) && isControlledLexicalSearchGuiMessage(record)))
   );
@@ -2072,6 +2116,14 @@ function isBoundedForwardedControlledFileReadMessage(value: Record<string, unkno
 function isBoundedForwardedControlledAgentEditMessage(value: Record<string, unknown>): boolean {
   try {
     return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedControlledAgentEditMessageBytes;
+  } catch {
+    return false;
+  }
+}
+
+function isBoundedForwardedControlledAgentMultifileApplyMessage(value: Record<string, unknown>): boolean {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxForwardedControlledAgentMultifileApplyMessageBytes;
   } catch {
     return false;
   }
