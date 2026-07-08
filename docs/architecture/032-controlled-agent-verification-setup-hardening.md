@@ -82,17 +82,20 @@ For broken dependency symlinks, the message should identify the symlink path and
 
 ## `npm run check` versus explicit heavy smokes
 
-`npm run check` should remain a default repository validation bundle for fast deterministic checks that are safe to run after docs, contracts, fixtures, and small pure-service changes. It may include local/mock controlled-agent smokes that are stable, bounded, and do not require real providers, IDE UI, package installation, network, broad builds, or local credential setup.
+`npm run check` should remain a default repository validation bundle for fast deterministic checks that are safe to run after docs, contracts, fixtures, and root-safe metadata changes. It may include local/mock controlled-agent validators that are stable, bounded, and do not require GUI package dependencies, real providers, IDE UI, package installation, network, broad builds, or local credential setup.
 
-The following belong in `npm run check` only when they stay deterministic, local/mock, and dependency-explicit:
+The following belong in `npm run check` when they stay deterministic, local/mock, and dependency-light enough for root validation:
 
 - schema and fixture validation;
 - documentation index/public hygiene checks;
-- pure GUI service transpile smokes with actionable missing-dependency failures;
-- controlled-agent child gates that do not compile full plugin artifacts or launch browsers.
+- report template and dogfood sanitizer self-tests;
+- root-safe metadata validators that use checked-in files and root dependencies only.
+
+S131-C3 moves GUI TypeScript/transpile-dependent controlled-agent smokes out of `npm run check` even when they have actionable setup diagnostics. They remain explicit focused commands because they depend on `apps/gui/node_modules/typescript` or equivalent local GUI setup in each worktree. The affected default-check removals include `npm run smoke:controlled-agent-lexical-search`, `npm run smoke:controlled-agent-task-harness`, `npm run smoke:controlled-agent-workflow-transcript`, `npm run smoke:controlled-run-observability`, `npm run smoke:controlled-run-history`, `npm run smoke:controlled-agent-patch-plan-preview`, and `npm run smoke:model-proposal-agent-run`.
 
 The following should remain explicit heavy or focused commands unless a later card intentionally changes the validation policy:
 
+- GUI TypeScript/transpile smokes and GUI service smokes that require `apps/gui/node_modules`;
 - real VS Code executor smokes such as real lexical search, real file read, real edit, or real verification;
 - plugin compile/test flows;
 - Playwright/browser built-GUI smokes;
@@ -104,7 +107,14 @@ This split preserves useful fast feedback without turning missing worktree depen
 
 ## CI and worktree setup notes
 
-CI jobs that run root checks should explicitly prepare dependencies before `npm run check`. A safe baseline is:
+CI jobs that run only `npm run check` should explicitly prepare the root dependencies before the root check:
+
+```sh
+npm ci
+npm run check
+```
+
+CI jobs that run explicit GUI or VS Code focused gates should prepare those package roots in the job before invoking the focused commands:
 
 ```sh
 npm ci
