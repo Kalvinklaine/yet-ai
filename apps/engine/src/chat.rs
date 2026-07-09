@@ -2100,6 +2100,109 @@ mod tests {
         ]
     }
 
+    async fn create_openai_compatible_provider(
+        dir: &std::path::Path,
+        id: &str,
+        auth_type: crate::providers::AuthType,
+        api_key: Option<&str>,
+    ) {
+        crate::providers::create_provider_config(
+            dir,
+            crate::providers::ProviderWriteRequest {
+                id: Some(id.to_string()),
+                kind: Some(crate::providers::ProviderKind::OpenAiCompatible),
+                display_name: Some(format!("{id} Provider")),
+                enabled: Some(true),
+                base_url: Some("http://127.0.0.1:3456/v1".to_string()),
+                auth: Some(crate::providers::AuthWriteRequest {
+                    auth_type,
+                    api_key: api_key.map(str::to_string),
+                }),
+                models: Some(vec![crate::providers::ModelSummary {
+                    id: "gpt-test".to_string(),
+                    display_name: "GPT Test".to_string(),
+                    provider_id: None,
+                    capabilities: crate::providers::ModelCapabilities::default(),
+                    readiness: crate::providers::ModelReadiness::default(),
+                    capability_provenance: None,
+                    local_availability: None,
+                    provider_family: None,
+                }]),
+                capabilities: Some(crate::providers::ProviderCapabilities::default()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn create_ollama_provider(dir: &std::path::Path) {
+        crate::providers::create_provider_config(
+            dir,
+            crate::providers::ProviderWriteRequest {
+                id: Some("ollama-local".to_string()),
+                kind: Some(crate::providers::ProviderKind::Ollama),
+                display_name: Some("Ollama Local".to_string()),
+                enabled: Some(true),
+                base_url: Some("http://127.0.0.1:11434".to_string()),
+                auth: Some(crate::providers::AuthWriteRequest {
+                    auth_type: crate::providers::AuthType::None,
+                    api_key: None,
+                }),
+                models: Some(vec![crate::providers::ModelSummary {
+                    id: "llama-test".to_string(),
+                    display_name: "Llama Test".to_string(),
+                    provider_id: None,
+                    capabilities: crate::providers::ModelCapabilities::default(),
+                    readiness: crate::providers::ModelReadiness::default(),
+                    capability_provenance: None,
+                    local_availability: None,
+                    provider_family: None,
+                }]),
+                capabilities: Some(crate::providers::ProviderCapabilities::default()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn create_codex_oauth_connection_with_expiry(
+        dir: &std::path::Path,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    ) {
+        use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
+        let store = provider_secret_store(dir);
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthAccessToken,
+                "fake-codex-access-token",
+            )
+            .await
+            .unwrap();
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthRefreshToken,
+                "fake-codex-refresh-token",
+            )
+            .await
+            .unwrap();
+        let metadata = serde_json::json!({
+            "provider": "openai",
+            "accountLabel": "Test Account",
+            "scopes": ["openid", "profile", "email", "offline_access"],
+            "expiresAt": expires_at.to_rfc3339(),
+            "redacted": "fake-...token",
+            "chatBaseUrl": "http://127.0.0.1:3456/chat",
+            "chatModel": "codex-test",
+            "tokenEndpointUrl": "http://127.0.0.1:3456/token"
+        });
+        store
+            .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn chat_selection_prefers_ready_api_key_provider_over_experimental_account_auth() {
         let dir = temp_dir();
@@ -2278,6 +2381,124 @@ mod tests {
             Err(error) => {
                 panic!("chat returned unexpected error during pending Codex login: {error}")
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_pending_experimental_auth_preserves_missing_credentials_error() {
+        let dir = temp_dir();
+        create_openai_compatible_provider(
+            &dir,
+            "openai-missing-key",
+            crate::providers::AuthType::ApiKey,
+            None,
+        )
+        .await;
+        let pending = crate::provider_auth::start(
+            &dir,
+            "openai",
+            crate::provider_auth::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                token_endpoint_url: Some("http://127.0.0.1:3456/token".to_string()),
+                chat_endpoint_url: Some("http://127.0.0.1:3456/chat".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(pending.status, "pending");
+
+        match select_chat_provider(&dir).await {
+            Err(super::ChatError::Unauthorized) => {}
+            Ok(super::ChatProvider::ExperimentalCodex(_)) => {
+                panic!("chat selected pending experimental account auth")
+            }
+            Ok(_) => panic!("chat selected unexpected provider during pending auth"),
+            Err(error) => panic!("chat returned unsanitized/unexpected pending error: {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_prefers_ready_ollama_over_experimental_account_auth() {
+        let dir = temp_dir();
+        create_ollama_provider(&dir).await;
+        create_codex_oauth_connection_with_expiry(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await;
+
+        match select_chat_provider(&dir).await.unwrap() {
+            super::ChatProvider::Ollama { provider_id, model } => {
+                assert_eq!(provider_id, "ollama-local");
+                assert_eq!(model, "llama-test");
+            }
+            _ => panic!("chat selected experimental account auth over Ollama"),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_uses_experimental_account_auth_only_after_safer_paths_are_unready() {
+        let dir = temp_dir();
+        create_openai_compatible_provider(
+            &dir,
+            "openai-missing-key",
+            crate::providers::AuthType::ApiKey,
+            None,
+        )
+        .await;
+        create_codex_oauth_connection_with_expiry(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await;
+
+        match select_chat_provider(&dir).await.unwrap() {
+            super::ChatProvider::ExperimentalCodex(auth) => {
+                assert_eq!(auth.access_token, "fake-codex-access-token");
+                assert_eq!(auth.base_url, "http://127.0.0.1:3456/chat");
+                assert_eq!(auth.model, "codex-test");
+            }
+            _ => panic!("chat did not select experimental account auth as last fallback"),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_treats_expired_experimental_auth_as_not_ready() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry(
+            &dir,
+            chrono::Utc::now() - chrono::Duration::hours(1),
+        )
+        .await;
+
+        match select_chat_provider(&dir).await {
+            Err(super::ChatError::ProviderConfig) => {}
+            Ok(super::ChatProvider::ExperimentalCodex(_)) => {
+                panic!("chat selected expired experimental account auth")
+            }
+            Ok(_) => panic!("chat selected unexpected provider for expired experimental auth"),
+            Err(error) => panic!("chat returned unexpected error for expired auth: {error}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_treats_revoked_experimental_auth_as_not_ready() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await;
+        crate::provider_auth::disconnect(&dir, "openai").await.unwrap();
+
+        match select_chat_provider(&dir).await {
+            Err(super::ChatError::NoProvider) => {}
+            Ok(super::ChatProvider::ExperimentalCodex(_)) => {
+                panic!("chat selected revoked experimental account auth")
+            }
+            Ok(_) => panic!("chat selected unexpected provider for revoked experimental auth"),
+            Err(error) => panic!("chat returned unexpected error for revoked auth: {error}"),
         }
     }
 
