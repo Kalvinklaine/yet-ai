@@ -1554,6 +1554,7 @@ async fn bearer_stream(
     base_url: &str,
     model: &str,
     access_token: &str,
+    chatgpt_account_id: &str,
     chat_id: &str,
     stream_id: u64,
     content: &str,
@@ -1563,6 +1564,8 @@ async fn bearer_stream(
         .post(url)
         .timeout(Duration::from_secs(10))
         .bearer_auth(access_token)
+        .header("chatgpt-account-id", chatgpt_account_id)
+        .header("originator", "codex_cli_rs")
         .json(&json!({
             "model": model,
             "stream": true,
@@ -1586,6 +1589,7 @@ async fn bearer_stream_with_unauthorized_retry(
         &auth.base_url,
         &auth.model,
         &auth.access_token,
+        &auth.chatgpt_account_id,
         chat_id,
         stream_id,
         content,
@@ -1612,6 +1616,7 @@ async fn bearer_stream_with_unauthorized_retry(
         &refreshed.base_url,
         &refreshed.model,
         &refreshed.access_token,
+        &refreshed.chatgpt_account_id,
         chat_id,
         stream_id,
         content,
@@ -2317,7 +2322,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "T-634 contract lock: later S141 card must use Codex Responses endpoint, headers, and minimal user-text body"]
-    async fn experimental_codex_chat_uses_refact_compatible_responses_contract_todo() {
+    async fn experimental_codex_chat_uses_codex_compatible_responses_contract_todo() {
         let dir = temp_dir();
         let server = start_loopback_server(vec![LoopbackResponse::Sse(
             "responses contract output".to_string(),
@@ -2352,9 +2357,7 @@ mod tests {
         assert!(request.starts_with("POST /responses "), "{request}");
         assert!(lower.contains("authorization: bearer fake-codex-responses-access-token"));
         assert!(lower.contains("chatgpt-account-id: "));
-        assert!(
-            lower.contains("originator: codex_cli_rs") || lower.contains("originator: refact-lsp")
-        );
+        assert!(lower.contains("originator: codex_cli_rs"));
         assert!(lower.contains("session_id: "));
         assert!(lower.contains("openai-beta: responses=experimental"));
         assert!(lower.contains("accept: text/event-stream"));

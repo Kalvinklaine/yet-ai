@@ -3,6 +3,7 @@ use axum::body::{to_bytes, Body};
 use axum::http::{header, HeaderValue, Method, Request, StatusCode};
 use axum::response::IntoResponse;
 use http_body_util::BodyExt;
+use base64::Engine;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -595,6 +596,14 @@ async fn start_mock_models_provider(
     status: StatusCode,
     body: &'static str,
 ) -> (String, mpsc::Receiver<Option<String>>) {
+    let body = body.to_string();
+    start_mock_models_provider_body(status, body).await
+}
+
+async fn start_mock_models_provider_body(
+    status: StatusCode,
+    body: String,
+) -> (String, mpsc::Receiver<Option<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (auth_sender, auth_receiver) = mpsc::channel(4);
@@ -608,7 +617,7 @@ async fn start_mock_models_provider(
                     .and_then(|value| value.to_str().ok())
                     .map(str::to_string);
                 let _ = auth_sender.send(auth.clone()).await;
-                (status, [(header::CONTENT_TYPE, "application/json")], body).into_response()
+                (status, [(header::CONTENT_TYPE, "application/json")], body.clone()).into_response()
             }
         };
         let app = axum::Router::new()
@@ -992,8 +1001,32 @@ async fn start_replacement_mock_provider() -> (
     )
 }
 
+fn codex_models_route() -> axum::Router {
+    axum::Router::new().route(
+        "/backend-api/codex/models",
+        axum::routing::get(|| async {
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                json!({ "data": [{ "id": "gpt-5-codex" }] }).to_string(),
+            )
+        }),
+    )
+}
+
 async fn start_mock_codex_token_endpoint() -> (String, oneshot::Receiver<Value>) {
     start_mock_codex_token_endpoint_with(1800).await
+}
+
+fn test_jwt_with_payload(payload: Value) -> String {
+    fn encode(value: &[u8]) -> String {
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value)
+    }
+    format!(
+        "{}.{}.signature",
+        encode(br#"{"alg":"none"}"#),
+        encode(serde_json::to_string(&payload).unwrap().as_bytes())
+    )
 }
 
 async fn start_mock_codex_token_endpoint_with(
@@ -1006,6 +1039,7 @@ async fn start_mock_codex_token_endpoint_response(
     expires_in: Option<i64>,
     account_label: Option<&'static str>,
 ) -> (String, oneshot::Receiver<Value>) {
+    let id_token = test_jwt_with_payload(json!({ "chatgpt_account_id": "acct-test" }));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (body_sender, body_receiver) = oneshot::channel();
@@ -1013,9 +1047,10 @@ async fn start_mock_codex_token_endpoint_response(
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
             let body_sender = body_sender.clone();
+            let id_token = id_token.clone();
             async move {
                 let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
-                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                let body = parse_form_body(&bytes);
                 if let Some(sender) = body_sender.lock().unwrap().take() {
                     let _ = sender.send(body);
                 }
@@ -1032,6 +1067,7 @@ async fn start_mock_codex_token_endpoint_response(
                     "scope".to_string(),
                     json!("openid profile email offline_access"),
                 );
+                response.insert("id_token".to_string(), json!(id_token));
                 if let Some(expires_in) = expires_in {
                     response.insert("expires_in".to_string(), json!(expires_in));
                 }
@@ -1046,7 +1082,9 @@ async fn start_mock_codex_token_endpoint_response(
                     .into_response()
             }
         };
-        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        let app = axum::Router::new()
+            .route("/oauth/token", axum::routing::post(handler))
+            .merge(codex_models_route());
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}/oauth/token"), body_receiver)
@@ -1062,7 +1100,7 @@ async fn start_hanging_codex_token_endpoint() -> (String, oneshot::Receiver<Valu
             let body_sender = body_sender.clone();
             async move {
                 let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
-                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                let body = parse_form_body(&bytes);
                 if let Some(sender) = body_sender.lock().unwrap().take() {
                     let _ = sender.send(body);
                 }
@@ -1075,22 +1113,26 @@ async fn start_hanging_codex_token_endpoint() -> (String, oneshot::Receiver<Valu
                     .into_response()
             }
         };
-        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        let app = axum::Router::new()
+            .route("/oauth/token", axum::routing::post(handler))
+            .merge(codex_models_route());
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}/oauth/token"), body_receiver)
 }
 
 async fn start_delayed_codex_token_endpoint() -> (String, mpsc::Receiver<Value>) {
+    let id_token = test_jwt_with_payload(json!({ "chatgpt_account_id": "acct-test" }));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (body_sender, body_receiver) = mpsc::channel(4);
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
             let body_sender = body_sender.clone();
+            let id_token = id_token.clone();
             async move {
                 let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
-                let body: Value = serde_json::from_slice(&bytes).unwrap();
+                let body = parse_form_body(&bytes);
                 let _ = body_sender.send(body).await;
                 tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                 (
@@ -1101,6 +1143,7 @@ async fn start_delayed_codex_token_endpoint() -> (String, mpsc::Receiver<Value>)
                         "refresh_token": "codex-refresh-token-secret-wxyz",
                         "expires_in": 1800,
                         "scope": "openid profile email offline_access",
+                        "id_token": id_token,
                         "account_label": "mock-user@example.test"
                     })
                     .to_string(),
@@ -1108,13 +1151,16 @@ async fn start_delayed_codex_token_endpoint() -> (String, mpsc::Receiver<Value>)
                     .into_response()
             }
         };
-        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        let app = axum::Router::new()
+            .route("/oauth/token", axum::routing::post(handler))
+            .merge(codex_models_route());
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}/oauth/token"), body_receiver)
 }
 
 async fn start_flaky_codex_token_endpoint() -> (String, mpsc::Receiver<Value>) {
+    let id_token = test_jwt_with_payload(json!({ "chatgpt_account_id": "acct-test" }));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (body_sender, body_receiver) = mpsc::channel(4);
@@ -1123,9 +1169,11 @@ async fn start_flaky_codex_token_endpoint() -> (String, mpsc::Receiver<Value>) {
         let handler = move |request: axum::http::Request<Body>| {
             let body_sender = body_sender.clone();
             let attempts = attempts.clone();
+            let id_token = id_token.clone();
             async move {
                 let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
-                let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+                let body = parse_form_body(&bytes);
                 let _ = body_sender.send(body).await;
                 if attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0 {
                     return (
@@ -1146,14 +1194,16 @@ async fn start_flaky_codex_token_endpoint() -> (String, mpsc::Receiver<Value>) {
                         "refresh_token": "codex-refresh-token-secret-wxyz",
                         "expires_in": 1800,
                         "scope": "openid profile email offline_access",
-                        "account_label": "mock-user@example.test"
+                        "id_token": id_token,
                     })
                     .to_string(),
                 )
                     .into_response()
             }
         };
-        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        let app = axum::Router::new()
+            .route("/oauth/token", axum::routing::post(handler))
+            .merge(codex_models_route());
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}/oauth/token"), body_receiver)
@@ -1181,7 +1231,8 @@ async fn start_sequence_refresh_codex_token_endpoint(
             let attempts = attempts.clone();
             async move {
                 let bytes = to_bytes(request.into_body(), usize::MAX).await.unwrap();
-                let body: Value = serde_json::from_slice(&bytes).unwrap();
+
+                let body = parse_form_body(&bytes);
                 let _ = body_sender.send(body).await;
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 let index = attempts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1198,7 +1249,9 @@ async fn start_sequence_refresh_codex_token_endpoint(
                     .into_response()
             }
         };
-        let app = axum::Router::new().route("/oauth/token", axum::routing::post(handler));
+        let app = axum::Router::new()
+            .route("/oauth/token", axum::routing::post(handler))
+            .merge(codex_models_route());
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}/oauth/token"), body_receiver)
@@ -1328,6 +1381,7 @@ async fn seed_experimental_openai_oauth_with_ttl(
         "scopes": ["openid", "profile", "email", "offline_access"],
         "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds)).to_rfc3339(),
         "redacted": "ac...ss",
+        "chatgptAccountId": "acct-test",
         "chatBaseUrl": chat_base_url,
         "chatModel": "gpt-5-codex",
         "tokenEndpointUrl": token_endpoint_url
@@ -1415,6 +1469,8 @@ fn state_from_authorization_url(value: &str) -> &str {
         .next()
         .unwrap()
 }
+
+
 
 fn sse_json_events(text: &str) -> Vec<Value> {
     text.lines()
@@ -1695,6 +1751,46 @@ fn assert_json_string_value(actual: &Value, expected: &str, label: &str) {
         "{label}: digest mismatch"
     );
     assert!(actual == expected, "{label}: value mismatch");
+}
+
+fn parse_form_body(bytes: &[u8]) -> Value {
+    let text = String::from_utf8_lossy(bytes);
+    let mut map = serde_json::Map::new();
+    for pair in text.split('&') {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        map.insert(key.to_string(), json!(form_decode(value)));
+    }
+    Value::Object(map)
+}
+
+fn form_decode(value: &str) -> String {
+    let mut bytes = Vec::new();
+    let mut iter = value.as_bytes().iter().copied();
+    while let Some(byte) = iter.next() {
+        match byte {
+            b'+' => bytes.push(b' '),
+            b'%' => {
+                let hi = iter.next().and_then(hex_value);
+                let lo = iter.next().and_then(hex_value);
+                if let (Some(hi), Some(lo)) = (hi, lo) {
+                    bytes.push((hi << 4) | lo);
+                }
+            }
+            _ => bytes.push(byte),
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn hex_value(value: u8) -> Option<u8> {
+    match value {
+        b'0'..=b'9' => Some(value - b'0'),
+        b'a'..=b'f' => Some(value - b'a' + 10),
+        b'A'..=b'F' => Some(value - b'A' + 10),
+        _ => None,
+    }
 }
 
 async fn empty_response_from(app: axum::Router, request: Request<Body>) -> StatusCode {
@@ -2091,16 +2187,16 @@ async fn provider_auth_openai_experimental_codex_like_start_returns_pending_pkce
     let authorization_url = body["authorizationUrl"].as_str().unwrap();
     assert!(authorization_url.starts_with("https://auth.openai.com/oauth/authorize?"));
     assert!(authorization_url.contains("response_type=code"));
-    assert!(authorization_url.contains("client_id=yet-ai-local-experimental"));
+    assert!(authorization_url.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
     assert!(authorization_url
-        .contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fopenai%2Fcallback"));
+        .contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"));
     assert!(authorization_url.contains("scope=openid%20profile%20email%20offline_access"));
     assert!(authorization_url.contains("code_challenge="));
     assert!(authorization_url.contains("code_challenge_method=S256"));
     assert!(authorization_url.contains("id_token_add_organizations=true"));
     assert!(authorization_url.contains("codex_cli_simplified_flow=true"));
     assert!(authorization_url.contains("state="));
-    assert!(authorization_url.contains("originator=yet_ai_local"));
+    assert!(authorization_url.contains("originator=codex_cli_rs"));
     assert_provider_auth_response_has_no_codex_secrets(&body);
 }
 
@@ -2449,7 +2545,7 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
         "codex-code-success",
         "token request code",
     );
-    assert_eq!(token_body["client_id"], "yet-ai-local-experimental");
+    assert_eq!(token_body["client_id"], "app_EMoamEEZ73f0CkXaXp7hrann");
     assert!(token_body["code_verifier"].as_str().unwrap().len() > 20);
 
     let store = FileSecretStore::new(&paths.config_dir);
@@ -3858,6 +3954,7 @@ async fn provider_auth_openai_experimental_concurrent_near_expiry_refresh_is_sin
         "scopes": ["openid", "profile", "email", "offline_access"],
         "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
         "redacted": "co...ld",
+        "chatgptAccountId": "acct-test",
         "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
         "chatModel": "gpt-5-codex",
         "tokenEndpointUrl": token_endpoint_url
@@ -3955,6 +4052,7 @@ async fn provider_auth_openai_experimental_changed_token_after_lock_wait_require
         "scopes": ["openid", "profile", "email", "offline_access"],
         "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
         "redacted": "co...ld",
+        "chatgptAccountId": "acct-test",
         "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
         "chatModel": "gpt-5-codex",
         "tokenEndpointUrl": token_endpoint_url
@@ -4029,6 +4127,7 @@ async fn provider_auth_openai_experimental_refresh_commit_failure_deletes_consum
         "scopes": ["openid", "profile", "email", "offline_access"],
         "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
         "redacted": "ac...-1",
+        "chatgptAccountId": "acct-test",
         "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
         "chatModel": "gpt-5-codex",
         "tokenEndpointUrl": token_endpoint_url
@@ -4096,6 +4195,7 @@ async fn provider_auth_openai_experimental_oversized_token_error_body_is_sanitiz
         "scopes": ["openid", "profile", "email", "offline_access"],
         "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
         "redacted": "ac...-1",
+        "chatgptAccountId": "acct-test",
         "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
         "chatModel": "gpt-5-codex",
         "tokenEndpointUrl": token_endpoint_url
@@ -4146,6 +4246,7 @@ async fn provider_auth_openai_experimental_refresh_token_reused_without_newer_to
         "scopes": ["openid", "profile", "email", "offline_access"],
         "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(1800)).to_rfc3339(),
         "redacted": "co...cd",
+        "chatgptAccountId": "acct-test",
         "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
         "chatModel": "gpt-5-codex",
         "tokenEndpointUrl": token_endpoint_url
@@ -4192,7 +4293,7 @@ async fn provider_auth_openai_experimental_refresh_token_reused_without_newer_to
 }
 
 #[tokio::test]
-async fn provider_auth_openai_experimental_refresh_requires_rotated_refresh_token() {
+async fn provider_auth_openai_experimental_refresh_reuses_omitted_refresh_token() {
     let paths = test_storage_paths();
     let store = FileSecretStore::new(&paths.config_dir);
     let (token_endpoint_url, _) = start_refresh_codex_token_endpoint(
@@ -4211,6 +4312,7 @@ async fn provider_auth_openai_experimental_refresh_requires_rotated_refresh_toke
         "scopes": ["openid", "profile", "email", "offline_access"],
         "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
         "redacted": "co...cd",
+        "chatgptAccountId": "acct-test",
         "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
         "chatModel": "gpt-5-codex",
         "tokenEndpointUrl": token_endpoint_url
@@ -4236,18 +4338,22 @@ async fn provider_auth_openai_experimental_refresh_requires_rotated_refresh_toke
         .await
         .unwrap();
 
-    let error =
+    let auth =
         yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_if_needed(&paths.config_dir)
             .await
-            .unwrap_err();
-    assert_eq!(error.to_string(), "provider auth token exchange failed");
-    let stored_access = store
-        .get_secret("openai", SecretKind::OAuthAccessToken)
+            .unwrap()
+            .expect("refresh should reuse omitted refresh token");
+    assert_stored_secret(
+        Some(&auth.access_token),
+        "codex-refreshed-access-token-secret-abcd",
+    );
+    let stored_refresh = store
+        .get_secret("openai", SecretKind::OAuthRefreshToken)
         .await
         .unwrap();
     assert_stored_secret(
-        stored_access.as_deref(),
-        "codex-old-access-token-secret-abcd",
+        stored_refresh.as_deref(),
+        "codex-old-refresh-token-secret-wxyz",
     );
 }
 
