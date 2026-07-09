@@ -3556,6 +3556,162 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn near_expiry_codex_auth_refreshes_within_skew_and_updates_secret_bundle() {
+        let dir = temp_dir();
+        let refreshed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let token_endpoint_url = successful_codex_token_endpoint_with_hook({
+            let refreshed = refreshed.clone();
+            move || refreshed.store(true, std::sync::atomic::Ordering::Relaxed)
+        })
+        .await;
+        create_near_expired_codex_oauth_connection_with_token_endpoint(&dir, &token_endpoint_url)
+            .await;
+
+        let auth = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap()
+            .expect("near-expiry auth should refresh");
+
+        assert!(refreshed.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(auth.access_token, "codex-exchange-access-token-secret");
+        assert_eq!(auth.model, super::CODEX_CHAT_MODEL);
+        let (access_token, refresh_token, metadata) = codex_secret_values(&dir).await;
+        assert_eq!(
+            access_token.as_deref(),
+            Some("codex-exchange-access-token-secret")
+        );
+        assert_eq!(
+            refresh_token.as_deref(),
+            Some("codex-exchange-refresh-token-secret")
+        );
+        let metadata: super::CodexAuthMetadata = serde_json::from_str(&metadata.unwrap()).unwrap();
+        assert_eq!(
+            metadata.redacted,
+            crate::secret_store::redact_secret("codex-exchange-access-token-secret")
+        );
+        assert!(
+            super::parse_time(&metadata.expires_at).unwrap()
+                > chrono::Utc::now() + chrono::Duration::minutes(30)
+        );
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "connected");
+        assert_response_sanitized(
+            &status,
+            &[
+                "codex-access-token-secret",
+                "codex-refresh-token-secret",
+                "codex-exchange-access-token-secret",
+                "codex-exchange-refresh-token-secret",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_codex_access_token_refreshes_once_and_returns_replacement() {
+        let dir = temp_dir();
+        let refreshed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let token_endpoint_url = successful_codex_token_endpoint_with_hook({
+            let refreshed = refreshed.clone();
+            move || refreshed.store(true, std::sync::atomic::Ordering::Relaxed)
+        })
+        .await;
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            |_, metadata| metadata.token_endpoint_url = token_endpoint_url,
+        )
+        .await;
+
+        let auth = super::refresh_experimental_codex_chat_auth_after_rejection(
+            &dir,
+            "codex-access-token-secret",
+        )
+        .await
+        .unwrap()
+        .expect("rejected current token should refresh");
+
+        assert!(refreshed.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(auth.access_token, "codex-exchange-access-token-secret");
+        assert_ne!(auth.access_token, "codex-access-token-secret");
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "connected");
+        assert_response_sanitized(
+            &status,
+            &[
+                "codex-access-token-secret",
+                "codex-refresh-token-secret",
+                "codex-exchange-access-token-secret",
+                "codex-exchange-refresh-token-secret",
+            ],
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_rejected_codex_access_token_reuses_newer_unexpired_secret_without_refresh() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            |token, metadata| {
+                token.access_token = "codex-newer-access-token-secret".to_string();
+                token.refresh_token = "codex-newer-refresh-token-secret".to_string();
+                metadata.redacted = crate::secret_store::redact_secret(&token.access_token);
+                metadata.token_endpoint_url = "http://127.0.0.1:9/token".to_string();
+            },
+        )
+        .await;
+
+        let auth = super::refresh_experimental_codex_chat_auth_after_rejection(
+            &dir,
+            "codex-stale-rejected-access-token-secret",
+        )
+        .await
+        .unwrap()
+        .expect("newer auth should be reused");
+
+        assert_eq!(auth.access_token, "codex-newer-access-token-secret");
+        let (access_token, refresh_token, _) = codex_secret_values(&dir).await;
+        assert_eq!(
+            access_token.as_deref(),
+            Some("codex-newer-access-token-secret")
+        );
+        assert_eq!(
+            refresh_token.as_deref(),
+            Some("codex-newer-refresh-token-secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn unexpired_pending_codex_session_blocks_pre_chat_refresh_and_preserves_secrets() {
+        let dir = temp_dir();
+        create_codex_pending_state(&dir).await;
+        create_near_expired_codex_oauth_connection_with_token_endpoint(
+            &dir,
+            "http://127.0.0.1:9/token",
+        )
+        .await;
+        let before = codex_secret_values(&dir).await;
+
+        let auth = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap();
+
+        assert!(auth.is_none());
+        assert_eq!(codex_secret_values(&dir).await, before);
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "pending");
+        assert!(status.session_id.is_some());
+        assert_response_sanitized(
+            &status,
+            &[
+                "codex-access-token-secret",
+                "codex-refresh-token-secret",
+                "http://127.0.0.1:9/token",
+            ],
+        );
+    }
+
+    #[tokio::test]
     async fn stored_codex_chat_model_secret_like_values_fail_closed() {
         for chat_model in [
             "sk-raw-chat-model-secret",
