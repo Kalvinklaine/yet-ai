@@ -2169,22 +2169,33 @@ mod tests {
         dir: &std::path::Path,
         expires_at: chrono::DateTime<chrono::Utc>,
     ) {
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            dir,
+            expires_at,
+            "http://127.0.0.1:3456/chat",
+            "http://127.0.0.1:3456/token",
+            "fake-codex-access-token",
+            "fake-codex-refresh-token",
+        )
+        .await;
+    }
+
+    async fn create_codex_oauth_connection_with_expiry_and_endpoints(
+        dir: &std::path::Path,
+        expires_at: chrono::DateTime<chrono::Utc>,
+        chat_base_url: &str,
+        token_endpoint_url: &str,
+        access_token: &str,
+        refresh_token: &str,
+    ) {
         use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
         let store = provider_secret_store(dir);
         store
-            .put_secret(
-                "openai",
-                SecretKind::OAuthAccessToken,
-                "fake-codex-access-token",
-            )
+            .put_secret("openai", SecretKind::OAuthAccessToken, access_token)
             .await
             .unwrap();
         store
-            .put_secret(
-                "openai",
-                SecretKind::OAuthRefreshToken,
-                "fake-codex-refresh-token",
-            )
+            .put_secret("openai", SecretKind::OAuthRefreshToken, refresh_token)
             .await
             .unwrap();
         let metadata = serde_json::json!({
@@ -2193,14 +2204,262 @@ mod tests {
             "scopes": ["openid", "profile", "email", "offline_access"],
             "expiresAt": expires_at.to_rfc3339(),
             "redacted": "fake-...token",
-            "chatBaseUrl": "http://127.0.0.1:3456/chat",
+            "chatBaseUrl": chat_base_url,
             "chatModel": "codex-test",
-            "tokenEndpointUrl": "http://127.0.0.1:3456/token"
+            "tokenEndpointUrl": token_endpoint_url
         });
         store
             .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
             .await
             .unwrap();
+    }
+
+    #[derive(Clone)]
+    enum LoopbackResponse {
+        Sse(String),
+        Unauthorized(String),
+        Token {
+            access_token: String,
+            refresh_token: String,
+        },
+    }
+
+    struct LoopbackServer {
+        base_url: String,
+        requests: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    async fn start_loopback_server(responses: Vec<LoopbackResponse>) -> LoopbackServer {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base_url = format!("http://{}", listener.local_addr().unwrap());
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = requests.clone();
+        tokio::spawn(async move {
+            for response in responses {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    return;
+                };
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buffer = [0_u8; 4096];
+                let read = stream.read(&mut buffer).await.unwrap_or(0);
+                captured
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8_lossy(&buffer[..read]).into_owned());
+                let (status, content_type, body) = match response {
+                    LoopbackResponse::Sse(content) => (
+                        "200 OK",
+                        "text/event-stream",
+                        format!(
+                            "data: {}\n\ndata: [DONE]\n\n",
+                            serde_json::json!({
+                                "choices": [{ "delta": { "content": content } }]
+                            })
+                        ),
+                    ),
+                    LoopbackResponse::Unauthorized(body) => {
+                        ("401 Unauthorized", "application/json", body)
+                    }
+                    LoopbackResponse::Token {
+                        access_token,
+                        refresh_token,
+                    } => (
+                        "200 OK",
+                        "application/json",
+                        serde_json::json!({
+                            "access_token": access_token,
+                            "refresh_token": refresh_token,
+                            "expires_in": 3600,
+                            "scope": "openid profile email offline_access",
+                            "account_label": "Loopback Account"
+                        })
+                        .to_string(),
+                    ),
+                };
+                let response = format!(
+                    "HTTP/1.1 {status}\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        LoopbackServer { base_url, requests }
+    }
+
+    async fn wait_for_terminal_message(
+        dir: &std::path::Path,
+        chat_id: &str,
+    ) -> crate::chat_history::ChatMessage {
+        for _ in 0..100 {
+            if let Ok(thread) = crate::chat_history::get_thread(dir, chat_id).await {
+                if let Some(message) = thread.messages.last() {
+                    if matches!(
+                        message.role,
+                        crate::chat_history::ChatMessageRole::Assistant
+                            | crate::chat_history::ChatMessageRole::Error
+                    ) {
+                        return message.clone();
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("chat did not reach terminal message");
+    }
+
+    #[tokio::test]
+    async fn first_chat_experimental_auth_streams_loopback_success() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![LoopbackResponse::Sse(
+            "loopback experimental auth response".to_string(),
+        )])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-first-chat-access-token",
+            "fake-codex-first-chat-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-success-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "hello through experimental auth".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(
+            message.role,
+            crate::chat_history::ChatMessageRole::Assistant
+        );
+        assert_eq!(message.content, "loopback experimental auth response");
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("POST /chat/completions "));
+        assert!(requests[0]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fake-codex-first-chat-access-token"));
+    }
+
+    #[tokio::test]
+    async fn first_chat_experimental_auth_refreshes_after_prestream_unauthorized() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::Unauthorized(
+                r#"{"error":"expired credential with ignored secret body"}"#.to_string(),
+            ),
+            LoopbackResponse::Token {
+                access_token: "fake-codex-refreshed-access-token".to_string(),
+                refresh_token: "fake-codex-refreshed-refresh-token".to_string(),
+            },
+            LoopbackResponse::Sse("response after refresh".to_string()),
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-stale-access-token",
+            "fake-codex-stale-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-refresh-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "refresh then answer".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(
+            message.role,
+            crate::chat_history::ChatMessageRole::Assistant
+        );
+        assert_eq!(message.content, "response after refresh");
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("POST /chat/completions "));
+        assert!(requests[0]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fake-codex-stale-access-token"));
+        assert!(requests[1].starts_with("POST /token "));
+        assert!(requests[2].starts_with("POST /chat/completions "));
+        assert!(requests[2]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fake-codex-refreshed-access-token"));
+    }
+
+    #[tokio::test]
+    async fn first_chat_experimental_auth_terminal_failure_is_sanitized_when_refresh_cannot_recover(
+    ) {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::Unauthorized(
+                r#"{"error":"sk-raw-token-secret /Users/example/.codex/auth.json cookie=value"}"#
+                    .to_string(),
+            ),
+            LoopbackResponse::Token {
+                access_token: "fake-codex-still-rejected-access-token".to_string(),
+                refresh_token: "fake-codex-rotated-refresh-token".to_string(),
+            },
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-still-rejected-access-token",
+            "fake-codex-original-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-terminal-failure-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "fail safely".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.role, crate::chat_history::ChatMessageRole::Error);
+        assert_eq!(
+            message.content,
+            "Provider credentials were rejected. Update the provider API key or account login, then retry."
+        );
+        let serialized = serde_json::to_string(&message).unwrap();
+        for forbidden in [
+            "sk-raw-token-secret",
+            "/Users/example/.codex/auth.json",
+            "cookie=value",
+            "fake-codex-still-rejected-access-token",
+            "fake-codex-original-refresh-token",
+            "fake-codex-rotated-refresh-token",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].starts_with("POST /chat/completions "));
+        assert!(requests[1].starts_with("POST /token "));
     }
 
     #[tokio::test]
@@ -2490,7 +2749,9 @@ mod tests {
             chrono::Utc::now() + chrono::Duration::hours(1),
         )
         .await;
-        crate::provider_auth::disconnect(&dir, "openai").await.unwrap();
+        crate::provider_auth::disconnect(&dir, "openai")
+            .await
+            .unwrap();
 
         match select_chat_provider(&dir).await {
             Err(super::ChatError::NoProvider) => {}
