@@ -2350,6 +2350,130 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn controlled_workflow_provider_proposal_can_stream_through_experimental_auth() {
+        let dir = temp_dir();
+        let proposal = serde_json::json!({
+            "kind": "controlled_agent_provider_proposal",
+            "version": "2026-07-07",
+            "authority": "provider_proposal_metadata_only",
+            "cloudRequired": false,
+            "executionAllowed": false,
+            "providerToolCallingAllowed": false,
+            "rawProviderPayloadStored": false,
+            "automaticApplyAllowed": false,
+            "automaticRunAllowed": false,
+            "workspace": {
+                "controlledWorkspaceId": "workspace-1",
+                "runId": "run-1",
+                "workspaceMode": "worktree",
+                "host": "vscode",
+                "privatePathExposed": false
+            },
+            "providerProposal": {
+                "proposalId": "experimental-auth-proposal-1",
+                "source": "model",
+                "sanitizedOnly": true,
+                "rawPayloadStored": false,
+                "toolCallsIncluded": false,
+                "automaticActionsIncluded": false,
+                "summary": "Review a bounded controlled workflow proposal.",
+                "plan": { "stepCount": 2, "steps": ["Review visible metadata", "Wait for manual apply"] },
+                "editMetadata": {
+                    "operation": "replace",
+                    "workspaceRelativePath": "apps/gui/src/App.tsx",
+                    "expectedContentHash": format!("sha256:{}", "a".repeat(64)),
+                    "startLine": 3,
+                    "endLine": 3,
+                    "replacementByteCount": 42,
+                    "rawReplacementStored": false,
+                    "rawDiffStored": false,
+                    "requiresUserApply": true
+                },
+                "verificationSuggestion": {
+                    "commandId": "gui-app-tests",
+                    "allowlistedCommandIdOnly": true,
+                    "freeformCommandAllowed": false,
+                    "requiresUserRun": true
+                }
+            },
+            "policyFlags": {
+                "metadataOnly": true,
+                "boundedPlanMetadataAllowed": true,
+                "boundedEditMetadataAllowed": true,
+                "providerToolCallingAllowed": false,
+                "rawProviderPayloadPersistenceAllowed": false,
+                "rawPromptPersistenceAllowed": false,
+                "rawFilePersistenceAllowed": false,
+                "rawDiffPersistenceAllowed": false,
+                "rawCommandPersistenceAllowed": false,
+                "rawOutputPersistenceAllowed": false,
+                "automaticApplyAllowed": false,
+                "automaticRunAllowed": false,
+                "automaticVerifyAllowed": false,
+                "automaticRepairAllowed": false,
+                "shellAllowed": false,
+                "gitAllowed": false,
+                "networkAllowed": false,
+                "packageInstallAllowed": false,
+                "hiddenReadAllowed": false,
+                "searchAllowed": false,
+                "indexingAllowed": false,
+                "toolAuthorityAllowed": false
+            }
+        })
+        .to_string();
+        let server = start_loopback_server(vec![LoopbackResponse::Sse(proposal.clone())]).await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-controlled-workflow-access-token",
+            "fake-codex-controlled-workflow-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-controlled-workflow-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "Controlled workflow provider proposal request: use explicit context only, return metadata-only proposal text, do not call tools, do not apply, do not verify.".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(
+            message.role,
+            crate::chat_history::ChatMessageRole::Assistant
+        );
+        assert_eq!(message.content, proposal);
+        let parsed: serde_json::Value = serde_json::from_str(&message.content).unwrap();
+        assert_eq!(parsed["authority"], "provider_proposal_metadata_only");
+        assert_eq!(parsed["executionAllowed"], false);
+        assert_eq!(parsed["providerToolCallingAllowed"], false);
+        assert_eq!(parsed["rawProviderPayloadStored"], false);
+        assert_eq!(parsed["automaticApplyAllowed"], false);
+        assert_eq!(parsed["automaticRunAllowed"], false);
+        assert_eq!(parsed["workspace"]["host"], "vscode");
+        assert_eq!(parsed["policyFlags"]["shellAllowed"], false);
+        assert_eq!(parsed["policyFlags"]["hiddenReadAllowed"], false);
+        assert_eq!(parsed["policyFlags"]["automaticVerifyAllowed"], false);
+        assert_eq!(parsed["providerProposal"]["verificationSuggestion"]["freeformCommandAllowed"], false);
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("POST /chat/completions "));
+        assert!(requests[0]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fake-codex-controlled-workflow-access-token"));
+        let serialized = serde_json::to_string(&message).unwrap();
+        assert!(!serialized.contains("fake-codex-controlled-workflow-access-token"));
+        assert!(!serialized.contains("fake-codex-controlled-workflow-refresh-token"));
+    }
+
+    #[tokio::test]
     async fn first_chat_experimental_auth_refreshes_after_prestream_unauthorized() {
         let dir = temp_dir();
         let server = start_loopback_server(vec![

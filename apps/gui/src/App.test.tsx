@@ -9508,6 +9508,59 @@ describe("edit proposal preview", () => {
     expect(browserStorageDump()).not.toContain("Review provider-backed metadata safely");
   });
 
+  it("routes controlled workflow proposal path through connected experimental auth without changing authority gates", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = controlledProviderProposalPayload({
+      providerProposal: {
+        ...controlledProviderProposalPayload().providerProposal,
+        proposalId: "experimental-auth-proposal-1",
+        summary: "Review a bounded experimental-auth proposal.",
+      },
+    });
+    mockRuntimeResponses({
+      authResponse: providerAuthResponse("connected"),
+      capsResponse: capsResponse({ agentRunReadiness: agentRunReadinessMetadata() }),
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: {} },
+        { seq: 1, type: "message_added", chatId: "chat-001", payload: { message: chatMessage("chat-001", "assistant-experimental-provider-proposal-1", "assistant", JSON.stringify(proposal)) } },
+      ],
+    });
+    renderApp();
+    await flushAsync();
+    postMessage.mockClear();
+
+    expect(container?.textContent).toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
+    expect(findButton("Send").disabled).toBe(false);
+    await act(async () => { setTextareaByPlaceholder("Describe the coding task goal", "Use connected experimental auth for a controlled provider proposal"); });
+    await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    const panel = agentRunPanel();
+    expect(lastUserMessageBody().payload?.content).toContain("One-step safe-edit model proposal request");
+    expect(text).toContain("proposal_detected");
+    expect(panel.textContent).toContain("Manual state: Checkpoint required");
+    expect(panel.textContent).toContain("Proposal status: detected but checkpoint metadata is missing");
+    expect(panel.textContent).toContain("Plan: Review visible metadata · Wait for manual apply");
+    expect(panel.textContent).toContain("Touched files: 1");
+    expect(buttonWithin(panel, "Manually apply reviewed patch").disabled).toBe(true);
+    expect(buttonWithin(panel, "Manually run allowlisted verification").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest" || message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.controlledAgentVerificationBundleRequest")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(1);
+    expect(text).not.toContain("Authorization: Bearer");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("Cookie:");
+    expect(text).not.toContain("/Users/");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("oauth");
+    expect(browserStorageDump()).not.toContain("controlled_agent_provider_proposal");
+    expect(browserStorageDump()).not.toContain("Use connected experimental auth");
+  });
+
   it("posts the existing apply bridge message only after explicit Agent Run apply click", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
