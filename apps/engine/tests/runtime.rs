@@ -2,8 +2,8 @@ use axum::body::Bytes;
 use axum::body::{to_bytes, Body};
 use axum::http::{header, HeaderValue, Method, Request, StatusCode};
 use axum::response::IntoResponse;
-use http_body_util::BodyExt;
 use base64::Engine;
+use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -200,9 +200,15 @@ async fn demo_mode_api_models_and_chat_stream_local_history() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models["models"][0]["id"], "yet-demo-chat");
     assert_eq!(models["models"][0]["readiness"]["status"], "ready");
-    assert_eq!(models["models"][0]["readiness"]["provenance"], "local_default");
+    assert_eq!(
+        models["models"][0]["readiness"]["provenance"],
+        "local_default"
+    );
     assert_eq!(models["models"][0]["providerFamily"], "demo_local");
-    assert_eq!(models["models"][0]["localAvailability"]["status"], "not_applicable");
+    assert_eq!(
+        models["models"][0]["localAvailability"]["status"],
+        "not_applicable"
+    );
 
     let command = json!({
         "requestId": "demo-message-1",
@@ -514,9 +520,19 @@ async fn start_mock_provider(
                     .into_response()
             }
         };
+        let models_handler = || async {
+            (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/json")],
+                r#"{"data":[{"id":"gpt-5-codex"}]}"#,
+            )
+                .into_response()
+        };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler))
+            .route("/models", axum::routing::get(models_handler));
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}"), auth_receiver)
@@ -546,7 +562,8 @@ async fn start_mock_provider_with_request_body(
         };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}"), body_receiver)
@@ -586,7 +603,8 @@ async fn start_chunked_mock_provider(
         };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}"), auth_receiver)
@@ -617,7 +635,12 @@ async fn start_mock_models_provider_body(
                     .and_then(|value| value.to_str().ok())
                     .map(str::to_string);
                 let _ = auth_sender.send(auth.clone()).await;
-                (status, [(header::CONTENT_TYPE, "application/json")], body.clone()).into_response()
+                (
+                    status,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    body.clone(),
+                )
+                    .into_response()
             }
         };
         let app = axum::Router::new()
@@ -821,7 +844,8 @@ async fn start_slow_mock_provider() -> (
         };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     (
@@ -854,7 +878,8 @@ async fn start_terminal_ordering_mock_provider() -> String {
         };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     format!("http://{address}")
@@ -925,7 +950,8 @@ async fn start_terminal_supersede_mock_provider() -> (
         };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     (
@@ -990,7 +1016,8 @@ async fn start_replacement_mock_provider() -> (
         };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     (
@@ -1289,7 +1316,8 @@ async fn start_stale_oauth_chat_provider() -> (String, mpsc::Receiver<Option<Str
         };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}"), auth_receiver)
@@ -1342,7 +1370,8 @@ async fn start_slow_401_oauth_chat_provider() -> (
         };
         let app = axum::Router::new()
             .route("/chat/completions", axum::routing::post(handler.clone()))
-            .route("/v1/chat/completions", axum::routing::post(handler));
+            .route("/v1/chat/completions", axum::routing::post(handler.clone()))
+            .route("/responses", axum::routing::post(handler));
         axum::serve(listener, app).await.unwrap();
     });
     (format!("http://{address}"), auth_receiver, pending_receiver)
@@ -1469,8 +1498,6 @@ fn state_from_authorization_url(value: &str) -> &str {
         .next()
         .unwrap()
 }
-
-
 
 fn sse_json_events(text: &str) -> Vec<Value> {
     text.lines()
@@ -2188,8 +2215,9 @@ async fn provider_auth_openai_experimental_codex_like_start_returns_pending_pkce
     assert!(authorization_url.starts_with("https://auth.openai.com/oauth/authorize?"));
     assert!(authorization_url.contains("response_type=code"));
     assert!(authorization_url.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
-    assert!(authorization_url
-        .contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback"));
+    assert!(
+        authorization_url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback")
+    );
     assert!(authorization_url.contains("scope=openid%20profile%20email%20offline_access"));
     assert!(authorization_url.contains("code_challenge="));
     assert!(authorization_url.contains("code_challenge_method=S256"));
@@ -7379,7 +7407,10 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(provider["models"][0]["readiness"]["status"], "ready");
-    assert_eq!(provider["models"][0]["readiness"]["provenance"], "configured");
+    assert_eq!(
+        provider["models"][0]["readiness"]["provenance"],
+        "configured"
+    );
     assert!(!provider.to_string().contains(api_key));
 
     let (status, caps) =
@@ -7393,7 +7424,10 @@ async fn provider_model_metadata_defaults_are_exposed_on_models_providers_and_ca
             "knowledge": false
         })
     );
-    assert_eq!(caps["providers"][0]["models"][0]["readiness"]["status"], "ready");
+    assert_eq!(
+        caps["providers"][0]["models"][0]["readiness"]["status"],
+        "ready"
+    );
     assert_eq!(
         caps["providers"][0]["models"][0]["readiness"]["provenance"],
         "configured"
@@ -8787,7 +8821,10 @@ async fn provider_secret_caps_first_access_migrates_inline_key() {
     let (status, body) =
         json_response_from(app, authed_request(Method::GET, "/v1/caps", Body::empty())).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["providers"][0]["models"][0]["readiness"]["status"], "ready");
+    assert_eq!(
+        body["providers"][0]["models"][0]["readiness"]["status"],
+        "ready"
+    );
     assert_eq!(
         body["providers"][0]["models"][0]["readiness"]["provenance"],
         "configured"
@@ -9518,7 +9555,10 @@ async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth()
     assert_eq!(model["capabilityProvenance"]["tools"], "provider_declared");
     assert_eq!(model["providerFamily"], "openai_compatible");
     assert_eq!(model["localAvailability"]["status"], "not_applicable");
-    assert_eq!(model["localAvailability"]["checkedAt"], state["lastTestedAt"]);
+    assert_eq!(
+        model["localAvailability"]["checkedAt"],
+        state["lastTestedAt"]
+    );
 
     let (status, providers) = json_response_from(
         app.clone(),
@@ -9526,7 +9566,10 @@ async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth()
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(providers["providers"][0]["providerFamily"], "openai_compatible");
+    assert_eq!(
+        providers["providers"][0]["providerFamily"],
+        "openai_compatible"
+    );
     assert_eq!(
         providers["providers"][0]["models"][0]["readiness"],
         model["readiness"]
@@ -9535,13 +9578,18 @@ async fn provider_test_openai_compatible_success_uses_loopback_models_and_auth()
         providers["providers"][0]["models"][0]["capabilityProvenance"],
         model["capabilityProvenance"]
     );
-    assert!(providers["providers"][0]["models"][0].get("providerId").is_none());
+    assert!(providers["providers"][0]["models"][0]
+        .get("providerId")
+        .is_none());
 
     let (status, caps) =
         json_response_from(app, authed_request(Method::GET, "/v1/caps", Body::empty())).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(caps["providers"][0]["providerFamily"], "openai_compatible");
-    assert_eq!(caps["providers"][0]["models"][0]["readiness"], model["readiness"]);
+    assert_eq!(
+        caps["providers"][0]["models"][0]["readiness"],
+        model["readiness"]
+    );
     assert_eq!(
         caps["providers"][0]["models"][0]["capabilityProvenance"],
         model["capabilityProvenance"]
@@ -9989,11 +10037,8 @@ async fn provider_failed_latest_test_makes_models_providers_caps_not_ready() {
         ("/v1/providers", "providers"),
         ("/v1/caps", "caps"),
     ] {
-        let (status, body) = json_response_from(
-            app.clone(),
-            authed_request(Method::GET, uri, Body::empty()),
-        )
-        .await;
+        let (status, body) =
+            json_response_from(app.clone(), authed_request(Method::GET, uri, Body::empty())).await;
         assert_eq!(status, StatusCode::OK, "{provider_path}");
         let model = match provider_path {
             "models" => &body["models"][0],
@@ -10073,7 +10118,9 @@ async fn provider_update_invalidates_stale_provider_test_state() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models["models"][0]["readiness"]["status"], "ready");
     assert_eq!(models["models"][0]["readiness"]["provenance"], "configured");
-    assert!(models["models"][0]["readiness"].get("lastTestStatus").is_none());
+    assert!(models["models"][0]["readiness"]
+        .get("lastTestStatus")
+        .is_none());
 }
 
 #[tokio::test]
@@ -10128,8 +10175,13 @@ async fn provider_write_strips_client_supplied_runtime_metadata() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED);
-    assert_eq!(created["models"][0]["readiness"]["provenance"], "configured");
-    assert!(created["models"][0]["readiness"].get("lastTestStatus").is_none());
+    assert_eq!(
+        created["models"][0]["readiness"]["provenance"],
+        "configured"
+    );
+    assert!(created["models"][0]["readiness"]
+        .get("lastTestStatus")
+        .is_none());
     assert_eq!(created["models"][0]["providerFamily"], "openai_compatible");
     assert_eq!(created["models"][0]["capabilities"]["tools"], false);
     assert_eq!(created["models"][0]["capabilities"]["reasoning"], false);
@@ -10173,11 +10225,8 @@ async fn provider_corrupt_test_state_falls_back_to_configured_summary() {
     .unwrap();
 
     for uri in ["/v1/models", "/v1/providers", "/v1/caps"] {
-        let (status, body) = json_response_from(
-            app.clone(),
-            authed_request(Method::GET, uri, Body::empty()),
-        )
-        .await;
+        let (status, body) =
+            json_response_from(app.clone(), authed_request(Method::GET, uri, Body::empty())).await;
         assert_eq!(status, StatusCode::OK, "{uri}");
         let model = if uri == "/v1/models" {
             &body["models"][0]
@@ -10230,8 +10279,14 @@ async fn provider_test_openai_compatible_requires_model_verification() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(models["models"][0]["readiness"]["status"], "missing_model");
-    assert_eq!(models["models"][0]["readiness"]["provenance"], "runtime_tested");
-    assert_eq!(models["models"][0]["capabilityProvenance"]["chat"], "configured");
+    assert_eq!(
+        models["models"][0]["readiness"]["provenance"],
+        "runtime_tested"
+    );
+    assert_eq!(
+        models["models"][0]["capabilityProvenance"]["chat"],
+        "configured"
+    );
 }
 
 #[tokio::test]
@@ -14045,6 +14100,11 @@ async fn chat_command_ollama_streaming_works_before_demo_and_codex_fallback() {
     )
     .await;
     let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    let (codex_chat_base_url, codex_auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"content\":\"codex-unused\"}}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
     let app = test_app();
     let (status, demo) = json_response_from(
         app.clone(),
@@ -14057,12 +14117,7 @@ async fn chat_command_ollama_streaming_works_before_demo_and_codex_fallback() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(demo["enabled"], true);
-    connect_experimental_openai_oauth(
-        app.clone(),
-        token_endpoint_url,
-        "http://127.0.0.1:1/chat".to_string(),
-    )
-    .await;
+    connect_experimental_openai_oauth(app.clone(), token_endpoint_url, codex_chat_base_url).await;
     configure_ollama_provider_with_id(
         app.clone(),
         "ollama-chat",
@@ -14076,6 +14131,7 @@ async fn chat_command_ollama_streaming_works_before_demo_and_codex_fallback() {
     assert!(text.contains("hello "));
     assert!(text.contains("ollama"));
     assert!(!text.contains("codex-access-token-secret"));
+    assert_no_observed_auth(codex_auth_receiver).await;
     assert_sanitized_sse_error(&text);
     let body = tokio::time::timeout(std::time::Duration::from_secs(2), body_receiver.recv())
         .await

@@ -567,7 +567,7 @@ impl ChatRuntime {
                 demo_stream(self, chat_id, stream_id, original_content, context).await
             }
             ChatProvider::ExperimentalCodex(auth) => {
-                bearer_stream_with_unauthorized_retry(
+                codex_responses_stream_with_unauthorized_retry(
                     self,
                     &self.client,
                     config_dir,
@@ -1548,33 +1548,48 @@ async fn ollama_stream(
     collect_ollama_stream(runtime, chat_id, stream_id, request).await
 }
 
-async fn bearer_stream(
+fn codex_responses_url(base_url: &str) -> Result<String, ChatError> {
+    providers::validate_provider_base_url(base_url).map_err(|_| ChatError::ProviderConfig)?;
+    let mut url = reqwest::Url::parse(base_url).map_err(|_| ChatError::ProviderConfig)?;
+    let normalized_path = url.path().trim_end_matches('/').to_string();
+    if normalized_path.ends_with("/responses") {
+        url.set_path(&normalized_path);
+    } else {
+        url.set_path(&format!("{normalized_path}/responses"));
+    }
+    Ok(url.to_string())
+}
+
+async fn codex_responses_stream(
     runtime: &ChatRuntime,
     client: &reqwest::Client,
-    base_url: &str,
-    model: &str,
-    access_token: &str,
-    chatgpt_account_id: &str,
+    auth: &ExperimentalCodexChatAuth,
     chat_id: &str,
     stream_id: u64,
     content: &str,
 ) -> Result<String, ChatError> {
-    let url = chat_completions_url(base_url)?;
+    let url = codex_responses_url(&auth.base_url)?;
     let request = client
         .post(url)
         .timeout(Duration::from_secs(10))
-        .bearer_auth(access_token)
-        .header("chatgpt-account-id", chatgpt_account_id)
+        .bearer_auth(&auth.access_token)
+        .header("chatgpt-account-id", &auth.chatgpt_account_id)
         .header("originator", "codex_cli_rs")
+        .header("session_id", chat_id)
+        .header("OpenAI-Beta", "responses=experimental")
+        .header("Accept", "text/event-stream")
         .json(&json!({
-            "model": model,
+            "model": auth.model,
             "stream": true,
-            "messages": [{ "role": "user", "content": content }]
+            "input": [{
+                "role": "user",
+                "content": [{ "type": "input_text", "text": content }]
+            }]
         }));
-    collect_openai_compatible_stream(runtime, chat_id, stream_id, request).await
+    collect_codex_responses_stream(runtime, chat_id, stream_id, request).await
 }
 
-async fn bearer_stream_with_unauthorized_retry(
+async fn codex_responses_stream_with_unauthorized_retry(
     runtime: &ChatRuntime,
     client: &reqwest::Client,
     config_dir: &std::path::Path,
@@ -1583,18 +1598,7 @@ async fn bearer_stream_with_unauthorized_retry(
     stream_id: u64,
     content: &str,
 ) -> Result<String, ChatError> {
-    let first = bearer_stream(
-        runtime,
-        client,
-        &auth.base_url,
-        &auth.model,
-        &auth.access_token,
-        &auth.chatgpt_account_id,
-        chat_id,
-        stream_id,
-        content,
-    )
-    .await;
+    let first = codex_responses_stream(runtime, client, auth, chat_id, stream_id, content).await;
     if !matches!(first, Err(ChatError::PreStreamUnauthorized)) {
         return first;
     }
@@ -1610,18 +1614,88 @@ async fn bearer_stream_with_unauthorized_retry(
     if refreshed.access_token == auth.access_token {
         return first;
     }
-    bearer_stream(
-        runtime,
-        client,
-        &refreshed.base_url,
-        &refreshed.model,
-        &refreshed.access_token,
-        &refreshed.chatgpt_account_id,
-        chat_id,
-        stream_id,
-        content,
-    )
-    .await
+    codex_responses_stream(runtime, client, &refreshed, chat_id, stream_id, content).await
+}
+
+async fn collect_codex_responses_stream(
+    runtime: &ChatRuntime,
+    chat_id: &str,
+    stream_id: u64,
+    request: reqwest::RequestBuilder,
+) -> Result<String, ChatError> {
+    let response = request.send().await.map_err(|error| {
+        if error.is_timeout() {
+            ChatError::Timeout
+        } else {
+            ChatError::Request
+        }
+    })?;
+    if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ChatError::PreStreamUnauthorized);
+        }
+        return Err(classify_provider_http_error(response).await);
+    }
+    let mut stream = response.bytes_stream();
+    let mut parser = CodexResponsesSseParser::default();
+    let mut utf8_buffer = Vec::new();
+    let mut assistant_content = String::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|error| {
+            if error.is_timeout() {
+                ChatError::Timeout
+            } else {
+                ChatError::Request
+            }
+        })?;
+        for text in decode_stream_utf8_chunk(&mut utf8_buffer, &chunk)? {
+            parser.push(&text).map_err(|error| {
+                if assistant_content.is_empty() && matches!(error, ChatError::Unauthorized) {
+                    ChatError::PreStreamUnauthorized
+                } else {
+                    error
+                }
+            })?;
+        }
+        for delta in parser.drain_deltas() {
+            assistant_content.push_str(&delta);
+            let current = runtime
+                .push_stream_event(
+                    chat_id,
+                    stream_id,
+                    "stream_delta",
+                    json!({ "delta": { "content": delta } }),
+                )
+                .await;
+            if !current {
+                return Ok(assistant_content);
+            }
+        }
+    }
+    if !utf8_buffer.is_empty() {
+        return Err(ChatError::MalformedStream);
+    }
+    for delta in parser.finish().map_err(|error| {
+        if assistant_content.is_empty() && matches!(error, ChatError::Unauthorized) {
+            ChatError::PreStreamUnauthorized
+        } else {
+            error
+        }
+    })? {
+        assistant_content.push_str(&delta);
+        let current = runtime
+            .push_stream_event(
+                chat_id,
+                stream_id,
+                "stream_delta",
+                json!({ "delta": { "content": delta } }),
+            )
+            .await;
+        if !current {
+            return Ok(assistant_content);
+        }
+    }
+    Ok(assistant_content)
 }
 
 async fn collect_openai_compatible_stream(
@@ -1892,6 +1966,15 @@ struct OpenAiSseParser {
 }
 
 #[derive(Default)]
+struct CodexResponsesSseParser {
+    buffer: String,
+    data_lines: Vec<String>,
+    event_data_bytes: usize,
+    deltas: Vec<String>,
+    done: bool,
+}
+
+#[derive(Default)]
 struct OllamaJsonLineParser {
     buffer: String,
     deltas: Vec<String>,
@@ -1947,6 +2030,115 @@ impl OllamaJsonLineParser {
             return Ok(());
         }
         Err(ChatError::MalformedStream)
+    }
+}
+
+impl CodexResponsesSseParser {
+    fn push(&mut self, text: &str) -> Result<(), ChatError> {
+        if self.buffer.len() + text.len() > PROVIDER_STREAM_LINE_BUFFER_LIMIT {
+            return Err(ChatError::MalformedStream);
+        }
+        self.buffer.push_str(text);
+        while let Some(index) = self.buffer.find('\n') {
+            let line = self.buffer[..index].trim_end_matches('\r').to_string();
+            self.buffer = self.buffer[index + 1..].to_string();
+            self.handle_line(&line)?;
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<Vec<String>, ChatError> {
+        if !self.buffer.is_empty() {
+            let line = std::mem::take(&mut self.buffer);
+            self.handle_line(line.trim_end_matches('\r'))?;
+        }
+        self.flush_event()?;
+        Ok(self.deltas)
+    }
+
+    fn drain_deltas(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.deltas)
+    }
+
+    fn handle_line(&mut self, line: &str) -> Result<(), ChatError> {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            return self.flush_event();
+        }
+        if line.starts_with(':') {
+            return Ok(());
+        }
+        if line.starts_with("event:") || line.starts_with("id:") || line.starts_with("retry:") {
+            return Ok(());
+        }
+        let Some(data) = line.strip_prefix("data:") else {
+            return Err(ChatError::MalformedStream);
+        };
+        let data = data.trim_start();
+        let separator_bytes = usize::from(!self.data_lines.is_empty());
+        if self.data_lines.len() >= PROVIDER_STREAM_EVENT_DATA_LINE_LIMIT
+            || self.event_data_bytes + separator_bytes + data.len()
+                > PROVIDER_STREAM_EVENT_DATA_LIMIT
+        {
+            return Err(ChatError::MalformedStream);
+        }
+        self.event_data_bytes += separator_bytes + data.len();
+        self.data_lines.push(data.to_string());
+        Ok(())
+    }
+
+    fn flush_event(&mut self) -> Result<(), ChatError> {
+        if self.data_lines.is_empty() {
+            return Ok(());
+        }
+        let data = self.data_lines.join("\n");
+        self.data_lines.clear();
+        self.event_data_bytes = 0;
+        self.handle_data(data.trim())
+    }
+
+    fn handle_data(&mut self, data: &str) -> Result<(), ChatError> {
+        if data.is_empty() || self.done {
+            return Ok(());
+        }
+        if data == "[DONE]" {
+            self.done = true;
+            return Ok(());
+        }
+        let value: serde_json::Value =
+            serde_json::from_str(data).map_err(|_| ChatError::MalformedStream)?;
+        let event_type = value
+            .get("type")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        match event_type {
+            "response.output_text.delta" => {
+                if let Some(delta) = value.get("delta").and_then(|value| value.as_str()) {
+                    if !delta.is_empty() {
+                        self.deltas.push(delta.to_string());
+                    }
+                }
+                Ok(())
+            }
+            "" => {
+                if value.get("error").is_some() {
+                    return Err(classify_provider_stream_error(&value));
+                }
+                if let Some(content) = value["choices"][0]["delta"]["content"].as_str() {
+                    if !content.is_empty() {
+                        self.deltas.push(content.to_string());
+                    }
+                }
+                Ok(())
+            }
+            "response.completed" | "response.output_text.done" => {
+                self.done |= event_type == "response.completed";
+                Ok(())
+            }
+            "response.incomplete" => Err(ChatError::ContextTooLarge),
+            "response.failed" | "error" => Err(classify_provider_stream_error(&value)),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -2210,8 +2402,9 @@ mod tests {
             "expiresAt": expires_at.to_rfc3339(),
             "redacted": "fake-...token",
             "chatBaseUrl": chat_base_url,
-            "chatModel": "codex-test",
-            "tokenEndpointUrl": token_endpoint_url
+            "chatModel": "gpt-5-codex",
+            "tokenEndpointUrl": token_endpoint_url,
+            "chatgptAccountId": "acct-test"
         });
         store
             .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
@@ -2256,9 +2449,14 @@ mod tests {
                         "200 OK",
                         "text/event-stream",
                         format!(
-                            "data: {}\n\ndata: [DONE]\n\n",
+                            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
                             serde_json::json!({
-                                "choices": [{ "delta": { "content": content } }]
+                                "type": "response.output_text.delta",
+                                "delta": content
+                            }),
+                            serde_json::json!({
+                                "type": "response.completed",
+                                "response": { "status": "completed" }
                             })
                         ),
                     ),
@@ -2321,8 +2519,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "T-634 contract lock: later S141 card must use Codex Responses endpoint, headers, and minimal user-text body"]
-    async fn experimental_codex_chat_uses_codex_compatible_responses_contract_todo() {
+    async fn experimental_codex_chat_uses_codex_compatible_responses_contract() {
         let dir = temp_dir();
         let server = start_loopback_server(vec![LoopbackResponse::Sse(
             "responses contract output".to_string(),
@@ -2376,8 +2573,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "T-634 contract lock: later S141 card must refresh once then retry one Codex Responses request after pre-output unauthorized"]
-    async fn experimental_codex_responses_unauthorized_refreshes_and_retries_once_todo() {
+    async fn experimental_codex_responses_unauthorized_refreshes_and_retries_once() {
         let dir = temp_dir();
         let server = start_loopback_server(vec![
             LoopbackResponse::Unauthorized(
@@ -2476,7 +2672,7 @@ mod tests {
         assert_eq!(message.content, "loopback experimental auth response");
         let requests = server.requests.lock().unwrap().clone();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].starts_with("POST /chat/completions "));
+        assert!(requests[0].starts_with("POST /responses "));
         assert!(requests[0]
             .to_ascii_lowercase()
             .contains("authorization: bearer fake-codex-first-chat-access-token"));
@@ -2600,7 +2796,7 @@ mod tests {
         );
         let requests = server.requests.lock().unwrap().clone();
         assert_eq!(requests.len(), 1);
-        assert!(requests[0].starts_with("POST /chat/completions "));
+        assert!(requests[0].starts_with("POST /responses "));
         assert!(requests[0]
             .to_ascii_lowercase()
             .contains("authorization: bearer fake-codex-controlled-workflow-access-token"));
@@ -2652,12 +2848,12 @@ mod tests {
         assert_eq!(message.content, "response after refresh");
         let requests = server.requests.lock().unwrap().clone();
         assert_eq!(requests.len(), 3);
-        assert!(requests[0].starts_with("POST /chat/completions "));
+        assert!(requests[0].starts_with("POST /responses "));
         assert!(requests[0]
             .to_ascii_lowercase()
             .contains("authorization: bearer fake-codex-stale-access-token"));
         assert!(requests[1].starts_with("POST /token "));
-        assert!(requests[2].starts_with("POST /chat/completions "));
+        assert!(requests[2].starts_with("POST /responses "));
         assert!(requests[2]
             .to_ascii_lowercase()
             .contains("authorization: bearer fake-codex-refreshed-access-token"));
@@ -2718,7 +2914,7 @@ mod tests {
         }
         let requests = server.requests.lock().unwrap().clone();
         assert_eq!(requests.len(), 2);
-        assert!(requests[0].starts_with("POST /chat/completions "));
+        assert!(requests[0].starts_with("POST /responses "));
         assert!(requests[1].starts_with("POST /token "));
     }
 
@@ -2976,7 +3172,7 @@ mod tests {
             super::ChatProvider::ExperimentalCodex(auth) => {
                 assert_eq!(auth.access_token, "fake-codex-access-token");
                 assert_eq!(auth.base_url, "http://127.0.0.1:3456/chat");
-                assert_eq!(auth.model, "codex-test");
+                assert_eq!(auth.model, "gpt-5-codex");
             }
             _ => panic!("chat did not select experimental account auth as last fallback"),
         }
