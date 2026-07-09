@@ -30,7 +30,9 @@ const validators = [
   ["scripts/dogfood-controlled-agent-real-provider-matrix.mjs", "--check-template"],
   ["scripts/dogfood-controlled-agent-real-provider-matrix.mjs", "--self-test"],
   ["scripts/dogfood-controlled-agent-task-beta-report.mjs", "--check-template"],
-  ["scripts/dogfood-controlled-agent-task-beta-report.mjs", "--self-test"]
+  ["scripts/dogfood-controlled-agent-task-beta-report.mjs", "--self-test"],
+  ["scripts/dogfood-experimental-codex-login-report.mjs", "--check-template"],
+  ["scripts/dogfood-experimental-codex-login-report.mjs", "--self-test"]
 ];
 
 for (const validator of validators) {
