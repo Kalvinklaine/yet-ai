@@ -8,7 +8,7 @@ const template = `# Experimental Codex-like Login Dogfood Report
 
 Manual real-account dogfood evidence only. Use this checklist only after explicit acceptance for the current task. Keep completed reports in ignored local evidence locations unless a task asks for a sanitized excerpt. This is not CI evidence, not official OAuth evidence, not production login evidence, not release evidence, not marketplace evidence, not signing evidence, not support-readiness evidence, and not a publication gate.
 
-The experimental Codex-like path remains high-risk, private-endpoint-style, non-default, account-specific, and separate from the safe/default API-key or project-key provider setup. Do not paste secrets, authorization headers, bearer tokens, access tokens, refresh tokens, auth codes, PKCE verifiers, cookies, secret URL query or fragment values, raw provider responses, raw prompts, raw file bodies, raw diffs, private absolute paths, bridge dumps, or browser storage dumps.
+The experimental Codex-like path remains high-risk, private-endpoint-style, non-default, account-specific, and separate from the safe/default API-key or project-key provider setup. Do not paste secrets, authorization headers, bearer tokens, access tokens, refresh tokens, auth codes, PKCE verifiers, cookies, secret URL query or fragment values, raw provider responses, raw prompts, raw file bodies, raw diffs, raw command output, provider payloads, private absolute paths, bridge dumps, browser storage dumps, screenshots with secrets, or account-private identifiers.
 
 ## Run metadata
 
@@ -32,11 +32,14 @@ The experimental Codex-like path remains high-risk, private-endpoint-style, non-
 - First chat result: <streamed answer visible | failed with sanitized provider category | blocked before send | not run>
 - Recovery after first chat: <none | reconnect needed | API-key fallback used | provider/model unavailable | not run>
 
-## Optional VS Code controlled task readiness note
+## VS Code controlled task smoke and dogfood note
 
 - VS Code host readiness: <runtime host.ready visible | controlled task surface visible | unsupported or blocked with sanitized reason | not run>
-- Controlled task handoff note: <ready for later S140 manual task | not attempted | blocked with sanitized reason | not run>
-- Authority boundary observed: <no automatic task execution | no workspace mutation from login alone | not run>
+- Controlled task start: <explicit small task started after first chat | not attempted | blocked with sanitized reason | not run>
+- Controlled task provider proposal: <proposal visible with sanitized labels | provider/model unavailable | not attempted | not run>
+- Controlled task gates observed: <explicit start/context/review/apply/verification gates visible | blocked before gates | not run>
+- Controlled task result label: <small task completed | stopped by user | verification failed with sanitized category | not attempted | not run>
+- Authority boundary observed: <no automatic task execution | no workspace mutation from login alone | Browser unsupported | JetBrains fail-closed unless separately verified | not run>
 
 ## Disconnect and reconnect observations
 
@@ -62,9 +65,13 @@ The experimental Codex-like path remains high-risk, private-endpoint-style, non-
 - Raw provider responses absent: <checked | issue fixed before sharing | not run>
 - Raw prompts absent: <checked | issue fixed before sharing | not run>
 - Raw file bodies and raw diffs absent: <checked | issue fixed before sharing | not run>
+- Raw command output absent: <checked | issue fixed before sharing | not run>
+- Provider payloads absent: <checked | issue fixed before sharing | not run>
 - Private absolute paths absent: <checked | issue fixed before sharing | not run>
 - Bridge dumps absent: <checked | issue fixed before sharing | not run>
 - Browser storage dumps absent: <checked | issue fixed before sharing | not run>
+- Screenshots with secrets absent: <checked | issue fixed before sharing | not run>
+- Account-private identifiers absent: <checked | issue fixed before sharing | not run>
 
 ## Explicit non-claims
 
@@ -109,9 +116,12 @@ const requiredPatterns = [
   ["provider selection field", /- Provider selection expectation:/],
   ["first chat field", /- First chat result:/],
   ["recovery after chat field", /- Recovery after first chat:/],
-  ["optional VS Code heading", /^## Optional VS Code controlled task readiness note$/m],
+  ["VS Code controlled task heading", /^## VS Code controlled task smoke and dogfood note$/m],
   ["VS Code host readiness field", /- VS Code host readiness:/],
-  ["controlled task handoff field", /- Controlled task handoff note:/],
+  ["controlled task start field", /- Controlled task start:/],
+  ["controlled task provider proposal field", /- Controlled task provider proposal:/],
+  ["controlled task gates field", /- Controlled task gates observed:/],
+  ["controlled task result field", /- Controlled task result label:/],
   ["authority boundary field", /- Authority boundary observed:/],
   ["disconnect reconnect heading", /^## Disconnect and reconnect observations$/m],
   ["disconnect observation field", /- Disconnect observation:/],
@@ -132,9 +142,13 @@ const requiredPatterns = [
   ["raw provider responses check", /- Raw provider responses absent:/],
   ["raw prompts check", /- Raw prompts absent:/],
   ["raw file bodies diffs check", /- Raw file bodies and raw diffs absent:/],
+  ["raw command output check", /- Raw command output absent:/],
+  ["provider payloads check", /- Provider payloads absent:/],
   ["private absolute paths check", /- Private absolute paths absent:/],
   ["bridge dumps check", /- Bridge dumps absent:/],
   ["browser storage dumps check", /- Browser storage dumps absent:/],
+  ["screenshots with secrets check", /- Screenshots with secrets absent:/],
+  ["account-private identifiers check", /- Account-private identifiers absent:/],
   ["explicit non-claims heading", /^## Explicit non-claims$/m],
   ["official OAuth non-claim", /- Official OAuth claim: not claimed/],
   ["production non-claim", /- Production login claim: not claimed/],
@@ -184,6 +198,8 @@ const unsafeChecks = [
   ["raw diffs", /\b(?:raw\s+diff|diff\s+dump|patch\s+body|raw\s+patch|patch\s+dump|verbatim\s+diff)\b\s*[:=]/i],
   ["bridge dumps", /\b(?:raw\s+bridge\s+payload|bridge\s+payload\s+dump|bridge\s+dump|postMessage\s+dump|request\s+body|raw\s+request)\b\s*[:=]/i],
   ["browser storage dumps", /\b(?:localStorage|sessionStorage|indexedDB|browser\s+storage\s+dump|storage\s+dump|workspace\s+storage\s+dump)\b\s*[:=]/i],
+  ["screenshots with secrets", /\b(?:screenshot|screen\s+capture|image)\b\s*[:=]\s*(?:.*(?:token|secret|api\s*key|authorization|cookie|code))/i],
+  ["account-private identifiers", /\b(?:account[_ -]?id|user[_ -]?id|email|organization[_ -]?id|tenant[_ -]?id)\b\s*[:=]\s*[^\s<][^\r\n]*/i],
   ["hosted backend/account/gateway requirements", /\b(?:requires?|must\s+use|needs?)\s+(?:a\s+)?(?:hosted\s+Yet\s+AI\s+backend|Yet\s+AI\s+account|managed\s+model\s+gateway|product\s+credits?|cloud\s+workspace)\b/i],
   ["automation claims", /\b(?:real-provider\s+CI\s*[:=]|automated\s+real-provider\s+test\s*[:=]|CI\s+called\s+real\s+provider\s*[:=]|CI\s+real-provider\s+automation\s*[:=])/i],
   ["official or readiness claims", releaseClaimPattern]
@@ -305,6 +321,8 @@ function selfTestFailures() {
     ["bridge dumps", "bridge payload dump: {}"],
     ["bridge dumps", "request body: {}"],
     ["browser storage dumps", "localStorage: { token: redacted }"],
+    ["screenshots with secrets", "screenshot: token visible"],
+    ["account-private identifiers", "account_id: private-account"],
     ["hosted backend/account/gateway requirements", "requires hosted Yet AI backend"],
     ["hosted backend/account/gateway requirements", "must use managed model gateway"],
     ["hosted backend/account/gateway requirements", "needs cloud workspace"],
@@ -328,8 +346,11 @@ function selfTestFailures() {
     .replace("<streamed answer visible | failed with sanitized provider category | blocked before send | not run>", "streamed answer visible")
     .replace("<none | reconnect needed | API-key fallback used | provider/model unavailable | not run>", "none")
     .replace("<runtime host.ready visible | controlled task surface visible | unsupported or blocked with sanitized reason | not run>", "runtime host ready visible")
-    .replace("<ready for later S140 manual task | not attempted | blocked with sanitized reason | not run>", "not run")
-    .replace("<no automatic task execution | no workspace mutation from login alone | not run>", "no automatic task execution")
+    .replace("<explicit small task started after first chat | not attempted | blocked with sanitized reason | not run>", "explicit small task started after first chat")
+    .replace("<proposal visible with sanitized labels | provider/model unavailable | not attempted | not run>", "proposal visible with sanitized labels")
+    .replace("<explicit start/context/review/apply/verification gates visible | blocked before gates | not run>", "explicit start and review gates visible")
+    .replace("<small task completed | stopped by user | verification failed with sanitized category | not attempted | not run>", "small task completed")
+    .replace("<no automatic task execution | no workspace mutation from login alone | Browser unsupported | JetBrains fail-closed unless separately verified | not run>", "no automatic task execution")
     .replace("<experimental auth removed | API-key fallback preserved | disconnect failed safely | not run>", "experimental auth removed")
     .replace("<reconnect started | pending recovered | exchange retried | reconnect blocked with sanitized reason | not run>", "reconnect started")
     .replace("<refresh invisible and chat still worked | expired state visible | reconnect required | not observed | not run>", "not observed")
@@ -341,7 +362,7 @@ function selfTestFailures() {
     .replaceAll("<checked | issue fixed before sharing | not run>", "checked")
     .replace("<connected and first chat worked | connected but first chat blocked | login blocked | failed closed | not run>", "connected and first chat worked")
     .replace("<short safe label-only summary | not run>", "connected status and first chat verified with sanitized labels")
-    .replace("<sanitized follow-up summary or none | not run>", "none");
+    .replace("<sanitized follow-up summary or none | not run>", "none; not run for follow-up");
   const failures = [];
   const validExampleFailures = validateTemplate(validSanitizedExample);
   if (validExampleFailures.length > 0) failures.push(...validExampleFailures.map((failure) => `valid sanitized example ${failure}`));

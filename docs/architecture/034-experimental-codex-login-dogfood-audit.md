@@ -267,15 +267,30 @@ Constraints for the go decision:
 - Do not store or expose raw provider secrets, auth codes, cookies, PKCE verifiers, authorization headers, raw prompts, raw provider payloads, raw file bodies, raw diffs, private paths, or bridge dumps.
 - Do not claim real-account success until a sanitized manual report is produced outside CI with explicit acceptance.
 
+### S136-S140 closure evidence
+
+Current closure status: S136-S140 now have deterministic local/mock evidence for the full dogfood journey boundary without real credentials or provider calls.
+
+Evidence now includes:
+
+- experimental login lifecycle template and checker for sanitized manual real-account reports;
+- engine and GUI regressions for connected experimental auth, first chat/provider proposal routing, and controlled workflow metadata gates;
+- `npm run smoke:experimental-codex-controlled-task`, a pure local/mock metadata smoke that ties experimental login labels, first chat/provider proposal labels, VS Code controlled task gates, reload/reconnect labels, Browser unsupported status, JetBrains fail-closed status, and explicit non-claims into one sanitized closure artifact;
+- `npm run check`, which includes the dogfood report template/self-test and the controlled-task closure smoke.
+
+The closure smoke is deterministic evidence only. It does not start VS Code, call a provider, use real credentials, launch a hosted service, mutate a workspace, run shell/git/tool commands for a task, publish packages, sign, notarize, or prove real-account success. Manual real-account dogfood remains allowed only after explicit acceptance and must use sanitized labels in `docs/dogfood/experimental-codex-login.md` or a report checked by `npm run dogfood:experimental-codex-login-report -- --check <local-report>`.
+
+Based on this S136-S140 evidence, conditional S141 and S142 are not recommended now. Create a later focused card only if future manual dogfood finds brittle packaged VS Code reload/reconnect/runtime restart behavior, stale pending cleanup that blocks a fresh user, or evidence/wording drift toward production, official OAuth, release, marketplace, signing, notarization, support readiness, hosted-service, real-provider CI, or default-login claims.
+
 ### Conditional S141/S142 trigger status
 
-Current status: conditional S141/S142 are not mandatory yet, but remain open triggers after S137-S140 evidence.
+Current status: conditional S141/S142 are not recommended from the current S136-S140 evidence, but remain future triggers if later manual dogfood finds blocking packaged VS Code recovery brittleness or evidence-safety drift.
 
 Create or narrow S141 if S137-S140 show packaged VS Code install, reload, reconnect, runtime restart, host-ready recovery, or stale pending cleanup is brittle enough to block a fresh dogfood user.
 
 Create or narrow S142 if S137-S140 produce mixed evidence that needs a final redaction, evidence-safety, postmortem, or decision-closure pass before any broader dogfood claim. S142 is also required if wording drifts toward production, official OAuth, marketplace, release, signing, notarization, support readiness, hosted-service requirement, real-provider CI, or default-login claims.
 
-Do not create S141/S142 solely because S136 found already-planned S137-S140 gaps. Let S137-S140 verification decide whether the conditional cards are needed. Tiny umbrella, only if it rains.
+Do not create S141/S142 solely because S136 found already-planned S137-S140 gaps. Current S137-S140 verification does not require them. Tiny umbrella, folded neatly unless it rains later.
 
 ### Exact next-card recommendations
 
@@ -297,7 +312,7 @@ Do not create S141/S142 solely because S136 found already-planned S137-S140 gaps
 Run from the repository root after editing this audit:
 
 ```sh
-npm run smoke:experimental-codex-login && npm run dogfood:experimental-codex-login-report -- --self-test && npm run check && git diff --check
+npm run smoke:experimental-codex-controlled-task && npm run dogfood:experimental-codex-login-report -- --self-test && npm run check && git diff --check
 ```
 
 This docs-only verification is not release evidence, not real-provider CI, not an official login approval, and not a production or marketplace readiness gate.

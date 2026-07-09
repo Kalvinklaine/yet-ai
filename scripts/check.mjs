@@ -32,7 +32,8 @@ const validators = [
   ["scripts/dogfood-controlled-agent-task-beta-report.mjs", "--check-template"],
   ["scripts/dogfood-controlled-agent-task-beta-report.mjs", "--self-test"],
   ["scripts/dogfood-experimental-codex-login-report.mjs", "--check-template"],
-  ["scripts/dogfood-experimental-codex-login-report.mjs", "--self-test"]
+  ["scripts/dogfood-experimental-codex-login-report.mjs", "--self-test"],
+  ["scripts/smoke-experimental-codex-controlled-task.mjs"]
 ];
 
 for (const validator of validators) {

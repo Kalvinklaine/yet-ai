@@ -2,7 +2,7 @@
 
 Manual real-account dogfood evidence only. Use this checklist only after explicit acceptance for the current task. Keep completed reports in ignored local evidence locations unless a task asks for a sanitized excerpt. This is not CI evidence, not official OAuth evidence, not production login evidence, not release evidence, not marketplace evidence, not signing evidence, not support-readiness evidence, and not a publication gate.
 
-The experimental Codex-like path remains high-risk, private-endpoint-style, non-default, account-specific, and separate from the safe/default API-key or project-key provider setup. Do not paste secrets, authorization headers, bearer tokens, access tokens, refresh tokens, auth codes, PKCE verifiers, cookies, secret URL query or fragment values, raw provider responses, raw prompts, raw file bodies, raw diffs, private absolute paths, bridge dumps, or browser storage dumps.
+The experimental Codex-like path remains high-risk, private-endpoint-style, non-default, account-specific, and separate from the safe/default API-key or project-key provider setup. Do not paste secrets, authorization headers, bearer tokens, access tokens, refresh tokens, auth codes, PKCE verifiers, cookies, secret URL query or fragment values, raw provider responses, raw prompts, raw file bodies, raw diffs, raw command output, provider payloads, private absolute paths, bridge dumps, browser storage dumps, screenshots with secrets, or account-private identifiers.
 
 ## Run metadata
 
@@ -26,11 +26,14 @@ The experimental Codex-like path remains high-risk, private-endpoint-style, non-
 - First chat result: <streamed answer visible | failed with sanitized provider category | blocked before send | not run>
 - Recovery after first chat: <none | reconnect needed | API-key fallback used | provider/model unavailable | not run>
 
-## Optional VS Code controlled task readiness note
+## VS Code controlled task smoke and dogfood note
 
 - VS Code host readiness: <runtime host.ready visible | controlled task surface visible | unsupported or blocked with sanitized reason | not run>
-- Controlled task handoff note: <ready for later S140 manual task | not attempted | blocked with sanitized reason | not run>
-- Authority boundary observed: <no automatic task execution | no workspace mutation from login alone | not run>
+- Controlled task start: <explicit small task started after first chat | not attempted | blocked with sanitized reason | not run>
+- Controlled task provider proposal: <proposal visible with sanitized labels | provider/model unavailable | not attempted | not run>
+- Controlled task gates observed: <explicit start/context/review/apply/verification gates visible | blocked before gates | not run>
+- Controlled task result label: <small task completed | stopped by user | verification failed with sanitized category | not attempted | not run>
+- Authority boundary observed: <no automatic task execution | no workspace mutation from login alone | Browser unsupported | JetBrains fail-closed unless separately verified | not run>
 
 ## Disconnect and reconnect observations
 
@@ -56,9 +59,13 @@ The experimental Codex-like path remains high-risk, private-endpoint-style, non-
 - Raw provider responses absent: <checked | issue fixed before sharing | not run>
 - Raw prompts absent: <checked | issue fixed before sharing | not run>
 - Raw file bodies and raw diffs absent: <checked | issue fixed before sharing | not run>
+- Raw command output absent: <checked | issue fixed before sharing | not run>
+- Provider payloads absent: <checked | issue fixed before sharing | not run>
 - Private absolute paths absent: <checked | issue fixed before sharing | not run>
 - Bridge dumps absent: <checked | issue fixed before sharing | not run>
 - Browser storage dumps absent: <checked | issue fixed before sharing | not run>
+- Screenshots with secrets absent: <checked | issue fixed before sharing | not run>
+- Account-private identifiers absent: <checked | issue fixed before sharing | not run>
 
 ## Explicit non-claims
 

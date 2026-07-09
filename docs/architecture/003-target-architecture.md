@@ -714,7 +714,7 @@ S135-C4 records the remaining residual risks in `017-controlled-agent-production
 - Target UX: open the IDE, have the plugin start or connect to the local runtime, connect a provider/account safely through engine-owned auth, and send the first GPT message without manual runtime-token copying or manual engine launch.
 - The safe/default real-provider path remains the API-key or project-key fallback until official provider OAuth/device/auth feasibility, contracts, local mock smoke, manual real-provider checklist, and privacy/security review pass.
 - Official login paths must use provider-supported OAuth/device/auth mechanisms where available. Cookie scraping, browser profile import, other-tool credential import, and private web-session reuse are not production defaults.
-- The current experimental Codex-like path remains high-risk/private-endpoint-style, mock-only for automation, and manual real-account testing only when explicitly accepted.
+- The current experimental Codex-like path remains high-risk/private-endpoint-style, mock-only for automation, and manual real-account testing only when explicitly accepted. S136-S140 closure evidence adds a deterministic local/mock controlled-task closure smoke (`npm run smoke:experimental-codex-controlled-task`) and a sanitized manual report template for login, first chat, one small VS Code controlled task, and reload/reconnect observations. This evidence does not change the production/default login boundary; Browser remains unsupported for trusted workspace execution and JetBrains remains fail-closed unless separately verified.
 
 ### Follow-up contract hardening before privileged flows
 
