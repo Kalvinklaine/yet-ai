@@ -13,6 +13,13 @@ const closureEvidence = Object.freeze({
     connected: "sanitized-connected-status",
     secretCustody: "engine-owned-local-secret-store"
   },
+  codexWireContract: {
+    tokenExchange: "form-urlencoded-oauth-exchange-and-refresh",
+    accountMetadata: "safe-account-id-derived-engine-only-not-output",
+    modelDiscovery: "codex-model-discovery-with-bearer-account-metadata",
+    chatEndpoint: "dedicated-responses-sse",
+    legacyChatCompletions: "not-used-for-experimental-codex-fallback"
+  },
   firstChat: {
     providerPrecedence: "safe-provider-precedence-checked",
     path: "experimental-auth-fallback-when-no-safer-provider-ready",
@@ -60,6 +67,11 @@ const requiredLabels = [
   ["manual pending exchange", closureEvidence.login.pending === "manual-exchange-guidance-visible"],
   ["sanitized connected status", closureEvidence.login.connected === "sanitized-connected-status"],
   ["engine secret custody", closureEvidence.login.secretCustody === "engine-owned-local-secret-store"],
+  ["form-urlencoded token contract", closureEvidence.codexWireContract.tokenExchange === "form-urlencoded-oauth-exchange-and-refresh"],
+  ["engine-only account metadata", closureEvidence.codexWireContract.accountMetadata === "safe-account-id-derived-engine-only-not-output"],
+  ["Codex model discovery", closureEvidence.codexWireContract.modelDiscovery === "codex-model-discovery-with-bearer-account-metadata"],
+  ["Responses SSE endpoint", closureEvidence.codexWireContract.chatEndpoint === "dedicated-responses-sse"],
+  ["legacy chat completions not used", closureEvidence.codexWireContract.legacyChatCompletions === "not-used-for-experimental-codex-fallback"],
   ["safe provider precedence", closureEvidence.firstChat.providerPrecedence === "safe-provider-precedence-checked"],
   ["experimental fallback path", closureEvidence.firstChat.path === "experimental-auth-fallback-when-no-safer-provider-ready"],
   ["provider proposal path", closureEvidence.firstChat.providerProposal === "controlled-task-proposal-visible"],

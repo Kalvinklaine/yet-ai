@@ -11,6 +11,8 @@ const runtimeToken = `smoke-runtime-${randomUUID()}`;
 const authCode = `codex-loopback-code-${randomUUID()}`;
 const accessToken = `codex-loopback-access-${randomUUID()}`;
 const refreshToken = `codex-loopback-refresh-${randomUUID()}`;
+const accountId = "acct-loopback-smoke";
+const idToken = jwtWithPayload({ chatgpt_account_id: accountId });
 const chatId = `smoke_codex_${randomUUID().replaceAll("-", "_")}`;
 const requestId = `smoke-codex-request-${randomUUID()}`;
 const firstChatSentinel = "SMOKE_CODEX_FIRST_CHAT";
@@ -22,8 +24,13 @@ let tokenEndpoint;
 let chatEndpoint;
 let tokenRequestCount = 0;
 let chatRequestCount = 0;
+let modelDiscoveryRequestCount = 0;
 let tokenRequestGrantType;
+let tokenRequestContentType;
+let modelDiscoveryAuthorizationHeader;
+let modelDiscoveryAccountHeaderSeen = false;
 let chatAuthorizationHeader;
+let chatAccountHeaderSeen = false;
 let chatRequestModel;
 let chatRequestSentinelSeen = false;
 
@@ -73,7 +80,11 @@ try {
   assert(exchange.sessionId === undefined, "connected exchange exposed session id");
   assert(exchange.authorizationUrl === undefined, "connected exchange exposed authorization URL");
   assert(tokenRequestCount === 1, "mock token endpoint was not called exactly once");
+  assert(tokenRequestContentType?.startsWith("application/x-www-form-urlencoded"), "mock token endpoint did not receive form-urlencoded exchange");
   assert(tokenRequestGrantType === "authorization_code", "mock token endpoint did not receive authorization-code grant");
+  assert(modelDiscoveryRequestCount === 1, "mock model discovery endpoint was not called exactly once");
+  assert(modelDiscoveryAuthorizationHeader === `Bearer ${accessToken}`, "mock model discovery did not receive experimental bearer auth");
+  assert(modelDiscoveryAccountHeaderSeen === true, "mock model discovery did not receive account metadata header");
 
   const connected = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
   assert(connected.status === "connected", "status did not report connected state");
@@ -98,10 +109,11 @@ try {
   assert(events.some((event) => event.type === "stream_delta" && event.payload?.delta?.content === " connected"), "chat stream did not include connected delta");
   assert(events.some((event) => event.type === "stream_finished" && event.payload?.finishReason === "stop"), "chat stream did not finish cleanly");
   assertMonotonicSequence(events);
-  assert(chatRequestCount === 1, "mock chat endpoint was not called exactly once");
-  assert(chatAuthorizationHeader === `Bearer ${accessToken}`, "mock chat endpoint did not receive experimental bearer auth");
-  assert(chatRequestModel === "gpt-5-codex", "mock chat endpoint received unexpected model");
-  assert(chatRequestSentinelSeen === true, "mock chat endpoint did not receive first chat sentinel");
+  assert(chatRequestCount === 1, "mock responses endpoint was not called exactly once");
+  assert(chatAuthorizationHeader === `Bearer ${accessToken}`, "mock responses endpoint did not receive experimental bearer auth");
+  assert(chatAccountHeaderSeen === true, "mock responses endpoint did not receive account metadata header");
+  assert(chatRequestModel === "gpt-5-codex", "mock responses endpoint received unexpected model");
+  assert(chatRequestSentinelSeen === true, "mock responses endpoint did not receive first chat sentinel");
 
   const disconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
     method: "POST",
@@ -118,8 +130,12 @@ try {
   const evidence = {
     mode: "local-loopback-mock-only",
     lifecycle: [initial.status, start.status, pending.status, exchange.status, connected.status, disconnect.status, afterDisconnect.status],
+    tokenExchange: "form-urlencoded-authorization-code",
+    modelDiscovery: "bearer-account-metadata-only",
+    responsesSse: "dedicated-responses-endpoint",
     tokenEndpointCalls: tokenRequestCount,
-    chatEndpointCalls: chatRequestCount,
+    modelDiscoveryCalls: modelDiscoveryRequestCount,
+    responsesEndpointCalls: chatRequestCount,
     firstChat: "safe-sentinel-observed",
     disconnected: afterDisconnect.status === "login_unavailable",
     cloudRequired: false
@@ -135,6 +151,14 @@ try {
   if (tokenEndpoint) await closeServer(tokenEndpoint.server);
   if (chatEndpoint) await closeServer(chatEndpoint.server);
   if (tempHome) await rm(tempHome, { recursive: true, force: true });
+}
+
+function jwtWithPayload(payload) {
+  return `${base64UrlJson({ alg: "none" })}.${base64UrlJson(payload)}.signature`;
+}
+
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
 }
 
 async function makeTempHome() {
@@ -199,22 +223,25 @@ async function startMockTokenEndpoint() {
       return;
     }
     tokenRequestCount += 1;
+    tokenRequestContentType = request.headers["content-type"];
     request.setEncoding("utf8");
     let body = "";
     request.on("data", (chunk) => {
       body += chunk;
     });
     request.on("end", () => {
-      const parsed = JSON.parse(body);
-      tokenRequestGrantType = parsed.grant_type;
-      assert(parsed.code === authCode, "mock token endpoint received unexpected auth code");
-      assert(typeof parsed.code_verifier === "string" && parsed.code_verifier.length > 20, "mock token endpoint did not receive PKCE verifier");
+      const parsed = new URLSearchParams(body);
+      tokenRequestGrantType = parsed.get("grant_type");
+      assert(parsed.get("code") === authCode, "mock token endpoint received unexpected auth code");
+      assert(typeof parsed.get("client_id") === "string" && parsed.get("client_id").length > 10, "mock token endpoint did not receive client id");
+      assert(typeof parsed.get("code_verifier") === "string" && parsed.get("code_verifier").length > 20, "mock token endpoint did not receive PKCE verifier");
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         access_token: accessToken,
         refresh_token: refreshToken,
         expires_in: 1800,
         scope: "openid profile email offline_access",
+        id_token: idToken,
         account_label: "loopback codex smoke account"
       }));
     });
@@ -226,12 +253,21 @@ async function startMockTokenEndpoint() {
 
 async function startMockChatEndpoint() {
   const server = http.createServer((request, response) => {
-    if (request.method !== "POST" || !["/chat/completions", "/v1/chat/completions"].includes(request.url)) {
+    if (request.method === "GET" && request.url?.startsWith("/models?")) {
+      modelDiscoveryRequestCount += 1;
+      modelDiscoveryAuthorizationHeader = request.headers.authorization;
+      modelDiscoveryAccountHeaderSeen = request.headers["chatgpt-account-id"] === accountId;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [{ id: "gpt-5-codex" }] }));
+      return;
+    }
+    if (request.method !== "POST" || request.url !== "/responses") {
       response.writeHead(404).end();
       return;
     }
     chatRequestCount += 1;
     chatAuthorizationHeader = request.headers.authorization;
+    chatAccountHeaderSeen = request.headers["chatgpt-account-id"] === accountId;
     request.setEncoding("utf8");
     let body = "";
     request.on("data", (chunk) => {
@@ -240,14 +276,14 @@ async function startMockChatEndpoint() {
     request.on("end", () => {
       const parsed = JSON.parse(body);
       chatRequestModel = parsed.model;
-      chatRequestSentinelSeen = parsed.messages?.[0]?.content === firstChatSentinel;
+      chatRequestSentinelSeen = parsed.input?.[0]?.content?.[0]?.text === firstChatSentinel;
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache"
       });
-      response.write('data: {"choices":[{"delta":{"content":"Loopback"}}]}\n\n');
-      response.write('data: {"choices":[{"delta":{"content":" connected"}}]}\n\n');
-      response.end("data: [DONE]\n\n");
+      response.write('data: {"type":"response.output_text.delta","delta":"Loopback"}\n\n');
+      response.write('data: {"type":"response.output_text.delta","delta":" connected"}\n\n');
+      response.end('data: {"type":"response.completed"}\n\n');
     });
   });
   await listen(server, "127.0.0.1", 0);
@@ -370,6 +406,8 @@ function assertNoUnsafeEvidence(text) {
     authCode,
     accessToken,
     refreshToken,
+    idToken,
+    accountId,
     `bearer ${runtimeToken}`,
     `bearer ${accessToken}`,
     "code_verifier",
@@ -390,7 +428,7 @@ function assertNoUnsafeEvidence(text) {
 
 function redactUnsafe(text) {
   let value = String(text);
-  for (const marker of [runtimeToken, authCode, accessToken, refreshToken, firstChatSentinel]) {
+  for (const marker of [runtimeToken, authCode, accessToken, refreshToken, idToken, accountId, firstChatSentinel]) {
     value = value.split(marker).join("[redacted]");
   }
   return value

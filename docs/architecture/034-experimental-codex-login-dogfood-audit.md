@@ -56,15 +56,18 @@ Current refresh behavior:
 
 - Chat provider selection tries ready OpenAI-compatible API-key providers first, then Ollama, then Demo Mode, then unexpired experimental Codex-like auth.
 - Experimental Codex-like auth is not selected while a pending Codex-like login session is unexpired.
+- Exchange and refresh use form-urlencoded OAuth token requests, not JSON token bodies.
+- Exchange derives the account metadata from token claims, discovers the usable Codex model with `GET /models?client_version=...` using bearer auth plus `chatgpt-account-id`, and stores the selected model and account id only in engine-owned metadata.
+- GUI-facing status and deterministic smoke output must not expose the raw account id, token-claim details, provider payloads, or authorization headers.
 - When stored Codex-like auth is near expiry, the engine attempts refresh before chat.
 - If a chat call receives pre-stream unauthorized from the experimental bearer path, the engine attempts one refresh and retries only if the access token changed.
 - Refresh uses an in-process lock plus a file lock, validates refreshed scopes and expiry, stores a new secret bundle, and clears secrets on refresh-token reuse when no newer token is available.
 
 ### Chat behavior after connection
 
-When no API-key provider, Ollama provider, or Demo Mode is selected, the engine may use a locally stored, unexpired experimental Codex-like bearer token for chat. It sends an OpenAI-compatible streaming chat request to the configured experimental chat base and model, normalizes stream deltas into the existing chat SSE flow, and maps provider failures into stable sanitized chat errors.
+When no API-key provider, Ollama provider, or Demo Mode is selected, the engine may use a locally stored, unexpired experimental Codex-like bearer token for chat. It sends a dedicated Codex-compatible Responses SSE request to the configured experimental Codex base at `/responses`, using the discovered model and engine-owned account metadata headers, then normalizes text deltas into the existing chat SSE flow and maps provider failures into stable sanitized chat errors.
 
-This route is fallback-like and non-default. API-key readiness wins over experimental account auth, and Demo Mode also wins over experimental account auth.
+This route is fallback-like and non-default. API-key readiness wins over experimental account auth, and Demo Mode also wins over experimental account auth. The experimental Codex fallback must not be described as using `/chat/completions`; that path remains relevant only to safer OpenAI-compatible API-key providers and historical contrast.
 
 ### GUI-visible flow
 
@@ -225,9 +228,9 @@ S136 closes with enough deterministic and checklist evidence to continue the man
 
 ### Deterministic smoke result
 
-S136-C2 added `npm run smoke:experimental-codex-login` as mock-only loopback evidence for the existing engine path. The smoke exercises start, pending status, exchange through a mock token endpoint, connected status, first chat through a mock chat endpoint, disconnect, and post-disconnect cleared status. Its evidence is intentionally sanitized to lifecycle labels, endpoint call counts, safe booleans, and no-secret assertions. It is useful evidence that the local engine lifecycle and first-chat fallback can work with fake credentials; it is not real-provider CI and not real-account evidence.
+S141 closure keeps `npm run smoke:experimental-codex-login` as mock-only loopback evidence for the implemented engine path. The smoke exercises start, pending status, form-urlencoded authorization-code token exchange through a mock token endpoint, safe account-id extraction from a mock token claim, Codex model discovery through a mock `/models?client_version=...` endpoint with bearer plus account metadata headers, connected status, first chat through a mock `/responses` SSE endpoint, disconnect, and post-disconnect cleared status. Its evidence is intentionally sanitized to lifecycle labels, local/mock contract labels, endpoint call counts, safe booleans, and no-secret assertions. It is useful evidence that the local engine lifecycle and first-chat fallback can work with fake credentials; it is not real-provider CI and not real-account evidence.
 
-Current S136 deterministic status: pass based on the S136-C2 reported verification and required re-run for this closure card. If the closure verification fails, treat the failure as a blocker for the affected next card instead of hiding it.
+Current deterministic status: must be re-run by this closure card with `npm run smoke:experimental-codex-login`, `npm run smoke:experimental-codex-controlled-task`, `npm run check`, and `git diff --check`. If closure verification fails, treat the failure as a blocker instead of hiding it.
 
 ### Manual checklist readiness
 
@@ -275,7 +278,8 @@ Evidence now includes:
 
 - experimental login lifecycle template and checker for sanitized manual real-account reports;
 - engine and GUI regressions for connected experimental auth, first chat/provider proposal routing, and controlled workflow metadata gates;
-- `npm run smoke:experimental-codex-controlled-task`, a pure local/mock metadata smoke that ties experimental login labels, first chat/provider proposal labels, VS Code controlled task gates, reload/reconnect labels, Browser unsupported status, JetBrains fail-closed status, and explicit non-claims into one sanitized closure artifact;
+- `npm run smoke:experimental-codex-login`, a local loopback smoke for form-urlencoded token exchange, safe account/model metadata handling, Codex model discovery, dedicated `/responses` SSE first chat, disconnect, and sanitized output boundaries;
+- `npm run smoke:experimental-codex-controlled-task`, a pure local/mock metadata smoke that ties experimental login labels, Codex wire-contract labels, first chat/provider proposal labels, VS Code controlled task gates, reload/reconnect labels, Browser unsupported status, JetBrains fail-closed status, and explicit non-claims into one sanitized closure artifact;
 - `npm run check`, which includes the dogfood report template/self-test and the controlled-task closure smoke.
 
 The closure smoke is deterministic evidence only. It does not start VS Code, call a provider, use real credentials, launch a hosted service, mutate a workspace, run shell/git/tool commands for a task, publish packages, sign, notarize, or prove real-account success. Manual real-account dogfood remains allowed only after explicit acceptance and must use sanitized labels in `docs/dogfood/experimental-codex-login.md` or a report checked by `npm run dogfood:experimental-codex-login-report -- --check <local-report>`.

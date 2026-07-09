@@ -11,6 +11,7 @@ The experimental Codex-like path remains high-risk, private-endpoint-style, non-
 - Date label: <YYYY-MM-DD or sanitized sprint label | not run>
 - Build/artifact label: <local dev checkout | VS Code dev-preview artifact family/name | not run>
 - Provider path under test: experimental Codex-like account login only; safe/default API-key or project-key path remains the approved real-provider path
+- Expected experimental contract label: form-urlencoded OAuth exchange/refresh, engine-only safe account metadata, Codex model discovery, and dedicated Responses SSE chat; do not record raw account ids, token claims, tokens, provider bodies, authorization headers, or raw prompts
 
 ## Experimental login lifecycle
 
@@ -18,12 +19,15 @@ The experimental Codex-like path remains high-risk, private-endpoint-style, non-
 - Pending status outcome: <pending visible with manual exchange guidance | expired before exchange | state mismatch handled | not run>
 - Exchange outcome: <connected with sanitized status | denied | expired | provider rejected | sanitized error | not run>
 - Connected status evidence: <sanitized account label/scopes/expiry visible | redacted hint visible | connected status unavailable | not run>
+- Token exchange/refresh evidence label: <form-urlencoded exchange observed through local/mock or manual sanitized label | refresh not observed | sanitized error | not run>
+- Model discovery evidence label: <safe model metadata visible without account id | provider/model unavailable | not run>
 - Disconnect outcome: <disconnect cleared experimental account auth | disconnect unavailable | not run>
 
 ## First chat result
 
 - Provider selection expectation: <experimental account auth used because no safer ready provider won | API-key/project-key path won by precedence | Demo Mode won by precedence | not run>
 - First chat result: <streamed answer visible | failed with sanitized provider category | blocked before send | not run>
+- First chat transport label: <dedicated Responses SSE used for experimental Codex fallback | safer API-key/project-key path used | Demo Mode used | not run>
 - Recovery after first chat: <none | reconnect needed | API-key fallback used | provider/model unavailable | not run>
 
 ## VS Code controlled task smoke and dogfood note
@@ -66,6 +70,7 @@ The experimental Codex-like path remains high-risk, private-endpoint-style, non-
 - Browser storage dumps absent: <checked | issue fixed before sharing | not run>
 - Screenshots with secrets absent: <checked | issue fixed before sharing | not run>
 - Account-private identifiers absent: <checked | issue fixed before sharing | not run>
+- Raw account ids and token claims absent: <checked | issue fixed before sharing | not run>
 
 ## Explicit non-claims
 
