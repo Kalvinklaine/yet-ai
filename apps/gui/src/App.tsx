@@ -568,7 +568,7 @@ export function App() {
         : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
           ? "OpenAI account login changing"
           : experimentalOauthChatReady
-            ? "Experimental OpenAI account / gpt-5-codex"
+            ? "Experimental OpenAI account fallback / gpt-5-codex"
             : apiKeyReadiness.message
               ? readinessStateLabel(apiKeyReadinessState, false)
               : "Provider required";
@@ -585,7 +585,7 @@ export function App() {
         : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
           ? "OpenAI account login state is changing. Wait for the local runtime to finish, refresh login status, or use the API-key fallback before sending."
           : experimentalOauthChatReady
-            ? "Experimental Codex-like OpenAI account chat is connected through the local runtime. This private-endpoint path is high-risk, not official public OAuth support, and not production-ready."
+            ? "Experimental Codex-like OpenAI account chat is available as a fallback through the local runtime because no safer API-key, OpenAI-compatible, local, or Demo Mode path is ready. This private-endpoint path is high-risk, not official public OAuth support, not default, and not production-ready."
             : activeModelError
               ? "Runtime model refresh failed. Check the local runtime/provider details shown here, Test provider if one is saved, then Refresh runtime again before sending the first message."
               : "Provider required: choose Demo Mode for a no-key local canned trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers. No production account login is required.";
@@ -3274,8 +3274,8 @@ export function App() {
     if (experimentalOauthChatReady) {
       return {
         title: "Experimental account login can send",
-        reason: "The account login fallback is connected, but this private-endpoint path is not the safe/default provider setup.",
-        nextAction: "Prefer configuring an API-key provider; otherwise type a prompt only if you accept the experimental risk.",
+        reason: "The account login fallback is connected only because no safer API-key/OpenAI-compatible, local, or Demo Mode chat path is ready; this private-endpoint path is not the safe/default provider setup.",
+        nextAction: "Prefer configuring an API-key or local provider; otherwise type a prompt only if you accept the experimental dev-preview risk.",
         actions: [{ kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "send_first_message", label: "Send first message" }],
         notes,
       };
@@ -3447,7 +3447,7 @@ export function App() {
             </div>
             <div className="chat-readiness-tiles" aria-label="Chat readiness checkpoints">
               <span className={`readiness-pill ${runtimeConnected ? "ok" : "warn"}`}>{runtimeConnected ? "Runtime ready" : "Runtime needs refresh"}</span>
-              <span className={`readiness-pill ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? activeSelectedDemoMode ? "Demo send ready" : "Provider send ready" : "Provider or Demo Mode needed"}</span>
+              <span className={`readiness-pill ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? activeSelectedDemoMode ? "Demo send ready" : experimentalOauthChatReady ? "Experimental fallback send ready" : "Provider send ready" : "Provider or Demo Mode needed"}</span>
               <span className="readiness-pill ok">Local-first BYOK</span>
             </div>
           </div>

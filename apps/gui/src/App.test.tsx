@@ -1814,9 +1814,10 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Why: Send is enabled for GPT-4o mini through openai-api.");
     expect(container?.textContent).toContain("Next safest action: Type a prompt and click Send through the local runtime.");
-    expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
     expect(container?.textContent).not.toContain("Experimental account login can send");
-    expect(container?.textContent).not.toContain("Prefer configuring an API-key provider; otherwise type a prompt only if you accept the experimental risk.");
+    expect(container?.textContent).not.toContain("Prefer configuring an API-key or local provider; otherwise type a prompt only if you accept the experimental dev-preview risk.");
+    expect(container?.textContent).not.toContain("Experimental fallback send ready");
     expect(findButton("Send").disabled).toBe(false);
     expect(browserStorageDump()).not.toContain("provider-login-session-precedence");
     expect(browserStorageDump()).not.toContain("oauth");
@@ -1925,7 +1926,7 @@ describe("provider secret boundary", () => {
     renderApp();
 
     await flushAsync();
-    expect(container?.textContent).toContain("State: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
     expect(findButton("Send").disabled).toBe(false);
 
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -6812,22 +6813,42 @@ describe("chat panel", () => {
   });
 
 
-  it("enables chat readiness from connected experimental OpenAI OAuth when no provider model is ready", async () => {
+  it("connected experimental auth with no safer ready path enables experimental fallback send-ready copy", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
     renderApp();
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("0 enabled providers");
-    expect(container?.textContent).toContain("State: Experimental OpenAI account / gpt-5-codex");
-    expect(container?.textContent).toContain("Experimental Codex-like OpenAI account chat is connected through the local runtime.");
-    expect(container?.textContent).toContain("private-endpoint path is high-risk");
-    expect(container?.textContent).toContain("OpenAI API-key fallback remains the safe/default setup");
+    const text = container?.textContent ?? "";
+    expect(text).toContain("0 enabled providers");
+    expect(text).toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
+    expect(text).toContain("Experimental Codex-like OpenAI account chat is available as a fallback through the local runtime because no safer API-key, OpenAI-compatible, local, or Demo Mode path is ready.");
+    expect(text).toContain("not official public OAuth support");
+    expect(text).toContain("not default");
+    expect(text).toContain("not production-ready");
+    expect(text).toContain("Experimental fallback send ready");
+    expect(text).toContain("Experimental account login can send");
+    expect(text).toContain("Why: The account login fallback is connected only because no safer API-key/OpenAI-compatible, local, or Demo Mode chat path is ready; this private-endpoint path is not the safe/default provider setup.");
+    expect(text).toContain("Next safest action: Prefer configuring an API-key or local provider; otherwise type a prompt only if you accept the experimental dev-preview risk.");
     expect(findButton("Send").disabled).toBe(false);
-    expect(container?.textContent).toContain("Account loginexperimental high-risk connected");
-    expect(container?.textContent).toContain("First messageSend available");
+    expect(text).toContain("Account loginexperimental high-risk connected");
+    expect(text).toContain("First messageSend available");
     expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("oauth");
+  });
+
+  it.each(["pending", "expired", "revoked", "error"] satisfies ProviderAuthStatus[])("keeps Send disabled for non-connected experimental auth status %s", async (status) => {
+    mockRuntimeResponses({ authResponse: providerAuthResponse(status) });
+    renderApp();
+
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain(status);
+    expect(text).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
+    expect(text).not.toContain("Experimental account login can send");
+    expect(findButton("Send").disabled).toBe(true);
     expect(browserStorageDump()).not.toContain("oauth");
   });
 
@@ -6882,7 +6903,7 @@ describe("chat panel", () => {
     });
 
     expect(container?.textContent).toContain("State: OpenAI account login changing");
-    expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
     expect(findButton("Send").disabled).toBe(true);
 
     disconnect.resolve(jsonResponse({ ...providerAuthResponse("not_configured"), success: true }));
@@ -6949,7 +6970,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).not.toContain("stale disconnect token response");
-    expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
   });
 
   it("renders sanitized provider-auth mutation failures without raw code session token or cookie text", async () => {
@@ -6998,7 +7019,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("1 enabled provider");
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
-    expect(container?.textContent).not.toContain("State: Experimental OpenAI account / gpt-5-codex");
+    expect(container?.textContent).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
     expect(findButton("Send").disabled).toBe(false);
   });
 
