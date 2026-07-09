@@ -2133,6 +2133,64 @@ describe("provider secret boundary", () => {
     expect(browserStorageDump()).not.toContain(rawSession);
   });
 
+  it("re-queries provider auth after runtime reconnect and clears stale pending UI", async () => {
+    const rawSession = "provider-login-session-reconnect-cleanup";
+    const staleCode = "manual-code-before-reconnect";
+    let statusResponse: ProviderAuthResponse = {
+      ...pendingExperimentalAuthResponse(),
+      sessionId: rawSession,
+    };
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(statusResponse));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: statusResponse });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(authCodeInput(), staleCode);
+    });
+    expect(authCodeInput().value).toBe(staleCode);
+    const statusCallsBeforeReconnect = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+
+    statusResponse = {
+      ...providerAuthResponse("expired"),
+      lastError: "Runtime recovered without the pending browser session.",
+    };
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "disconnected", diagnosis: "runtime stopped during pending login", nextAction: "Restart runtime." }));
+    await flushAsync();
+
+    let text = container?.textContent ?? "";
+    expect(authCodeInputOptional()).toBeUndefined();
+    expect(text).toContain("Checking account login status…");
+    expect(text).toContain("Refresh the local runtime status or continue with the API-key fallback.");
+    expect(text).not.toContain(rawSession);
+    expect(text).not.toContain(staleCode);
+
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "connected", diagnosis: "runtime reconnected after restart", nextAction: "Refresh runtime." }));
+    await flushAsync();
+    await flushAsync();
+
+    const statusCallsAfterReconnect = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+    expect(statusCallsAfterReconnect).toBeGreaterThan(statusCallsBeforeReconnect);
+    text = container?.textContent ?? "";
+    expect(text).toContain("OpenAI account expired");
+    expect(text).toContain("Runtime recovered without the pending browser session.");
+    expect(text).toContain("Reconnect OpenAI account");
+    expect(text).toContain("Use OpenAI API key fallback");
+    expect(text).not.toContain("Manual authorization-code exchange");
+    expect(text).not.toContain(rawSession);
+    expect(text).not.toContain(staleCode);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSession);
+    expect(browserStorageDump()).not.toContain(staleCode);
+  });
+
   it("clears stale manual exchange input when refreshed status becomes terminal", async () => {
     const code = "manual-code-cleared-after-expiry";
     let statusResponse = pendingExperimentalAuthResponse();

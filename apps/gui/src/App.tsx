@@ -1247,6 +1247,11 @@ export function App() {
           oneStepEditRequestIdRef.current = null;
           setRuntimeDataRevision(null);
           setProviderDataRevision(null);
+          setProviderAuthDataRevision(null);
+          providerAuthExchangeInFlightRef.current = false;
+          setProviderAuthExchangeWorking(false);
+          setProviderAuthExchangeCode("");
+          setProviderAuthExchangeError(null);
           setDemoModeDataRevision(null);
           stopPendingControlledCommandRunState("Runtime disconnected or blocked controlled verification. Stale host results will be ignored; no auto-retry was started.");
           setPendingControlledFileReadRequestId(null);
@@ -1841,6 +1846,13 @@ export function App() {
     setProviderAuthExchangeCode("");
     setProviderAuthExchangeError(null);
   }, [activeProviderAuthStatus?.status]);
+
+  useEffect(() => {
+    const lifecycle = activeRuntimeLifecycle?.lifecycle;
+    if ((lifecycle === "connected" || lifecycle === "degraded") && providerAuthDataRevision !== settingsRevision) {
+      void refreshProviderAuthStatus();
+    }
+  }, [activeRuntimeLifecycle?.lifecycle, providerAuthDataRevision, refreshProviderAuthStatus, settingsRevision]);
 
   const refreshChats = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = chatHistoryAttemptRef.current + 1;
