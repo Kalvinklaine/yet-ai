@@ -85,15 +85,15 @@ const verificationCommands: VerificationCommand[] = [
 ];
 
 const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
-  not_configured: "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path.",
-  api_key_configured: "OpenAI API-key fallback is configured locally. Account login is not required for the default real-provider path.",
+  not_configured: "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path; the experimental account path is optional and high-risk.",
+  api_key_configured: "OpenAI API-key fallback is configured locally. Account login is not required for the default real-provider path, and API-key/Demo Mode precedence stays intact.",
   login_available: "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.",
   login_unavailable: "OpenAI account login is planned/not available for production; use the OpenAI API-key fallback.",
-  pending: "Experimental OpenAI account login is pending. Finish the browser/device step, then refresh status; use API-key fallback for the default path.",
+  pending: "Experimental OpenAI account login is pending. Finish the browser/device step, then exchange the code or refresh status; use API-key fallback for the default path.",
   connected: "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.",
-  expired: "Experimental OpenAI account login expired. Start it again only if you accept the risk, or use the API-key fallback.",
-  revoked: "Experimental OpenAI account login was revoked. Disconnect it or use the API-key fallback.",
-  error: "Experimental OpenAI account login reported an error. Review sanitized details or use the API-key fallback.",
+  expired: "Experimental OpenAI account login expired. Reconnect only if you accept the risk, or use the API-key fallback.",
+  revoked: "Experimental OpenAI account login was revoked or disconnected. Reconnect only if you accept the risk, or use the API-key fallback.",
+  error: "Experimental OpenAI account login reported a sanitized error. Retry/reconnect only if you accept the risk, or use the API-key fallback.",
 };
 
 function sanitizeSseEvent(event: SseEvent): SseEvent {
@@ -5936,6 +5936,13 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
         <span>{providerAuthStatusCopy[status.status]}</span>
         {status.message && <span>{sanitizeDisplayText(status.message)}</span>}
       </div>
+      {status.status !== "login_unavailable" && (
+        <div className="recovery-card" role="status">
+          <strong>{providerAuthRecoveryTitle(status.status)}</strong>
+          <span>{providerAuthRecoveryCopy(status)}</span>
+          <span className="subtle">Login/chat only. No workspace execution.</span>
+        </div>
+      )}
       <ProviderAuthStateBody status={status} />
       {status.status === "pending" && status.authSource === "oauth" && status.sessionId && (
         <form className="manual-exchange-card stack" onSubmit={onExchange}>
@@ -6011,6 +6018,50 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
     return <span className="subtle">The safe API-key fallback is already configured locally. You can keep using it or set up account login later.</span>;
   }
   return <span className="subtle">Start account login when supported, or use the API-key fallback now.</span>;
+}
+
+function providerAuthRecoveryTitle(status: ProviderAuthStatus): string {
+  switch (status) {
+    case "pending":
+      return "Pending recovery";
+    case "connected":
+      return "Connected handoff";
+    case "expired":
+      return "Expired recovery";
+    case "revoked":
+      return "Revoked or disconnected recovery";
+    case "error":
+      return "Sanitized error recovery";
+    case "api_key_configured":
+      return "API-key fallback active";
+    case "login_unavailable":
+      return "Unavailable fallback";
+    default:
+      return "Safe next step";
+  }
+}
+
+function providerAuthRecoveryCopy(status: ProviderAuthResponse): string {
+  switch (status.status) {
+    case "pending":
+      return "Complete browser verification, paste only the authorization code if needed, then Exchange authorization code. If it expires, denied, or mismatches, use Reconnect login, Cancel or disconnect login, or the API-key fallback.";
+    case "connected":
+      return "Connected status is sanitized runtime evidence only. API-key providers and Demo Mode still take precedence for chat when ready; disconnect or reconnect stays explicit.";
+    case "expired":
+      return "The session can no longer power chat. Reconnect experimental account only after accepting the private-endpoint risk, or switch to the API-key fallback.";
+    case "revoked":
+      return "The runtime reports the account path as revoked or disconnected. Use Disconnect login to clear local state, reconnect explicitly, or switch to the API-key fallback.";
+    case "error":
+      return "Only sanitized error details are shown. Retry login, reconnect, disconnect, or use the API-key fallback; raw provider payloads are never needed in the GUI.";
+    case "api_key_configured":
+      return "The safe/default API-key path is already available locally. Keep using it unless you intentionally start the experimental high-risk path.";
+    case "login_unavailable":
+      return "Normal account login is unavailable. Continue with API-key fallback or Demo Mode; this is not a blocked local-first setup.";
+    case "login_available":
+      return "Account login is available only as an explicit experimental path. Prefer API-key fallback for real-provider setup unless dogfooding this risk path.";
+    default:
+      return "Choose API-key fallback for the supported real-provider setup, or explicitly start the experimental high-risk account path.";
+  }
 }
 
 function providerAuthStateTitle(status: ProviderAuthStatus): string {

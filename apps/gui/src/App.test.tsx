@@ -1799,6 +1799,41 @@ describe("provider secret boundary", () => {
     expect(browserStorageDump()).not.toContain("access_token");
   });
 
+  it("renders all experimental login card actions without raw authorization URL material", async () => {
+    const authUrl = "https://auth.openai.com/oauth/authorize?client_id=yet-ai-local&state=secret-state-query&code_challenge=secret-challenge";
+    const openMock = vi.spyOn(window, "open").mockImplementation(() => null);
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({
+      authSupportsLogin: true,
+      startAuthUrl: authUrl,
+      startAuthMessage: "Experimental high-risk Codex-like OpenAI login is pending.",
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Experimental Codex-like account login risk");
+    expect(container?.textContent).toContain("not official public OpenAI OAuth support");
+    expect(container?.textContent).toContain("Start experimental OpenAI login");
+    expect(container?.textContent).toContain("Experimental high-risk account login");
+    expect(container?.textContent).toContain("Use OpenAI API key fallback");
+    expect(container?.textContent).toContain("Login/chat only. No workspace execution.");
+    expect(container?.textContent).not.toContain("secret-state-query");
+    expect(container?.textContent).not.toContain("secret-challenge");
+
+    await act(async () => {
+      findButton("Experimental high-risk account login").click();
+    });
+
+    expect(openMock).toHaveBeenCalledWith(authUrl, "_blank", "noopener,noreferrer");
+    expect(container?.textContent).not.toContain(authUrl);
+    expect(container?.textContent).not.toContain("secret-state-query");
+    expect(container?.textContent).not.toContain("secret-challenge");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("secret-state-query");
+    expect(browserStorageDump()).not.toContain("secret-challenge");
+  });
+
   it("keeps Send disabled while disconnecting connected experimental login when no API-key model is ready", async () => {
     const disconnect = deferred<Response>();
     mockRuntimeResponses({ authResponse: providerAuthResponse("connected") });
@@ -1949,13 +1984,15 @@ describe("provider secret boundary", () => {
   });
 
   it.each([
-    ["login_unavailable", "OpenAI account login is planned/not available for production; use the OpenAI API-key fallback."],
-    ["api_key_configured", "OpenAI API-key fallback is configured locally. Account login is not required for the default real-provider path."],
-    ["pending", "Experimental OpenAI account login is pending. Finish the browser/device step, then refresh status; use API-key fallback for the default path."],
-    ["connected", "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path."],
-    ["expired", "Experimental OpenAI account login expired. Start it again only if you accept the risk, or use the API-key fallback."],
-    ["revoked", "Experimental OpenAI account login was revoked. Disconnect it or use the API-key fallback."],
-  ] satisfies Array<[ProviderAuthStatus, string]>)("renders provider auth status %s", async (status, copy) => {
+    ["not_configured", "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path; the experimental account path is optional and high-risk.", "Safe next step"],
+    ["login_available", "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.", "Account login is available only as an explicit experimental path."],
+    ["api_key_configured", "OpenAI API-key fallback is configured locally. Account login is not required for the default real-provider path, and API-key/Demo Mode precedence stays intact.", "The safe/default API-key path is already available locally."],
+    ["pending", "Experimental OpenAI account login is pending. Finish the browser/device step, then exchange the code or refresh status; use API-key fallback for the default path.", "Complete browser verification, paste only the authorization code if needed"],
+    ["connected", "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.", "API-key providers and Demo Mode still take precedence for chat when ready"],
+    ["expired", "Experimental OpenAI account login expired. Reconnect only if you accept the risk, or use the API-key fallback.", "The session can no longer power chat."],
+    ["revoked", "Experimental OpenAI account login was revoked or disconnected. Reconnect only if you accept the risk, or use the API-key fallback.", "The runtime reports the account path as revoked or disconnected."],
+    ["error", "Experimental OpenAI account login reported a sanitized error. Retry/reconnect only if you accept the risk, or use the API-key fallback.", "Only sanitized error details are shown."],
+  ] satisfies Array<[ProviderAuthStatus, string, string]>)("renders provider auth status %s", async (status, copy, recoveryCopy) => {
     mockRuntimeResponses({ authResponse: providerAuthResponse(status) });
     renderApp();
 
@@ -1963,6 +2000,8 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).toContain(status);
     expect(container?.textContent).toContain(copy);
+    expect(container?.textContent).toContain(recoveryCopy);
+    expect(container?.textContent).toContain("Login/chat only. No workspace execution.");
   });
 
   it("enables disconnect for connected account login", async () => {
