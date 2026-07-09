@@ -219,12 +219,85 @@ S141-S142 may be skipped or narrowed only if S136-S140 produce all of the follow
 - docs and UI still state experimental, private-endpoint-style, non-default, not official OpenAI OAuth, and not production-ready;
 - API-key fallback remains visibly safe/default and wins when ready.
 
+## S136 decision
+
+S136 closes with enough deterministic and checklist evidence to continue the mandatory S137-S140 dogfood-hardening wave, but not enough evidence to claim real-account success, production login readiness, official OAuth support, release readiness, marketplace readiness, or support readiness. The path remains experimental, high-risk, private-endpoint-style, non-default, and separate from the safe/default local BYOK API-key or OpenAI-compatible provider path.
+
+### Deterministic smoke result
+
+S136-C2 added `npm run smoke:experimental-codex-login` as mock-only loopback evidence for the existing engine path. The smoke exercises start, pending status, exchange through a mock token endpoint, connected status, first chat through a mock chat endpoint, disconnect, and post-disconnect cleared status. Its evidence is intentionally sanitized to lifecycle labels, endpoint call counts, safe booleans, and no-secret assertions. It is useful evidence that the local engine lifecycle and first-chat fallback can work with fake credentials; it is not real-provider CI and not real-account evidence.
+
+Current S136 deterministic status: pass based on the S136-C2 reported verification and required re-run for this closure card. If the closure verification fails, treat the failure as a blocker for the affected next card instead of hiding it.
+
+### Manual checklist readiness
+
+S136-C3 added `docs/dogfood/experimental-codex-login.md` and `npm run dogfood:experimental-codex-login-report` as the manual dogfood evidence template and sanitizer. The checklist is ready for an explicitly accepted local real-account run because it records only sanitized status labels for runtime launch/connect, login start, pending, exchange, connected status, first chat, optional VS Code controlled-task readiness, disconnect/reconnect, known issue categories, evidence-safety checks, and explicit non-claims.
+
+Current S136 manual status: checklist ready, no completed real-account report evidenced in this card. Do not say the real account path works until an explicitly accepted sanitized manual report exists.
+
+### Implementation gaps by severity
+
+| Severity | S136 closure status | Required handling in S137-S140 |
+| --- | --- | --- |
+| P0 | Production/default account login remains blocked by feasibility and risk. | Preserve non-default experimental wording, API-key fallback precedence, local-first BYOK, and no official OAuth or production claims in every follow-up. |
+| P0 | The experimental path still depends on private-endpoint-style behavior. | Keep automation loopback/mock-only; never add real credentials or real-provider CI. |
+| P1 | IDE-owned browser handoff and callback polish are not proven. | S137 should harden pending/manual exchange UX and clarify recovery without expanding host authority. |
+| P1 | First-chat handoff is not explicit enough for dogfooders. | S137/S139 should show which provider path will power the next send and preserve safer-provider precedence. |
+| P1 | Integrated VS Code login-to-controlled-task evidence does not exist yet. | S140 should add a sanitized VS Code-first manual checklist and deterministic mock/loopback evidence for controlled-task handoff. |
+| P2 | Expired, revoked, refresh, provider-rejected, and reconnect states may be safe but opaque. | S138/S139 should improve visible recovery guidance and add focused regressions where behavior changes. |
+| P2 | Browser, VS Code, and JetBrains parity is uneven. | Keep S137-S140 VS Code-first; Browser remains login/chat preview, JetBrains remains fail-closed unless separately verified. |
+| P3 | Audit, smoke, report helper, and docs index are now present. | Keep docs indexed and verification commands current when future cards modify these surfaces. |
+
+### Go/no-go for S137-S140
+
+Decision: go for mandatory S137-S140 hardening.
+
+Rationale:
+
+- The deterministic loopback smoke covers the existing engine lifecycle and first-chat path without secrets or real providers.
+- The manual dogfood checklist and sanitizer are ready to collect explicitly accepted real-account evidence later.
+- The known gaps are UX, recovery, first-chat handoff, session lifecycle, and VS Code controlled-task evidence gaps, which match the planned S137-S140 scope.
+- No S136 evidence currently shows a blocker that requires replacing S137-S140 with a different roadmap.
+
+Constraints for the go decision:
+
+- Do not promote the path to default login.
+- Do not remove API-key or OpenAI-compatible local BYOK precedence.
+- Do not add hosted Yet AI backend, account, managed gateway, product credit, or cloud workspace requirements.
+- Do not store or expose raw provider secrets, auth codes, cookies, PKCE verifiers, authorization headers, raw prompts, raw provider payloads, raw file bodies, raw diffs, private paths, or bridge dumps.
+- Do not claim real-account success until a sanitized manual report is produced outside CI with explicit acceptance.
+
+### Conditional S141/S142 trigger status
+
+Current status: conditional S141/S142 are not mandatory yet, but remain open triggers after S137-S140 evidence.
+
+Create or narrow S141 if S137-S140 show packaged VS Code install, reload, reconnect, runtime restart, host-ready recovery, or stale pending cleanup is brittle enough to block a fresh dogfood user.
+
+Create or narrow S142 if S137-S140 produce mixed evidence that needs a final redaction, evidence-safety, postmortem, or decision-closure pass before any broader dogfood claim. S142 is also required if wording drifts toward production, official OAuth, marketplace, release, signing, notarization, support readiness, hosted-service requirement, real-provider CI, or default-login claims.
+
+Do not create S141/S142 solely because S136 found already-planned S137-S140 gaps. Let S137-S140 verification decide whether the conditional cards are needed. Tiny umbrella, only if it rains.
+
+### Exact next-card recommendations
+
+1. S137-C1: Harden the experimental login card states and copy so unavailable normal login, API-key fallback, and explicit high-risk experimental login remain visually distinct.
+2. S137-C2: Improve pending/manual exchange UX with clearer step-by-step recovery for expired, denied, mismatched, unsafe URL, and sanitized runtime-error states.
+3. S137-C3: Add send-readiness copy that states whether API-key/project-key, Demo Mode, or experimental account auth will power the next send.
+4. S138-C1: Add focused engine regressions for refresh, expiry, revoked, disconnect, pending cleanup, and provider rejection if existing tests do not already cover the dogfood branches.
+5. S138-C2: Polish GUI recovery states for expired/revoked/runtime-restart/reconnect without raw secrets or hidden authority.
+6. S138-C3: Verify reload/status re-query behavior in web and VS Code surfaces; only escalate to S141 if packaged or reload evidence blocks dogfood.
+7. S139-C1: Audit chat provider selection and keep safer configured providers ahead of experimental account auth.
+8. S139-C2: Extend deterministic first-chat evidence where needed without real-provider automation.
+9. S139-C3: Improve first-message error recovery for provider unauthorized, model unavailable, streaming interruption, and refresh/reconnect prompts.
+10. S140-C1: Route the VS Code controlled-agent task flow through the same provider readiness facts without granting login any workspace authority.
+11. S140-C2: Add deterministic controlled-agent experimental Codex smoke using mock/loopback evidence only.
+12. S140-C3: Add the sanitized manual VS Code controlled coding dogfood checklist for login to first chat to one bounded controlled task.
+
 ## Verification commands
 
 Run from the repository root after editing this audit:
 
 ```sh
-npm run check && git diff --check
+npm run smoke:experimental-codex-login && npm run dogfood:experimental-codex-login-report -- --self-test && npm run check && git diff --check
 ```
 
 This docs-only verification is not release evidence, not real-provider CI, not an official login approval, and not a production or marketplace readiness gate.
