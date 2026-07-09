@@ -4537,7 +4537,7 @@ describe("active editor attached context", () => {
     expect(browserStorageDump()).not.toContain("passed");
   });
 
-  it("shows disabled coding actions guidance when no usable attached context exists", async () => {
+  it("keeps no-context coding actions visible but disabled while Send is enabled", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
     await flushAsync();
@@ -4547,9 +4547,10 @@ describe("active editor attached context", () => {
     expect(findButton("Explain selection").disabled).toBe(true);
     expect(findButton("Improve safely").disabled).toBe(true);
     expect(findButton("Safe edit").disabled).toBe(true);
+    expect(findButton("Send").disabled).toBe(false);
   });
 
-  it("fills the prompt for explain selection, enables attached context, focuses prompt, and does not write browser storage", async () => {
+  it("enables Explain selection after valid selected context and fills the prompt without storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
@@ -4559,6 +4560,7 @@ describe("active editor attached context", () => {
       selection: { startLine: 10, startCharacter: 2, endLine: 12, endCharacter: 4, text: "function demo() { return 1; }" },
     });
 
+    expect(findButton("Explain selection").disabled).toBe(false);
     await act(async () => {
       findButton("Explain selection").click();
     });
@@ -4707,6 +4709,25 @@ describe("active editor attached context", () => {
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(0);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("export const answer");
+  });
+
+  it("keeps selection coding actions disabled for excerpt-only context", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Attach active file excerpt").click();
+    });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ text: "export const answer = 42;" }));
+
+    expect(findButton("Ask about active file").disabled).toBe(false);
+    expect(findButton("Explain selection").disabled).toBe(true);
+    expect(findButton("Improve safely").disabled).toBe(true);
+    expect(findButton("Safe edit").disabled).toBe(true);
+    expect(findButton("Send").disabled).toBe(false);
   });
 
   it("renders active-file excerpt preview, respects omit toggle, sends once, and clears after accepted send", async () => {
@@ -5982,6 +6003,23 @@ describe("active editor attached context", () => {
     expect(text.length).toBeLessThan(20000);
     expect(text).toContain("Selected text preview was shortened");
     expect(attachedContextToggle().checked).toBe(false);
+  });
+
+  it("keeps acknowledgement-required selected context from enabling coding actions", async () => {
+    const rawSecret = "access_token=" + "u".repeat(64);
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: `const token = "${rawSecret}";` } });
+
+    expect(container?.textContent).toContain("Context preview requires acknowledgement");
+    expect(findButton("Explain selection").disabled).toBe(true);
+    await act(async () => {
+      attachedContextAcknowledgementToggle().click();
+    });
+    expect(attachedContextToggle().disabled).toBe(false);
+    expect(findButton("Explain selection").disabled).toBe(false);
   });
 
   it("resets gated context acknowledgement when context payload changes", async () => {

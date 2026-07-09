@@ -65,10 +65,12 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await dispatchHostReady(page);
   await page.waitForFunction(() => document.body.innerText.includes("ready to chat") || document.body.innerText.includes("Ready to send"), undefined, { timeout: 20_000 }).catch(() => failures.push(`Missing ${name} runtime ready state`));
   await page.waitForFunction(() => document.querySelector(".chat-scroll-region"), undefined, { timeout: 10_000 }).catch(() => failures.push(`Missing ${name} chat scroll region`));
+  const explainSelectionButton = page.getByRole("button", { name: "Explain selection", exact: true });
+  await requireVisibleDisabledButton(page, explainSelectionButton, `${name} Explain selection button before context`, name);
+  await assertActionable(page.getByRole("button", { name: "Send", exact: true }), `${name} Send button before context`);
   await injectActiveEditorContext(page, host);
   const contextReady = await waitForActiveSelectedContext(page);
   if (!contextReady) await failViewport(page, name, "active selected context was not accepted before Coding Actions checks");
-  const explainSelectionButton = page.getByRole("button", { name: "Explain selection", exact: true });
   await requireActionableButton(page, explainSelectionButton, `${name} Explain selection button`, name);
 
   const chatsButton = page.getByRole("button", { name: "Chats", exact: true });
@@ -115,6 +117,54 @@ async function waitForActiveSelectedContext(page) {
     const normalizedText = text.toLowerCase();
     return normalizedText.includes("active editor context") && normalizedText.includes("attach to next message") && text.includes("src/plugin-layout.ts") && text.includes("10:2-10:40");
   }, undefined, { timeout: 10_000 }).then(() => true).catch(() => false);
+}
+
+async function requireVisibleDisabledButton(page, locator, label, viewportName) {
+  const visible = await locator.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!visible) await failViewport(page, viewportName, `${label} did not become visible`);
+  const disabled = await locator.isDisabled({ timeout: 5000 }).catch(() => false);
+  if (!disabled) await failViewport(page, viewportName, `${label} was enabled before selected context was attached`, await buttonStateSnapshot(locator));
+  await locator.scrollIntoViewIfNeeded();
+  const visibleHitTarget = await describeVisibleHitTarget(locator);
+  if (!visibleHitTarget.ok) await failViewport(page, viewportName, `${label} is not visibly hit-testable while disabled`, visibleHitTarget);
+  return { ok: true, label, reason: "visible disabled", visibleHitTarget };
+}
+
+async function buttonStateSnapshot(locator) {
+  return locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return {
+      disabled: element.hasAttribute("disabled"),
+      ariaDisabled: element.getAttribute("aria-disabled"),
+      rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      visibility: style.visibility,
+      display: style.display,
+      pointerEvents: style.pointerEvents,
+    };
+  }).catch((error) => ({ ok: false, reason: error instanceof Error ? error.message : String(error) }));
+}
+
+async function describeVisibleHitTarget(locator) {
+  return locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const top = document.elementFromPoint(centerX, centerY);
+    return {
+      ok: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.pointerEvents !== "none" && (top === element || element.contains(top)),
+      rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      visibility: style.visibility,
+      display: style.display,
+      pointerEvents: style.pointerEvents,
+      disabled: element.hasAttribute("disabled"),
+      topTag: top?.tagName,
+      topText: top?.textContent?.trim().slice(0, 80),
+    };
+  }).catch((error) => ({ ok: false, reason: error instanceof Error ? error.message : String(error) }));
 }
 
 async function requireActionableButton(page, locator, label, viewportName) {
