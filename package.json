@@ -94,6 +94,7 @@
     "smoke:local-provider-first-message": "node scripts/smoke-local-provider-first-message.mjs",
     "smoke:gui-demo-mode": "node scripts/smoke-gui-demo-mode.mjs",
     "smoke:login-first-message": "node scripts/smoke-login-first-message.mjs",
+    "smoke:experimental-codex-login": "node scripts/smoke-experimental-codex-login.mjs",
     "smoke:plugin-layout": "node scripts/smoke-plugin-layout.mjs",
     "smoke:gui-visual": "node scripts/smoke-gui-demo-mode.mjs",
     "smoke:gui-conversation-history": "node scripts/smoke-gui-conversation-history.mjs",
