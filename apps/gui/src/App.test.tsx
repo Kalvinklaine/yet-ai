@@ -6990,7 +6990,13 @@ describe("chat panel", () => {
     expect(text).toContain("Experimental fallback send ready");
     expect(text).toContain("Experimental account login can send");
     expect(text).toContain("Why: The account login fallback is connected only because no safer API-key/OpenAI-compatible, local, or Demo Mode chat path is ready; this private-endpoint path is not the safe/default provider setup.");
-    expect(text).toContain("Next safest action: Prefer configuring an API-key or local provider; otherwise type a prompt only if you accept the experimental dev-preview risk.");
+    expect(text).toContain("Next safest action: Prefer configuring an API-key or local provider. If you send through this experimental path and the first message fails, use the sanitized error to choose one manual action: retry login, reconnect runtime, disconnect, reduce context if the request is too large, or switch to the API-key fallback.");
+    expect(text).toContain("If the first message fails through experimental account auth, review the sanitized error only: retry login, reconnect runtime, disconnect the account path, reduce attached context when the error says the request is too large, or switch to the API-key fallback.");
+    expect(text).toContain("If the first message fails, use the sanitized error to retry login, reconnect runtime, disconnect, reduce context when relevant, or switch to the API-key fallback; no automatic retry or managed support is implied.");
+    expect(text).not.toContain("Authorization: Bearer");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("Cookie:");
+    expect(text).not.toContain("/Users/");
     expect(findButton("Send").disabled).toBe(false);
     expect(text).toContain("Account loginexperimental high-risk connected");
     expect(text).toContain("First messageSend available");

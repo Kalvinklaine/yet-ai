@@ -78,6 +78,17 @@ Allowed status for the experimental path:
 
 The experimental path must not become the default production login UX, must not run in CI against real accounts, and must not be described as production OpenAI login support. No smoke or CI command may use real OpenAI/ChatGPT credentials; `npm run smoke:local` covers only loopback token/chat mocks.
 
+### First-message recovery copy
+
+When the experimental path is connected and no safer ready path wins, the GUI may enable Send with conservative fallback copy. First-message failures must remain sanitized and manual-only:
+
+- show stable recovery choices such as retry login, refresh/reconnect the local runtime, disconnect the experimental account path, reduce prompt or attached context when the error says the request is too large, or switch to the API-key fallback;
+- keep API-key and local-provider setup visible as the safer/default real-provider route;
+- do not imply automatic retry, hosted support, production support, official OAuth availability, or managed account recovery;
+- do not render raw provider responses, bearer/auth headers, tokens, authorization codes, cookies, endpoint query strings or fragments, private paths, browser storage dumps, stack traces, or copied reference wording.
+
+This is dev-preview/manual recovery guidance only. It documents implemented GUI behavior around sanitized chat errors and provider-auth status; it is not a promise that the experimental account path is reliable, supportable, or suitable for production use.
+
 ## Engine, GUI, and IDE boundaries
 
 The engine owns:

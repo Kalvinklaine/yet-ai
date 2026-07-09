@@ -3258,6 +3258,7 @@ export function App() {
     const authStatus = activeProviderAuthStatus?.status;
     if (activeProviderAuthStatus?.configured && activeProviderAuthStatus.authSource === "oauth") {
       notes.push("Experimental account login is connected/available only as an explicit high-risk path; API-key providers remain the safe default when configured.");
+      notes.push("If the first message fails through experimental account auth, review the sanitized error only: retry login, reconnect runtime, disconnect the account path, reduce attached context when the error says the request is too large, or switch to the API-key fallback.");
     } else if (authStatus === "login_available") {
       notes.push("Account login may be available, but it is not the default first-message path; use an API-key provider unless you intentionally choose the experimental flow.");
     } else if (authStatus === "api_key_configured") {
@@ -3297,7 +3298,7 @@ export function App() {
       return {
         title: "Experimental account login can send",
         reason: "The account login fallback is connected only because no safer API-key/OpenAI-compatible, local, or Demo Mode chat path is ready; this private-endpoint path is not the safe/default provider setup.",
-        nextAction: "Prefer configuring an API-key or local provider; otherwise type a prompt only if you accept the experimental dev-preview risk.",
+        nextAction: "Prefer configuring an API-key or local provider. If you send through this experimental path and the first message fails, use the sanitized error to choose one manual action: retry login, reconnect runtime, disconnect, reduce context if the request is too large, or switch to the API-key fallback.",
         actions: [{ kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "send_first_message", label: "Send first message" }],
         notes,
       };
@@ -6078,7 +6079,7 @@ function providerAuthRecoveryCopy(status: ProviderAuthResponse): string {
     case "pending":
       return "Complete browser verification, paste only the authorization code if needed, then Exchange authorization code. If exchange is rejected, retry exchange with a fresh browser code once; if it expires, denied, or mismatches, use Reconnect login, Cancel or disconnect login, or the API-key fallback.";
     case "connected":
-      return "Connected status is sanitized runtime evidence only. API-key providers and Demo Mode still take precedence for chat when ready; disconnect or reconnect stays explicit.";
+      return "Connected status is sanitized runtime evidence only. API-key providers and Demo Mode still take precedence for chat when ready. If the first message fails, use the sanitized error to retry login, reconnect runtime, disconnect, reduce context when relevant, or switch to the API-key fallback; no automatic retry or managed support is implied.";
     case "expired":
       return "The session can no longer power chat. Reconnect experimental account only after accepting the private-endpoint risk, or switch to the API-key fallback.";
     case "revoked":
