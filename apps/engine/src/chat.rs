@@ -2307,6 +2307,136 @@ mod tests {
         panic!("chat did not reach terminal message");
     }
 
+    fn request_body(request: &str) -> serde_json::Value {
+        let body = request
+            .split("\r\n\r\n")
+            .nth(1)
+            .unwrap_or_else(|| panic!("missing HTTP body in {request:?}"));
+        serde_json::from_str(body).unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore = "T-634 contract lock: later S141 card must use Codex Responses endpoint, headers, and minimal user-text body"]
+    async fn experimental_codex_chat_uses_refact_compatible_responses_contract_todo() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![LoopbackResponse::Sse(
+            "responses contract output".to_string(),
+        )])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-responses-access-token",
+            "fake-codex-responses-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-responses-contract-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "minimal user text only".to_string(),
+                None,
+            )
+            .await;
+        let _ = wait_for_terminal_message(&dir, &chat_id).await;
+
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1);
+        let request = &requests[0];
+        let lower = request.to_ascii_lowercase();
+        assert!(request.starts_with("POST /responses "), "{request}");
+        assert!(lower.contains("authorization: bearer fake-codex-responses-access-token"));
+        assert!(lower.contains("chatgpt-account-id: "));
+        assert!(
+            lower.contains("originator: codex_cli_rs") || lower.contains("originator: refact-lsp")
+        );
+        assert!(lower.contains("session_id: "));
+        assert!(lower.contains("openai-beta: responses=experimental"));
+        assert!(lower.contains("accept: text/event-stream"));
+        let body = request_body(request);
+        assert_eq!(body["model"], "gpt-5-codex");
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["input"][0]["role"], "user");
+        assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
+        assert_eq!(
+            body["input"][0]["content"][0]["text"],
+            "minimal user text only"
+        );
+        assert!(body.get("messages").is_none());
+        assert!(body.get("tools").is_none());
+        assert!(body.get("instructions").is_none());
+    }
+
+    #[tokio::test]
+    #[ignore = "T-634 contract lock: later S141 card must refresh once then retry one Codex Responses request after pre-output unauthorized"]
+    async fn experimental_codex_responses_unauthorized_refreshes_and_retries_once_todo() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::Unauthorized(
+                r#"{"error":"expired credential with ignored secret body"}"#.to_string(),
+            ),
+            LoopbackResponse::Token {
+                access_token: "fake-codex-responses-refreshed-access-token".to_string(),
+                refresh_token: "fake-codex-responses-refreshed-refresh-token".to_string(),
+            },
+            LoopbackResponse::Sse("responses after refresh".to_string()),
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-responses-stale-access-token",
+            "fake-codex-responses-stale-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-responses-refresh-contract-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "refresh once".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.content, "responses after refresh");
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("POST /responses "));
+        assert!(requests[1].starts_with("POST /token "));
+        assert!(requests[2].starts_with("POST /responses "));
+        assert!(requests[0]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fake-codex-responses-stale-access-token"));
+        assert!(requests[2]
+            .to_ascii_lowercase()
+            .contains("authorization: bearer fake-codex-responses-refreshed-access-token"));
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /responses "))
+                .count(),
+            2
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /token "))
+                .count(),
+            1
+        );
+    }
+
     #[tokio::test]
     async fn first_chat_experimental_auth_streams_loopback_success() {
         let dir = temp_dir();
@@ -2461,7 +2591,10 @@ mod tests {
         assert_eq!(parsed["policyFlags"]["shellAllowed"], false);
         assert_eq!(parsed["policyFlags"]["hiddenReadAllowed"], false);
         assert_eq!(parsed["policyFlags"]["automaticVerifyAllowed"], false);
-        assert_eq!(parsed["providerProposal"]["verificationSuggestion"]["freeformCommandAllowed"], false);
+        assert_eq!(
+            parsed["providerProposal"]["verificationSuggestion"]["freeformCommandAllowed"],
+            false
+        );
         let requests = server.requests.lock().unwrap().clone();
         assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("POST /chat/completions "));

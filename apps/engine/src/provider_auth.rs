@@ -1562,7 +1562,9 @@ fn validate_codex_chat_model(value: &str) -> Result<(), ProviderAuthError> {
     if trimmed != value
         || trimmed.is_empty()
         || trimmed.chars().count() > CODEX_CHAT_MODEL_MAX_CHARS
-        || trimmed.chars().any(|value| value.is_control() || value.is_whitespace())
+        || trimmed
+            .chars()
+            .any(|value| value.is_control() || value.is_whitespace())
         || !trimmed
             .chars()
             .all(|value| value.is_ascii_alphanumeric() || matches!(value, '.' | '_' | '-' | ':'))
@@ -2149,6 +2151,7 @@ async fn sync_parent_directory(_path: &Path) -> Result<(), ProviderAuthError> {
 mod tests {
     use super::{CodexOAuthState, ProviderAuthError};
     use crate::secret_store::{ProviderSecretStore, SecretKind, SecretStoreError};
+    use base64::Engine;
 
     #[derive(Clone, Default)]
     struct DeleteRecordingSecretStore {
@@ -2511,10 +2514,13 @@ mod tests {
         };
         let metadata = super::CodexAuthMetadata {
             provider: "openai".to_string(),
-            account_label: "Bearer sk-raw-account-label-secret /Users/alice/.codex/auth.json cookie=session".to_string(),
+            account_label:
+                "Bearer sk-raw-account-label-secret /Users/alice/.codex/auth.json cookie=session"
+                    .to_string(),
             scopes: super::codex_scopes(),
             expires_at: expires_at.to_rfc3339(),
-            redacted: "sk-raw-redacted-token-secret /Users/alice/.codex/auth.json cookie=session".to_string(),
+            redacted: "sk-raw-redacted-token-secret /Users/alice/.codex/auth.json cookie=session"
+                .to_string(),
             chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
             chat_model: super::CODEX_CHAT_MODEL.to_string(),
             token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
@@ -2696,7 +2702,10 @@ mod tests {
             r#"{"sessionId":null,"state":null,"code":null}"#,
             r#"{"sessionId":"mock-session","state":"mock-state","code":null}"#,
         ] {
-            assert!(parse_exchange_request(body).is_err(), "accepted body: {body}");
+            assert!(
+                parse_exchange_request(body).is_err(),
+                "accepted body: {body}"
+            );
         }
 
         assert!(parse_exchange_request(r#"{}"#).is_ok());
@@ -3359,8 +3368,8 @@ mod tests {
     #[tokio::test]
     async fn codex_exchange_rolls_back_secrets_when_pending_clear_fails() {
         let dir = temp_dir();
-        let state_path = super::provider_auth_state_path(&dir, "provider-auth-openai", "openai")
-            .unwrap();
+        let state_path =
+            super::provider_auth_state_path(&dir, "provider-auth-openai", "openai").unwrap();
         let outside = temp_dir();
         std::fs::create_dir_all(&outside).unwrap();
         let target = outside.join("outside.json");
@@ -3374,7 +3383,8 @@ mod tests {
             }
         })
         .await;
-        let pending = create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+        let pending =
+            create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
 
         let error = super::exchange(
             &dir,
@@ -3425,7 +3435,8 @@ mod tests {
             assert_eq!(message, "provider auth token exchange failed");
             assert!(!message.contains("codex-access-token-secret-abcd"));
             assert!(!message.contains(malicious_scope));
-            let serialized = serde_json::to_string(&serde_json::json!({ "error": message })).unwrap();
+            let serialized =
+                serde_json::to_string(&serde_json::json!({ "error": message })).unwrap();
             assert!(!serialized.contains(malicious_scope));
             assert!(!serialized.contains("sk-raw-token-secret-abcd"));
             assert!(!serialized.contains("eyJhbGciOiJIUzI1NiJ9"));
@@ -3992,6 +4003,214 @@ mod tests {
             super::read_codex_state(&dir, "openai").await,
             Err(ProviderAuthError::Storage)
         ));
+    }
+
+    fn test_query_param(url: &str, name: &str) -> String {
+        reqwest::Url::parse(url)
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_else(|| panic!("missing query parameter {name}"))
+    }
+
+    fn test_jwt_with_payload(payload: serde_json::Value) -> String {
+        fn encode(value: &[u8]) -> String {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value)
+        }
+        format!(
+            "{}.{}.signature",
+            encode(br#"{"alg":"none"}"#),
+            encode(serde_json::to_string(&payload).unwrap().as_bytes())
+        )
+    }
+
+    fn test_extract_refact_compatible_account_id(jwt: &str) -> Option<String> {
+        let mut parts = jwt.split('.');
+        let _header = parts.next()?;
+        let payload = parts.next()?;
+        let _signature = parts.next()?;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload)
+            .ok()?;
+        let payload: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        payload
+            .get("chatgpt_account_id")
+            .and_then(serde_json::Value::as_str)
+            .or_else(|| {
+                payload
+                    .get("https://api.openai.com/auth.chatgpt_account_id")
+                    .and_then(serde_json::Value::as_str)
+            })
+            .or_else(|| {
+                payload
+                    .get("organizations")
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|items| items.first())
+                    .and_then(|item| item.get("id"))
+                    .and_then(serde_json::Value::as_str)
+            })
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    }
+
+    async fn raw_recording_token_endpoint(
+        response_body: serde_json::Value,
+    ) -> (String, tokio::sync::oneshot::Receiver<String>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/token", listener.local_addr().unwrap());
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buffer = vec![0_u8; 8192];
+                let read = stream.read(&mut buffer).await.unwrap_or(0);
+                let _ = sender.send(String::from_utf8_lossy(&buffer[..read]).into_owned());
+                let body = response_body.to_string();
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        (url, receiver)
+    }
+
+    #[tokio::test]
+    #[ignore = "T-634 contract lock: later S141 card must switch to Refact-compatible Codex OAuth parameters"]
+    async fn refact_compatible_codex_authorization_url_contract_todo() {
+        let dir = temp_dir();
+
+        let response = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let authorization_url = response.authorization_url.unwrap();
+
+        assert_eq!(
+            test_query_param(&authorization_url, "response_type"),
+            "code"
+        );
+        assert_eq!(
+            test_query_param(&authorization_url, "client_id"),
+            "app_EMoamEEZ73f0CkXaXp7hrann"
+        );
+        assert_eq!(
+            test_query_param(&authorization_url, "redirect_uri"),
+            "http://localhost:1455/auth/callback"
+        );
+        assert_eq!(
+            test_query_param(&authorization_url, "code_challenge_method"),
+            "S256"
+        );
+        assert_eq!(
+            test_query_param(&authorization_url, "id_token_add_organizations"),
+            "true"
+        );
+        assert_eq!(
+            test_query_param(&authorization_url, "codex_cli_simplified_flow"),
+            "true"
+        );
+        assert_eq!(
+            test_query_param(&authorization_url, "originator"),
+            "codex_cli_rs"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "T-634 contract lock: later S141 card must use form-urlencoded Codex token exchange"]
+    async fn refact_compatible_codex_token_exchange_is_form_urlencoded_todo() {
+        let dir = temp_dir();
+        let (token_endpoint_url, request_receiver) = raw_recording_token_endpoint(serde_json::json!({
+            "access_token": "codex-access-token-secret-form",
+            "refresh_token": "codex-refresh-token-secret-form",
+            "expires_in": 3600,
+            "scope": "openid profile email offline_access",
+            "id_token": test_jwt_with_payload(serde_json::json!({ "chatgpt_account_id": "acct-form" }))
+        }))
+        .await;
+        let session =
+            create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+
+        let _ = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(session.session_id),
+                state: Some(session.state),
+                code: Some("codex-code-form".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        let request = request_receiver.await.unwrap().to_ascii_lowercase();
+
+        assert!(request.starts_with("post /token "));
+        assert!(request.contains("content-type: application/x-www-form-urlencoded"));
+        assert!(!request.contains("content-type: application/json"));
+        assert!(request.contains("grant_type=authorization_code"));
+        assert!(request.contains("client_id=app_emoamee"));
+        assert!(request.contains("code_verifier="));
+    }
+
+    #[test]
+    #[ignore = "T-634 contract lock: later S141 card must wire account-id extraction into Codex metadata"]
+    fn refact_compatible_codex_account_id_claims_contract_todo() {
+        for (payload, expected) in [
+            (
+                serde_json::json!({ "chatgpt_account_id": "acct-top" }),
+                "acct-top",
+            ),
+            (
+                serde_json::json!({ "https://api.openai.com/auth.chatgpt_account_id": "acct-namespaced" }),
+                "acct-namespaced",
+            ),
+            (
+                serde_json::json!({ "organizations": [{ "id": "acct-org" }] }),
+                "acct-org",
+            ),
+        ] {
+            assert_eq!(
+                test_extract_refact_compatible_account_id(&test_jwt_with_payload(payload))
+                    .as_deref(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "T-634 contract lock: later S141 card must reuse refresh token when refresh omits a replacement"]
+    async fn refact_compatible_codex_refresh_reuses_existing_refresh_token_when_omitted_todo() {
+        let dir = temp_dir();
+        let (token_endpoint_url, request_receiver) = raw_recording_token_endpoint(serde_json::json!({
+            "access_token": "codex-refreshed-access-token-secret",
+            "expires_in": 3600,
+            "scope": "openid profile email offline_access",
+            "id_token": test_jwt_with_payload(serde_json::json!({ "chatgpt_account_id": "acct-refresh" }))
+        }))
+        .await;
+        create_near_expired_codex_oauth_connection_with_token_endpoint(&dir, &token_endpoint_url)
+            .await;
+
+        let auth = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap()
+            .expect("refresh should keep existing refresh token when omitted");
+        let (_, refresh_token, _) = codex_secret_values(&dir).await;
+        let request = request_receiver.await.unwrap().to_ascii_lowercase();
+
+        assert_eq!(auth.access_token, "codex-refreshed-access-token-secret");
+        assert_eq!(refresh_token.as_deref(), Some("codex-refresh-token-secret"));
+        assert!(request.contains("content-type: application/x-www-form-urlencoded"));
+        assert!(request.contains("grant_type=refresh_token"));
     }
 
     #[cfg(unix)]
