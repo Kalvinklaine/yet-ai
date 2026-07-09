@@ -421,6 +421,7 @@ export function App() {
   const chatIdRef = useRef("chat-001");
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
+  const providerAuthExchangeInFlightRef = useRef(false);
   const chatHistoryAttemptRef = useRef(0);
   const [providerAuthMutation, setProviderAuthMutation] = useState<"start" | "exchange" | "disconnect" | null>(null);
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
@@ -1160,6 +1161,7 @@ export function App() {
     });
     setRuntimeLifecycle(null);
     providerAuthMutationAttemptRef.current += 1;
+    providerAuthExchangeInFlightRef.current = false;
     setProviderAuthMutation(null);
     setProviderAuthExchangeCode("");
     setProviderAuthExchangeWorking(false);
@@ -2304,17 +2306,22 @@ export function App() {
     event.preventDefault();
     const sessionId = activeProviderAuthStatus?.sessionId;
     const code = providerAuthExchangeCode.trim();
-    if (!sessionId || !code || !providerAuthPendingState.state) {
+    const state = providerAuthPendingState.state;
+    const validation = validateProviderAuthExchangeInput(sessionId, code, state, providerAuthExchangeInFlightRef.current || providerAuthExchangeWorking || providerAuthMutation === "exchange");
+    setProviderAuthExchangeCode("");
+    if (!validation.ok) {
+      setProviderAuthExchangeError(validation.error);
       return;
     }
     setProviderAuthError(null);
     setProviderAuthExchangeError(null);
+    providerAuthExchangeInFlightRef.current = true;
     setProviderAuthExchangeWorking(true);
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
     const attempt = beginProviderAuthMutation("exchange");
     try {
-      const result = await exchangeProviderAuth(targetSettings, "openai", sessionId, code, providerAuthPendingState.state);
+      const result = await exchangeProviderAuth(targetSettings, "openai", validation.sessionId, validation.code, validation.state);
       if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
         return;
       }
@@ -2334,8 +2341,8 @@ export function App() {
         setProviderAuthError(result.error);
       }
     } finally {
-      setProviderAuthExchangeCode("");
       if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
+        providerAuthExchangeInFlightRef.current = false;
         setProviderAuthExchangeWorking(false);
         setProviderAuthMutation(null);
       }
@@ -6087,6 +6094,49 @@ function providerAuthStateTitle(status: ProviderAuthStatus): string {
   }
 }
 
+type ProviderAuthExchangeValidation =
+  | { ok: true; sessionId: string; code: string; state: string }
+  | { ok: false; error: string };
+
+function validateProviderAuthExchangeInput(sessionId: string | undefined, code: string, state: string | undefined, inFlight: boolean): ProviderAuthExchangeValidation {
+  if (inFlight) {
+    return { ok: false, error: "Authorization-code exchange is already pending. Wait for the local runtime response, refresh status, or reconnect before retrying." };
+  }
+  if (!sessionId || !isSafeProviderAuthExchangeValue(sessionId, 256)) {
+    return { ok: false, error: "Pending login session is missing or malformed. Refresh login status, reconnect, or use the API-key fallback." };
+  }
+  if (!state || !isSafeProviderAuthExchangeValue(state, 512)) {
+    return { ok: false, error: "Authorization state is missing or malformed. Refresh login status, reconnect, or use the API-key fallback." };
+  }
+  if (!code || !isSafeProviderAuthExchangeValue(code, 4096)) {
+    return { ok: false, error: "Authorization code is empty, too large, or contains unsafe token/cookie/verifier markers. Paste only the browser authorization code." };
+  }
+  return { ok: true, sessionId, code, state };
+}
+
+function isSafeProviderAuthExchangeValue(value: string, maxLength: number): boolean {
+  if (value.length > maxLength) {
+    return false;
+  }
+  if (/\s/.test(value)) {
+    return false;
+  }
+  const lowered = value.toLowerCase();
+  return !(
+    lowered.includes("access_token") ||
+    lowered.includes("refresh_token") ||
+    lowered.includes("id_token") ||
+    lowered.includes("authorization:") ||
+    lowered.includes("bearer") ||
+    lowered.includes("cookie") ||
+    lowered.includes("verifier") ||
+    lowered.includes("auth.json") ||
+    lowered.includes("/users/") ||
+    lowered.includes("\\users\\") ||
+    lowered.includes("openai_api_key")
+  );
+}
+
 function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: string; error?: string } {
   if (!status || status.status !== "pending" || status.authSource !== "oauth" || !status.sessionId) {
     return {};
@@ -6098,6 +6148,9 @@ function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: 
     const state = new URL(status.authorizationUrl).searchParams.get("state")?.trim();
     if (!state) {
       return { error: "Authorization state is missing from the pending login response. Start experimental login again or use API key fallback." };
+    }
+    if (!isSafeProviderAuthExchangeValue(state, 512)) {
+      return { error: "Authorization state is malformed or unsafe in the pending login response. Start experimental login again or use API key fallback." };
     }
     return { state };
   } catch {

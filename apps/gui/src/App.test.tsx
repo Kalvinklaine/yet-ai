@@ -1674,6 +1674,91 @@ describe("provider secret boundary", () => {
     expect(authCodeInputOptional()?.value ?? "").toBe("");
   });
 
+  it("clears authorization code immediately during manual exchange and blocks duplicate submits", async () => {
+    const exchange = deferred<Response>();
+    const code = "manual-code-duplicate";
+    mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse() });
+    renderApp();
+
+    await flushAsync();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST" && url === "http://127.0.0.1:8001/v1/provider-auth/openai/exchange") {
+        return exchange.promise;
+      }
+      return mockRuntimeResponse(input, init, { authResponse: pendingExperimentalAuthResponse() });
+    });
+
+    await act(async () => {
+      setInputValue(authCodeInput(), code);
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+    });
+
+    const exchangeCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/exchange") && init?.method === "POST");
+    expect(exchangeCalls).toHaveLength(1);
+    expect(exchangeCalls[0]?.[1]?.body).toBe(JSON.stringify({ sessionId: "provider-login-session-001", code, state: "codex-state-001" }));
+    expect(authCodeInput().value).toBe("");
+    expect(findButton("Exchanging…").disabled).toBe(true);
+    expect(container?.textContent).not.toContain(code);
+    expect(browserStorageDump()).not.toContain(code);
+
+    exchange.resolve(jsonResponse(connectedExperimentalAuthResponse()));
+    await flushAsync();
+    await flushAsync();
+
+    expect(authCodeInputOptional()?.value ?? "").toBe("");
+  });
+
+  it("rejects unsafe authorization-code markers before manual exchange", async () => {
+    const unsafeCode = "access_token=" + "u".repeat(64);
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse() });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(authCodeInput(), unsafeCode);
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/exchange") && init?.method === "POST")).toHaveLength(0);
+    expect(authCodeInput().value).toBe("");
+    expect(container?.textContent).toContain("Authorization code is empty, too large, or contains unsafe token/cookie/verifier markers. Paste only the browser authorization code.");
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("u".repeat(64));
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(unsafeCode);
+  });
+
+  it("fails manual exchange closed when pending session or state markers are unsafe", async () => {
+    mockRuntimeResponses({
+      authResponse: {
+        ...pendingExperimentalAuthResponse(),
+        sessionId: "provider-login-session-001 Cookie=secret",
+        authorizationUrl: "https://auth.openai.com/oauth/authorize?client_id=yet-ai-local&state=access_token%3Dunsafe",
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(authCodeInput(), "manual-code-safe-shape");
+    });
+
+    expect(container?.textContent).toContain("Authorization state is malformed or unsafe in the pending login response.");
+    expect(findButton("Exchange authorization code").disabled).toBe(true);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/exchange") && init?.method === "POST")).toHaveLength(0);
+    expect(container?.textContent).not.toContain("Cookie=secret");
+    expect(container?.textContent).not.toContain("access_token");
+  });
+
   it("renders connected sanitized status after successful manual exchange", async () => {
     mockRuntimeResponses({ authResponse: pendingExperimentalAuthResponse(), exchangeResponse: connectedExperimentalAuthResponse() });
     renderApp();
