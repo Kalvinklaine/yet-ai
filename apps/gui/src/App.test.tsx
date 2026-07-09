@@ -2108,6 +2108,108 @@ describe("provider secret boundary", () => {
     expect(findButton("Disconnect login").disabled).toBe(true);
   });
 
+  it("renders runtime-restart recovery guidance for pending experimental login without leaking session data", async () => {
+    const rawSession = "provider-login-session-runtime-restart";
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({
+      runtimeFailure: true,
+      authResponse: {
+        ...pendingExperimentalAuthResponse(),
+        sessionId: rawSession,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Runtime unavailable or restarted: click Refresh runtime, then Refresh login status.");
+    expect(text).toContain("If the pending browser session is stale, reconnect or use the API-key fallback.");
+    expect(text).toContain("Reconnect login");
+    expect(text).toContain("Cancel or disconnect login");
+    expect(text).toContain("Use OpenAI API key fallback");
+    expect(text).not.toContain(rawSession);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawSession);
+  });
+
+  it("clears stale manual exchange input when refreshed status becomes terminal", async () => {
+    const code = "manual-code-cleared-after-expiry";
+    let statusResponse = pendingExperimentalAuthResponse();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(statusResponse));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: statusResponse });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(authCodeInput(), code);
+    });
+    expect(authCodeInput().value).toBe(code);
+
+    statusResponse = {
+      ...providerAuthResponse("expired"),
+      lastError: "Pending browser session expired before exchange.",
+    };
+    await act(async () => {
+      findButton("Refresh login status").click();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(authCodeInputOptional()).toBeUndefined();
+    expect(text).toContain("OpenAI account expired");
+    expect(text).toContain("Pending browser session expired before exchange.");
+    expect(text).toContain("Reconnect OpenAI account");
+    expect(text).toContain("Use OpenAI API key fallback");
+    expect(text).not.toContain(code);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(code);
+  });
+
+  it("renders retry exchange disconnect and fallback recovery actions for rejected manual exchange", async () => {
+    const code = "manual-code-rejected-once";
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({
+      authResponse: pendingExperimentalAuthResponse(),
+      exchangeResponse: {
+        ...pendingExperimentalAuthResponse(),
+        success: false,
+        lastError: "Authorization exchange was rejected by the local runtime.",
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setInputValue(authCodeInput(), code);
+    });
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("If exchange is rejected, retry exchange with a fresh browser code once");
+    expect(text).toContain("Authorization exchange was rejected by the local runtime.");
+    expect(text).toContain("Reconnect login");
+    expect(text).toContain("Cancel or disconnect login");
+    expect(text).toContain("Use OpenAI API key fallback");
+    expect(authCodeInput().value).toBe("");
+    expect(text).not.toContain(code);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(code);
+  });
+
   it("sanitizes token-like provider auth last errors before display", async () => {
     const rawToken = "Bearer abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     const rawApiKey = "api_key=sk-testabcdefghijklmnopqrstuvwxyz";

@@ -1832,6 +1832,16 @@ export function App() {
     }
   }, [isCurrentRefresh]);
 
+  useEffect(() => {
+    if (activeProviderAuthStatus?.status === "pending") {
+      return;
+    }
+    providerAuthExchangeInFlightRef.current = false;
+    setProviderAuthExchangeWorking(false);
+    setProviderAuthExchangeCode("");
+    setProviderAuthExchangeError(null);
+  }, [activeProviderAuthStatus?.status]);
+
   const refreshChats = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = chatHistoryAttemptRef.current + 1;
     chatHistoryAttemptRef.current = attempt;
@@ -3688,6 +3698,7 @@ export function App() {
               exchangeCode={providerAuthExchangeCode}
               exchangeError={providerAuthExchangeError}
               exchangeWorking={providerAuthExchangeWorking}
+              runtimeConnected={runtimeConnected}
               onExchangeCodeChange={setProviderAuthExchangeCode}
               onExchange={(event) => void exchangeOpenAiLoginCode(event)}
               onRefresh={() => void refreshProviderAuthStatus()}
@@ -5923,6 +5934,7 @@ type ProviderAuthJourneyProps = {
   exchangeCode: string;
   exchangeError: string | null;
   exchangeWorking: boolean;
+  runtimeConnected: boolean;
   onExchangeCodeChange: (code: string) => void;
   onExchange: (event: FormEvent<HTMLFormElement>) => void;
   onRefresh: () => void;
@@ -5932,7 +5944,7 @@ type ProviderAuthJourneyProps = {
   onApiKeyFallback: () => void;
 };
 
-function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError, exchangeWorking, onExchangeCodeChange, onExchange, onRefresh, onLogin, onExperimentalLogin, onDisconnect, onApiKeyFallback }: ProviderAuthJourneyProps) {
+function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError, exchangeWorking, runtimeConnected, onExchangeCodeChange, onExchange, onRefresh, onLogin, onExperimentalLogin, onDisconnect, onApiKeyFallback }: ProviderAuthJourneyProps) {
   const canLogin = status.supportsLogin !== false;
   const canDisconnect = status.configured && status.authSource !== "api_key";
   const reconnectLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : "Reconnect OpenAI account";
@@ -5947,6 +5959,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
         <div className="recovery-card" role="status">
           <strong>{providerAuthRecoveryTitle(status.status)}</strong>
           <span>{providerAuthRecoveryCopy(status)}</span>
+          {!runtimeConnected && <span>Runtime unavailable or restarted: click Refresh runtime, then Refresh login status. If the pending browser session is stale, reconnect or use the API-key fallback.</span>}
           <span className="subtle">Login/chat only. No workspace execution.</span>
         </div>
       )}
@@ -6051,7 +6064,7 @@ function providerAuthRecoveryTitle(status: ProviderAuthStatus): string {
 function providerAuthRecoveryCopy(status: ProviderAuthResponse): string {
   switch (status.status) {
     case "pending":
-      return "Complete browser verification, paste only the authorization code if needed, then Exchange authorization code. If it expires, denied, or mismatches, use Reconnect login, Cancel or disconnect login, or the API-key fallback.";
+      return "Complete browser verification, paste only the authorization code if needed, then Exchange authorization code. If exchange is rejected, retry exchange with a fresh browser code once; if it expires, denied, or mismatches, use Reconnect login, Cancel or disconnect login, or the API-key fallback.";
     case "connected":
       return "Connected status is sanitized runtime evidence only. API-key providers and Demo Mode still take precedence for chat when ready; disconnect or reconnect stays explicit.";
     case "expired":
