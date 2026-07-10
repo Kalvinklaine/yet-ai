@@ -27,23 +27,31 @@
     </extensions>
 
     <actions>
-        <action id="ai.yet.plugin.OpenChat"
-                class="ai.yet.plugin.actions.OpenChatAction"
-                text="Yet AI: Open Chat"
-                description="Open the Yet AI local runtime chat shell">
+        <group id="ai.yet.plugin.ToolsMenu"
+               text="Yet AI"
+               description="Yet AI local-first actions"
+               popup="true">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
-        <action id="ai.yet.plugin.ShowRuntimeStatus"
-                class="ai.yet.plugin.actions.ShowRuntimeStatusAction"
-                text="Yet AI: Show Runtime Status"
-                description="Show sanitized Yet AI local runtime diagnostics">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
-        <action id="ai.yet.plugin.RestartRuntime"
-                class="ai.yet.plugin.actions.RestartRuntimeAction"
-                text="Yet AI: Restart Runtime"
-                description="Restart the Yet AI local runtime process launched by this plugin">
-            <add-to-group group-id="ToolsMenu" anchor="last"/>
-        </action>
+            <action id="ai.yet.plugin.OpenChat"
+                    class="ai.yet.plugin.actions.OpenChatAction"
+                    text="Yet AI: Open Chat"
+                    description="Open the Yet AI local runtime chat shell"/>
+            <action id="ai.yet.plugin.CopyDiagnostics"
+                    class="ai.yet.plugin.actions.CopyYetDiagnosticsAction"
+                    text="Yet AI: Copy Diagnostics"
+                    description="Copy sanitized Yet AI runtime diagnostics to the clipboard"/>
+            <action id="ai.yet.plugin.ShowRuntimeStatus"
+                    class="ai.yet.plugin.actions.ShowRuntimeStatusAction"
+                    text="Yet AI: Show Runtime Status"
+                    description="Show sanitized Yet AI local runtime diagnostics"/>
+            <action id="ai.yet.plugin.OpenLogsFolder"
+                    class="ai.yet.plugin.actions.OpenYetLogsFolderAction"
+                    text="Yet AI: Open Logs Folder"
+                    description="Open the local Yet AI diagnostics log folder"/>
+            <action id="ai.yet.plugin.RestartRuntime"
+                    class="ai.yet.plugin.actions.RestartRuntimeAction"
+                    text="Yet AI: Restart Runtime"
+                    description="Restart the Yet AI local runtime process launched by this plugin"/>
+        </group>
     </actions>
 </idea-plugin>

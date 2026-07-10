@@ -21,6 +21,8 @@ class YetLogSink(
 
     fun logPath(): Path = directoryProvider().resolve("yet-ai.log")
 
+    fun logDirectory(): Path = directoryProvider()
+
     fun append(level: String, event: String, metadata: Map<String, Any?> = emptyMap()) {
         val line = formatLine(level, event, metadata)
         synchronized(lock) {

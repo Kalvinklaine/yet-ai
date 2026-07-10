@@ -5,6 +5,7 @@ import ai.yet.plugin.runtime.RuntimeConnectionResult
 import ai.yet.plugin.runtime.RuntimeSettings
 import com.intellij.openapi.project.Project
 import java.lang.reflect.Proxy
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -66,6 +67,112 @@ class RuntimeActionsTest {
         assertContains(event.message, "[redacted]")
         assertFalse(event.message.contains("short-secret"), event.message)
         assertFalse(event.message.contains("a".repeat(64)), event.message)
+    }
+
+    @Test
+    fun copyDiagnosticsCopiesSanitizedBundleAndPresentsSuccess() {
+        val scheduler = RecordingStatusActionScheduler()
+        val presenter = RecordingYetDiagnosticsActionPresenter()
+        val clipboard = RecordingYetDiagnosticsClipboard()
+        val token = "copy-diagnostics-token-that-must-not-leak-1234567890"
+        val privatePath = "/Users/alice/Library/Logs/yet-ai/yet-ai.log"
+        val runner = CopyYetDiagnosticsActionRunner(
+            diagnostics = {
+                "Yet AI Diagnostics Bundle\n" +
+                    "Log path: $privatePath\n" +
+                    "Recent log tail:\nAuthorization: Bearer $token\napi_key=$token"
+            },
+            clipboard = clipboard,
+            scheduler = scheduler,
+            presenter = presenter,
+        )
+
+        runner.copy(null)
+
+        assertTrue(clipboard.values.isEmpty())
+        scheduler.runNextBackground()
+        scheduler.runNextUi()
+
+        val copied = clipboard.values.single()
+        assertContains(copied, "Yet AI Diagnostics Bundle")
+        assertContains(copied, "[redacted")
+        assertFalse(copied.contains(token), copied)
+        assertFalse(copied.contains(privatePath), copied)
+        assertFalse(copied.contains("alice"), copied)
+        assertEquals(listOf(Presentation("info", "Copied Yet AI diagnostics to clipboard (${copied.length} chars).")), presenter.events)
+    }
+
+    @Test
+    fun copyDiagnosticsFailureIsSanitizedAndPresentedAsError() {
+        val scheduler = RecordingStatusActionScheduler()
+        val presenter = RecordingYetDiagnosticsActionPresenter()
+        val runner = CopyYetDiagnosticsActionRunner(
+            diagnostics = { error("OAuth code ${"a".repeat(64)} at /Users/alice/private/auth.json") },
+            clipboard = RecordingYetDiagnosticsClipboard(),
+            scheduler = scheduler,
+            presenter = presenter,
+        )
+
+        runner.copy(null)
+        scheduler.runNextBackground()
+        scheduler.runNextUi()
+
+        val message = presenter.events.single().message
+        assertContains(message, "Unable to copy Yet AI diagnostics")
+        assertContains(message, "[redacted")
+        assertFalse(message.contains("a".repeat(64)), message)
+        assertFalse(message.contains("/Users/alice"), message)
+    }
+
+    @Test
+    fun openLogsFolderCreatesDirectoryOpensItAndPresentsSuccess() {
+        val scheduler = RecordingStatusActionScheduler()
+        val presenter = RecordingYetDiagnosticsActionPresenter()
+        val opener = RecordingYetLogsFolderOpener()
+        val directory = Files.createTempDirectory("yet-ai-logs-action-test")
+            .resolve("missing")
+        val runner = OpenYetLogsFolderActionRunner(
+            logDirectory = { directory },
+            opener = opener,
+            scheduler = scheduler,
+            presenter = presenter,
+        )
+
+        runner.open(null)
+
+        assertFalse(Files.exists(directory))
+        scheduler.runNextBackground()
+        scheduler.runNextUi()
+
+        assertTrue(Files.isDirectory(directory))
+        assertEquals(listOf(directory), opener.directories)
+        assertEquals(listOf(Presentation("info", "Opened Yet AI logs folder: $directory")), presenter.events)
+    }
+
+    @Test
+    fun openLogsFolderFailureIsSanitizedAndPresentedAsError() {
+        val scheduler = RecordingStatusActionScheduler()
+        val presenter = RecordingYetDiagnosticsActionPresenter()
+        val runner = OpenYetLogsFolderActionRunner(
+            logDirectory = { Path.of("/Users/alice/private/yet-ai") },
+            opener = object : YetLogsFolderOpener {
+                override fun open(directory: Path) {
+                    error("cannot open $directory Authorization: Bearer ${"b".repeat(64)}")
+                }
+            },
+            scheduler = scheduler,
+            presenter = presenter,
+        )
+
+        runner.open(null)
+        scheduler.runNextBackground()
+        scheduler.runNextUi()
+
+        val message = presenter.events.single().message
+        assertContains(message, "Unable to open Yet AI logs folder")
+        assertContains(message, "[redacted")
+        assertFalse(message.contains("/Users/alice"), message)
+        assertFalse(message.contains("b".repeat(64)), message)
     }
 
     @Test
@@ -304,6 +411,20 @@ class RuntimeActionsTest {
     }
 
     @Test
+    fun diagnosticsActionsUseBackgroundRunnerAndDesktopAbstractions() {
+        val source = projectFile("src/main/kotlin/ai/yet/plugin/actions/CopyYetDiagnosticsAction.kt").toFile().readText() +
+            projectFile("src/main/kotlin/ai/yet/plugin/actions/OpenYetLogsFolderAction.kt").toFile().readText()
+
+        assertContains(source, "DumbAwareAction")
+        assertContains(source, "CopyYetDiagnosticsActionRunner().copy(event.project)")
+        assertContains(source, "OpenYetLogsFolderActionRunner().open(event.project)")
+        assertContains(source, "YetDiagnosticsClipboard")
+        assertContains(source, "YetLogsFolderOpener")
+        assertContains(source, "CopyPasteManager.getInstance()")
+        assertContains(source, "BrowserUtil.browse")
+    }
+
+    @Test
     fun statusActionIsDumbAwareAndUsesBackgroundRunner() {
         val source = projectFile("src/main/kotlin/ai/yet/plugin/actions/ShowRuntimeStatusAction.kt").toFile().readText()
 
@@ -320,6 +441,11 @@ class RuntimeActionsTest {
 
         assertContains(pluginXml, "id=\"ai.yet.plugin.ShowRuntimeStatus\"")
         assertContains(pluginXml, "class=\"ai.yet.plugin.actions.ShowRuntimeStatusAction\"")
+        assertContains(pluginXml, "id=\"ai.yet.plugin.ToolsMenu\"")
+        assertContains(pluginXml, "id=\"ai.yet.plugin.CopyDiagnostics\"")
+        assertContains(pluginXml, "class=\"ai.yet.plugin.actions.CopyYetDiagnosticsAction\"")
+        assertContains(pluginXml, "id=\"ai.yet.plugin.OpenLogsFolder\"")
+        assertContains(pluginXml, "class=\"ai.yet.plugin.actions.OpenYetLogsFolderAction\"")
         assertContains(pluginXml, "id=\"ai.yet.plugin.RestartRuntime\"")
         assertContains(pluginXml, "class=\"ai.yet.plugin.actions.RestartRuntimeAction\"")
         assertFalse(pluginXml.contains("ai.yet.plugin.RestartRuntimeAction.disabled"), pluginXml)
@@ -376,6 +502,34 @@ private class RecordingStatusActionPresenter : StatusActionPresenter {
 
     override fun error(project: Project?, message: String) {
         events += Presentation("error", message)
+    }
+}
+
+private class RecordingYetDiagnosticsActionPresenter : YetDiagnosticsActionPresenter {
+    val events = mutableListOf<Presentation>()
+
+    override fun info(project: Project?, message: String) {
+        events += Presentation("info", message)
+    }
+
+    override fun error(project: Project?, message: String) {
+        events += Presentation("error", message)
+    }
+}
+
+private class RecordingYetDiagnosticsClipboard : YetDiagnosticsClipboard {
+    val values = mutableListOf<String>()
+
+    override fun copy(value: String) {
+        values += value
+    }
+}
+
+private class RecordingYetLogsFolderOpener : YetLogsFolderOpener {
+    val directories = mutableListOf<Path>()
+
+    override fun open(directory: Path) {
+        directories.add(directory)
     }
 }
 
