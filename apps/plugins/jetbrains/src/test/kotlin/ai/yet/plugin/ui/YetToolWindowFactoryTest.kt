@@ -375,21 +375,40 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
-    fun hostBridgeCorrelationFieldsIncludeReasonTokenStateAndSanitizedRuntimeOrigin() {
-        val fields = hostBridgeCorrelationFields(
-            RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
-            "401_recovery",
+    fun pendingAutoGuiReadyCorrelationFieldsUseExternalOwnerUntilPrepareResolves() {
+        val connection = pendingRuntimeConnection(
+            RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.AUTO),
         )
+        val fields = hostBridgeCorrelationFields(connection.settings, connection.lifecycleStatus, "initial")
 
-        assertEquals("401_recovery", fields["reason"])
+        assertEquals("initial", fields["reason"])
         assertEquals("present", fields["tokenState"])
         assertEquals("http://127.0.0.1:8001", fields["runtime"])
-        assertEquals("launch", fields["launchMode"])
-        assertEquals("plugin-managed", fields["runtimeOwner"])
+        assertEquals("auto", fields["launchMode"])
+        assertEquals("external/connect", fields["runtimeOwner"])
         val combined = fields.values.joinToString(" ")
+        assertFalse(combined.contains("plugin-managed"), combined)
         assertFalse(combined.contains("host-secret-token"), combined)
         assertFalse(combined.contains("must-not-leak"), combined)
         assertFalse(combined.contains("private"), combined)
+    }
+
+    @Test
+    fun pendingAutoRuntimeStatusUsesExternalNotOwnedAndWrapperAcceptedPayload() {
+        val connection = pendingRuntimeConnection(
+            RuntimeSettings("http://127.0.0.1:8001", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.AUTO),
+        )
+        val status = BridgeMessages.runtimeStatus(connection.lifecycleStatus)
+        val payload = JsonParser.parseString(status).asJsonObject.getAsJsonObject("payload")
+
+        assertEquals("restarting", payload.get("lifecycle").asString)
+        assertEquals("external", payload.get("runtimeOwner").asString)
+        assertEquals("auto", payload.get("launchMode").asString)
+        assertEquals("not_owned", payload.get("processState").asString)
+        assertContains(payload.get("diagnosis").asString, "prepare is pending")
+        assertTrue(isWrapperAcceptedRuntimeStatusPayload(payload))
+        assertFalse(status.contains("ide_host"), status)
+        assertFalse(status.contains("plugin-managed"), status)
     }
 
     @Test
@@ -614,9 +633,10 @@ class YetToolWindowFactoryTest {
 
     @Test
     fun pendingRuntimeConnectionDoesNotReportConnectedBeforePrepareCompletes() {
-        val result = pendingRuntimeConnection(RuntimeSettings("http://127.0.0.1:8001", null, null))
+        val result = pendingRuntimeConnection(RuntimeSettings("http://127.0.0.1:8001", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH))
 
         assertEquals(RuntimeLifecycle.RESTARTING, result.lifecycleStatus.lifecycle)
+        assertEquals("ide_host", result.lifecycleStatus.runtimeOwner)
         assertEquals(RuntimeProcessState.UNKNOWN, result.lifecycleStatus.processState)
         assertFalse(BridgeMessages.runtimeStatus(result.lifecycleStatus).contains("\"lifecycle\":\"connected\""))
         assertContains(result.lifecycleStatus.diagnosis, "prepare is pending")
@@ -1056,6 +1076,22 @@ class YetToolWindowFactoryTest {
 private fun applyMessage(): String = """{"version":"2026-05-15","type":"gui.applyWorkspaceEditRequest","requestId":"req-apply-1","payload":{"requiresUserConfirmation":true,"summary":"Replace reviewed range.","cloudRequired":false,"edits":[{"workspaceRelativePath":"src/Main.kt","textReplacements":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"replacementText":"updated"}]}]}}"""
 
 private fun messageType(message: String): String = JsonParser.parseString(message).asJsonObject.get("type").asString
+
+private fun isWrapperAcceptedRuntimeStatusPayload(payload: com.google.gson.JsonObject): Boolean {
+    val allowedKeys = setOf("protocolVersion", "surface", "lifecycle", "runtimeOwner", "launchMode", "tokenState", "processState", "diagnosis", "nextAction", "cloudRequired", "authority")
+    return payload.keySet().all { it in allowedKeys } &&
+        payload.get("protocolVersion")?.asString == "2026-06-21" &&
+        payload.get("surface")?.asString == "jetbrains" &&
+        payload.get("lifecycle")?.asString in setOf("connected", "auth_mismatch", "invalid_settings", "failed", "restarting", "stopped") &&
+        payload.get("runtimeOwner")?.asString in setOf("ide_host", "external") &&
+        payload.get("launchMode")?.asString in setOf("auto", "connect", "launch") &&
+        payload.get("tokenState")?.asString in setOf("unknown", "not_required", "absent", "present", "mismatch", "invalid") &&
+        payload.get("processState")?.asString in setOf("unknown", "not_owned", "running", "exited", "stopped", "failed") &&
+        payload.get("diagnosis")?.asString?.isNotBlank() == true &&
+        payload.get("nextAction")?.asString?.isNotBlank() == true &&
+        payload.get("cloudRequired")?.asBoolean == false &&
+        payload.get("authority")?.asString == "metadata_only"
+}
 
 private fun assertPendingHostReplayBehavior() {
     val readyRequestId = "gui-ready-1"

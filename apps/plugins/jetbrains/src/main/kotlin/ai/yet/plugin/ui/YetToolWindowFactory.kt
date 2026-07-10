@@ -6,6 +6,8 @@ import ai.yet.plugin.bridge.ControlledFileRead
 import ai.yet.plugin.bridge.ControlledIdeActions
 import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.logging.YetLogSink
+import ai.yet.plugin.runtime.EffectiveRuntimeOwner
+import ai.yet.plugin.runtime.LaunchMode
 import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionListener
 import ai.yet.plugin.runtime.RuntimeConnectionResult
@@ -191,11 +193,24 @@ internal fun pendingRuntimeConnection(settings: RuntimeSettings): RuntimeConnect
         settings,
         settings.launchMode,
         RuntimeLifecycle.RESTARTING,
-        RuntimeProcessState.UNKNOWN,
+        pendingRuntimeProcessState(settings.launchMode),
         "local runtime prepare is pending",
         "Wait for Yet AI runtime prepare to finish.",
+        effectiveRuntimeOwner = pendingRuntimeOwner(settings.launchMode),
     ),
 )
+
+internal fun pendingRuntimeOwner(launchMode: LaunchMode): EffectiveRuntimeOwner = when (launchMode) {
+    LaunchMode.LAUNCH -> EffectiveRuntimeOwner.IDE_HOST
+    LaunchMode.AUTO,
+    LaunchMode.CONNECT,
+    -> EffectiveRuntimeOwner.EXTERNAL
+}
+
+internal fun pendingRuntimeProcessState(launchMode: LaunchMode): RuntimeProcessState = when (pendingRuntimeOwner(launchMode)) {
+    EffectiveRuntimeOwner.IDE_HOST -> RuntimeProcessState.UNKNOWN
+    EffectiveRuntimeOwner.EXTERNAL -> RuntimeProcessState.NOT_OWNED
+}
 
 class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
@@ -401,8 +416,6 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         RuntimeSettings.safeFallback()
     }
 }
-
-internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, reason: String): Map<String, Any?> = runtimeCorrelationFields(settings) + mapOf("reason" to reason)
 
 internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, lifecycleStatus: RuntimeLifecycleStatus, reason: String): Map<String, Any?> = runtimeCorrelationFields(settings, settings.launchMode, effectiveRuntimeOwnerFromLifecycleOwner(lifecycleStatus.runtimeOwner)) + mapOf("reason" to reason)
 
