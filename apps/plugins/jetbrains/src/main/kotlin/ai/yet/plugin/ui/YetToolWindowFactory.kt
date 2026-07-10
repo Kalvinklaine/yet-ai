@@ -8,11 +8,8 @@ import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionListener
 import ai.yet.plugin.runtime.RuntimeConnectionResult
-import ai.yet.plugin.runtime.RuntimeLifecycle
 import ai.yet.plugin.runtime.RuntimeLifecycleStatus
-import ai.yet.plugin.runtime.RuntimeProcessState
 import ai.yet.plugin.runtime.RuntimeSettings
-import ai.yet.plugin.runtime.runtimeLifecycleStatus
 import ai.yet.plugin.runtime.loopbackOrigin
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
@@ -554,7 +551,6 @@ object JetBrainsReadyMessageDelivery {
             return false
         }
         send(BridgeMessages.hostReady(settings, requestId))
-        send(BridgeMessages.runtimeStatus(runtimeLifecycleStatus(settings, settings.launchMode, RuntimeLifecycle.CONNECTED, RuntimeProcessState.RUNNING, "local runtime is reachable", "Continue using Yet AI.")))
         send(BridgeMessages.openedFromCommand())
         val snapshot = try {
             contextSupplier()

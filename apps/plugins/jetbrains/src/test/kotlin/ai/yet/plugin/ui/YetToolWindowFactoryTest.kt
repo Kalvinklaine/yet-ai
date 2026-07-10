@@ -1,10 +1,14 @@
 package ai.yet.plugin.ui
 
 import ai.yet.plugin.bridge.ActiveEditorContext
+import ai.yet.plugin.bridge.BridgeMessages
 import ai.yet.plugin.bridge.ControlledIdeActions
 import ai.yet.plugin.runtime.RuntimeConnectionResult
-import com.google.gson.JsonParser
+import ai.yet.plugin.runtime.RuntimeLifecycle
+import ai.yet.plugin.runtime.RuntimeLifecycleStatus
+import ai.yet.plugin.runtime.RuntimeProcessState
 import ai.yet.plugin.runtime.RuntimeSettings
+import com.google.gson.JsonParser
 import java.util.concurrent.CompletableFuture
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -541,15 +545,12 @@ class YetToolWindowFactoryTest {
             logContextStatus = { logs.add(it) },
         )
 
-        assertEquals(listOf("host.ready", "host.runtimeStatus", "host.openedFromCommand", "host.contextSnapshot"), sent.map(::messageType))
+        assertEquals(listOf("host.ready", "host.openedFromCommand", "host.contextSnapshot"), sent.map(::messageType))
         assertContains(sent[0], "\"sessionToken\":\"session-token\"")
         assertFalse(JsonParser.parseString(sent[1]).asJsonObject.has("requestId"))
-        assertContains(sent[1], "\"type\":\"host.runtimeStatus\"")
-        assertContains(sent[1], "\"authority\":\"metadata_only\"")
-        assertFalse(sent[1].contains("session-token"), sent[1])
-        assertFalse(JsonParser.parseString(sent[2]).asJsonObject.has("requestId"))
-        assertContains(sent[3], "\"source\":\"jetbrains\"")
-        assertContains(sent[3], "safe text")
+        assertFalse(sent.any { messageType(it) == "host.runtimeStatus" })
+        assertContains(sent[2], "\"source\":\"jetbrains\"")
+        assertContains(sent[2], "safe text")
         assertEquals(emptyList(), logs)
     }
 
@@ -607,6 +608,36 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun readyDeliveryDoesNotOverwritePreciseRuntimeStatusWithSyntheticConnectedStatus() {
+        val sent = mutableListOf<String>()
+        val preciseStatus = RuntimeLifecycleStatus(
+            lifecycle = RuntimeLifecycle.STOPPED,
+            runtimeOwner = "ide_host",
+            launchMode = "launch",
+            tokenState = "present",
+            processState = RuntimeProcessState.EXITED,
+            diagnosis = "plugin-launched runtime process exited unexpectedly",
+            nextAction = "Click Refresh runtime, then run Yet AI: Restart Runtime.",
+        )
+
+        sent.add(BridgeMessages.runtimeStatus(preciseStatus))
+        JetBrainsReadyMessageDelivery.deliver(
+            settings = RuntimeSettings("http://127.0.0.1:8001", null, "session-token"),
+            requestId = "ready-precise",
+            send = { sent.add(it) },
+            contextSupplier = { null },
+            logContextStatus = {},
+        )
+
+        val runtimeStatusMessages = sent.filter { messageType(it) == "host.runtimeStatus" }
+        assertEquals(1, runtimeStatusMessages.size)
+        val payload = JsonParser.parseString(runtimeStatusMessages.single()).asJsonObject.getAsJsonObject("payload")
+        assertEquals("stopped", payload.get("lifecycle").asString)
+        assertEquals("exited", payload.get("processState").asString)
+        assertFalse(sent.drop(1).any { messageType(it) == "host.runtimeStatus" })
+    }
+
+    @Test
     fun readyDeliveryCanSendFreshHostReadyForExistingGuiRequestAfterRuntimeRelaunch() {
         val sent = mutableListOf<String>()
         val requestId = "gui-ready-current"
@@ -645,7 +676,7 @@ class YetToolWindowFactoryTest {
             logContextStatus = {},
         )
 
-        assertEquals(listOf("host.ready", "host.runtimeStatus", "host.openedFromCommand"), sent.map(::messageType))
+        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
     }
 
     @Test
@@ -682,7 +713,7 @@ class YetToolWindowFactoryTest {
             logContextStatus = {},
         )
 
-        assertEquals(listOf("host.ready", "host.runtimeStatus", "host.openedFromCommand"), sent.map(::messageType))
+        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
     }
 
     @Test
@@ -718,7 +749,7 @@ class YetToolWindowFactoryTest {
             logContextStatus = { logs.add(it) },
         )
 
-        assertEquals(listOf("host.ready", "host.runtimeStatus", "host.openedFromCommand"), sent.map(::messageType))
+        assertEquals(listOf("host.ready", "host.openedFromCommand"), sent.map(::messageType))
         assertEquals(listOf("Yet AI active editor context collection failed"), logs)
         assertFalse(logs.joinToString("\n").contains("raw-selected-text"))
         assertFalse(logs.joinToString("\n").contains("/Users/person/private/File.kt"))

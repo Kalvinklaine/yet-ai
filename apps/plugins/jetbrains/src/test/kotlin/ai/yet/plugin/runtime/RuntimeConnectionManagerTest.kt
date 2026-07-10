@@ -355,6 +355,39 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun prepareClassifiesPluginProcessThatExitsDuringHealthAsStopped() {
+        val exitingProcess = FakeManuallyKillableProcess(exitCode = 42)
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { exitingProcess },
+            tokenGenerator = { "exiting-session-token-that-must-not-leak-1234567890" },
+            healthChecker = {
+                exitingProcess.killManually()
+                throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: connection refused Authorization: Bearer exiting-session-token-that-must-not-leak-1234567890 /Users/alice/private/yet-lsp")
+            },
+        )
+
+        val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.LAUNCH, null))
+        val diagnostics = manager.runtimeDiagnosticsForTest(RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.LAUNCH, null))
+
+        assertEquals(RuntimeLifecycle.STOPPED, result.lifecycleStatus.lifecycle)
+        assertEquals(RuntimeProcessState.EXITED, result.lifecycleStatus.processState)
+        assertTrue(result.lifecycleStatus.diagnosis.contains("exited unexpectedly"), result.lifecycleStatus.diagnosis)
+        assertTrue(result.lifecycleStatus.nextAction.contains("Refresh runtime"), result.lifecycleStatus.nextAction)
+        assertTrue(result.lifecycleStatus.nextAction.contains("Restart Runtime"), result.lifecycleStatus.nextAction)
+        assertFalse(result.lifecycleStatus.diagnosis.contains("running but did not answer"), result.lifecycleStatus.diagnosis)
+        assertFalse(result.error.orEmpty().contains("running but did not answer"), result.error)
+        assertTrue(diagnostics.contains("Plugin-launched process: not running"), diagnostics)
+        assertTrue(diagnostics.contains("plugin-launched process exited with code 42"), diagnostics)
+        listOf("exiting-session-token", "Authorization", "Bearer", "/Users/alice", "private/yet-lsp").forEach { privateValue ->
+            assertFalse(result.error.orEmpty().contains(privateValue, ignoreCase = true), result.error)
+            assertFalse(result.lifecycleStatus.toString().contains(privateValue, ignoreCase = true), result.lifecycleStatus.toString())
+            assertFalse(diagnostics.contains(privateValue, ignoreCase = true), diagnostics)
+        }
+    }
+
+    @Test
     fun prepareRetriesPluginOwnedHttp401OnceWithFreshToken() {
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()
