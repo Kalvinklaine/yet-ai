@@ -537,6 +537,15 @@ class RuntimeConnectionManagerTest {
         assertContains(logText, "runtimeOwner=plugin-managed")
         assertContains(logText, "launchMode=launch")
         assertContains(logText, "tokenState=present")
+        val retryHealthStartLine = logText.lines().single { line ->
+            line.contains("runtime.health") &&
+                line.contains("phase=start") &&
+                line.contains("recovery=401_retry")
+        }
+        assertContains(retryHealthStartLine, "runtime=http://127.0.0.1:8125")
+        assertContains(retryHealthStartLine, "runtimeOwner=plugin-managed")
+        assertContains(retryHealthStartLine, "launchMode=launch")
+        assertContains(retryHealthStartLine, "tokenState=present")
         listOf("first-plugin-token", "second-plugin-token", "stale-initial-token", "/Users/alice", "Authorization", "Bearer").forEach { privateValue ->
             assertFalse(logText.contains(privateValue, ignoreCase = true), logText)
         }

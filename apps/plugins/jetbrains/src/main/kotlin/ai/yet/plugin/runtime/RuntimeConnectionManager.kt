@@ -155,7 +155,7 @@ class RuntimeConnectionManager(
                     return result
                 }
                 return try {
-                    logSink.append("info", "runtime.health", mapOf("phase" to "start", "recovery" to "401_retry", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
+                    logSink.append("info", "runtime.health", runtimeCorrelationFields(connection, settings.launchMode, EffectiveRuntimeOwner.IDE_HOST) + mapOf("phase" to "start", "recovery" to "401_retry"))
                     lastLaunchedByPluginDuringHealth = launchedConnection == connection
                     healthChecker(connection)
                     lastHealthResult = "/v1/ping returned 2xx after HTTP 401 recovery"
