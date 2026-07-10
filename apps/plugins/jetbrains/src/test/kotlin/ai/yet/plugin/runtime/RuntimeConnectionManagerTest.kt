@@ -726,6 +726,75 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun autoModeFallbackSuccessfulExternalHealthReportsExternalOwnerAndNoEngineLog() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-auto-fallback-success")
+        val logSink = YetLogSink(directoryProvider = { logDir })
+        var launchCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(null),
+            engineBinaryFinder = { configured -> assertEquals(null, configured); null },
+            processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
+            tokenGenerator = { "unused-token" },
+            healthChecker = {},
+            logSink = logSink,
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8129", null, "external-runtime-token", LaunchMode.AUTO, null)
+
+        val result = manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+        val logText = java.nio.file.Files.readString(logSink.logPath())
+
+        assertEquals(0, launchCalls)
+        assertEquals(RuntimeLifecycle.CONNECTED, result.lifecycleStatus.lifecycle)
+        assertEquals("external", result.lifecycleStatus.runtimeOwner)
+        assertEquals(RuntimeProcessState.NOT_OWNED, result.lifecycleStatus.processState)
+        assertContains(logText, "runtime.health")
+        assertContains(logText, "launchMode=auto")
+        assertContains(logText, "runtimeOwner=external/connect")
+        assertFalse(logText.contains("runtimeOwner=plugin-managed"), logText)
+        assertContains(diagnostics, "Runtime owner: external")
+        assertContains(diagnostics, "Engine log path: unavailable")
+        assertContains(diagnostics, "Engine log tail: unavailable")
+        assertFalse(diagnostics.contains("engine-8129.log"), diagnostics)
+    }
+
+    @Test
+    fun autoModeFallbackHttp401ReportsExternalOwnerWithoutPluginRetryGuidance() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-auto-fallback-401")
+        val logSink = YetLogSink(directoryProvider = { logDir })
+        var launchCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(null),
+            engineBinaryFinder = { configured -> assertEquals(null, configured); null },
+            processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
+            tokenGenerator = { "unused-token" },
+            healthChecker = { throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 with token=external-secret-token", 401) },
+            logSink = logSink,
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8130", null, "external-secret-token", LaunchMode.AUTO, null)
+
+        val result = manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+        val logText = java.nio.file.Files.readString(logSink.logPath())
+
+        assertEquals(0, launchCalls)
+        assertEquals(RuntimeLifecycle.AUTH_MISMATCH, result.lifecycleStatus.lifecycle)
+        assertEquals("external", result.lifecycleStatus.runtimeOwner)
+        assertEquals(RuntimeProcessState.FAILED, result.lifecycleStatus.processState)
+        assertContains(result.error.orEmpty(), "HTTP 401")
+        assertContains(result.lifecycleStatus.nextAction, "external runtime")
+        assertContains(result.lifecycleStatus.nextAction, "not a provider API key")
+        assertFalse(result.error.orEmpty().contains("Plugin-launched runtime process"), result.error)
+        assertFalse(result.lifecycleStatus.nextAction.contains("Restart Runtime"), result.lifecycleStatus.nextAction)
+        assertFalse(logText.contains("runtime.401_retry"), logText)
+        assertContains(logText, "runtimeOwner=external/connect")
+        assertContains(diagnostics, "Runtime owner: external")
+        assertContains(diagnostics, "Engine log path: unavailable")
+        assertFalse(diagnostics.contains("engine-8130.log"), diagnostics)
+        assertFalse(diagnostics.contains("external-secret-token"), diagnostics)
+    }
+
+    @Test
     fun autoModeSurfacesBundledExtractionFailureInsteadOfFallingBackToPathOrConnect() {
         var finderCalls = 0
         var launchCalls = 0

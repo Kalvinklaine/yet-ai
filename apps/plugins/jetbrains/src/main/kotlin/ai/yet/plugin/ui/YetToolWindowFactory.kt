@@ -14,6 +14,7 @@ import ai.yet.plugin.runtime.RuntimeLifecycleStatus
 import ai.yet.plugin.runtime.RuntimeProcessState
 import ai.yet.plugin.runtime.RuntimeSettings
 import ai.yet.plugin.runtime.loopbackOrigin
+import ai.yet.plugin.runtime.effectiveRuntimeOwnerFromLifecycleOwner
 import ai.yet.plugin.runtime.runtimeCorrelationFields
 import ai.yet.plugin.runtime.runtimeLifecycleStatus
 import com.google.gson.JsonParser
@@ -352,7 +353,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         acceptedHostReadyRequestId = requestId.takeIf { delivered && !disposed }
         if (delivered && !disposed) {
             val reason = pendingHostReadyReason ?: "runtime_update"
-            logSink.append("info", "bridge.host_ready.delivered", hostBridgeCorrelationFields(settings, reason))
+            logSink.append("info", "bridge.host_ready.delivered", hostBridgeCorrelationFields(settings, latestConnection.lifecycleStatus, reason))
             pendingHostReadyReason = null
         }
     }
@@ -402,6 +403,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
 }
 
 internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, reason: String): Map<String, Any?> = runtimeCorrelationFields(settings) + mapOf("reason" to reason)
+
+internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, lifecycleStatus: RuntimeLifecycleStatus, reason: String): Map<String, Any?> = runtimeCorrelationFields(settings, settings.launchMode, effectiveRuntimeOwnerFromLifecycleOwner(lifecycleStatus.runtimeOwner)) + mapOf("reason" to reason)
 
 internal fun runtimeUpdateReadyReason(connection: RuntimeConnectionResult): String = if (connection.status?.contains("refreshing the runtime session token", ignoreCase = true) == true) "401_recovery" else "runtime_update"
 
