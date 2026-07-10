@@ -59,6 +59,9 @@ export function runtimeLifecycleHostCopy(host: BridgeHost): string {
 }
 
 function lifecycleGuidance(payload: HostRuntimeStatusPayload, host: BridgeHost): string {
+  if (payload.lifecycle === "auth_mismatch" && (host === "browser" || payload.surface === "browser")) {
+    return boundLifecycleText("Runtime session mismatch. Browser standalone cannot launch or restart runtime; provide the matching loopback runtime URL and Session token, then refresh. Raw token values are never shown here.");
+  }
   if (payload.lifecycle === "auth_mismatch") {
     return boundLifecycleText("Runtime session mismatch. Refresh runtime first; if still failing, use the IDE runtime status or restart command. Raw token values are never shown here.");
   }

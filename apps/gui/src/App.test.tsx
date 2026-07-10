@@ -1931,6 +1931,57 @@ describe("provider secret boundary", () => {
     expect(browserStorageDump()).not.toContain("access_token");
   });
 
+  it("shows runtime 401 as local session-token mismatch recovery in browser standalone", async () => {
+    mockRuntimeResponses({ authStatusCode: 401, modelsFailure: true });
+    renderApp();
+
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Local runtime session token mismatch");
+    expect(text).toContain("GUI-to-runtime Session token or loopback URL mismatch");
+    expect(text).toContain("not an OpenAI, GPT, OAuth, or provider API-key problem");
+    expect(text).toContain("Browser standalone cannot launch or restart the runtime");
+    expect(text).toContain("GPT/OpenAI experimental login cannot start until you provide a matching loopback runtime URL and Session token");
+    expect(text).not.toContain("raw-secret");
+    expect(text).not.toContain("Bearer");
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
+  it("keeps experimental login visible but disabled under runtime 401", async () => {
+    mockRuntimeResponses({ authStatusCode: 401, modelsFailure: true });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Experimental GPT/OpenAI login is blocked by runtime auth");
+    expect(container?.textContent).toContain("Blocked prerequisite");
+    expect(container?.textContent).toContain("Fix the local GUI-to-runtime Session token mismatch first");
+    expect(findButton("Start experimental OpenAI login").disabled).toBe(true);
+    expect(findButton("Experimental high-risk account login").disabled).toBe(true);
+    expect(container?.textContent).not.toContain("authorizationUrl");
+    expect(container?.textContent).not.toContain("access_token");
+  });
+
+  it("keeps API-key fallback visible under runtime 401 without claiming it fixes runtime auth", async () => {
+    mockRuntimeResponses({ authStatusCode: 401, modelsFailure: true });
+    renderApp();
+
+    await flushAsync();
+
+    expect(buttonsNamed("Use OpenAI API key fallback").length).toBeGreaterThan(0);
+    await act(async () => {
+      findButton("Use OpenAI API key fallback").click();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("OpenAI API-key fallback selected, but it cannot fix the local GUI-to-runtime session token mismatch.");
+    expect(text).toContain("Fix the runtime URL/session token first");
+    expect(text).toContain("Provider API key");
+    expect(apiKeyInput()).toBeDefined();
+    expect(findButton("Send").disabled).toBe(true);
+  });
+
   it("renders all experimental login card actions without raw authorization URL material", async () => {
     const authUrl = "https://auth.openai.com/oauth/authorize?client_id=yet-ai-local&state=secret-state-query&code_challenge=secret-challenge";
     const openMock = vi.spyOn(window, "open").mockImplementation(() => null);

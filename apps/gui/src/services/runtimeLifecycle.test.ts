@@ -36,6 +36,14 @@ describe("runtimeLifecycle", () => {
     expect(diagnostics.guidance).not.toContain("session-token-value");
   });
 
+  it("renders browser auth mismatch guidance as connect-only", () => {
+    const diagnostics = runtimeLifecycleDiagnostics({ ...connected, surface: "browser", lifecycle: "auth_mismatch", tokenState: "mismatch", diagnosis: "runtime rejected the current local credentials", nextAction: "Update local connection." }, "browser");
+
+    expect(diagnostics.guidance).toContain("Browser standalone cannot launch or restart runtime");
+    expect(diagnostics.guidance).toContain("matching loopback runtime URL and Session token");
+    expect(diagnostics.guidance).not.toContain("Bearer");
+  });
+
   it("bounds and sanitizes lifecycle guidance", () => {
     const diagnostics = runtimeLifecycleDiagnostics({ ...connected, lifecycle: "failed", diagnosis: `runtime failed Bearer unsafe-secret-value ${"z".repeat(500)}`, nextAction: "Check /Users/alice/private/runtime.log and retry." }, "vscode");
 

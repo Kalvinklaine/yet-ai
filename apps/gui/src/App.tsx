@@ -543,11 +543,13 @@ export function App() {
   const activeDemoMode = demoModeDataCurrent ? demoMode : null;
   const activeDemoModeError = demoModeDataCurrent ? demoModeError : null;
   const activeProviderAuthStatus = providerAuthDataCurrent ? providerAuthStatus : null;
+  const activeProviderAuthError = providerAuthDataCurrent ? providerAuthError : null;
   const activeChatSummaries = chatHistoryCurrent ? chatSummaries : [];
   const activeRuntimeLifecycle = runtimeLifecycle?.settingsRevision === settingsRevision ? runtimeLifecycle.diagnostics : null;
   const activeChatSummary = activeChatSummaries.find((item) => item.chatId === chatId);
   const activeChatIndex = activeChatSummaries.findIndex((item) => item.chatId === chatId);
   const runtimeConnected = activePing?.ready === true && !activeConnectionError;
+  const runtimeAuthMismatchError = runtimeAuthMismatch(activeConnectionError, activeModelError, activeProviderAuthError);
   const connectionStatus = activeConnectionError ? "error" : activePing?.ready ? "connected" : "not checked";
   const hostedRuntimeConnection = bridgeHost !== "browser" || runtimeConnectionSource === "host.ready";
   const enabledProviders = useMemo(() => activeProviders.filter((provider) => provider.enabled), [activeProviders]);
@@ -2218,7 +2220,9 @@ export function App() {
     const preset = providerPresets.find((item) => item.id === "openai-api");
     if (preset) {
       applyProviderPreset(preset);
-      setProviderSetupStatus("OpenAI API-key fallback selected. Paste your provider API key, save or update the provider, test provider, then refresh runtime/model readiness before sending.");
+      setProviderSetupStatus(runtimeAuthMismatchError
+        ? "OpenAI API-key fallback selected, but it cannot fix the local GUI-to-runtime session token mismatch. Fix the runtime URL/session token first, then save, test provider, refresh runtime/model readiness, and send."
+        : "OpenAI API-key fallback selected. Paste your provider API key, save or update the provider, test provider, then refresh runtime/model readiness before sending.");
       showProviderSetupFocus();
     }
   };
@@ -3690,6 +3694,7 @@ export function App() {
         {runtimeRefreshStatus && <div className={`refresh-status ${runtimeRefreshStatus.state}`} role="status"><strong>{runtimeRefreshStatus.detail}</strong><span>Attempt {runtimeRefreshStatus.attempt} at {runtimeRefreshStatus.checkedAt}</span></div>}
         {activeConnectionError && <ErrorBox error={activeConnectionError} />}
         {activeModelError && <div className="error">Models refresh failed: {activeModelError.status}: {sanitizeDisplayText(activeModelError.message)}</div>}
+        {runtimeAuthMismatchError && <RuntimeAuthMismatchRecovery host={bridgeHost} hostedRuntimeConnection={hostedRuntimeConnection} />}
         {activeIdentityWarnings.map((warning) => <div className="error" key={warning}>{warning}</div>)}
         <div className="grid">
           <StatusBlock title="/v1/ping" value={activePing} />
@@ -3741,6 +3746,7 @@ export function App() {
           </div>
           {providerAuthError && <ErrorBox error={providerAuthError} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
+          {runtimeAuthMismatchError && !activeProviderAuthStatus && <BlockedProviderAuthJourney host={bridgeHost} hostedRuntimeConnection={hostedRuntimeConnection} onRefresh={() => void connect()} onApiKeyFallback={applyOpenAiApiPreset} />}
           {activeProviderAuthStatus ? (
             <ProviderAuthJourney
               status={activeProviderAuthStatus}
@@ -3757,7 +3763,7 @@ export function App() {
               onDisconnect={() => void disconnectOpenAiLogin()}
               onApiKeyFallback={applyOpenAiApiPreset}
             />
-          ) : (
+          ) : runtimeAuthMismatchError ? null : (
             <div className="login-state-panel stack">
               <strong>Checking account login status…</strong>
               <span className="subtle">Refresh the local runtime status or continue with the API-key fallback.</span>
@@ -5986,6 +5992,54 @@ function formatFreshnessTimestamp(value: string | undefined): string {
   return value ? sanitizeDisplayText(value) : "unknown";
 }
 
+
+function runtimeAuthMismatch(...errors: Array<RuntimeError | null | undefined>): RuntimeError | null {
+  return errors.find((error) => error?.status === 401) ?? null;
+}
+
+function RuntimeAuthMismatchRecovery({ host, hostedRuntimeConnection }: { host: BridgeHost; hostedRuntimeConnection: boolean }) {
+  const hostLabel = host === "jetbrains" ? "JetBrains" : host === "vscode" ? "VS Code" : "browser standalone";
+  return (
+    <div className="recovery-card stack" role="status">
+      <strong>Local runtime session token mismatch</strong>
+      <span>The local runtime rejected this GUI session with 401. This is a GUI-to-runtime Session token or loopback URL mismatch, not an OpenAI, GPT, OAuth, or provider API-key problem.</span>
+      {host === "browser" && <span>Browser standalone cannot launch or restart the runtime. GPT/OpenAI experimental login cannot start until you provide a matching loopback runtime URL and Session token from the already running local runtime.</span>}
+      {host !== "browser" && hostedRuntimeConnection && <span>{hostLabel} manages runtime recovery: use Refresh runtime or the IDE restart-runtime command, then retry login or provider setup after the runtime connection works.</span>}
+      {host !== "browser" && !hostedRuntimeConnection && <span>{hostLabel} has not supplied matching runtime settings yet. Refresh/restart the IDE-managed runtime, then wait for the host to provide the loopback URL and hidden Session token.</span>}
+      <span>Next actions: fix the runtime URL/Session token, refresh runtime, then retry experimental login or configure a provider. OpenAI API-key fallback remains available, but it does not repair this runtime session-token mismatch.</span>
+    </div>
+  );
+}
+
+function BlockedProviderAuthJourney({ host, hostedRuntimeConnection, onRefresh, onApiKeyFallback }: { host: BridgeHost; hostedRuntimeConnection: boolean; onRefresh: () => void; onApiKeyFallback: () => void }) {
+  const hostAction = host === "browser"
+    ? "Prerequisite: enter the matching loopback runtime URL and Session token from your running local runtime. Browser standalone cannot launch or restart it."
+    : hostedRuntimeConnection
+      ? "Prerequisite: refresh or restart the IDE-managed runtime so this GUI receives a matching local Session token."
+      : "Prerequisite: wait for the IDE host to provide a matching loopback runtime URL and hidden Session token, or restart the IDE-managed runtime.";
+  return (
+    <div className="login-state-panel stack blocked">
+      <div className="stack">
+        <strong>Experimental GPT/OpenAI login is blocked by runtime auth</strong>
+        <span>This experimental, non-default account-login entrypoint is still here, but it cannot start while local runtime requests return 401.</span>
+        <span>{hostAction}</span>
+        <span className="subtle">No production OAuth claim. No raw tokens, authorization URLs, provider secrets, or Session token values are stored in browser storage or shown here.</span>
+      </div>
+      <div className="recovery-card" role="status">
+        <strong>Blocked prerequisite</strong>
+        <span>Fix the local GUI-to-runtime Session token mismatch first, then refresh login status and retry the experimental GPT/OpenAI login only if you accept the dev-preview risk.</span>
+        <span>OpenAI API-key fallback is visible for BYOK provider setup, but it does not fix runtime 401 session-token mismatch.</span>
+        <span className="subtle">Login/chat only. No workspace execution.</span>
+      </div>
+      <div className="row">
+        <button type="button" onClick={onRefresh}>Refresh runtime</button>
+        <button type="button" disabled>Start experimental OpenAI login</button>
+        <button type="button" className="danger-button" disabled>Experimental high-risk account login</button>
+        <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
+      </div>
+    </div>
+  );
+}
 
 type ProviderAuthJourneyProps = {
   status: ProviderAuthResponse;
