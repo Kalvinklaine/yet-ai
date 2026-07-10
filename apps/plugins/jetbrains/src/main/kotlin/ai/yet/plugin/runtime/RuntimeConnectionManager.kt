@@ -1,6 +1,7 @@
 package ai.yet.plugin.runtime
 
 import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.settings.SessionTokenStore
 import ai.yet.plugin.settings.YetSettingsState
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
@@ -27,6 +28,7 @@ class RuntimeConnectionManager(
     private val processStarter: (EngineLaunchCommand) -> Process = ::startEngineProcess,
     private val tokenGenerator: () -> String = ::generateSessionToken,
     private val healthChecker: (RuntimeSettings) -> Unit = ::checkHealth,
+    private val sessionTokenStore: RuntimeSessionTokenStore = PasswordSafeRuntimeSessionTokenStore(),
 ) : Disposable {
     private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
     private var launchedProcess: Process? = null
@@ -109,7 +111,7 @@ class RuntimeConnectionManager(
                 logger.info("Yet AI plugin-launched runtime returned HTTP 401 during health check; restarting once with a fresh session token")
                 stopLaunchedProcess()
                 connection = try {
-                    prepareConnectionSettings(settings)
+                    prepareConnectionSettings(settings, refreshSessionToken = true)
                 } catch (launchError: Exception) {
                     val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed after HTTP 401 recovery", launchError)
                     lastHealthResult = "HTTP 401 from /v1/ping; plugin-owned restart failed"
@@ -227,7 +229,7 @@ class RuntimeConnectionManager(
     }
 
     @Synchronized
-    fun prepareConnectionSettings(settings: RuntimeSettings): RuntimeSettings {
+    fun prepareConnectionSettings(settings: RuntimeSettings, refreshSessionToken: Boolean = false): RuntimeSettings {
         val binaryPath = when (settings.launchMode) {
             LaunchMode.CONNECT -> null
             LaunchMode.LAUNCH -> {
@@ -249,18 +251,18 @@ class RuntimeConnectionManager(
         val shouldLaunch = settings.launchMode == LaunchMode.LAUNCH ||
             (settings.launchMode == LaunchMode.AUTO && binaryPath != null)
         return if (shouldLaunch) {
-            launchOrReuse(settings, requireNotNull(binaryPath))
+            launchOrReuse(settings, requireNotNull(binaryPath), refreshSessionToken)
         } else {
             settings
         }
     }
 
     @Synchronized
-    private fun launchOrReuse(settings: RuntimeSettings, binaryPath: Path): RuntimeSettings {
+    private fun launchOrReuse(settings: RuntimeSettings, binaryPath: Path, refreshSessionToken: Boolean): RuntimeSettings {
         reconcileExitedLaunchedProcess()
         val existing = launchedProcess
         val existingConnection = launchedConnection
-        if (existing != null && existing.isAlive && existingConnection?.runtimeUrl == settings.runtimeUrl) {
+        if (!refreshSessionToken && existing != null && existing.isAlive && existingConnection?.runtimeUrl == settings.runtimeUrl) {
             return existingConnection
         }
         stopLaunchedProcess()
@@ -271,8 +273,15 @@ class RuntimeConnectionManager(
         } catch (error: Exception) {
             throw IllegalStateException(sanitizedRuntimeError("Yet AI local runtime process start failed", error, token))
         }
+        val connection = settings.copyWithSessionToken(token)
+        try {
+            sessionTokenStore.set(token)
+        } catch (error: Exception) {
+            stopProcess(process)
+            throw IllegalStateException(sanitizedRuntimeError("Yet AI local runtime session token store update failed", error, token))
+        }
         launchedProcess = process
-        launchedConnection = settings.copyWithSessionToken(token)
+        launchedConnection = connection
         attachLogs(process, token)
         logger.info("Started Yet AI local runtime")
         thread(name = "Yet AI runtime watcher", isDaemon = true) {
@@ -347,6 +356,17 @@ class RuntimeConnectionManager(
 private fun pluginLaunchedProcessExitMessage(code: Int?): String {
     val codeText = code?.toString() ?: "unknown"
     return "plugin-launched process exited with code $codeText; click Refresh runtime or run Yet AI: Restart Runtime to relaunch"
+}
+
+interface RuntimeSessionTokenStore {
+    fun set(value: String)
+}
+
+private class PasswordSafeRuntimeSessionTokenStore : RuntimeSessionTokenStore {
+    override fun set(value: String) {
+        val application = ApplicationManager.getApplication() ?: return
+        application.getService(SessionTokenStore::class.java).set(value)
+    }
 }
 
 interface RuntimeConnectionListener {

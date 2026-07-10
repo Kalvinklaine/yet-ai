@@ -222,6 +222,28 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun pluginLaunchPersistsGeneratedTokenForGuiAndNextSettingsRead() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        val tokenStore = RecordingRuntimeSessionTokenStore()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
+            tokenGenerator = { "generated-plugin-owned-token" },
+            sessionTokenStore = tokenStore,
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, "stale-cached-token", LaunchMode.AUTO, null)
+
+        val prepared = manager.prepareConnectionSettings(settings)
+
+        assertEquals("generated-plugin-owned-token", prepared.sessionToken)
+        assertEquals(listOf("generated-plugin-owned-token"), tokenStore.values)
+        assertEquals("generated-plugin-owned-token", launched.single().environment["YET_AI_AUTH_TOKEN"])
+        manager.dispose()
+    }
+
+    @Test
     fun autoModePrefersBundledRuntimeOverPathFallback() {
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         var finderCalls = 0
@@ -392,6 +414,7 @@ class RuntimeConnectionManagerTest {
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()
         var healthCalls = 0
+        val tokenStore = RecordingRuntimeSessionTokenStore()
         val manager = RuntimeConnectionManager(
             bundledEngineProvider = RecordingBundledProvider(bundledPath),
             engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
@@ -402,6 +425,7 @@ class RuntimeConnectionManagerTest {
                 if (healthCalls == 1) throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401", 401)
                 assertEquals("second-plugin-token", settings.sessionToken)
             },
+            sessionTokenStore = tokenStore,
         )
 
         val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8125", null, "stale-initial-token", LaunchMode.LAUNCH, null))
@@ -415,7 +439,37 @@ class RuntimeConnectionManagerTest {
         assertTrue(result.status.orEmpty().contains("refreshing the runtime session token"), result.status)
         assertFalse(result.lifecycleStatus.diagnosis.contains("token", ignoreCase = true), result.lifecycleStatus.diagnosis)
         assertEquals(2, healthCalls)
+        assertEquals(listOf("first-plugin-token", "second-plugin-token"), tokenStore.values)
         assertEquals(listOf("first-plugin-token", "second-plugin-token"), launched.map { it.environment.getValue("YET_AI_AUTH_TOKEN") })
+        manager.dispose()
+    }
+
+    @Test
+    fun refreshSessionTokenRestartsAlivePluginRuntimeAndPersistsFreshToken() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        val processes = mutableListOf<FakeAliveProcess>()
+        val tokenStore = RecordingRuntimeSessionTokenStore()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command -> launched += command; FakeAliveProcess().also { processes += it } },
+            tokenGenerator = { if (launched.isEmpty()) "old-plugin-token" else "fresh-plugin-token" },
+            healthChecker = {},
+            sessionTokenStore = tokenStore,
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8125", null, "stale-browser-token", LaunchMode.LAUNCH, null)
+
+        val oldConnection = manager.prepareConnectionSettings(settings)
+        val freshConnection = manager.prepareConnectionSettings(settings, refreshSessionToken = true)
+
+        assertEquals("old-plugin-token", oldConnection.sessionToken)
+        assertEquals("fresh-plugin-token", freshConnection.sessionToken)
+        assertEquals(listOf("old-plugin-token", "fresh-plugin-token"), tokenStore.values)
+        assertEquals(listOf("old-plugin-token", "fresh-plugin-token"), launched.map { it.environment.getValue("YET_AI_AUTH_TOKEN") })
+        assertEquals(2, processes.size)
+        assertFalse(processes.first().isAlive)
+        assertTrue(processes.last().isAlive)
         manager.dispose()
     }
 
@@ -1151,6 +1205,14 @@ private class FakeProcess(private val destroyWaitResults: List<Boolean>) : Proce
     }
 
     override fun isAlive(): Boolean = alive
+}
+
+private class RecordingRuntimeSessionTokenStore : RuntimeSessionTokenStore {
+    val values = mutableListOf<String>()
+
+    override fun set(value: String) {
+        values += value
+    }
 }
 
 private class FakeManuallyKillableProcess(private val exitCode: Int = 0) : Process() {
