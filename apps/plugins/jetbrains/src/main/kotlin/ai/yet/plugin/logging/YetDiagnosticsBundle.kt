@@ -41,7 +41,7 @@ class YetDiagnosticsBundle(
         lines += "Log path: ${logSink.logPath()}"
         lines += "Recent log tail:"
         lines += logSink.tail()
-        lines += "Engine log path: ${snapshot.engineLogPath ?: "unavailable"}"
+        lines += "Engine log path: ${snapshot.engineLogPath?.fileName ?: "unavailable"}"
         val engineTail = snapshot.engineLogPath?.let { engineLogTail(it) }
         if (engineTail.isNullOrBlank()) {
             lines += "Engine log tail: unavailable"

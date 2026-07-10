@@ -96,6 +96,80 @@ class YetDiagnosticsBundleTest {
     }
 
     @Test
+    fun bundleReportsExternalEngineLogUnavailableWithoutDerivingPath() {
+        val dir = createTempDirectory("yet-diagnostics-external-engine")
+        val sink = YetLogSink(directoryProvider = { dir })
+        sink.append("info", "runtime.health", mapOf("phase" to "failure"))
+        val lifecycle = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.CONNECT, null),
+            LaunchMode.CONNECT,
+            RuntimeLifecycle.FAILED,
+            RuntimeProcessState.NOT_OWNED,
+            "connect mode is waiting for an externally managed local runtime",
+            "Start the external runtime",
+        )
+
+        val bundle = YetDiagnosticsBundle(sink).build(
+            YetDiagnosticsSnapshot(
+                launchMode = "connect",
+                runtimeUrl = "http://127.0.0.1:8123",
+                engineBinaryConfigured = false,
+                binaryStatus = "not used in connect mode",
+                launchedByPlugin = false,
+                lifecycleStatus = lifecycle,
+                lastHealth = null,
+                lastError = null,
+                lastProcess = null,
+                lastRecovery = null,
+                engineLogPath = null,
+            ),
+        )
+
+        assertContains(bundle, "Engine log path: unavailable")
+        assertContains(bundle, "Engine log tail: unavailable")
+        assertFalse(bundle.contains("engine-8123.log"), bundle)
+    }
+
+    @Test
+    fun bundleRedactsCredentialFilePathsFromHostAndEngineTails() {
+        val dir = createTempDirectory("yet-diagnostics-credential-paths")
+        val sink = YetLogSink(directoryProvider = { dir })
+        val engineLogPath = expectedEngineLogPath(dir, 8123)
+        sink.append("warn", "runtime.output", mapOf("line" to "opened /Users/Alice Smith/.config/yet/credentials.json and C:\\Users\\Alice Smith\\credential.json"))
+        Files.writeString(engineLogPath, "engine read ../yet/credential.json and /tmp/yet/credentials.json\nengine ok\n")
+        val lifecycle = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null),
+            LaunchMode.LAUNCH,
+            RuntimeLifecycle.CONNECTED,
+            RuntimeProcessState.RUNNING,
+            "local runtime is reachable",
+            "Continue using Yet AI.",
+        )
+
+        val bundle = YetDiagnosticsBundle(sink).build(
+            YetDiagnosticsSnapshot(
+                launchMode = "launch",
+                runtimeUrl = "http://127.0.0.1:8123",
+                engineBinaryConfigured = false,
+                binaryStatus = "bundled plugin runtime binary available",
+                launchedByPlugin = true,
+                lifecycleStatus = lifecycle,
+                lastHealth = "/v1/ping returned 2xx",
+                lastError = "credential path /Users/Alice Smith/.config/yet/credential.json",
+                lastProcess = null,
+                lastRecovery = null,
+                engineLogPath = engineLogPath,
+            ),
+        )
+
+        assertContains(bundle, "runtime.output")
+        assertContains(bundle, "engine ok")
+        listOf("credential.json", "credentials.json", "Alice Smith", "/tmp/yet", ".config/yet").forEach { privateValue ->
+            assertFalse(bundle.contains(privateValue, ignoreCase = true), bundle)
+        }
+    }
+
+    @Test
     fun bundleRedactsSecretsPathsAndStaysBounded() {
         val dir = createTempDirectory("yet-diagnostics-redaction")
         val sink = YetLogSink(directoryProvider = { dir })

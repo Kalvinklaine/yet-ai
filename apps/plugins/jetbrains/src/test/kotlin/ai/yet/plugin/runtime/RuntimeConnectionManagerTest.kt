@@ -553,6 +553,53 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun connectModeDiagnosticsReportExternalEngineLogUnavailable() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-connect-log")
+        val logSink = YetLogSink(directoryProvider = { logDir })
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("connect mode must not resolve engine binaries") },
+            processStarter = { error("connect mode must not launch") },
+            tokenGenerator = { "unused-token" },
+            healthChecker = { throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: connection refused") },
+            logSink = logSink,
+        )
+
+        manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8126", null, null, LaunchMode.CONNECT, null))
+        val diagnostics = manager.runtimeDiagnosticsForTest(RuntimeSettings("http://127.0.0.1:8126", null, null, LaunchMode.CONNECT, null))
+
+        assertContains(diagnostics, "Runtime owner: external")
+        assertContains(diagnostics, "Engine log path: unavailable")
+        assertContains(diagnostics, "Engine log tail: unavailable")
+        assertFalse(diagnostics.contains("engine-8126.log"), diagnostics)
+    }
+
+    @Test
+    fun pluginLaunchedRuntimeDiagnosticsIncludeExpectedEngineLogPathAndTail() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-plugin-engine-log")
+        val logSink = YetLogSink(directoryProvider = { logDir })
+        val engineLogPath = expectedEngineLogPath(logDir, 8128)
+        java.nio.file.Files.writeString(engineLogPath, "engine started\nengine ready\n")
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "plugin-engine-log-token" },
+            healthChecker = {},
+            logSink = logSink,
+        )
+
+        manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8128", null, null, LaunchMode.LAUNCH, null))
+        val diagnostics = manager.runtimeDiagnosticsForTest(RuntimeSettings("http://127.0.0.1:8128", null, null, LaunchMode.LAUNCH, null))
+
+        assertContains(diagnostics, "Runtime owner: ide_host")
+        assertContains(diagnostics, "engine-8128.log")
+        assertContains(diagnostics, "Recent engine log tail:")
+        assertContains(diagnostics, "engine ready")
+        manager.dispose()
+    }
+
+    @Test
     fun retryFailureStopsPluginOwnedRuntimeAndSurfacesActionableRedactedGuidance() {
         val logDir = kotlin.io.path.createTempDirectory("yet-runtime-retry-log")
         val logSink = YetLogSink(directoryProvider = { logDir })
@@ -1170,6 +1217,31 @@ class RuntimeConnectionManagerTest {
             assertFalse(redacted.contains(marker), redacted)
             assertFalse(redacted.contains(".codex"), redacted)
             assertFalse(redacted.contains("auth.json"), redacted)
+            assertTrue(redacted.contains("[redacted]"), redacted)
+        }
+    }
+
+    @Test
+    fun redactsCredentialJsonAndCredentialsJsonNamesAndPaths() {
+        val cases = listOf(
+            "credential.json",
+            "credentials.json",
+            "./credential.json",
+            "../credentials.json",
+            ".config/yet/credential.json",
+            "..\\yet\\credentials.json",
+            "/Users/Alice Smith/.config/yet/credential.json",
+            "/tmp/yet/credentials.json",
+            "C:\\Users\\Alice Smith\\AppData\\Roaming\\yet\\credential.json",
+            "D:\\tmp\\yet\\credentials.json",
+        )
+
+        cases.forEach { marker ->
+            val redacted = redactLogText("credential file $marker", "")
+            assertFalse(redacted.contains(marker), redacted)
+            assertFalse(redacted.contains("credential.json"), redacted)
+            assertFalse(redacted.contains("credentials.json"), redacted)
+            assertFalse(redacted.contains("Alice Smith"), redacted)
             assertTrue(redacted.contains("[redacted]"), redacted)
         }
     }

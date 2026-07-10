@@ -37,6 +37,32 @@ class YetLogSinkTest {
     }
 
     @Test
+    fun writesAndTailsRedactCredentialFilePaths() {
+        val dir = createTempDirectory("yet-log-sink-credential-paths")
+        val sink = YetLogSink(directoryProvider = { dir })
+
+        sink.append(
+            "warn",
+            "runtime.output",
+            mapOf(
+                "bare" to "credentials.json",
+                "relative" to "../yet/credential.json",
+                "unix" to "/Users/Alice Smith/.config/yet/credentials.json",
+                "windows" to "C:\\Users\\Alice Smith\\AppData\\Roaming\\yet\\credential.json",
+            ),
+        )
+
+        val text = Files.readString(sink.logPath())
+        val tail = sink.tail(maxBytes = 1024)
+        listOf(text, tail).forEach { output ->
+            assertContains(output, "runtime.output")
+            listOf("credential.json", "credentials.json", "Alice Smith", ".config/yet", "AppData").forEach { privateValue ->
+                assertFalse(output.contains(privateValue, ignoreCase = true), output)
+            }
+        }
+    }
+
+    @Test
     fun tailAndFileStayBounded() {
         val dir = createTempDirectory("yet-log-sink-bounded")
         val sink = YetLogSink(directoryProvider = { dir }, maxBytes = 500, maxLineLength = 200)
@@ -46,9 +72,11 @@ class YetLogSinkTest {
         }
 
         assertTrue(Files.size(sink.logPath()) <= 500, Files.size(sink.logPath()).toString())
+        sink.append("info", "runtime.newest", mapOf("payload" to "done"))
         val tail = sink.tail(maxBytes = 120)
-        assertTrue(tail.toByteArray().size <= 500)
-        assertContains(tail, "runtime.health")
+        assertTrue(tail.toByteArray().size <= 120, tail.toByteArray().size.toString())
+        assertContains(tail, "runtime.newest")
+        assertFalse(tail.contains("index=0"), tail)
     }
 
     @Test

@@ -372,12 +372,15 @@ class RuntimeConnectionManager(
         lastError = diagnostics.error,
         lastProcess = diagnostics.process,
         lastRecovery = lastRecoveryResult,
-        engineLogPath = engineLogPathForDiagnostics(diagnostics.runtimeUrl),
+        engineLogPath = engineLogPathForDiagnostics(diagnostics),
     )
 
-    private fun engineLogPathForDiagnostics(runtimeUrl: String): Path? = runCatching {
-        expectedEngineLogPath(logSink.logDirectory(), parseExplicitRuntimePort(runtimeUrl))
-    }.getOrNull()
+    private fun engineLogPathForDiagnostics(diagnostics: RuntimeDiagnostics): Path? {
+        if (!diagnostics.pluginManagedRuntime) return null
+        return runCatching {
+            expectedEngineLogPath(logSink.logDirectory(), parseExplicitRuntimePort(diagnostics.runtimeUrl))
+        }.getOrNull()
+    }
 
     @Synchronized
     private fun currentProcessState(): RuntimeProcessState = when {
@@ -606,7 +609,10 @@ data class RuntimeDiagnostics(
     val health: String?,
     val error: String?,
     val process: String? = null,
-)
+) {
+    val pluginManagedRuntime: Boolean
+        get() = launchedByPlugin || process?.contains("plugin-launched", ignoreCase = true) == true
+}
 
 fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
     val mode = diagnostics.launchMode.lowercase()
@@ -963,13 +969,10 @@ private fun redactSensitiveText(value: String, exactToken: String?): String {
             match.groupValues[1] + match.groupValues[2] + "=[redacted]"
         }
         .replace(Regex("(?i)(?:^|[\\s,{(])(?:[A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)\\s*[:=]\\s*[^\\s,)}\\]]+"), "[redacted]")
-        .replace(Regex("(?i)(^|[\\s\"'`=:(,{])(?:\\.\\.?[/\\\\])?\\.codex[/\\\\]auth\\.json(?=$|[\\s\"'`,;:)}\\]])")) { match ->
+        .replace(Regex("(?i)(^|[\\s\"'`=:(,{])(?:\\.?\\.?[/\\\\])?(?:(?:[^/\\\\\\r\\n,;)}\\]\\s]+|[^/\\\\\\r\\n,;)}\\]]+ [^/\\\\\\r\\n,;)}\\]]*)[/\\\\])*(?:\\.codex[/\\\\])?(?:auth|credential|credentials)\\.json(?=$|[\\s\"'`,;:)}\\]])")) { match ->
             match.groupValues[1] + "[redacted]"
         }
-        .replace(Regex("(?i)(^|[\\s\"'`=:(,{])auth\\.json(?=$|[\\s\"'`,;:)}\\]])")) { match ->
-            match.groupValues[1] + "[redacted]"
-        }
-        .replace(Regex("(?i)(?:[A-Za-z]:)?(?:[/\\\\][^\\r\\n,;)}\\]]*)*(?:[/\\\\](?:\\.codex[/\\\\])?auth\\.json)"), "[redacted]")
+        .replace(Regex("(?i)(?:[A-Za-z]:)?(?:[/\\\\][^\\r\\n,;)}\\]]*)*(?:[/\\\\](?:\\.codex[/\\\\])?(?:auth|credential|credentials)\\.json)"), "[redacted]")
         .replace(Regex("(?:[A-Za-z]:\\\\[^\\r\\n,;)}\\]\\s]+(?:\\\\[^\\r\\n,;)}\\]\\s]+)+|/(?:Users|home|var/folders|tmp|private|Volumes)/[^\\r\\n,;)}\\]\\s]+(?:/[^\\r\\n,;)}\\]\\s]+)*)"), "[redacted path]")
         .replace(Regex("\\b[A-Za-z0-9_-]{48,}\\b"), "[redacted]")
     return if (redacted.length > 500) redacted.take(500) + "…" else redacted
