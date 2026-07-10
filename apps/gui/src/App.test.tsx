@@ -1134,6 +1134,50 @@ describe("runtime refresh feedback", () => {
     expect(browserStorageDump()).not.toContain("Repository validation completed with sanitized metadata");
   });
 
+  it("shows JetBrains diagnostics handoff during runtime errors without rendering logs", async () => {
+    window.postIntellijMessage = vi.fn();
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Diagnostics available");
+    expect(text).toContain("Copy Diagnostics");
+    expect(text).toContain("Open Logs Folder");
+    expect(text).toContain("sanitized bundle");
+    expect(text).toContain("Raw logs are not shown in the Web UI");
+    expect(text).not.toContain("access_token");
+    expect(browserStorageDump()).not.toContain("Diagnostics available");
+  });
+
+  it("shows JetBrains diagnostics handoff when runtime status is normal", async () => {
+    window.postIntellijMessage = vi.fn();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+    await dispatchRuntimeStatus(runtimeStatusPayload({ surface: "jetbrains", lifecycle: "connected", diagnosis: "runtime connected", nextAction: "Use the chat when ready." }));
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Runtime connected");
+    expect(text).toContain("Diagnostics available");
+    expect(text).toContain("Tools → Yet AI: Copy Diagnostics or Open Logs Folder");
+    expect(text).not.toContain("Recent log tail");
+    expect(browserStorageDump()).not.toContain("Open Logs Folder");
+  });
+
+  it("does not claim browser standalone can open JetBrains logs", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Browser standalone mode connects to a running loopback runtime");
+    expect(text).not.toContain("Diagnostics available");
+    expect(text).not.toContain("Open Logs Folder");
+    expect(text).not.toContain("Tools → Yet AI");
+  });
+
   it("renders auth mismatch lifecycle guidance without token leakage", async () => {
     const token = "host-runtime-status-secret-value";
     mockRuntimeResponses({ runtimeFailure: true });

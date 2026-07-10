@@ -3687,6 +3687,10 @@ export function App() {
             </>
           ) : <span>{runtimeLifecycleHostCopy(bridgeHost)}</span>}
         </div>
+        {bridgeHost === "jetbrains" && <div className="recovery-card subtle" role="status" aria-label="JetBrains diagnostics handoff">
+          <strong>Diagnostics available</strong>
+          <span>Use JetBrains Tools → Yet AI: Copy Diagnostics or Open Logs Folder for a sanitized bundle and local logs folder. Raw logs are not shown in the Web UI.</span>
+        </div>}
         <div className="row">
           <button onClick={() => void connect()} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
           <span className="subtle">Authorization header is sent only to validated loopback runtime URLs.</span>
