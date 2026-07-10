@@ -4,6 +4,7 @@ pub mod chat_history;
 pub mod demo_mode;
 pub mod http;
 pub mod identity;
+pub mod logging;
 pub mod lsp;
 pub mod project_memory;
 pub mod provider_auth;

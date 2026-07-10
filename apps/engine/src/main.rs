@@ -1,4 +1,8 @@
-use yet_lsp::{app, default_bind_addr, lsp, AppState, AuthToken, ProductIdentity};
+use yet_lsp::{
+    app, default_bind_addr,
+    logging::{init_engine_logging, log_event, EngineLogLevel},
+    lsp, AppState, AuthToken, ProductIdentity,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,6 +17,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(8001);
+    let _engine_log_guard = init_engine_logging(port);
+    let auth_required = true;
+    log_event(
+        EngineLogLevel::Info,
+        "http.server.start",
+        &[
+            ("port", &port as &dyn std::fmt::Display),
+            ("auth_required", &auth_required as &dyn std::fmt::Display),
+        ],
+    );
     let addr = default_bind_addr(port);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app(AppState::new(identity, token))).await?;
