@@ -412,6 +412,9 @@ export function App() {
   const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("manual");
   const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(true);
   const [providerDetailsOpen, setProviderDetailsOpen] = useState(false);
+  const [providerSetupHighlight, setProviderSetupHighlight] = useState(false);
+  const [providerSetupStatus, setProviderSetupStatus] = useState<string | null>(null);
+  const [providerSetupFocusRequest, setProviderSetupFocusRequest] = useState(0);
   const [settingsRevision, setSettingsRevision] = useState(0);
   const runtimeRefreshAttemptRef = useRef(0);
   const runtimeRefreshInFlightRef = useRef(false);
@@ -474,6 +477,9 @@ export function App() {
   const controlledMultifileApplyCompletedRequestIdRef = useRef<string | null>(null);
   const controlledVerificationBundleCorrelationRef = useRef<ControlledAgentVerificationBundleRequestCorrelation | null>(null);
   const controlledVerificationBundleCompletedRequestIdRef = useRef<string | null>(null);
+  const providerSetupCardRef = useRef<HTMLElement | null>(null);
+  const providerApiKeyInputRef = useRef<HTMLInputElement | null>(null);
+  const providerSetupHighlightTimerRef = useRef<number | null>(null);
   const oneStepFileReadRequestIdRef = useRef<string | null>(null);
   const oneStepEditRequestIdRef = useRef<string | null>(null);
   const oneStepCommandRunRequestIdRef = useRef<string | null>(null);
@@ -956,6 +962,20 @@ export function App() {
   useEffect(() => {
     setProviderDetailsOpen(!canSendChat);
   }, [canSendChat]);
+
+  useEffect(() => () => {
+    if (providerSetupHighlightTimerRef.current !== null) {
+      window.clearTimeout(providerSetupHighlightTimerRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (providerSetupFocusRequest === 0) {
+      return;
+    }
+    providerSetupCardRef.current?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    providerApiKeyInputRef.current?.focus({ preventScroll: true });
+  }, [providerSetupFocusRequest]);
 
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
@@ -2157,6 +2177,7 @@ export function App() {
     if (provider.kind === "demo-local") {
       return;
     }
+    setProviderDetailsOpen(true);
     setSelectedProviderId(provider.id);
     setProviderForm({
       providerId: provider.id,
@@ -2180,10 +2201,25 @@ export function App() {
     });
   };
 
+  const showProviderSetupFocus = () => {
+    setProviderDetailsOpen(true);
+    setProviderSetupHighlight(true);
+    setProviderSetupFocusRequest((current) => current + 1);
+    if (providerSetupHighlightTimerRef.current !== null) {
+      window.clearTimeout(providerSetupHighlightTimerRef.current);
+    }
+    providerSetupHighlightTimerRef.current = window.setTimeout(() => {
+      setProviderSetupHighlight(false);
+      providerSetupHighlightTimerRef.current = null;
+    }, 1800);
+  };
+
   const applyOpenAiApiPreset = () => {
     const preset = providerPresets.find((item) => item.id === "openai-api");
     if (preset) {
       applyProviderPreset(preset);
+      setProviderSetupStatus("OpenAI API-key fallback selected. Paste your provider API key, save or update the provider, test provider, then refresh runtime/model readiness before sending.");
+      showProviderSetupFocus();
     }
   };
 
@@ -3673,9 +3709,9 @@ export function App() {
         </details>
       </section>
 
-      <section className="card stack secondary-card provider-setup-card">
-        <details className="debug-details" data-testid="provider-setup-details" open={providerDetailsOpen} onToggle={(event) => setProviderDetailsOpen(event.currentTarget.open)}>
-          <summary><h2>Provider setup</h2></summary>
+      <section ref={providerSetupCardRef} className={`card stack secondary-card provider-setup-card${providerSetupHighlight ? " provider-setup-card-highlight" : ""}`}>
+        <details className="debug-details provider-setup-details" data-testid="provider-setup-details" open={providerDetailsOpen} onToggle={(event) => setProviderDetailsOpen(event.currentTarget.open)}>
+          <summary><h2>Provider setup</h2><span className="subtle">BYOK, local, demo, login</span></summary>
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
           <div className="guided-setup-card stack" role="status">
             <strong>Runtime connected — choose the first-message path</strong>
@@ -3690,6 +3726,7 @@ export function App() {
         <p className="subtle"><strong>Runtime Session token</strong> is only for this GUI talking to the local loopback runtime. <strong>Provider API key</strong> is for upstream providers that require one and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage. Ollama local uses auth None.</p>
         <p className="subtle">ChatGPT/OpenAI account login is experimental/non-default until officially supported and reviewed. It is not production official login. OpenAI API-key setup remains available as the safe/default hosted real-provider path.</p>
         <p className="subtle">For local Ollama, the engine calls your Ollama server directly at http://127.0.0.1:11434. No API key, hosted Yet AI service, account, managed model gateway, cloud workspace, or product credit balance is required.</p>
+        {providerSetupStatus && <div className="provider-setup-status" role="status"><strong>OpenAI API-key setup opened</strong><span>{providerSetupStatus}</span></div>}
         {providerError && <ErrorBox error={providerError} />}
         <div className="provider-item account-login-card stack">
           <div className="row">
@@ -3731,20 +3768,24 @@ export function App() {
             </div>
           )}
         </div>
-        <div className="grid">
-          <form className="stack" onSubmit={(event) => void submitProvider(event)}>
-            <div className="stack">
-              <strong>Quick presets</strong>
-              <div className="row">
+        <div className="provider-setup-grid">
+          <form className="provider-form-card stack" onSubmit={(event) => void submitProvider(event)}>
+            <div className="provider-setup-group stack">
+              <strong>1. Pick a provider preset</strong>
+              <div className="row provider-preset-row">
                 {providerPresets.map((preset) => (
                   <button type="button" key={preset.id} onClick={() => applyProviderPreset(preset)} title={preset.description}>
                     {preset.label}
                   </button>
                 ))}
               </div>
-              <span className="subtle">Presets only fill provider fields. They never include API keys and do not contact providers from the GUI. The OpenAI API-key fallback preset is the safe/default real-provider starting point.</span>
+              <span className="subtle">Presets fill fields only; no API keys or GUI provider calls.</span>
             </div>
-            <div className="form-grid">
+            <div className="provider-setup-group stack">
+              <strong>2. Fill local runtime provider settings</strong>
+              <span className="subtle">Save sends settings to the local runtime; the API-key field is cleared after save/update.</span>
+            </div>
+            <div className="form-grid provider-form-grid">
               <label>
                 Provider id
                 <input disabled={Boolean(selectedProviderId)} value={providerForm.providerId} onChange={(event) => setProviderForm({ ...providerForm, providerId: event.target.value })} />
@@ -3774,7 +3815,7 @@ export function App() {
               </label>
               <label>
                 API key
-                <input type="password" value={providerForm.apiKey} onChange={(event) => setProviderForm({ ...providerForm, apiKey: event.target.value })} placeholder="Provider API key, not the runtime Session token" autoComplete="off" />
+                <input ref={providerApiKeyInputRef} type="password" value={providerForm.apiKey} onChange={(event) => setProviderForm({ ...providerForm, apiKey: event.target.value })} placeholder="Provider API key, not the runtime Session token" autoComplete="off" />
                 <span className="field-help">Sent only to the local runtime on save, then cleared. This is your provider/OpenAI API key, not the runtime Session token.</span>
               </label>
               <label>
@@ -3794,10 +3835,15 @@ export function App() {
               <button type="submit">{selectedProviderId ? "Update provider" : "Create provider"}</button>
               <button type="button" onClick={() => { setSelectedProviderId(undefined); setProviderForm(emptyProviderForm); }}>New provider</button>
             </div>
-            <span className="field-help">After Save/Update: click Test provider in the Providers list, click Refresh runtime to reload model readiness, then use Send when Chat readiness says Send available.</span>
+            <div className="provider-setup-group stack">
+              <strong>3. Save, test, refresh</strong>
+              <span className="subtle">Save/update, test provider, refresh runtime, then send.</span>
+            </div>
+            <span className="field-help">Then test provider, refresh runtime, and send when ready.</span>
           </form>
-          <div className="stack">
-            <h3>Providers</h3>
+          <div className="provider-list-card stack">
+            <h3>Saved providers</h3>
+            <span className="subtle">Secrets stay runtime-owned; only configured/redacted status is shown.</span>
             {activeProviders.length === 0 ? <p className="subtle">No providers returned.</p> : activeProviders.map((provider) => (
               <div className="provider-item stack" key={provider.id}>
                 <div className="row">

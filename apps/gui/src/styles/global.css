@@ -38,6 +38,22 @@ button {
   padding: 10px 14px;
 }
 
+button:not(:disabled) {
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease, transform 80ms ease;
+}
+
+button:not(:disabled):hover {
+  background: #244bd1;
+  box-shadow: 0 8px 18px rgba(47, 91, 234, 0.22);
+  transform: translateY(-1px);
+}
+
+button:not(:disabled):active {
+  background: #1f3fb3;
+  box-shadow: 0 3px 8px rgba(47, 91, 234, 0.18);
+  transform: translateY(1px);
+}
+
 button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -185,6 +201,19 @@ textarea {
   color: #2441a1;
 }
 
+.secondary-button:not(:disabled):hover,
+.link-button:not(:disabled):hover {
+  background: #dce6ff;
+  border-color: #9fb7f7;
+  color: #1f3fb3;
+}
+
+.secondary-button:not(:disabled):active,
+.link-button:not(:disabled):active {
+  background: #ccdafe;
+  color: #18328f;
+}
+
 .debug-details {
   border: 1px solid #e2e7f0;
   border-radius: 14px;
@@ -256,6 +285,54 @@ textarea {
   background: #f4fbf7;
   color: #0f5b36;
   padding: 14px;
+}
+
+.provider-setup-card {
+  scroll-margin-block: 16px;
+}
+
+.provider-setup-card-highlight {
+  border-color: #7da0ff;
+  box-shadow: 0 0 0 4px rgba(47, 91, 234, 0.14), 0 24px 70px rgba(28, 40, 72, 0.14);
+}
+
+.provider-setup-details summary {
+  justify-content: space-between;
+}
+
+.provider-setup-status {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #b8c7ff;
+  border-radius: 14px;
+  background: #f2f6ff;
+  color: #2441a1;
+  padding: 12px;
+}
+
+.provider-setup-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.provider-form-card,
+.provider-list-card,
+.provider-setup-group {
+  border: 1px solid #e2e7f0;
+  border-radius: 14px;
+  background: #fbfcff;
+  padding: 14px;
+}
+
+.provider-preset-row button {
+  text-align: left;
+}
+
+.provider-form-grid label {
+  display: grid;
+  align-content: start;
 }
 
 .field-help {
@@ -371,6 +448,15 @@ textarea {
   background: #9f2d20;
 }
 
+.danger-button:not(:disabled):hover {
+  background: #84251b;
+  box-shadow: 0 8px 18px rgba(159, 45, 32, 0.22);
+}
+
+.danger-button:not(:disabled):active {
+  background: #6f1f16;
+}
+
 pre,
 .timeline {
   overflow: auto;
@@ -451,6 +537,12 @@ pre,
   border-color: #ffe2a3;
   background: #fff4d7;
   color: #8a5a00;
+}
+
+@media (max-width: 900px) {
+  .provider-setup-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {

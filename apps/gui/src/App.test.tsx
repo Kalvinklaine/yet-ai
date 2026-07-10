@@ -1431,9 +1431,19 @@ describe("provider secret boundary", () => {
       findButton("Use OpenAI API key fallback").click();
     });
 
+    expect(findInputValue("openai-api")).toBeDefined();    await act(async () => {
+      findButton("Use OpenAI API key fallback").click();
+    });
+    await flushAsync();
+
     expect(findInputValue("openai-api")).toBeDefined();
     expect(findInputValue("https://api.openai.com/v1")).toBeDefined();
     expect(apiKeyInput().value).toBe("");
+    expect(findDetails("provider-setup-details").open).toBe(true);
+    expect(document.activeElement).toBe(apiKeyInput());
+    expect(container?.textContent).toContain("OpenAI API-key setup opened");
+    expect(container?.textContent).toContain("Paste your provider API key, save or update the provider, test provider, then refresh runtime/model readiness before sending.");
+    expect(container?.textContent).toContain("Paste your provider API key, save or update the provider, test provider, then refresh runtime/model readiness before sending.");
   });
 
   it("does not write provider auth state or secrets to browser storage", async () => {
@@ -1444,6 +1454,42 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(browserStorageDump()).not.toContain(secret);
+  });
+
+  it("opens provider setup from chat fallback, focuses API key, and keeps fallback secret out of storage", async () => {
+    const secret = "sk-fallback-focus-secret-value";
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+
+    await flushAsync();
+    const details = findDetails("provider-setup-details");
+    await act(async () => {
+      details.open = false;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    expect(details.open).toBe(false);
+
+    await act(async () => {
+      findButton("Use OpenAI API key fallback").click();
+    });
+    await flushAsync();
+
+    expect(details.open).toBe(true);
+    expect(findInputValue("openai-api")).toBeDefined();
+    expect(findInputValue("https://api.openai.com/v1")).toBeDefined();
+    expect(apiKeyInput().value).toBe("");
+    expect(document.activeElement).toBe(apiKeyInput());
+    expect(container?.querySelector(".provider-setup-card-highlight")).toBeDefined();
+    expect(container?.textContent).toContain("OpenAI API-key setup opened");
+    expect(container?.textContent).toContain("Paste your provider API key, save or update the provider, test provider, then refresh runtime/model readiness before sending.");
+
+    await act(async () => {
+      setInputValue(apiKeyInput(), secret);
+    });
+    expect(apiKeyInput().value).toBe(secret);
+    expect(browserStorageDump()).not.toContain(secret);
+    expect(localSetItem).not.toHaveBeenCalled();
   });
 
   it("saves OpenAI API-key fallback, clears the raw key, and refreshes to send readiness", async () => {
