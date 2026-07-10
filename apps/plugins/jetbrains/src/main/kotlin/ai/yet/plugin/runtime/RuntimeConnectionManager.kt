@@ -231,7 +231,7 @@ class RuntimeConnectionManager(
             RuntimeSettings.current()
         } catch (error: Exception) {
             val diagnostics = RuntimeDiagnostics(
-                launchMode = rawLaunchMode.trim().ifBlank { "auto" },
+                launchMode = sanitizedLaunchModeForDiagnostics(rawLaunchMode),
                 runtimeUrl = sanitizeRuntimeUrlForDiagnostics(rawRuntimeUrl),
                 engineBinaryConfigured = rawEngineBinaryPath.isNotBlank(),
                 binaryStatus = "settings invalid: ${redactLogText(error.message ?: error::class.java.simpleName, "")}",
@@ -620,8 +620,11 @@ fun runtimeLifecycleStatus(
 )
 
 fun runtimeLifecycleStatusFromDiagnostics(diagnostics: RuntimeDiagnostics): RuntimeLifecycleStatus {
+    val invalidLaunchMode = parseLaunchModeOrNull(diagnostics.launchMode) == null
+    val launchMode = parseLaunchModeForDiagnostics(diagnostics.launchMode)
     val diagnosis = runtimeDiagnosis(diagnostics)
     val lifecycle = when {
+        invalidLaunchMode -> RuntimeLifecycle.INVALID_SETTINGS
         diagnostics.process?.contains("exited", ignoreCase = true) == true -> RuntimeLifecycle.STOPPED
         diagnostics.process?.contains("stopped", ignoreCase = true) == true -> RuntimeLifecycle.STOPPED
         diagnosis.contains("token mismatch") -> RuntimeLifecycle.AUTH_MISMATCH
@@ -639,10 +642,10 @@ fun runtimeLifecycleStatusFromDiagnostics(diagnostics: RuntimeDiagnostics): Runt
         diagnosis.contains("waiting for a plugin-launched runtime process") -> RuntimeProcessState.RUNNING
         else -> RuntimeProcessState.NOT_OWNED
     }
-    val settings = RuntimeSettings(diagnostics.runtimeUrl, null, null, launchMode = parseLaunchMode(diagnostics.launchMode))
+    val settings = RuntimeSettings(diagnostics.runtimeUrl, null, null, launchMode = launchMode)
     return runtimeLifecycleStatus(
         settings,
-        settings.launchMode,
+        launchMode,
         lifecycle,
         processState,
         diagnosis,
@@ -650,6 +653,12 @@ fun runtimeLifecycleStatusFromDiagnostics(diagnostics: RuntimeDiagnostics): Runt
         effectiveRuntimeOwner = if (diagnostics.pluginManagedRuntime) EffectiveRuntimeOwner.IDE_HOST else EffectiveRuntimeOwner.EXTERNAL,
     )
 }
+
+private fun parseLaunchModeForDiagnostics(value: String): LaunchMode = parseLaunchModeOrNull(value) ?: LaunchMode.AUTO
+
+private fun parseLaunchModeOrNull(value: String): LaunchMode? = runCatching { parseLaunchMode(value) }.getOrNull()
+
+private fun sanitizedLaunchModeForDiagnostics(value: String): String = redactLogText(value.trim().ifBlank { "not configured" }, "")
 
 private fun tokenState(settings: RuntimeSettings, lifecycle: RuntimeLifecycle): String = when (lifecycle) {
     RuntimeLifecycle.AUTH_MISMATCH -> "mismatch"
@@ -711,11 +720,16 @@ data class RuntimeDiagnostics(
 }
 
 fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
-    val mode = diagnostics.launchMode.lowercase()
-    val guidance = when (mode) {
-        "connect" -> "Connect mode expects an already running loopback Yet AI runtime. Verify the URL, port, and debug token match the runtime process."
-        "launch" -> "Launch mode uses the bundled runtime when Engine binary path is empty, or an executable absolute ${ProductIdentity.engineBinaryName} path when configured, plus an http runtime URL with an explicit nonzero port."
-        else -> "Auto mode prefers the bundled runtime for installable/dev-preview artifacts, uses a configured absolute ${ProductIdentity.engineBinaryName} path when set, and treats PATH discovery as a dev-preview fallback only; otherwise it connects to the configured loopback URL."
+    val mode = sanitizedLaunchModeForDiagnostics(diagnostics.launchMode).lowercase()
+    val invalidLaunchMode = parseLaunchModeOrNull(diagnostics.launchMode) == null
+    val guidance = if (invalidLaunchMode) {
+        "Configured launch mode is invalid. Supported values are auto, connect, or launch."
+    } else {
+        when (mode) {
+            "connect" -> "Connect mode expects an already running loopback Yet AI runtime. Verify the URL, port, and debug token match the runtime process."
+            "launch" -> "Launch mode uses the bundled runtime when Engine binary path is empty, or an executable absolute ${ProductIdentity.engineBinaryName} path when configured, plus an http runtime URL with an explicit nonzero port."
+            else -> "Auto mode prefers the bundled runtime for installable/dev-preview artifacts, uses a configured absolute ${ProductIdentity.engineBinaryName} path when set, and treats PATH discovery as a dev-preview fallback only; otherwise it connects to the configured loopback URL."
+        }
     }
     val diagnosis = runtimeDiagnosis(diagnostics)
     val nextAction = runtimeNextAction(diagnostics, diagnosis)
@@ -737,6 +751,9 @@ fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
 }
 
 private fun runtimeDiagnosis(diagnostics: RuntimeDiagnostics): String {
+    if (parseLaunchModeOrNull(diagnostics.launchMode) == null) {
+        return "local runtime settings are invalid: unsupported launch mode; supported values are auto, connect, or launch"
+    }
     val combined = listOfNotNull(diagnostics.binaryStatus, diagnostics.health, diagnostics.process, diagnostics.error).joinToString("\n").lowercase()
     val url = diagnostics.runtimeUrl.lowercase()
     return when {
@@ -769,6 +786,8 @@ private fun runtimeDiagnosis(diagnostics: RuntimeDiagnostics): String {
 }
 
 private fun runtimeNextAction(diagnostics: RuntimeDiagnostics, diagnosis: String): String = when {
+    parseLaunchModeOrNull(diagnostics.launchMode) == null ->
+        "Open settings and choose a supported Launch mode: auto, connect, or launch."
     diagnosis.contains("token mismatch") && diagnostics.pluginManagedRuntime ->
         "Click Refresh runtime, then use Yet AI: Restart Runtime or change the Runtime URL port. In connect mode, make the IDE debug/session token match the external runtime; this is not a provider API key."
     diagnosis.contains("token mismatch") && diagnostics.launchMode.lowercase() == "connect" ->

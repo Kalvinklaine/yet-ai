@@ -1152,6 +1152,37 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun diagnosticsWithInvalidLaunchModeAreSafeActionableAndRedacted() {
+        val diagnostics = RuntimeDiagnostics(
+            launchMode = "remote token=runtime-secret-token-1234567890 /Users/alice/private/yet-lsp",
+            runtimeUrl = sanitizeRuntimeUrlForDiagnostics("http://127.0.0.1:8123/private?access_token=url-secret"),
+            engineBinaryConfigured = true,
+            binaryStatus = "settings invalid: Yet AI launchMode must be auto, connect, or launch at /Users/alice/private/yet-lsp Authorization: Bearer secret-token",
+            launchedByPlugin = false,
+            health = null,
+            error = "Yet AI runtime settings are invalid: Yet AI launchMode must be auto, connect, or launch token=runtime-secret-token-1234567890 /Users/alice/private/yet-lsp",
+        )
+
+        val status = runtimeLifecycleStatusFromDiagnostics(diagnostics)
+        val text = formatRuntimeDiagnostics(diagnostics)
+
+        assertEquals(RuntimeLifecycle.INVALID_SETTINGS, status.lifecycle)
+        assertEquals("auto", status.launchMode)
+        assertEquals("external", status.runtimeOwner)
+        assertContains(status.diagnosis, "unsupported launch mode")
+        assertContains(status.nextAction, "supported Launch mode")
+        assertContains(text, "Launch mode: remote")
+        assertContains(text, "[redacted]")
+        assertContains(text, "Configured launch mode is invalid")
+        assertContains(text, "settings are invalid")
+        assertContains(text, "supported values are auto, connect, or launch")
+        listOf("runtime-secret-token", "url-secret", "Authorization", "Bearer", "/Users/alice", "private/yet-lsp").forEach { privateValue ->
+            assertFalse(status.toString().contains(privateValue, ignoreCase = true), status.toString())
+            assertFalse(text.contains(privateValue, ignoreCase = true), text)
+        }
+    }
+
+    @Test
     fun diagnosticsFor401MentionTokenMismatchWithoutTokenValue() {
         val token = "runtime-session-token-that-must-not-leak-1234567890"
         val diagnostics = formatRuntimeDiagnostics(
