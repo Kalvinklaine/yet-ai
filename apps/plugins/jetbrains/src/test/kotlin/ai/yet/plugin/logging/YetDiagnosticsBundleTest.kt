@@ -4,7 +4,9 @@ import ai.yet.plugin.runtime.LaunchMode
 import ai.yet.plugin.runtime.RuntimeLifecycle
 import ai.yet.plugin.runtime.RuntimeProcessState
 import ai.yet.plugin.runtime.RuntimeSettings
+import ai.yet.plugin.runtime.expectedEngineLogPath
 import ai.yet.plugin.runtime.runtimeLifecycleStatus
+import java.nio.file.Files
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -16,7 +18,9 @@ class YetDiagnosticsBundleTest {
     fun bundleIncludesRuntimeStateLogPathAndRecentTail() {
         val dir = createTempDirectory("yet-diagnostics")
         val sink = YetLogSink(directoryProvider = { dir })
+        val engineLogPath = expectedEngineLogPath(dir, 8123)
         sink.append("info", "runtime.health", mapOf("phase" to "success"))
+        Files.writeString(engineLogPath, "engine booted\nengine health ok\n")
         val lifecycle = runtimeLifecycleStatus(
             RuntimeSettings("http://127.0.0.1:8123/private?token=runtime-secret", "project-secret", "session-secret", LaunchMode.LAUNCH, null),
             LaunchMode.LAUNCH,
@@ -38,6 +42,7 @@ class YetDiagnosticsBundleTest {
                 lastError = null,
                 lastProcess = null,
                 lastRecovery = "none",
+                engineLogPath = engineLogPath,
             ),
         )
 
@@ -48,15 +53,58 @@ class YetDiagnosticsBundleTest {
         assertContains(bundle, "Process state: running")
         assertContains(bundle, "Log path:")
         assertContains(bundle, "runtime.health")
+        assertContains(bundle, "Engine log path:")
+        assertContains(bundle, "Recent engine log tail:")
+        assertContains(bundle, "engine health ok")
         assertFalse(bundle.contains("runtime-secret"), bundle)
         assertFalse(bundle.contains("session-secret"), bundle)
+    }
+
+    @Test
+    fun bundleNotesMissingEngineLogWithoutFailing() {
+        val dir = createTempDirectory("yet-diagnostics-missing-engine")
+        val sink = YetLogSink(directoryProvider = { dir })
+        sink.append("info", "runtime.health", mapOf("phase" to "success"))
+        val lifecycle = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null),
+            LaunchMode.LAUNCH,
+            RuntimeLifecycle.FAILED,
+            RuntimeProcessState.RUNNING,
+            "runtime did not become reachable",
+            "Refresh runtime",
+        )
+
+        val bundle = YetDiagnosticsBundle(sink).build(
+            YetDiagnosticsSnapshot(
+                launchMode = "launch",
+                runtimeUrl = "http://127.0.0.1:8123",
+                engineBinaryConfigured = false,
+                binaryStatus = "bundled plugin runtime binary available",
+                launchedByPlugin = true,
+                lifecycleStatus = lifecycle,
+                lastHealth = null,
+                lastError = null,
+                lastProcess = null,
+                lastRecovery = null,
+                engineLogPath = expectedEngineLogPath(dir, 8123),
+            ),
+        )
+
+        assertContains(bundle, "Engine log path:")
+        assertContains(bundle, "Engine log tail: unavailable")
+        assertContains(bundle, "runtime.health")
     }
 
     @Test
     fun bundleRedactsSecretsPathsAndStaysBounded() {
         val dir = createTempDirectory("yet-diagnostics-redaction")
         val sink = YetLogSink(directoryProvider = { dir })
+        val engineLogPath = expectedEngineLogPath(dir, 8123)
         sink.append("error", "runtime.health", mapOf("error" to "Authorization: Bearer raw-token-secret /Users/alice/private/file.kt sk-provider-secret"))
+        Files.writeString(
+            engineLogPath,
+            (1..80).joinToString("\n") { index -> "engine line $index Authorization: Bearer raw-token-secret /Users/alice/private/file.kt YET_AI_AUTH_TOKEN=session-token-secret" },
+        )
         val lifecycle = runtimeLifecycleStatus(
             RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.CONNECT, null),
             LaunchMode.CONNECT,
@@ -66,7 +114,7 @@ class YetDiagnosticsBundleTest {
             "Refresh runtime",
         )
 
-        val bundle = YetDiagnosticsBundle(sink, maxChars = 800).build(
+        val bundle = YetDiagnosticsBundle(sink, maxChars = 800, maxEngineTailBytes = 600).build(
             YetDiagnosticsSnapshot(
                 launchMode = "connect",
                 runtimeUrl = "http://127.0.0.1:8123/path?code_verifier=oauth-verifier-secret",
@@ -78,11 +126,12 @@ class YetDiagnosticsBundleTest {
                 lastError = "Cookie: sid=cookie-secret Authorization: Bearer raw-token-secret /Users/alice/private/file.kt",
                 lastProcess = "process from /Users/alice/private/yet-lsp exited",
                 lastRecovery = "retry used token=retry-token-secret",
+                engineLogPath = engineLogPath,
             ),
         )
 
         assertTrue(bundle.length <= 800)
-        listOf("raw-token-secret", "/Users/alice", "provider-secret", "cookie-secret", "oauth-verifier-secret", "retry-token-secret", "Authorization", "Bearer").forEach { secret ->
+        listOf("raw-token-secret", "/Users/alice", "provider-secret", "cookie-secret", "oauth-verifier-secret", "retry-token-secret", "session-token-secret", "Authorization", "Bearer").forEach { secret ->
             assertFalse(bundle.contains(secret, ignoreCase = true), bundle)
         }
     }

@@ -35,6 +35,38 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun launchCommandPassesEngineLogDirectoryAndDefaultLevel() {
+        val command = buildEngineLaunchCommand(
+            runtimeUrl = "http://127.0.0.1:8123",
+            binaryPath = Path.of("/tmp/yet-lsp"),
+            sessionToken = "session-secret",
+            baseEnvironment = mapOf("PATH" to "/bin"),
+            logDirectory = Path.of("/tmp/yet-logs"),
+        )
+
+        assertEquals("/tmp/yet-logs", command.environment["YET_AI_LOG_DIR"])
+        assertEquals("info", command.environment["YET_AI_LOG_LEVEL"])
+    }
+
+    @Test
+    fun launchCommandPreservesExplicitEngineLogLevelOverride() {
+        val command = buildEngineLaunchCommand(
+            runtimeUrl = "http://127.0.0.1:8123",
+            binaryPath = Path.of("/tmp/yet-lsp"),
+            sessionToken = "session-secret",
+            baseEnvironment = mapOf("YET_AI_LOG_LEVEL" to "debug"),
+            logDirectory = Path.of("/tmp/yet-logs"),
+        )
+
+        assertEquals("debug", command.environment["YET_AI_LOG_LEVEL"])
+    }
+
+    @Test
+    fun expectedEngineLogPathUsesRuntimePort() {
+        assertEquals(Path.of("/tmp/yet-logs/engine-8123.log"), expectedEngineLogPath(Path.of("/tmp/yet-logs"), parseExplicitRuntimePort("http://127.0.0.1:8123")))
+    }
+
+    @Test
     fun launchCommandFiltersSecretEnvironmentAndPreservesSafeBasics() {
         val command = buildEngineLaunchCommand(
             runtimeUrl = "http://127.0.0.1:8123",

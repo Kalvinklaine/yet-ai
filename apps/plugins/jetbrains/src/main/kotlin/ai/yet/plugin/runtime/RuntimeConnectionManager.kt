@@ -286,7 +286,7 @@ class RuntimeConnectionManager(
         }
         stopLaunchedProcess()
         val token = tokenGenerator()
-        val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token)
+        val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token, logDirectory = logSink.logDirectory())
         logSink.append("info", "runtime.launch", mapOf("phase" to "start", "launchMode" to settings.launchMode.name.lowercase(), "runtime" to sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl), "binary" to binaryPath.fileName.toString(), "refreshSessionToken" to refreshSessionToken))
         val process = try {
             processStarter(command)
@@ -372,7 +372,12 @@ class RuntimeConnectionManager(
         lastError = diagnostics.error,
         lastProcess = diagnostics.process,
         lastRecovery = lastRecoveryResult,
+        engineLogPath = engineLogPathForDiagnostics(diagnostics.runtimeUrl),
     )
+
+    private fun engineLogPathForDiagnostics(runtimeUrl: String): Path? = runCatching {
+        expectedEngineLogPath(logSink.logDirectory(), parseExplicitRuntimePort(runtimeUrl))
+    }.getOrNull()
 
     @Synchronized
     private fun currentProcessState(): RuntimeProcessState = when {
@@ -720,12 +725,18 @@ fun buildEngineLaunchCommand(
     binaryPath: Path,
     sessionToken: String,
     baseEnvironment: Map<String, String> = System.getenv(),
+    logDirectory: Path? = null,
 ): EngineLaunchCommand {
     val env = sanitizedEngineLaunchEnvironment(baseEnvironment).toMutableMap()
+    val port = parseExplicitRuntimePort(runtimeUrl)
     env["YET_AI_AUTH_TOKEN"] = sessionToken
-    env["YET_AI_HTTP_PORT"] = parseExplicitRuntimePort(runtimeUrl).toString()
+    env["YET_AI_HTTP_PORT"] = port.toString()
+    logDirectory?.let { env["YET_AI_LOG_DIR"] = it.toString() }
+    env.putIfAbsent("YET_AI_LOG_LEVEL", "info")
     return EngineLaunchCommand(binaryPath, env)
 }
+
+fun expectedEngineLogPath(logDirectory: Path, runtimePort: Int): Path = logDirectory.resolve("engine-" + runtimePort + ".log")
 
 private val safeEngineLaunchEnvironmentNames = setOf(
     "PATH",
@@ -743,6 +754,7 @@ private val safeEngineLaunchEnvironmentNames = setOf(
     "TMP",
     "TEMP",
     "LANG",
+    "YET_AI_LOG_LEVEL",
 )
 
 private val safeSecretNamedEngineLaunchEnvironmentNames = setOf(

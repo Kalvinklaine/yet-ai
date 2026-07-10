@@ -4,11 +4,15 @@ import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.RuntimeLifecycleStatus
 import ai.yet.plugin.runtime.redactLogText
 import java.net.URI
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
 
 class YetDiagnosticsBundle(
     private val logSink: YetLogSink,
     private val pluginVersion: String = "0.1.0",
     private val maxChars: Int = 24 * 1024,
+    private val maxEngineTailBytes: Long = 16 * 1024,
 ) {
     fun build(snapshot: YetDiagnosticsSnapshot): String {
         logSink.append("info", "diagnostics.requested", mapOf("launchMode" to snapshot.launchMode, "lifecycle" to snapshot.lifecycleStatus.lifecycle.wireName))
@@ -37,7 +41,24 @@ class YetDiagnosticsBundle(
         lines += "Log path: ${logSink.logPath()}"
         lines += "Recent log tail:"
         lines += logSink.tail()
+        lines += "Engine log path: ${snapshot.engineLogPath ?: "unavailable"}"
+        val engineTail = snapshot.engineLogPath?.let { engineLogTail(it) }
+        if (engineTail.isNullOrBlank()) {
+            lines += "Engine log tail: unavailable"
+        } else {
+            lines += "Recent engine log tail:"
+            lines += engineTail
+        }
         return lines.joinToString("\n") { redactLogText(it, "") }.take(maxChars)
+    }
+
+    private fun engineLogTail(path: Path): String? {
+        if (!Files.exists(path)) return null
+        return runCatching {
+            val bytes = Files.readAllBytes(path)
+            val start = (bytes.size - maxEngineTailBytes.coerceAtLeast(0)).coerceAtLeast(0).toInt()
+            redactLogText(String(bytes.copyOfRange(start, bytes.size), StandardCharsets.UTF_8), "")
+        }.getOrNull()
     }
 
     private fun runtimeOrigin(value: String): String {
@@ -62,4 +83,5 @@ data class YetDiagnosticsSnapshot(
     val lastError: String?,
     val lastProcess: String?,
     val lastRecovery: String?,
+    val engineLogPath: Path? = null,
 )
