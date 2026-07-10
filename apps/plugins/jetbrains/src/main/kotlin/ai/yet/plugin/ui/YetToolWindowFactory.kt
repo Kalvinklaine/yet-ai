@@ -417,7 +417,11 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     }
 }
 
-internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, lifecycleStatus: RuntimeLifecycleStatus, reason: String): Map<String, Any?> = runtimeCorrelationFields(settings, settings.launchMode, effectiveRuntimeOwnerFromLifecycleOwner(lifecycleStatus.runtimeOwner)) + mapOf("reason" to reason)
+internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, lifecycleStatus: RuntimeLifecycleStatus, reason: String): Map<String, Any?> = runtimeCorrelationFields(settings, settings.launchMode, effectiveRuntimeOwnerFromLifecycleOwner(lifecycleStatus.runtimeOwner)) + mapOf(
+    "launchMode" to lifecycleStatus.launchMode,
+    "tokenState" to lifecycleStatus.tokenState,
+    "reason" to reason,
+)
 
 internal fun runtimeUpdateReadyReason(connection: RuntimeConnectionResult): String = if (connection.status?.contains("refreshing the runtime session token", ignoreCase = true) == true) "401_recovery" else "runtime_update"
 

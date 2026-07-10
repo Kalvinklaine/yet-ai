@@ -438,6 +438,37 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun guiReadyCorrelationFieldsUseLifecycleTokenStateForAuthMismatch() {
+        val settings = RuntimeSettings(
+            "http://127.0.0.1:8001/private?token=must-not-leak",
+            null,
+            "host-secret-token",
+            launchMode = ai.yet.plugin.runtime.LaunchMode.AUTO,
+        )
+        val lifecycleStatus = RuntimeLifecycleStatus(
+            lifecycle = RuntimeLifecycle.AUTH_MISMATCH,
+            runtimeOwner = "external",
+            launchMode = "connect",
+            tokenState = "mismatch",
+            processState = RuntimeProcessState.NOT_OWNED,
+            diagnosis = "runtime rejected the current local credentials",
+            nextAction = "Update the local runtime connection.",
+        )
+        val fields = hostBridgeCorrelationFields(settings, lifecycleStatus, "401_recovery")
+
+        assertEquals("401_recovery", fields["reason"])
+        assertEquals("mismatch", fields["tokenState"])
+        assertEquals("http://127.0.0.1:8001", fields["runtime"])
+        assertEquals("connect", fields["launchMode"])
+        assertEquals("external/connect", fields["runtimeOwner"])
+        val combined = fields.values.joinToString(" ")
+        assertFalse(combined.contains("present"), combined)
+        assertFalse(combined.contains("host-secret-token"), combined)
+        assertFalse(combined.contains("must-not-leak"), combined)
+        assertFalse(combined.contains("private"), combined)
+    }
+
+    @Test
     fun guiReadyCorrelationFieldsUsePluginManagedLifecycleOwner() {
         val fields = hostBridgeCorrelationFields(
             RuntimeSettings("http://127.0.0.1:8001", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.AUTO),
