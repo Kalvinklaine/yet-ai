@@ -122,7 +122,7 @@ class RuntimeConnectionManager(
             if (isHttp401(error) && shouldRetryPluginOwnedRuntime(settings, connection)) {
                 logger.info("Yet AI plugin-launched runtime returned HTTP 401 during health check; restarting once with a fresh session token")
                 lastRecoveryResult = "HTTP 401 recovery started for plugin-owned runtime"
-                logSink.append("warn", "runtime.401_retry", mapOf("phase" to "start", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
+                logSink.append("warn", "runtime.401_retry", runtimeCorrelationFields(connection, settings.launchMode) + mapOf("phase" to "start"))
                 stopLaunchedProcess()
                 connection = try {
                     prepareConnectionSettings(settings, refreshSessionToken = true)
@@ -131,7 +131,7 @@ class RuntimeConnectionManager(
                     lastHealthResult = "HTTP 401 from /v1/ping; plugin-owned restart failed"
                     lastConnectionError = result.error
                     lastRecoveryResult = "HTTP 401 recovery launch failed"
-                    logSink.append("error", "runtime.401_retry", mapOf("phase" to "failure", "error" to result.error))
+                    logSink.append("error", "runtime.401_retry", runtimeCorrelationFields(settings, settings.launchMode) + mapOf("phase" to "failure", "error" to result.error))
                     lastLaunchedByPluginDuringHealth = false
                     return result
                 }
@@ -142,7 +142,7 @@ class RuntimeConnectionManager(
                     lastHealthResult = "/v1/ping returned 2xx after HTTP 401 recovery"
                     lastConnectionError = null
                     lastRecoveryResult = "HTTP 401 recovery succeeded"
-                    logSink.append("info", "runtime.401_retry", mapOf("phase" to "success", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
+                    logSink.append("info", "runtime.401_retry", runtimeCorrelationFields(connection, settings.launchMode) + mapOf("phase" to "success"))
                     lastLaunchedByPluginDuringHealth = false
                     RuntimeConnectionResult(
                         connection,
@@ -166,7 +166,7 @@ class RuntimeConnectionManager(
                     lastConnectionError = result.error
                     lastProcessExit = processStateAfterFailure
                     lastRecoveryResult = "HTTP 401 recovery failed"
-                    logSink.append("error", "runtime.401_retry", mapOf("phase" to "failure", "error" to result.error, "process" to processStateAfterFailure))
+                    logSink.append("error", "runtime.401_retry", runtimeCorrelationFields(connection, settings.launchMode) + mapOf("phase" to "failure", "error" to result.error, "process" to processStateAfterFailure))
                     lastLaunchedByPluginDuringHealth = false
                     return result
                 }
@@ -282,10 +282,13 @@ class RuntimeConnectionManager(
         val existing = launchedProcess
         val existingConnection = launchedConnection
         if (!refreshSessionToken && existing != null && existing.isAlive && existingConnection?.runtimeUrl == settings.runtimeUrl) {
+            logSink.append("info", "runtime.connection.reuse", runtimeCorrelationFields(existingConnection, settings.launchMode))
             return existingConnection
         }
+        logSink.append("info", "runtime.connection.relaunch", runtimeCorrelationFields(settings, settings.launchMode) + mapOf("refreshSessionToken" to refreshSessionToken))
         stopLaunchedProcess()
         val token = tokenGenerator()
+        logSink.append("info", "runtime.token.generated", runtimeCorrelationFields(settings.copyWithSessionToken(token), settings.launchMode))
         val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token, logDirectory = logSink.logDirectory())
         logSink.append("info", "runtime.launch", mapOf("phase" to "start", "launchMode" to settings.launchMode.name.lowercase(), "runtime" to sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl), "binary" to binaryPath.fileName.toString(), "refreshSessionToken" to refreshSessionToken))
         val process = try {
@@ -297,8 +300,10 @@ class RuntimeConnectionManager(
         val connection = settings.copyWithSessionToken(token)
         try {
             sessionTokenStore.set(token)
+            logSink.append("info", "runtime.token.persisted", runtimeCorrelationFields(connection, settings.launchMode) + mapOf("result" to "success"))
         } catch (error: Exception) {
             stopProcess(process)
+            logSink.append("error", "runtime.token.persisted", runtimeCorrelationFields(connection, settings.launchMode) + mapOf("result" to "failure", "error" to sanitizedRuntimeError("Yet AI local runtime session token store update failed", error, token)))
             logSink.append("error", "runtime.launch", mapOf("phase" to "failure", "error" to sanitizedRuntimeError("Yet AI local runtime session token store update failed", error, token)))
             throw IllegalStateException(sanitizedRuntimeError("Yet AI local runtime session token store update failed", error, token))
         }
@@ -401,6 +406,15 @@ class RuntimeConnectionManager(
         ApplicationManager.getApplication().messageBus.syncPublisher(RuntimeConnectionListener.TOPIC).runtimeConnectionUpdated(result)
     }
 }
+
+internal fun runtimeCorrelationFields(settings: RuntimeSettings, launchMode: LaunchMode = settings.launchMode): Map<String, Any?> = mapOf(
+    "runtime" to sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
+    "runtimeOwner" to runtimeOwnerForLogs(launchMode),
+    "launchMode" to launchMode.name.lowercase(),
+    "tokenState" to if (settings.sessionToken == null) "absent" else "present",
+)
+
+internal fun runtimeOwnerForLogs(launchMode: LaunchMode): String = if (launchMode == LaunchMode.CONNECT) "external/connect" else "plugin-managed"
 
 private fun pluginLaunchedProcessExitMessage(code: Int?): String {
     val codeText = code?.toString() ?: "unknown"
@@ -968,7 +982,7 @@ private fun redactSensitiveText(value: String, exactToken: String?): String {
         .replace(Regex("(?i)([?&;#])([A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|oauth[_-]?code|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)=([^\\s&#;]+)")) { match ->
             match.groupValues[1] + match.groupValues[2] + "=[redacted]"
         }
-        .replace(Regex("(?i)(?:^|[\\s,{(])(?:[A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)\\s*[:=]\\s*[^\\s,)}\\]]+"), "[redacted]")
+        .replace(Regex("(?i)(?:^|[\\s,{(])(?!tokenState\\s*[:=]\\s*(?:present|absent|unknown|mismatch|invalid|not_required)\\b)(?:[A-Za-z0-9_-]*(?:access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|code[_-]?verifier|pkce[_-]?verifier|verifier)[A-Za-z0-9_-]*)\\s*[:=]\\s*[^\\s,)}\\]]+"), "[redacted]")
         .replace(Regex("(?i)(^|[\\s\"'`=:(,{])(?:\\.?\\.?[/\\\\])?(?:(?:[^/\\\\\\r\\n,;)}\\]\\s]+|[^/\\\\\\r\\n,;)}\\]]+ [^/\\\\\\r\\n,;)}\\]]*)[/\\\\])*(?:\\.codex[/\\\\])?(?:auth|credential|credentials)\\.json(?=$|[\\s\"'`,;:)}\\]])")) { match ->
             match.groupValues[1] + "[redacted]"
         }

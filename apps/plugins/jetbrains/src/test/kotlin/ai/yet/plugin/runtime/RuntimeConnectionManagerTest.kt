@@ -256,6 +256,8 @@ class RuntimeConnectionManagerTest {
 
     @Test
     fun pluginLaunchPersistsGeneratedTokenForGuiAndNextSettingsRead() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-token-log")
+        val logSink = YetLogSink(directoryProvider = { logDir })
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()
         val tokenStore = RecordingRuntimeSessionTokenStore()
@@ -265,6 +267,7 @@ class RuntimeConnectionManagerTest {
             processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
             tokenGenerator = { "generated-plugin-owned-token" },
             sessionTokenStore = tokenStore,
+            logSink = logSink,
         )
         val settings = RuntimeSettings("http://127.0.0.1:8123", null, "stale-cached-token", LaunchMode.AUTO, null)
 
@@ -273,6 +276,46 @@ class RuntimeConnectionManagerTest {
         assertEquals("generated-plugin-owned-token", prepared.sessionToken)
         assertEquals(listOf("generated-plugin-owned-token"), tokenStore.values)
         assertEquals("generated-plugin-owned-token", launched.single().environment["YET_AI_AUTH_TOKEN"])
+        val logText = java.nio.file.Files.readString(logSink.logPath())
+        assertContains(logText, "runtime.connection.relaunch")
+        assertContains(logText, "runtime.token.generated")
+        assertContains(logText, "runtime.token.persisted")
+        assertContains(logText, "result=success")
+        assertContains(logText, "tokenState=present")
+        assertContains(logText, "runtimeOwner=plugin-managed")
+        assertFalse(logText.contains("generated-plugin-owned-token"), logText)
+        assertFalse(logText.contains("stale-cached-token"), logText)
+        manager.dispose()
+    }
+
+    @Test
+    fun pluginLaunchReusesAliveRuntimeAndLogsCorrelationEvent() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-reuse-log")
+        val logSink = YetLogSink(directoryProvider = { logDir })
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command -> launched += command; FakeAliveProcess() },
+            tokenGenerator = { "reuse-secret-token" },
+            logSink = logSink,
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
+
+        val first = manager.prepareConnectionSettings(settings)
+        val second = manager.prepareConnectionSettings(settings)
+
+        assertEquals(first, second)
+        assertEquals(1, launched.size)
+        val logText = java.nio.file.Files.readString(logSink.logPath())
+        assertContains(logText, "runtime.connection.relaunch")
+        assertContains(logText, "runtime.connection.reuse")
+        assertContains(logText, "runtime=http://127.0.0.1:8123")
+        assertContains(logText, "launchMode=auto")
+        assertContains(logText, "runtimeOwner=plugin-managed")
+        assertContains(logText, "tokenState=present")
+        assertFalse(logText.contains("reuse-secret-token"), logText)
         manager.dispose()
     }
 
@@ -488,7 +531,12 @@ class RuntimeConnectionManagerTest {
         assertEquals(listOf("first-plugin-token", "second-plugin-token"), launched.map { it.environment.getValue("YET_AI_AUTH_TOKEN") })
         val logText = java.nio.file.Files.readString(logSink.logPath())
         assertContains(logText, "runtime.401_retry")
+        assertContains(logText, "phase=start")
         assertContains(logText, "phase=success")
+        assertContains(logText, "runtime=http://127.0.0.1:8125")
+        assertContains(logText, "runtimeOwner=plugin-managed")
+        assertContains(logText, "launchMode=launch")
+        assertContains(logText, "tokenState=present")
         listOf("first-plugin-token", "second-plugin-token", "stale-initial-token", "/Users/alice", "Authorization", "Bearer").forEach { privateValue ->
             assertFalse(logText.contains(privateValue, ignoreCase = true), logText)
         }

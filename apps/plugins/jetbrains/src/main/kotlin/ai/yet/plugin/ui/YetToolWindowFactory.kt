@@ -5,6 +5,7 @@ import ai.yet.plugin.bridge.ActiveEditorContext
 import ai.yet.plugin.bridge.ControlledFileRead
 import ai.yet.plugin.bridge.ControlledIdeActions
 import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.logging.YetLogSink
 import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionListener
 import ai.yet.plugin.runtime.RuntimeConnectionResult
@@ -13,6 +14,7 @@ import ai.yet.plugin.runtime.RuntimeLifecycleStatus
 import ai.yet.plugin.runtime.RuntimeProcessState
 import ai.yet.plugin.runtime.RuntimeSettings
 import ai.yet.plugin.runtime.loopbackOrigin
+import ai.yet.plugin.runtime.runtimeCorrelationFields
 import ai.yet.plugin.runtime.runtimeLifecycleStatus
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
@@ -196,6 +198,7 @@ internal fun pendingRuntimeConnection(settings: RuntimeSettings): RuntimeConnect
 
 class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
+    private val logSink = YetLogSink()
     private val browser = JBCefBrowser()
     private val query = JBCefJSQuery.create(browser as JBCefBrowser)
     private val delivery = WrapperScriptDelivery()
@@ -209,6 +212,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     @Volatile
     private var acceptedHostReadyRequestId: String? = null
     @Volatile
+    private var pendingHostReadyReason: String? = null
+    @Volatile
     private var disposed = false
 
     init {
@@ -217,10 +222,12 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             if (isGuiUnloadedBridgeMessage(raw)) {
                 guiReadyRequestId = null
                 acceptedHostReadyRequestId = null
+                pendingHostReadyReason = null
                 return@addHandler null
             }
             if (BridgeMessages.parseGuiRuntimeRefresh(raw) != null) {
                 logger.info("Yet AI received GUI runtime refresh request")
+                pendingHostReadyReason = "manual_refresh"
                 refreshRuntimeFromGui()
                 return@addHandler null
             }
@@ -238,9 +245,11 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 return@addHandler null
             }
             logger.info("Yet AI received gui.ready")
+            logSink.append("info", "bridge.gui_ready", hostBridgeCorrelationFields(latestConnection.settings, "initial"))
             val requestId = guiReady.requestId
             guiReadyRequestId = requestId
             acceptedHostReadyRequestId = null
+            pendingHostReadyReason = "initial"
             val latestError = latestConnection.error
             sendRuntimeStatus(latestConnection.lifecycleStatus)
             if (latestError != null) {
@@ -314,6 +323,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         runtimePrepared = connection.error == null
         sendRuntimeStatus(connection.lifecycleStatus)
         if (connection.error == null) {
+            if (pendingHostReadyReason == null && guiReadyRequestId != null) pendingHostReadyReason = runtimeUpdateReadyReason(connection)
             guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }
         } else {
             sendDiagnostic(connection.error)
@@ -340,6 +350,11 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             logContextStatus = { logger.info(it) },
         )
         acceptedHostReadyRequestId = requestId.takeIf { delivered && !disposed }
+        if (delivered && !disposed) {
+            val reason = pendingHostReadyReason ?: "runtime_update"
+            logSink.append("info", "bridge.host_ready.delivered", hostBridgeCorrelationFields(settings, reason))
+            pendingHostReadyReason = null
+        }
     }
 
     fun refreshActiveEditorContext() {
@@ -385,6 +400,10 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         RuntimeSettings.safeFallback()
     }
 }
+
+internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, reason: String): Map<String, Any?> = runtimeCorrelationFields(settings) + mapOf("reason" to reason)
+
+internal fun runtimeUpdateReadyReason(connection: RuntimeConnectionResult): String = if (connection.status?.contains("refreshing the runtime session token", ignoreCase = true) == true) "401_recovery" else "runtime_update"
 
 interface ApplyWorkspaceEditConfirmer {
     fun confirm(summary: String, affectedFiles: List<String>): Boolean

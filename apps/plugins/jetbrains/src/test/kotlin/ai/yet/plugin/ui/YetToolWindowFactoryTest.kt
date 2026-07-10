@@ -377,6 +377,37 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun hostBridgeCorrelationFieldsIncludeReasonTokenStateAndSanitizedRuntimeOrigin() {
+        val fields = hostBridgeCorrelationFields(
+            RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            "401_recovery",
+        )
+
+        assertEquals("401_recovery", fields["reason"])
+        assertEquals("present", fields["tokenState"])
+        assertEquals("http://127.0.0.1:8001", fields["runtime"])
+        assertEquals("launch", fields["launchMode"])
+        assertEquals("plugin-managed", fields["runtimeOwner"])
+        val combined = fields.values.joinToString(" ")
+        assertFalse(combined.contains("host-secret-token"), combined)
+        assertFalse(combined.contains("must-not-leak"), combined)
+        assertFalse(combined.contains("private"), combined)
+    }
+
+    @Test
+    fun runtimeUpdateReadyReasonClassifies401RecoveryStatus() {
+        val recovery = RuntimeConnectionResult(
+            RuntimeSettings("http://127.0.0.1:8001", null, "fresh-token"),
+            "Connected to Yet AI local runtime after refreshing the runtime session token.",
+            null,
+        )
+        val update = RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), "Connected.", null)
+
+        assertEquals("401_recovery", runtimeUpdateReadyReason(recovery))
+        assertEquals("runtime_update", runtimeUpdateReadyReason(update))
+    }
+
+    @Test
     fun ideActionBridgeExecutesHostAndReturnsProgressAndResult() {
         val sent = mutableListOf<String>()
         val handled = JetBrainsIdeActionBridge.handleReadOnlyIdeActionRequest(
@@ -798,6 +829,20 @@ class YetToolWindowFactoryTest {
         assertContains(source, "override fun toolWindowShown(toolWindow: ToolWindow)")
         assertContains(actionSource, "toolWindow.activate({ YetToolWindowFactory.refreshActiveEditorContext(toolWindow) })")
         assertContains(source, "disposed = true")
+    }
+
+    @Test
+    fun panelSourceLogsGuiReadyAndHostReadyCorrelationEvents() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+
+        assertContains(source, "bridge.gui_ready")
+        assertContains(source, "bridge.host_ready.delivered")
+        assertContains(source, "hostBridgeCorrelationFields(latestConnection.settings, \"initial\")")
+        assertContains(source, "pendingHostReadyReason = \"manual_refresh\"")
+        assertContains(source, "pendingHostReadyReason = runtimeUpdateReadyReason(connection)")
+        assertContains(source, "pendingHostReadyReason ?: \"runtime_update\"")
+        assertContains(source, "runtimeUpdateReadyReason(connection)")
+        assertFalse(source.contains("raw GUI"))
     }
 
     @Test
