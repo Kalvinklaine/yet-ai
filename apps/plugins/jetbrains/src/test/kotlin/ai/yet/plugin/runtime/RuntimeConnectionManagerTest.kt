@@ -323,6 +323,38 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun prepareClassifiesRunningPluginProcessThatNeverAnswersPing() {
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "nonresponsive-session-token-that-must-not-leak-1234567890" },
+            healthChecker = { settings ->
+                throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: timed out Authorization: Bearer ${settings.sessionToken} /Users/alice/private/yet-lsp")
+            },
+        )
+
+        val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.LAUNCH, null))
+        val diagnostics = manager.runtimeDiagnosticsForTest(RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.LAUNCH, null))
+
+        assertEquals(RuntimeLifecycle.FAILED, result.lifecycleStatus.lifecycle)
+        assertEquals(RuntimeProcessState.RUNNING, result.lifecycleStatus.processState)
+        assertTrue(result.lifecycleStatus.diagnosis.contains("plugin-launched runtime process is running"), result.lifecycleStatus.diagnosis)
+        assertTrue(result.lifecycleStatus.nextAction.contains("Refresh runtime"), result.lifecycleStatus.nextAction)
+        assertTrue(result.lifecycleStatus.nextAction.contains("Restart Runtime"), result.lifecycleStatus.nextAction)
+        assertTrue(result.lifecycleStatus.nextAction.contains("loopback port"), result.lifecycleStatus.nextAction)
+        assertTrue(result.lifecycleStatus.nextAction.contains("bundled binary"), result.lifecycleStatus.nextAction)
+        assertTrue(diagnostics.contains("Plugin-launched process: running"), diagnostics)
+        assertTrue(result.error.orEmpty().contains("did not answer authenticated /v1/ping"), result.error)
+        manager.dispose()
+        listOf("nonresponsive-session-token", "Authorization", "Bearer", "/Users/alice", "private/yet-lsp").forEach { privateValue ->
+            assertFalse(result.error.orEmpty().contains(privateValue, ignoreCase = true), result.error)
+            assertFalse(result.lifecycleStatus.toString().contains(privateValue, ignoreCase = true), result.lifecycleStatus.toString())
+            assertFalse(diagnostics.contains(privateValue, ignoreCase = true), diagnostics)
+        }
+    }
+
+    @Test
     fun prepareRetriesPluginOwnedHttp401OnceWithFreshToken() {
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()
@@ -346,6 +378,8 @@ class RuntimeConnectionManagerTest {
         assertEquals(RuntimeLifecycle.CONNECTED, result.lifecycleStatus.lifecycle)
         assertEquals("ide_host", result.lifecycleStatus.runtimeOwner)
         assertEquals("present", result.lifecycleStatus.tokenState)
+        assertEquals(RuntimeProcessState.RUNNING, result.lifecycleStatus.processState)
+        assertTrue(result.status.orEmpty().contains("refreshing the runtime session token"), result.status)
         assertFalse(result.lifecycleStatus.diagnosis.contains("token", ignoreCase = true), result.lifecycleStatus.diagnosis)
         assertEquals(2, healthCalls)
         assertEquals(listOf("first-plugin-token", "second-plugin-token"), launched.map { it.environment.getValue("YET_AI_AUTH_TOKEN") })
@@ -402,6 +436,11 @@ class RuntimeConnectionManagerTest {
         assertContains(error, "Stale external yet-lsp")
         assertContains(error, "change the Runtime URL port")
         assertContains(error, "connect mode with a matching local runtime token")
+        assertEquals(RuntimeLifecycle.AUTH_MISMATCH, result.lifecycleStatus.lifecycle)
+        assertEquals(RuntimeProcessState.RUNNING, result.lifecycleStatus.processState)
+        assertEquals("mismatch", result.lifecycleStatus.tokenState)
+        assertTrue(result.lifecycleStatus.nextAction.contains("Restart Runtime"), result.lifecycleStatus.nextAction)
+        assertTrue(result.lifecycleStatus.nextAction.contains("Runtime URL port"), result.lifecycleStatus.nextAction)
         assertFalse(error.contains("retry-secret-token"), error)
         assertFalse(error.contains("Authorization"), error)
         assertFalse(error.contains("/Users/alice"), error)
@@ -765,7 +804,7 @@ class RuntimeConnectionManagerTest {
             assertFalse(combined.contains("Authorization"), combined)
             assertFalse(combined.contains("Bearer"), combined)
             assertFalse(combined.contains("token", ignoreCase = true), combined)
-            assertFalse(combined.contains("api key", ignoreCase = true), combined)
+            assertFalse(combined.contains("api key", ignoreCase = true) && !combined.contains("not a provider API key", ignoreCase = true), combined)
         }
     }
 

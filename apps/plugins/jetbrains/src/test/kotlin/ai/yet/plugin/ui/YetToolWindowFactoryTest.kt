@@ -39,7 +39,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics)")
         assertContains(html, "window.__yetAiPendingHostMessages = pendingHostMessages")
         assertContains(html, "window.__yetAiPendingDiagnostics = pendingDiagnostics")
-        assertContains(html, "if (!frameReady) return;")
+        assertContains(html, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return;")
         assertContains(html, "flushPending()")
         assertContains(html, "message.type === \"host.contextSnapshot\"")
         assertFalse(html.contains("isHostMessage(event.data)"))
@@ -90,7 +90,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "event.source === currentFrameWindow && event.source === frame?.contentWindow")
         assertContains(html, "while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())")
         assertContains(html, "pendingHostMessages.length = 0;")
-        assertContains(html, "if (!frameReady) return;")
+        assertContains(html, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return;")
         assertContains(html, "if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;")
         assertContains(html, "const nextGuiReadySequence = guiReadySequence + 1;")
         assertContains(html, "const nextGuiReadyRequestId = wrapperReadyRequestId(nextGuiReadySequence);")
@@ -735,7 +735,7 @@ class YetToolWindowFactoryTest {
         assertContains(source, "if (disposed) return")
         assertContains(source, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages.slice(-maxPendingHostMessages) : []")
         assertContains(source, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics.slice(-maxPendingDiagnostics) : []")
-        assertContains(source, "if (!frameReady) return")
+        assertContains(source, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return")
         assertContains(source, "pushBounded(pendingDiagnostics, message, maxPendingDiagnostics)")
         assertContains(source, "isGuiUnloadedBridgeMessage(raw)")
         assertContains(source, "guiReadyRequestId = null")
@@ -792,6 +792,16 @@ class YetToolWindowFactoryTest {
         assertContains(source, "if (publishUpdates) publishRuntimeConnectionUpdate(result)")
         assertContains(source, "publishUpdates && (result.error != null || result.settings != previousConnection)")
         assertContains(source, "private fun publishRuntimeConnectionUpdate(result: RuntimeConnectionResult)")
+    }
+
+    @Test
+    fun panelSendsRuntimeStatusBeforeDiagnosticsWhenPrepareFails() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+
+        assertContains(source, "runtimePrepared = connection.error == null")
+        assertContains(source, "sendRuntimeStatus(connection.lifecycleStatus)\n        if (connection.error == null)")
+        assertContains(source, "sendDiagnostic(connection.error)")
+        assertFalse(source.contains("if (connection.error == null) {\n            guiReadyRequestId?.let { requestId -> deliverReadyMessages(connection.settings, requestId) }\n        } else {\n            sendDiagnostic(connection.error)\n        }\n        sendRuntimeStatus"))
     }
 
     @Test
