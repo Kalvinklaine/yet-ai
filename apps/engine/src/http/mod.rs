@@ -1,11 +1,14 @@
+use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::OriginalUri;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::middleware::{from_fn, Next};
 use axum::response::sse::{KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use http::{header, HeaderValue, Method, StatusCode};
+use http::{header, HeaderValue, Method, Request, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -14,6 +17,7 @@ use crate::agent_progress;
 use crate::chat::ChatContext;
 use crate::chat_history;
 use crate::demo_mode;
+use crate::logging::{log_event, EngineLogLevel};
 use crate::project_memory;
 use crate::provider_auth;
 use crate::providers;
@@ -66,10 +70,78 @@ pub fn router(state: AppState) -> Router {
                 .route("/chats/subscribe", get(chats_subscribe))
                 .route("/chats/:chat_id", get(chats_get).delete(chats_delete))
                 .route("/chats/:chat_id/commands", post(chat_command))
-                .layer(DefaultBodyLimit::max(V1_BODY_LIMIT_BYTES)),
+                .layer(DefaultBodyLimit::max(V1_BODY_LIMIT_BYTES))
+                .layer(from_fn(request_summary_middleware)),
         )
         .layer(cors_layer())
         .with_state(state)
+}
+
+async fn request_summary_middleware(request: Request<Body>, next: Next) -> Response {
+    let metadata = RequestSummaryLogFields::from_request(&request);
+    let response = next.run(request).await;
+    if let Some(mut metadata) = metadata {
+        metadata.result_status = response.status().as_u16();
+        metadata.log();
+    }
+    response
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RequestSummaryLogFields {
+    pub method: String,
+    pub endpoint: String,
+    pub auth_header_present: bool,
+    pub result_status: u16,
+}
+
+fn request_summary_path(request: &Request<Body>) -> &str {
+    request
+        .extensions()
+        .get::<OriginalUri>()
+        .map(|uri| uri.path())
+        .unwrap_or_else(|| request.uri().path())
+}
+
+impl RequestSummaryLogFields {
+    fn from_request(request: &Request<Body>) -> Option<Self> {
+        let endpoint = selected_request_summary_endpoint(request_summary_path(request))?;
+        Some(Self {
+            method: request.method().as_str().to_string(),
+            endpoint: endpoint.to_string(),
+            auth_header_present: request.headers().contains_key(header::AUTHORIZATION),
+            result_status: 0,
+        })
+    }
+
+    fn log(&self) {
+        log_event(
+            EngineLogLevel::Info,
+            "http.request.summary",
+            &[
+                ("method", &self.method as &dyn std::fmt::Display),
+                ("endpoint", &self.endpoint as &dyn std::fmt::Display),
+                (
+                    "auth_header_present",
+                    &self.auth_header_present as &dyn std::fmt::Display,
+                ),
+                (
+                    "result_status",
+                    &self.result_status as &dyn std::fmt::Display,
+                ),
+            ],
+        );
+    }
+}
+
+fn selected_request_summary_endpoint(path: &str) -> Option<&str> {
+    if matches!(path, "/v1/ping" | "/v1/models" | "/v1/providers")
+        || path.starts_with("/v1/provider-auth/")
+    {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn cors_layer() -> CorsLayer {
@@ -764,6 +836,12 @@ mod tests {
     use crate::AppState;
 
     static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static HTTP_LOG_TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+
+    fn http_log_test_lock() -> &'static tokio::sync::Mutex<()> {
+        HTTP_LOG_TEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
 
     fn temp_storage_paths() -> StoragePaths {
         let root = std::env::temp_dir().join(format!(
@@ -798,6 +876,149 @@ mod tests {
         let status = response.status();
         let _ = response.into_body().collect().await.unwrap();
         status
+    }
+
+    async fn get_models_with_auth(auth_header: Option<&'static str>) -> StatusCode {
+        let identity = ProductIdentity::load().unwrap();
+        let state = AppState::with_storage_paths(
+            identity,
+            AuthToken::new("test-token").unwrap(),
+            temp_storage_paths(),
+        );
+        let mut builder = Request::builder()
+            .method("GET")
+            .uri("/v1/models?token=query-secret&next=/Users/alice");
+        if let Some(auth_header) = auth_header {
+            builder = builder.header(header::AUTHORIZATION, auth_header);
+        }
+        let response = super::router(state)
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let _ = response.into_body().collect().await.unwrap();
+        status
+    }
+
+    fn auth_reject_lines() -> Vec<String> {
+        crate::logging::test_log_lines()
+            .into_iter()
+            .filter(|line| line.contains("http.auth.reject"))
+            .collect()
+    }
+
+    fn model_request_summary_lines() -> Vec<String> {
+        crate::logging::test_log_lines()
+            .into_iter()
+            .filter(|line| {
+                line.contains("http.request.summary") && line.contains("endpoint=/v1/models")
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn missing_authorization_returns_401_and_logs_missing_header() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth(None).await;
+        let lines = auth_reject_lines();
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("endpoint=/v1/models"));
+        assert!(lines[0].contains("auth_header_present=false"));
+        assert!(lines[0].contains("reason=missing_header"));
+    }
+
+    #[tokio::test]
+    async fn malformed_bearer_returns_401_and_logs_token_mismatch() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth(Some("Basic raw-token")).await;
+        let lines = auth_reject_lines();
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("auth_header_present=true"));
+        assert!(lines[0].contains("reason=token_mismatch"));
+    }
+
+    #[tokio::test]
+    async fn empty_bearer_returns_401_and_logs_empty_bearer() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth(Some("Bearer ")).await;
+        let lines = auth_reject_lines();
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("auth_header_present=true"));
+        assert!(lines[0].contains("reason=empty_bearer"));
+    }
+
+    #[tokio::test]
+    async fn wrong_bearer_returns_401_and_logs_token_mismatch() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth(Some("Bearer wrong-token")).await;
+        let lines = auth_reject_lines();
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("endpoint=/v1/models"));
+        assert!(lines[0].contains("auth_header_present=true"));
+        assert!(lines[0].contains("reason=token_mismatch"));
+    }
+
+    #[tokio::test]
+    async fn correct_bearer_does_not_log_auth_reject() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth(Some("Bearer test-token")).await;
+        let lines = auth_reject_lines();
+
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+        assert!(lines.is_empty());
+    }
+
+    #[tokio::test]
+    async fn logs_exclude_queries_tokens_and_private_paths() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth(Some("Bearer wrong-token")).await;
+        let all_lines = crate::logging::test_log_lines().join("\n");
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        for unsafe_value in [
+            "query-secret",
+            "wrong-token",
+            "test-token",
+            "/Users/alice",
+            "next=",
+        ] {
+            assert!(
+                !all_lines.contains(unsafe_value),
+                "leaked {unsafe_value}: {all_lines}"
+            );
+        }
+        assert!(all_lines.contains("endpoint=/v1/models"));
+    }
+
+    #[tokio::test]
+    async fn selected_request_summary_logs_safe_fields() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth(Some("Bearer test-token")).await;
+        let lines = model_request_summary_lines();
+
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("method=GET"));
+        assert!(lines[0].contains("endpoint=/v1/models"));
+        assert!(lines[0].contains("auth_header_present=true"));
+        assert!(lines[0].contains("result_status="));
+        assert!(!lines[0].contains("test-token"));
+        assert!(!lines[0].contains("query-secret"));
     }
 
     #[tokio::test]

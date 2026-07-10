@@ -11,6 +11,8 @@ const DEFAULT_MAX_LINE_LENGTH: usize = 1200;
 const REDACTED: &str = "[REDACTED]";
 
 static ENGINE_LOGGER: OnceLock<Arc<EngineLogger>> = OnceLock::new();
+#[cfg(test)]
+static TEST_LOG_LINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EngineLogLevel {
@@ -108,9 +110,33 @@ pub fn init_engine_logging(port: u16) -> EngineLogGuard {
 }
 
 pub fn log_event(level: EngineLogLevel, event: &str, fields: &[(&str, &dyn Display)]) {
+    #[cfg(test)]
+    capture_test_log_line(level, event, fields);
     if let Some(logger) = ENGINE_LOGGER.get() {
         logger.append(level, event, fields);
     }
+}
+
+#[cfg(test)]
+fn capture_test_log_line(level: EngineLogLevel, event: &str, fields: &[(&str, &dyn Display)]) {
+    if let Ok(mut lines) = TEST_LOG_LINES.lock() {
+        lines.push(format_log_line(
+            level,
+            event,
+            fields,
+            DEFAULT_MAX_LINE_LENGTH,
+        ));
+    }
+}
+
+#[cfg(test)]
+pub fn clear_test_log_lines() {
+    TEST_LOG_LINES.lock().unwrap().clear();
+}
+
+#[cfg(test)]
+pub fn test_log_lines() -> Vec<String> {
+    TEST_LOG_LINES.lock().unwrap().clone()
 }
 
 pub fn redact_log_text(input: &str) -> String {
