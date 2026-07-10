@@ -355,6 +355,35 @@ Use Tools → `Yet AI: Show Runtime Status` when the tool window cannot connect,
 
 Use Tools → `Yet AI: Restart Runtime` to stop only the process launched by this plugin and prepare the current settings again. It does not stop externally managed runtimes used in `connect` mode, does not inspect provider configuration, and does not expose the local runtime session token. If restart reports a missing binary, invalid configured path, port conflict, runtime-down health failure, or 401/token mismatch, copy the sanitized status text and verify the settings above before reinstalling the ZIP.
 
+### Logs-based JetBrains 401 checklist
+
+Use this checklist for one fresh local-runtime 401 reproduce in JetBrains Yet AI:
+
+1. Reproduce the 401 once in the JetBrains Yet AI tool window.
+2. Run Tools → Yet AI → Show Runtime Status and note the sanitized launch mode, runtime URL, runtime owner, token state, process state, and diagnosis.
+3. Run Tools → Yet AI → Copy Diagnostics. Diagnostics are redacted; users should still never paste raw provider keys, local runtime session tokens, bearer headers, auth codes, cookies, request bodies, private paths, or other secrets into reports.
+4. Run Tools → Yet AI → Open Logs Folder.
+5. Inspect `yet-ai.log` for plugin-owned launch, reuse, health, retry, bridge, and host-ready correlation events.
+6. Inspect `engine-&lt;port&gt;.log` for runtime-owned request/auth events. The filename uses the local runtime port, for example `engine-8001.log`.
+7. If the port owner is unclear, replace `<PORT>` with the runtime URL port from status/diagnostics and run:
+
+```sh
+lsof -nP -iTCP:<PORT> -sTCP:LISTEN
+ps aux | grep yet-lsp | grep -v grep
+```
+
+Classify the result from the copied diagnostics and the two log files:
+
+| Evidence | Likely diagnosis |
+| --- | --- |
+| `connect` or external mode, no engine log, and 401 | External runtime token/URL mismatch. Start the intended loopback runtime yourself, then make the JetBrains Runtime URL and debug/session token match it. |
+| `http.auth.reject reason=missing_header` | GUI/host handoff did not send the Authorization header to the runtime. Check `host.ready` delivery and refresh the runtime connection. |
+| `http.auth.reject reason=token_mismatch` before a successful `runtime.401_retry` | Stale plugin-launched token was recovered by the one-time retry. Continue after the retry succeeds. |
+| Repeated `http.auth.reject reason=token_mismatch` after `runtime.401_retry` | Wrong process owns the port, a stale external runtime is still being used, or the host-ready token was not propagated to the GUI. Check the port owner commands above, then restart the plugin-owned runtime or change the loopback port. |
+| Engine log missing for `auto` or `launch` with a plugin-managed runtime | Launch environment/logging issue. Check `yet-ai.log`, Show Runtime Status, bundled/configured binary status, and whether `YET_AI_LOG_DIR` reached the launched runtime. |
+
+These logs diagnose the local loopback runtime boundary only. Runtime 401s are local session-token/auth-header problems; provider 401s after the runtime connects are upstream BYOK provider credential problems handled by the engine/provider setup flow. This checklist does not require a hosted Yet AI backend, account, managed model gateway, product credit balance, cloud workspace, signing, marketplace publication, or production-release workflow.
+
 Concise troubleshooting matrix:
 
 | Symptom/status | Next action |
