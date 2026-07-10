@@ -246,7 +246,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 return@addHandler null
             }
             logger.info("Yet AI received gui.ready")
-            logSink.append("info", "bridge.gui_ready", hostBridgeCorrelationFields(latestConnection.settings, "initial"))
+            logSink.append("info", "bridge.gui_ready", hostBridgeCorrelationFields(latestConnection.settings, latestConnection.lifecycleStatus, "initial"))
             val requestId = guiReady.requestId
             guiReadyRequestId = requestId
             acceptedHostReadyRequestId = null

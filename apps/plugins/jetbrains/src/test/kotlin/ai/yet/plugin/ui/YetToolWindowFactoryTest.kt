@@ -393,6 +393,56 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun guiReadyCorrelationFieldsUseExternalAutoLifecycleOwner() {
+        val fields = hostBridgeCorrelationFields(
+            RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.AUTO),
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "external",
+                launchMode = "auto",
+                tokenState = "present",
+                processState = RuntimeProcessState.NOT_OWNED,
+                diagnosis = "local runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+            "initial",
+        )
+
+        assertEquals("initial", fields["reason"])
+        assertEquals("present", fields["tokenState"])
+        assertEquals("http://127.0.0.1:8001", fields["runtime"])
+        assertEquals("auto", fields["launchMode"])
+        assertEquals("external/connect", fields["runtimeOwner"])
+        assertFalse(fields.values.joinToString(" ").contains("plugin-managed"))
+        assertFalse(fields.values.joinToString(" ").contains("host-secret-token"))
+        assertFalse(fields.values.joinToString(" ").contains("must-not-leak"))
+    }
+
+    @Test
+    fun guiReadyCorrelationFieldsUsePluginManagedLifecycleOwner() {
+        val fields = hostBridgeCorrelationFields(
+            RuntimeSettings("http://127.0.0.1:8001", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.AUTO),
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "ide_host",
+                launchMode = "auto",
+                tokenState = "present",
+                processState = RuntimeProcessState.RUNNING,
+                diagnosis = "local runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+            "initial",
+        )
+
+        assertEquals("initial", fields["reason"])
+        assertEquals("present", fields["tokenState"])
+        assertEquals("http://127.0.0.1:8001", fields["runtime"])
+        assertEquals("auto", fields["launchMode"])
+        assertEquals("plugin-managed", fields["runtimeOwner"])
+        assertFalse(fields.values.joinToString(" ").contains("host-secret-token"))
+    }
+
+    @Test
     fun runtimeUpdateReadyReasonClassifies401RecoveryStatus() {
         val recovery = RuntimeConnectionResult(
             RuntimeSettings("http://127.0.0.1:8001", null, "fresh-token"),
@@ -835,7 +885,7 @@ class YetToolWindowFactoryTest {
 
         assertContains(source, "bridge.gui_ready")
         assertContains(source, "bridge.host_ready.delivered")
-        assertContains(source, "hostBridgeCorrelationFields(latestConnection.settings, \"initial\")")
+        assertContains(source, "hostBridgeCorrelationFields(latestConnection.settings, latestConnection.lifecycleStatus, \"initial\")")
         assertContains(source, "pendingHostReadyReason = \"manual_refresh\"")
         assertContains(source, "pendingHostReadyReason = runtimeUpdateReadyReason(connection)")
         assertContains(source, "pendingHostReadyReason ?: \"runtime_update\"")
