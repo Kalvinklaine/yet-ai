@@ -523,6 +523,16 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
+    fun pendingRuntimeConnectionDoesNotReportConnectedBeforePrepareCompletes() {
+        val result = pendingRuntimeConnection(RuntimeSettings("http://127.0.0.1:8001", null, null))
+
+        assertEquals(RuntimeLifecycle.RESTARTING, result.lifecycleStatus.lifecycle)
+        assertEquals(RuntimeProcessState.UNKNOWN, result.lifecycleStatus.processState)
+        assertFalse(BridgeMessages.runtimeStatus(result.lifecycleStatus).contains("\"lifecycle\":\"connected\""))
+        assertContains(result.lifecycleStatus.diagnosis, "prepare is pending")
+    }
+
+    @Test
     fun readyDeliverySendsContextAfterReadyMessagesWhenSupplierReturnsSnapshot() {
         val sent = mutableListOf<String>()
         val logs = mutableListOf<String>()

@@ -8,9 +8,12 @@ import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.RuntimeConnectionManager
 import ai.yet.plugin.runtime.RuntimeConnectionListener
 import ai.yet.plugin.runtime.RuntimeConnectionResult
+import ai.yet.plugin.runtime.RuntimeLifecycle
 import ai.yet.plugin.runtime.RuntimeLifecycleStatus
+import ai.yet.plugin.runtime.RuntimeProcessState
 import ai.yet.plugin.runtime.RuntimeSettings
 import ai.yet.plugin.runtime.loopbackOrigin
+import ai.yet.plugin.runtime.runtimeLifecycleStatus
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
 import com.intellij.openapi.Disposable
@@ -177,6 +180,20 @@ internal fun handleControlledAgentEditWithReadiness(raw: String, ready: Boolean,
     return handled
 }
 
+internal fun pendingRuntimeConnection(settings: RuntimeSettings): RuntimeConnectionResult = RuntimeConnectionResult(
+    settings,
+    "Connecting to Yet AI local runtime...",
+    null,
+    runtimeLifecycleStatus(
+        settings,
+        settings.launchMode,
+        RuntimeLifecycle.RESTARTING,
+        RuntimeProcessState.UNKNOWN,
+        "local runtime prepare is pending",
+        "Wait for Yet AI runtime prepare to finish.",
+    ),
+)
+
 class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val logger = Logger.getInstance(YetBrowserPanel::class.java)
     private val browser = JBCefBrowser()
@@ -184,7 +201,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     private val delivery = WrapperScriptDelivery()
     private val contextRefreshAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     @Volatile
-    private var latestConnection = RuntimeConnectionResult(RuntimeSettings.safeFallback(), "Connecting to Yet AI local runtime...", null)
+    private var latestConnection = pendingRuntimeConnection(RuntimeSettings.safeFallback())
     @Volatile
     private var runtimePrepared = false
     @Volatile
@@ -236,7 +253,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             null
         }
         val initialSettings = initialSettings()
-        latestConnection = RuntimeConnectionResult(initialSettings, "Connecting to Yet AI local runtime...", null)
+        latestConnection = pendingRuntimeConnection(initialSettings)
         val packagedGui = if (initialSettings.guiDevUrl == null) PackagedGuiServer.getInstance().start() else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
         browser.loadHTML(renderHtml(latestConnection, postIntellij, packagedGui))

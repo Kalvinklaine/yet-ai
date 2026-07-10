@@ -138,10 +138,12 @@ class RuntimeConnectionManager(
                     )
                 } catch (retryError: Exception) {
                     reconcileExitedLaunchedProcess()
-                    val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed after HTTP 401 recovery", retryError, lastLaunchedByPluginDuringHealth, lastProcessExit)
+                    val processStateAfterFailure = lastProcessExit ?: "plugin-launched process stopped after HTTP 401 recovery failure; click Refresh runtime or run Yet AI: Restart Runtime to relaunch"
                     stopLaunchedProcess()
+                    val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed after HTTP 401 recovery", retryError, false, processStateAfterFailure)
                     lastHealthResult = "HTTP 401 recovery attempted once for plugin-owned runtime"
                     lastConnectionError = result.error
+                    lastProcessExit = processStateAfterFailure
                     lastLaunchedByPluginDuringHealth = false
                     return result
                 }
@@ -456,9 +458,10 @@ fun runtimeLifecycleStatus(
 fun runtimeLifecycleStatusFromDiagnostics(diagnostics: RuntimeDiagnostics): RuntimeLifecycleStatus {
     val diagnosis = runtimeDiagnosis(diagnostics)
     val lifecycle = when {
+        diagnostics.process?.contains("exited", ignoreCase = true) == true -> RuntimeLifecycle.STOPPED
+        diagnostics.process?.contains("stopped", ignoreCase = true) == true -> RuntimeLifecycle.STOPPED
         diagnosis.contains("token mismatch") -> RuntimeLifecycle.AUTH_MISMATCH
         diagnosis.contains("launch URL") || diagnosis.contains("engine binary") || diagnosis.contains("no launchable") -> RuntimeLifecycle.INVALID_SETTINGS
-        diagnostics.process?.contains("exited", ignoreCase = true) == true -> RuntimeLifecycle.STOPPED
         diagnostics.error != null -> RuntimeLifecycle.FAILED
         diagnosis.contains("waiting for a plugin-launched runtime process") -> RuntimeLifecycle.FAILED
         diagnostics.health?.contains("2xx") == true -> RuntimeLifecycle.CONNECTED
@@ -508,10 +511,8 @@ private fun lifecycleNextAction(lifecycle: RuntimeLifecycle): String = when (lif
 }
 
 private fun safeLifecycleText(value: String): String = redactLogText(value, "")
-    .replace(Regex("(?i)token"), "credentials")
     .replace(Regex("(?i)authorization"), "credentials")
     .replace(Regex("(?i)bearer"), "credentials")
-    .replace(Regex("(?i)api[_-]?key"), "credentials")
     .replace(Regex("(?i)secret"), "credentials")
     .replace(Regex("(?i)private[_-]?path"), "local path")
     .replace(Regex("(?i)private\\s+path"), "local path")
@@ -579,6 +580,8 @@ private fun runtimeDiagnosis(diagnostics: RuntimeDiagnostics): String {
             "no launchable bundled, configured, or PATH engine binary was found"
         url.startsWith("https://") || combined.contains("requires runtime url to use http") || combined.contains("explicit nonzero port") || Regex("^http://[^:]+$").containsMatchIn(url) ->
             "launch URL is invalid for plugin-managed runtime launch"
+        diagnostics.process?.contains("stopped", ignoreCase = true) == true ->
+            "plugin-launched runtime process stopped after recovery failure"
         combined.contains("http 401") ->
             "local runtime rejected the session token (HTTP 401 token mismatch)"
         combined.contains("address already in use") || combined.contains("address in use") || combined.contains("port already in use") || combined.contains("eaddrinuse") ->

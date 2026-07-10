@@ -439,10 +439,11 @@ class RuntimeConnectionManagerTest {
         assertEquals(RuntimeLifecycle.AUTH_MISMATCH, result.lifecycleStatus.lifecycle)
         assertEquals("mismatch", result.lifecycleStatus.tokenState)
         assertEquals("external", result.lifecycleStatus.runtimeOwner)
-        assertFalse(result.lifecycleStatus.diagnosis.contains("token", ignoreCase = true), result.lifecycleStatus.diagnosis)
+        assertContains(result.lifecycleStatus.diagnosis, "session token")
         assertFalse(result.error.orEmpty().contains("connect-secret-token"), result.error)
         assertTrue(diagnostics.contains("HTTP 401 token mismatch"), diagnostics)
         assertTrue(diagnostics.contains("make the IDE debug/session token match the external runtime"), diagnostics)
+        assertTrue(diagnostics.contains("this is not a provider API key"), diagnostics)
         assertFalse(diagnostics.contains("connect-secret-token"), diagnostics)
     }
 
@@ -469,14 +470,35 @@ class RuntimeConnectionManagerTest {
         assertContains(error, "Stale external yet-lsp")
         assertContains(error, "change the Runtime URL port")
         assertContains(error, "connect mode with a matching local runtime token")
-        assertEquals(RuntimeLifecycle.AUTH_MISMATCH, result.lifecycleStatus.lifecycle)
-        assertEquals(RuntimeProcessState.RUNNING, result.lifecycleStatus.processState)
-        assertEquals("mismatch", result.lifecycleStatus.tokenState)
+        assertEquals(RuntimeLifecycle.STOPPED, result.lifecycleStatus.lifecycle)
+        assertEquals(RuntimeProcessState.STOPPED, result.lifecycleStatus.processState)
+        assertEquals("absent", result.lifecycleStatus.tokenState)
+        assertContains(result.lifecycleStatus.diagnosis, "stopped")
+        assertFalse(result.lifecycleStatus.diagnosis.contains("running", ignoreCase = true), result.lifecycleStatus.diagnosis)
         assertTrue(result.lifecycleStatus.nextAction.contains("Restart Runtime"), result.lifecycleStatus.nextAction)
-        assertTrue(result.lifecycleStatus.nextAction.contains("Runtime URL port"), result.lifecycleStatus.nextAction)
         assertFalse(error.contains("retry-secret-token"), error)
         assertFalse(error.contains("Authorization"), error)
         assertFalse(error.contains("/Users/alice"), error)
+    }
+
+    @Test
+    fun lifecycleTextPreservesRuntimeTokenAndProviderApiKeyWordingWithoutValues() {
+        val status = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8127", null, "runtime-secret-token-value-1234567890", LaunchMode.CONNECT, null),
+            LaunchMode.CONNECT,
+            RuntimeLifecycle.AUTH_MISMATCH,
+            RuntimeProcessState.FAILED,
+            "runtime session token mismatch; provider API key is unrelated: sk-provider-secret-1234567890 Authorization: Bearer runtime-secret-token-value-1234567890 /Users/alice/private/yet-lsp",
+            "Make the runtime session token match; do not paste a provider API key here.",
+        )
+
+        assertContains(status.diagnosis, "runtime session token mismatch")
+        assertContains(status.diagnosis, "provider API key is unrelated")
+        assertContains(status.nextAction, "runtime session token")
+        assertContains(status.nextAction, "provider API key")
+        listOf("runtime-secret-token-value", "sk-provider-secret", "Authorization", "Bearer", "/Users/alice").forEach { privateValue ->
+            assertFalse(status.toString().contains(privateValue, ignoreCase = true), status.toString())
+        }
     }
 
     @Test
@@ -836,6 +858,7 @@ class RuntimeConnectionManagerTest {
             assertFalse(combined.contains("/Users/alice"), combined)
             assertFalse(combined.contains("Authorization"), combined)
             assertFalse(combined.contains("Bearer"), combined)
+            if (status == authMismatch) return@forEach
             assertFalse(combined.contains("token", ignoreCase = true), combined)
             assertFalse(combined.contains("api key", ignoreCase = true) && !combined.contains("not a provider API key", ignoreCase = true), combined)
         }
