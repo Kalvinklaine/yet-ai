@@ -544,6 +544,73 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun pluginOwnedHttp401RecoveryRelaunchFailureKeepsPluginDiagnosis() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-401-relaunch-failure")
+        val logSink = YetLogSink(directoryProvider = { logDir })
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        var healthCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command ->
+                launched += command
+                if (launched.size == 1) {
+                    FakeAliveProcess()
+                } else {
+                    error("relaunch failed with HTTP 401 Authorization: Bearer second-plugin-token /Users/alice/private/yet-lsp")
+                }
+            },
+            tokenGenerator = { if (launched.isEmpty()) "first-plugin-token" else "second-plugin-token" },
+            healthChecker = {
+                healthCalls += 1
+                throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 Authorization: Bearer first-plugin-token /Users/alice/private/yet-lsp", 401)
+            },
+            logSink = logSink,
+        )
+
+        val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8131", null, "stale-initial-token", LaunchMode.LAUNCH, null))
+        val diagnostics = manager.runtimeDiagnosticsForTest(RuntimeSettings("http://127.0.0.1:8131", null, "stale-initial-token", LaunchMode.LAUNCH, null))
+        val error = result.error.orEmpty()
+
+        assertEquals(2, launched.size)
+        assertEquals(1, healthCalls)
+        assertEquals(RuntimeLifecycle.FAILED, result.lifecycleStatus.lifecycle)
+        assertEquals("ide_host", result.lifecycleStatus.runtimeOwner)
+        assertEquals(RuntimeProcessState.FAILED, result.lifecycleStatus.processState)
+        assertContains(result.lifecycleStatus.diagnosis, "relaunch failed")
+        assertContains(result.lifecycleStatus.nextAction, "Restart Runtime")
+        assertContains(result.lifecycleStatus.nextAction, "engine binary path")
+        assertContains(result.lifecycleStatus.nextAction, "engine logs")
+        assertContains(error, "relaunch failed during session recovery")
+        assertContains(error, "Plugin-owned runtime relaunch failed during HTTP 401 recovery")
+        assertContains(error, "Restart Runtime")
+        assertContains(error, "engine binary path")
+        assertContains(error, "engine logs")
+        assertFalse(result.lifecycleStatus.diagnosis.contains("token mismatch", ignoreCase = true), result.lifecycleStatus.diagnosis)
+        assertFalse(result.lifecycleStatus.nextAction.contains("external runtime", ignoreCase = true), result.lifecycleStatus.nextAction)
+        assertFalse(error.contains("Stale external yet-lsp"), error)
+        assertFalse(error.contains("connect mode with a matching local runtime token"), error)
+        assertContains(diagnostics, "Runtime owner: ide_host")
+        assertContains(diagnostics, "plugin-owned runtime relaunch failed during HTTP 401 recovery")
+        assertFalse(diagnostics.contains("HTTP 401 token mismatch"), diagnostics)
+        assertFalse(diagnostics.contains("make the IDE debug/session token match the external runtime"), diagnostics)
+        val logText = java.nio.file.Files.readString(logSink.logPath())
+        assertContains(logText, "runtime.401_retry")
+        assertContains(logText, "phase=failure")
+        assertContains(logText, "runtimeOwner=plugin-managed")
+        assertContains(logText, "launchMode=launch")
+        assertContains(logText, "tokenState=present")
+        listOf("first-plugin-token", "second-plugin-token", "stale-initial-token", "/Users/alice", "Authorization", "Bearer").forEach { privateValue ->
+            assertFalse(error.contains(privateValue, ignoreCase = true), error)
+            assertFalse(result.lifecycleStatus.toString().contains(privateValue, ignoreCase = true), result.lifecycleStatus.toString())
+            assertFalse(diagnostics.contains(privateValue, ignoreCase = true), diagnostics)
+            assertFalse(logText.contains(privateValue, ignoreCase = true), logText)
+        }
+        manager.dispose()
+    }
+
+    @Test
     fun refreshSessionTokenRestartsAlivePluginRuntimeAndPersistsFreshToken() {
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()

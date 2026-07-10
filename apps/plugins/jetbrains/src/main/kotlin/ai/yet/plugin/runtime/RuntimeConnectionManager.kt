@@ -129,11 +129,21 @@ class RuntimeConnectionManager(
                 connection = try {
                     prepareConnectionSettings(settings, refreshSessionToken = true)
                 } catch (launchError: Exception) {
-                    val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed after HTTP 401 recovery", launchError)
+                    val recoveryProcessState = "plugin-launched runtime relaunch failed during HTTP 401 recovery; click Refresh runtime or run Yet AI: Restart Runtime to relaunch"
+                    val result = failedRuntimeConnection(
+                        settings,
+                        connection,
+                        "Yet AI local runtime relaunch failed during session recovery",
+                        launchError,
+                        processExit = recoveryProcessState,
+                        effectiveRuntimeOwner = EffectiveRuntimeOwner.IDE_HOST,
+                        recoveryRelaunchFailure = true,
+                    )
                     lastHealthResult = "HTTP 401 from /v1/ping; plugin-owned restart failed"
                     lastConnectionError = result.error
+                    lastProcessExit = recoveryProcessState
                     lastRecoveryResult = "HTTP 401 recovery launch failed"
-                    logSink.append("error", "runtime.401_retry", runtimeCorrelationFields(settings, settings.launchMode) + mapOf("phase" to "failure", "error" to result.error))
+                    logSink.append("error", "runtime.401_retry", runtimeCorrelationFields(connection, settings.launchMode, EffectiveRuntimeOwner.IDE_HOST) + mapOf("phase" to "failure", "error" to result.error, "process" to recoveryProcessState))
                     lastLaunchedByPluginDuringHealth = false
                     return result
                 }
@@ -469,10 +479,11 @@ fun failedRuntimeConnection(
     launchedByPluginDuringHealth: Boolean = false,
     processExit: String? = null,
     effectiveRuntimeOwner: EffectiveRuntimeOwner = if (attemptedSettings != null) EffectiveRuntimeOwner.IDE_HOST else EffectiveRuntimeOwner.EXTERNAL,
+    recoveryRelaunchFailure: Boolean = false,
 ): RuntimeConnectionResult {
     val token = attemptedSettings?.sessionToken ?: settings.sessionToken
     val sanitized = sanitizedRuntimeError(prefix, error, token)
-    val guidance = if (isHttp401(error)) {
+    val guidance = if (isHttp401(error) && !recoveryRelaunchFailure) {
         " Stale external yet-lsp, loopback port reuse, or debug/session token mismatch can cause HTTP 401. Stop the existing process, change the Runtime URL port, or use connect mode with a matching local runtime token."
     } else {
         ""
@@ -483,7 +494,12 @@ fun failedRuntimeConnection(
     } else {
         ""
     }
-    val errorText = sanitized + processGuidance + guidance
+    val recoveryGuidance = if (recoveryRelaunchFailure) {
+        " Plugin-owned runtime relaunch failed during HTTP 401 recovery. Click Refresh runtime or run Yet AI: Restart Runtime; if it repeats, check the engine binary path and engine logs."
+    } else {
+        ""
+    }
+    val errorText = sanitized + processGuidance + recoveryGuidance + guidance
     val diagnostics = RuntimeDiagnostics(
         launchMode = settings.launchMode.name.lowercase(),
         runtimeUrl = sanitizeRuntimeUrlForDiagnostics(resultSettings.runtimeUrl),
@@ -688,6 +704,8 @@ private fun runtimeDiagnosis(diagnostics: RuntimeDiagnostics): String {
             "plugin-launched runtime process stopped after recovery failure"
         diagnostics.process?.contains("exited", ignoreCase = true) == true ->
             "plugin-launched runtime process exited unexpectedly"
+        diagnostics.pluginManagedRuntime && (combined.contains("relaunch failed during session recovery") || combined.contains("plugin-owned runtime relaunch failed during http 401 recovery")) ->
+            "plugin-owned runtime relaunch failed during HTTP 401 recovery"
         combined.contains("http 401") ->
             "local runtime rejected the session token (HTTP 401 token mismatch)"
         diagnostics.binaryStatus.contains("not executable", ignoreCase = true) ->
@@ -721,6 +739,8 @@ private fun runtimeNextAction(diagnostics: RuntimeDiagnostics, diagnosis: String
         "Set Runtime URL to an http loopback URL with an explicit nonzero port, for example http://127.0.0.1:8001; https is not supported for plugin launch mode."
     diagnosis.contains("port") ->
         "Use Yet AI: Restart Runtime, stop the other local process, or change the loopback Runtime URL port."
+    diagnosis.contains("relaunch failed") ->
+        "Click Refresh runtime or run Yet AI: Restart Runtime. If it still fails, check the engine binary path and engine logs in Yet AI: Show Runtime Status."
     diagnosis.contains("/v1/ping") || diagnosis.contains("exited") ->
         "Click Refresh runtime, then run Yet AI: Restart Runtime. If it still fails, open Yet AI: Show Runtime Status and check the loopback port and bundled binary diagnostics."
     diagnostics.launchMode.lowercase() == "connect" ->
