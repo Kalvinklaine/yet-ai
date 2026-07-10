@@ -1,5 +1,6 @@
 package ai.yet.plugin.runtime
 
+import ai.yet.plugin.logging.YetLogSink
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -310,6 +311,8 @@ class RuntimeConnectionManagerTest {
 
     @Test
     fun manualKillOfPluginOwnedRuntimeRelaunchesOnNextPrepareWithFreshToken() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-exit-log")
+        val logSink = YetLogSink(directoryProvider = { logDir })
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()
         val firstProcess = FakeManuallyKillableProcess(exitCode = 137)
@@ -323,6 +326,7 @@ class RuntimeConnectionManagerTest {
             },
             tokenGenerator = { if (launched.isEmpty()) "first-plugin-token" else "second-plugin-token" },
             healthChecker = {},
+            logSink = logSink,
         )
         val settings = RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.AUTO, null)
 
@@ -341,6 +345,12 @@ class RuntimeConnectionManagerTest {
         assertFalse(diagnosticsAfterKill.contains("first-plugin-token"), diagnosticsAfterKill)
         assertFalse(diagnosticsAfterKill.contains("Authorization"), diagnosticsAfterKill)
         assertFalse(diagnosticsAfterKill.contains("/Users/alice"), diagnosticsAfterKill)
+        val exitLogText = java.nio.file.Files.readString(logSink.logPath())
+        assertContains(exitLogText, "runtime.exit")
+        assertContains(exitLogText, "code=137")
+        listOf("first-plugin-token", "second-plugin-token", "/Users/alice", "Authorization", "Bearer").forEach { privateValue ->
+            assertFalse(exitLogText.contains(privateValue, ignoreCase = true), exitLogText)
+        }
         manager.dispose()
     }
 
@@ -411,6 +421,8 @@ class RuntimeConnectionManagerTest {
 
     @Test
     fun prepareRetriesPluginOwnedHttp401OnceWithFreshToken() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-401-log")
+        val logSink = YetLogSink(directoryProvider = { logDir })
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val launched = mutableListOf<EngineLaunchCommand>()
         var healthCalls = 0
@@ -425,6 +437,7 @@ class RuntimeConnectionManagerTest {
                 if (healthCalls == 1) throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401", 401)
                 assertEquals("second-plugin-token", settings.sessionToken)
             },
+            logSink = logSink,
             sessionTokenStore = tokenStore,
         )
 
@@ -441,6 +454,12 @@ class RuntimeConnectionManagerTest {
         assertEquals(2, healthCalls)
         assertEquals(listOf("first-plugin-token", "second-plugin-token"), tokenStore.values)
         assertEquals(listOf("first-plugin-token", "second-plugin-token"), launched.map { it.environment.getValue("YET_AI_AUTH_TOKEN") })
+        val logText = java.nio.file.Files.readString(logSink.logPath())
+        assertContains(logText, "runtime.401_retry")
+        assertContains(logText, "phase=success")
+        listOf("first-plugin-token", "second-plugin-token", "stale-initial-token", "/Users/alice", "Authorization", "Bearer").forEach { privateValue ->
+            assertFalse(logText.contains(privateValue, ignoreCase = true), logText)
+        }
         manager.dispose()
     }
 
@@ -503,6 +522,8 @@ class RuntimeConnectionManagerTest {
 
     @Test
     fun retryFailureStopsPluginOwnedRuntimeAndSurfacesActionableRedactedGuidance() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-retry-log")
+        val logSink = YetLogSink(directoryProvider = { logDir })
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
         val processes = mutableListOf<FakeAliveProcess>()
         val manager = RuntimeConnectionManager(
@@ -513,6 +534,7 @@ class RuntimeConnectionManagerTest {
             healthChecker = { settings ->
                 throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 Authorization: Bearer ${settings.sessionToken} /Users/alice/private/yet-lsp", 401)
             },
+            logSink = logSink,
         )
 
         val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8127", null, "initial-secret-token", LaunchMode.LAUNCH, null))
@@ -533,6 +555,12 @@ class RuntimeConnectionManagerTest {
         assertFalse(error.contains("retry-secret-token"), error)
         assertFalse(error.contains("Authorization"), error)
         assertFalse(error.contains("/Users/alice"), error)
+        val retryLogText = java.nio.file.Files.readString(logSink.logPath())
+        assertContains(retryLogText, "runtime.401_retry")
+        assertContains(retryLogText, "phase=failure")
+        listOf("retry-secret-token", "initial-secret-token", "/Users/alice", "Authorization", "Bearer").forEach { privateValue ->
+            assertFalse(retryLogText.contains(privateValue, ignoreCase = true), retryLogText)
+        }
     }
 
     @Test

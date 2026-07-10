@@ -1,6 +1,9 @@
 package ai.yet.plugin.runtime
 
 import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.logging.YetDiagnosticsBundle
+import ai.yet.plugin.logging.YetDiagnosticsSnapshot
+import ai.yet.plugin.logging.YetLogSink
 import ai.yet.plugin.settings.SessionTokenStore
 import ai.yet.plugin.settings.YetSettingsState
 import com.intellij.openapi.Disposable
@@ -29,6 +32,7 @@ class RuntimeConnectionManager(
     private val tokenGenerator: () -> String = ::generateSessionToken,
     private val healthChecker: (RuntimeSettings) -> Unit = ::checkHealth,
     private val sessionTokenStore: RuntimeSessionTokenStore = PasswordSafeRuntimeSessionTokenStore(),
+    private val logSink: YetLogSink = YetLogSink(),
 ) : Disposable {
     private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
     private var launchedProcess: Process? = null
@@ -36,6 +40,7 @@ class RuntimeConnectionManager(
     private var lastHealthResult: String? = null
     private var lastConnectionError: String? = null
     private var lastProcessExit: String? = null
+    private var lastRecoveryResult: String? = null
     private var lastLaunchedByPluginDuringHealth = false
 
     @Synchronized
@@ -45,6 +50,7 @@ class RuntimeConnectionManager(
 
     @Synchronized
     private fun prepareCurrent(publishUpdates: Boolean): RuntimeConnectionResult {
+        logSink.append("info", "runtime.prepare", mapOf("phase" to "start"))
         val settings = try {
             RuntimeSettings.current()
         } catch (error: Exception) {
@@ -63,11 +69,13 @@ class RuntimeConnectionManager(
                     "Open settings and use an http loopback runtime URL with a supported launch mode.",
                 ),
             )
+            logSink.append("error", "runtime.prepare", mapOf("phase" to "failure", "error" to lastConnectionError))
             if (publishUpdates) publishRuntimeConnectionUpdate(result)
             return result
         }
         val previousConnection = launchedConnection
         val result = prepareResolvedSettings(settings)
+        logSink.append("info", "runtime.prepare", mapOf("phase" to if (result.error == null) "success" else "failure", "launchMode" to settings.launchMode.name.lowercase(), "lifecycle" to result.lifecycleStatus.lifecycle.wireName, "error" to result.error))
         if (publishUpdates && (result.error != null || result.settings != previousConnection)) publishRuntimeConnectionUpdate(result)
         return result
     }
@@ -84,13 +92,16 @@ class RuntimeConnectionManager(
             val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed", error)
             lastHealthResult = null
             lastConnectionError = result.error
+            logSink.append("error", "runtime.launch", mapOf("phase" to "failure", "launchMode" to settings.launchMode.name.lowercase(), "error" to result.error))
             return result
         }
         return try {
+            logSink.append("info", "runtime.health", mapOf("phase" to "start", "launchMode" to settings.launchMode.name.lowercase(), "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
             lastLaunchedByPluginDuringHealth = launchedConnection == connection
             healthChecker(connection)
             lastHealthResult = "/v1/ping returned 2xx"
             lastConnectionError = null
+            logSink.append("info", "runtime.health", mapOf("phase" to "success", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
             lastLaunchedByPluginDuringHealth = false
             RuntimeConnectionResult(
                 connection,
@@ -107,8 +118,11 @@ class RuntimeConnectionManager(
             )
         } catch (error: Exception) {
             reconcileExitedLaunchedProcess()
+            logSink.append("warn", "runtime.health", mapOf("phase" to "failure", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl), "error" to error.message))
             if (isHttp401(error) && shouldRetryPluginOwnedRuntime(settings, connection)) {
                 logger.info("Yet AI plugin-launched runtime returned HTTP 401 during health check; restarting once with a fresh session token")
+                lastRecoveryResult = "HTTP 401 recovery started for plugin-owned runtime"
+                logSink.append("warn", "runtime.401_retry", mapOf("phase" to "start", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
                 stopLaunchedProcess()
                 connection = try {
                     prepareConnectionSettings(settings, refreshSessionToken = true)
@@ -116,14 +130,19 @@ class RuntimeConnectionManager(
                     val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed after HTTP 401 recovery", launchError)
                     lastHealthResult = "HTTP 401 from /v1/ping; plugin-owned restart failed"
                     lastConnectionError = result.error
+                    lastRecoveryResult = "HTTP 401 recovery launch failed"
+                    logSink.append("error", "runtime.401_retry", mapOf("phase" to "failure", "error" to result.error))
                     lastLaunchedByPluginDuringHealth = false
                     return result
                 }
                 return try {
+                    logSink.append("info", "runtime.health", mapOf("phase" to "start", "recovery" to "401_retry", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
                     lastLaunchedByPluginDuringHealth = launchedConnection == connection
                     healthChecker(connection)
                     lastHealthResult = "/v1/ping returned 2xx after HTTP 401 recovery"
                     lastConnectionError = null
+                    lastRecoveryResult = "HTTP 401 recovery succeeded"
+                    logSink.append("info", "runtime.401_retry", mapOf("phase" to "success", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
                     lastLaunchedByPluginDuringHealth = false
                     RuntimeConnectionResult(
                         connection,
@@ -146,6 +165,8 @@ class RuntimeConnectionManager(
                     lastHealthResult = "HTTP 401 recovery attempted once for plugin-owned runtime"
                     lastConnectionError = result.error
                     lastProcessExit = processStateAfterFailure
+                    lastRecoveryResult = "HTTP 401 recovery failed"
+                    logSink.append("error", "runtime.401_retry", mapOf("phase" to "failure", "error" to result.error, "process" to processStateAfterFailure))
                     lastLaunchedByPluginDuringHealth = false
                     return result
                 }
@@ -168,13 +189,14 @@ class RuntimeConnectionManager(
 
     @Synchronized
     fun restartRuntime(): RuntimeConnectionResult {
+        logSink.append("info", "runtime.restart", mapOf("phase" to "requested"))
         stopLaunchedProcess()
         val result = prepareCurrent(publishUpdates = false)
+        logSink.append("info", "runtime.restart", mapOf("phase" to if (result.error == null) "success" else "failure", "lifecycle" to result.lifecycleStatus.lifecycle.wireName, "error" to result.error))
         publishRuntimeConnectionUpdate(result)
         return result
     }
 
-    @Synchronized
     fun runtimeDiagnostics(): String {
         reconcileExitedLaunchedProcess()
         val state = YetSettingsState.getInstance().state
@@ -184,48 +206,45 @@ class RuntimeConnectionManager(
         val settings = try {
             RuntimeSettings.current()
         } catch (error: Exception) {
-            return formatRuntimeDiagnostics(
-                RuntimeDiagnostics(
-                    launchMode = rawLaunchMode.trim().ifBlank { "auto" },
-                    runtimeUrl = sanitizeRuntimeUrlForDiagnostics(rawRuntimeUrl),
-                    engineBinaryConfigured = rawEngineBinaryPath.isNotBlank(),
-                    binaryStatus = "settings invalid: ${redactLogText(error.message ?: error::class.java.simpleName, "")}",
-                    launchedByPlugin = launchedProcess?.isAlive == true,
-                    health = null,
-                    error = sanitizedRuntimeError("Yet AI runtime settings are invalid", error),
-                    process = lastProcessExit,
-                ),
-            )
-        }
-        return formatRuntimeDiagnostics(
-            RuntimeDiagnostics(
-                launchMode = settings.launchMode.name.lowercase(),
-                runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
-                engineBinaryConfigured = settings.engineBinaryPath != null,
-                binaryStatus = if (launchedProcess?.isAlive == true && lastConnectionError != null) "plugin-managed runtime process was launched" else describeEngineBinaryStatus(settings),
+            val diagnostics = RuntimeDiagnostics(
+                launchMode = rawLaunchMode.trim().ifBlank { "auto" },
+                runtimeUrl = sanitizeRuntimeUrlForDiagnostics(rawRuntimeUrl),
+                engineBinaryConfigured = rawEngineBinaryPath.isNotBlank(),
+                binaryStatus = "settings invalid: ${redactLogText(error.message ?: error::class.java.simpleName, "")}",
                 launchedByPlugin = launchedProcess?.isAlive == true,
-                health = lastHealthResult,
-                error = lastConnectionError,
+                health = null,
+                error = sanitizedRuntimeError("Yet AI runtime settings are invalid", error),
                 process = lastProcessExit,
-            ),
+            )
+            return diagnosticsBundle().build(diagnosticsSnapshot(diagnostics))
+        }
+        val diagnostics = RuntimeDiagnostics(
+            launchMode = settings.launchMode.name.lowercase(),
+            runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
+            engineBinaryConfigured = settings.engineBinaryPath != null,
+            binaryStatus = if (launchedProcess?.isAlive == true && lastConnectionError != null) "plugin-managed runtime process was launched" else describeEngineBinaryStatus(settings),
+            launchedByPlugin = launchedProcess?.isAlive == true,
+            health = lastHealthResult,
+            error = lastConnectionError,
+            process = lastProcessExit,
         )
+        return diagnosticsBundle().build(diagnosticsSnapshot(diagnostics))
     }
 
     @Synchronized
     internal fun runtimeDiagnosticsForTest(settings: RuntimeSettings): String {
         reconcileExitedLaunchedProcess()
-        return formatRuntimeDiagnostics(
-            RuntimeDiagnostics(
-                launchMode = settings.launchMode.name.lowercase(),
-                runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
-                engineBinaryConfigured = settings.engineBinaryPath != null,
-                binaryStatus = if (launchedProcess?.isAlive == true && lastConnectionError != null) "plugin-managed runtime process was launched" else describeEngineBinaryStatus(settings),
-                launchedByPlugin = launchedProcess?.isAlive == true,
-                health = lastHealthResult,
-                error = lastConnectionError,
-                process = lastProcessExit,
-            ),
+        val diagnostics = RuntimeDiagnostics(
+            launchMode = settings.launchMode.name.lowercase(),
+            runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
+            engineBinaryConfigured = settings.engineBinaryPath != null,
+            binaryStatus = if (launchedProcess?.isAlive == true && lastConnectionError != null) "plugin-managed runtime process was launched" else describeEngineBinaryStatus(settings),
+            launchedByPlugin = launchedProcess?.isAlive == true,
+            health = lastHealthResult,
+            error = lastConnectionError,
+            process = lastProcessExit,
         )
+        return diagnosticsBundle().build(diagnosticsSnapshot(diagnostics))
     }
 
     @Synchronized
@@ -268,9 +287,11 @@ class RuntimeConnectionManager(
         stopLaunchedProcess()
         val token = tokenGenerator()
         val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token)
+        logSink.append("info", "runtime.launch", mapOf("phase" to "start", "launchMode" to settings.launchMode.name.lowercase(), "runtime" to sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl), "binary" to binaryPath.fileName.toString(), "refreshSessionToken" to refreshSessionToken))
         val process = try {
             processStarter(command)
         } catch (error: Exception) {
+            logSink.append("error", "runtime.launch", mapOf("phase" to "failure", "error" to sanitizedRuntimeError("Yet AI local runtime process start failed", error, token)))
             throw IllegalStateException(sanitizedRuntimeError("Yet AI local runtime process start failed", error, token))
         }
         val connection = settings.copyWithSessionToken(token)
@@ -278,18 +299,21 @@ class RuntimeConnectionManager(
             sessionTokenStore.set(token)
         } catch (error: Exception) {
             stopProcess(process)
+            logSink.append("error", "runtime.launch", mapOf("phase" to "failure", "error" to sanitizedRuntimeError("Yet AI local runtime session token store update failed", error, token)))
             throw IllegalStateException(sanitizedRuntimeError("Yet AI local runtime session token store update failed", error, token))
         }
         launchedProcess = process
         launchedConnection = connection
         attachLogs(process, token)
         logger.info("Started Yet AI local runtime")
+        logSink.append("info", "runtime.launch", mapOf("phase" to "success", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
         thread(name = "Yet AI runtime watcher", isDaemon = true) {
             val code = process.waitFor()
             logger.info("Yet AI local runtime exited with code $code")
             synchronized(this@RuntimeConnectionManager) {
                 if (launchedProcess == process) {
                     lastProcessExit = pluginLaunchedProcessExitMessage(code)
+                    logSink.append("warn", "runtime.exit", mapOf("code" to code, "process" to lastProcessExit))
                     launchedProcess = null
                     launchedConnection = null
                 }
@@ -304,6 +328,7 @@ class RuntimeConnectionManager(
         if (process.isAlive) return
         val code = runCatching { process.exitValue() }.getOrNull()
         lastProcessExit = pluginLaunchedProcessExitMessage(code)
+        logSink.append("warn", "runtime.exit", mapOf("code" to code, "process" to lastProcessExit))
         launchedProcess = null
         launchedConnection = null
         lastHealthResult = null
@@ -316,6 +341,7 @@ class RuntimeConnectionManager(
                     lines.forEach { line ->
                         if (line.isNotBlank()) {
                             logger.info("Yet AI runtime: ${redactLogText(line, token)}")
+                            logSink.append("info", "runtime.output", mapOf("line" to redactLogText(line, token)))
                         }
                     }
                 }
@@ -332,6 +358,21 @@ class RuntimeConnectionManager(
         lastProcessExit = null
         stopProcess(process)
     }
+
+    private fun diagnosticsBundle(): YetDiagnosticsBundle = YetDiagnosticsBundle(logSink)
+
+    private fun diagnosticsSnapshot(diagnostics: RuntimeDiagnostics): YetDiagnosticsSnapshot = YetDiagnosticsSnapshot(
+        launchMode = diagnostics.launchMode,
+        runtimeUrl = diagnostics.runtimeUrl,
+        engineBinaryConfigured = diagnostics.engineBinaryConfigured,
+        binaryStatus = diagnostics.binaryStatus,
+        launchedByPlugin = diagnostics.launchedByPlugin,
+        lifecycleStatus = runtimeLifecycleStatusFromDiagnostics(diagnostics),
+        lastHealth = diagnostics.health,
+        lastError = diagnostics.error,
+        lastProcess = diagnostics.process,
+        lastRecovery = lastRecoveryResult,
+    )
 
     @Synchronized
     private fun currentProcessState(): RuntimeProcessState = when {
@@ -602,12 +643,12 @@ private fun runtimeDiagnosis(diagnostics: RuntimeDiagnostics): String {
             "launch URL is invalid for plugin-managed runtime launch"
         diagnostics.process?.contains("stopped", ignoreCase = true) == true ->
             "plugin-launched runtime process stopped after recovery failure"
+        diagnostics.process?.contains("exited", ignoreCase = true) == true ->
+            "plugin-launched runtime process exited unexpectedly"
         combined.contains("http 401") ->
             "local runtime rejected the session token (HTTP 401 token mismatch)"
         combined.contains("address already in use") || combined.contains("address in use") || combined.contains("port already in use") || combined.contains("eaddrinuse") ->
             "loopback port is already in use by another process"
-        diagnostics.process?.contains("exited", ignoreCase = true) == true ->
-            "plugin-launched runtime process exited unexpectedly"
         diagnostics.launchedByPlugin && (combined.contains("/v1/ping") || combined.contains("health check failed") || combined.contains("failed to connect") || combined.contains("connection refused") || combined.contains("timed out") || combined.contains("no response")) ->
             "plugin-launched runtime process is running but did not answer authenticated /v1/ping"
         combined.contains("/v1/ping") || combined.contains("health check failed") || combined.contains("failed to connect") || combined.contains("connection refused") ->
