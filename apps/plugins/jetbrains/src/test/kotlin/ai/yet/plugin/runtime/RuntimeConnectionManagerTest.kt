@@ -826,6 +826,54 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun stalePluginProcessDoesNotMakeCurrentConnectOrAutoFallbackDiagnosticsPluginManaged() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-stale-process-owner")
+        val logSink = YetLogSink(directoryProvider = { logDir })
+        val engineLogPath = expectedEngineLogPath(logDir, 8131)
+        java.nio.file.Files.writeString(engineLogPath, "stale plugin-owned engine log\n")
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = SequenceBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp"), null),
+            engineBinaryFinder = { configured -> if (configured == null) null else configured },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "stale-plugin-token" },
+            healthChecker = {},
+            logSink = logSink,
+        )
+        val pluginSettings = RuntimeSettings("http://127.0.0.1:8131", null, null, LaunchMode.LAUNCH, null)
+        val connectSettings = RuntimeSettings("http://127.0.0.1:8131", null, "external-connect-token", LaunchMode.CONNECT, null)
+        val autoFallbackSettings = RuntimeSettings("http://127.0.0.1:8131", null, "external-auto-token", LaunchMode.AUTO, null)
+
+        val pluginResult = manager.prepareForTest(pluginSettings)
+        val pluginDiagnostics = manager.runtimeDiagnosticsForTest(pluginSettings)
+        val connectResult = manager.prepareForTest(connectSettings)
+        val connectDiagnostics = manager.runtimeDiagnosticsForTest(connectSettings)
+        val autoResult = manager.prepareForTest(autoFallbackSettings)
+        val autoDiagnostics = manager.runtimeDiagnosticsForTest(autoFallbackSettings)
+
+        assertEquals("ide_host", pluginResult.lifecycleStatus.runtimeOwner)
+        assertEquals(RuntimeProcessState.RUNNING, pluginResult.lifecycleStatus.processState)
+        assertContains(pluginDiagnostics, "Runtime owner: ide_host")
+        assertContains(pluginDiagnostics, "engine-8131.log")
+        assertEquals("external", connectResult.lifecycleStatus.runtimeOwner)
+        assertEquals(RuntimeProcessState.NOT_OWNED, connectResult.lifecycleStatus.processState)
+        assertContains(connectDiagnostics, "Runtime owner: external")
+        assertContains(connectDiagnostics, "Plugin-launched process: not running")
+        assertContains(connectDiagnostics, "Process state: not_owned")
+        assertContains(connectDiagnostics, "Engine log path: unavailable")
+        assertFalse(connectDiagnostics.contains("engine-8131.log"), connectDiagnostics)
+        assertFalse(connectDiagnostics.contains("stale plugin-owned engine log"), connectDiagnostics)
+        assertEquals("external", autoResult.lifecycleStatus.runtimeOwner)
+        assertEquals(RuntimeProcessState.NOT_OWNED, autoResult.lifecycleStatus.processState)
+        assertContains(autoDiagnostics, "Runtime owner: external")
+        assertContains(autoDiagnostics, "Plugin-launched process: not running")
+        assertContains(autoDiagnostics, "Process state: not_owned")
+        assertContains(autoDiagnostics, "Engine log path: unavailable")
+        assertFalse(autoDiagnostics.contains("engine-8131.log"), autoDiagnostics)
+        assertFalse(autoDiagnostics.contains("stale plugin-owned engine log"), autoDiagnostics)
+        manager.dispose()
+    }
+
+    @Test
     fun autoModeFallbackHttp401ReportsExternalOwnerWithoutPluginRetryGuidance() {
         val logDir = kotlin.io.path.createTempDirectory("yet-runtime-auto-fallback-401")
         val logSink = YetLogSink(directoryProvider = { logDir })
@@ -1467,6 +1515,17 @@ private class RecordingBundledProvider(private val path: Path?) : BundledEngineP
     override fun resolveOrNull(): Path? {
         resolveCalls += 1
         return path
+    }
+}
+
+private class SequenceBundledProvider(vararg paths: Path?) : BundledEngineProvider {
+    private val values = paths.toList()
+    private var index = 0
+
+    override fun resolveOrNull(): Path? {
+        val value = values.getOrElse(index) { values.lastOrNull() }
+        index += 1
+        return value
     }
 }
 

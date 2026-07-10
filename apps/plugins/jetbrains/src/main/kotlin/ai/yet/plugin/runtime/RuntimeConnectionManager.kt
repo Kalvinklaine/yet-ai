@@ -42,6 +42,9 @@ class RuntimeConnectionManager(
     private var lastProcessExit: String? = null
     private var lastRecoveryResult: String? = null
     private var lastLaunchedByPluginDuringHealth = false
+    private var lastPreparedRuntimeUrl: String? = null
+    private var lastEffectiveRuntimeOwner: EffectiveRuntimeOwner = EffectiveRuntimeOwner.EXTERNAL
+    private var lastEffectiveProcessState: RuntimeProcessState = RuntimeProcessState.NOT_OWNED
 
     @Synchronized
     fun prepare(): RuntimeConnectionResult {
@@ -92,6 +95,7 @@ class RuntimeConnectionManager(
             val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed", error)
             lastHealthResult = null
             lastConnectionError = result.error
+            rememberCurrentRuntime(result.settings, EffectiveRuntimeOwner.EXTERNAL, result.lifecycleStatus.processState)
             logSink.append("error", "runtime.launch", mapOf("phase" to "failure", "launchMode" to settings.launchMode.name.lowercase(), "error" to result.error))
             return result
         }
@@ -102,6 +106,8 @@ class RuntimeConnectionManager(
             healthChecker(connection)
             lastHealthResult = "/v1/ping returned 2xx"
             lastConnectionError = null
+            val processState = currentProcessState(runtimeOwner)
+            rememberCurrentRuntime(connection, runtimeOwner, processState)
             logSink.append("info", "runtime.health", runtimeCorrelationFields(connection, settings.launchMode, runtimeOwner) + mapOf("phase" to "success"))
             lastLaunchedByPluginDuringHealth = false
             RuntimeConnectionResult(
@@ -112,7 +118,7 @@ class RuntimeConnectionManager(
                     connection,
                     settings.launchMode,
                     RuntimeLifecycle.CONNECTED,
-                    currentProcessState(),
+                    processState,
                     "local runtime is reachable",
                     "Continue using Yet AI.",
                     effectiveRuntimeOwner = runtimeOwner,
@@ -143,6 +149,7 @@ class RuntimeConnectionManager(
                     lastConnectionError = result.error
                     lastProcessExit = recoveryProcessState
                     lastRecoveryResult = "HTTP 401 recovery launch failed"
+                    rememberCurrentRuntime(result.settings, EffectiveRuntimeOwner.IDE_HOST, result.lifecycleStatus.processState)
                     logSink.append("error", "runtime.401_retry", runtimeCorrelationFields(connection, settings.launchMode, EffectiveRuntimeOwner.IDE_HOST) + mapOf("phase" to "failure", "error" to result.error, "process" to recoveryProcessState))
                     lastLaunchedByPluginDuringHealth = false
                     return result
@@ -154,6 +161,8 @@ class RuntimeConnectionManager(
                     lastHealthResult = "/v1/ping returned 2xx after HTTP 401 recovery"
                     lastConnectionError = null
                     lastRecoveryResult = "HTTP 401 recovery succeeded"
+                    val processState = currentProcessState(EffectiveRuntimeOwner.IDE_HOST)
+                    rememberCurrentRuntime(connection, EffectiveRuntimeOwner.IDE_HOST, processState)
                     logSink.append("info", "runtime.401_retry", runtimeCorrelationFields(connection, settings.launchMode, EffectiveRuntimeOwner.IDE_HOST) + mapOf("phase" to "success"))
                     lastLaunchedByPluginDuringHealth = false
                     RuntimeConnectionResult(
@@ -164,9 +173,10 @@ class RuntimeConnectionManager(
                             connection,
                             settings.launchMode,
                             RuntimeLifecycle.CONNECTED,
-                            currentProcessState(),
+                            processState,
                             "local runtime is reachable after refreshing session credentials",
                             "Continue using Yet AI.",
+                            effectiveRuntimeOwner = EffectiveRuntimeOwner.IDE_HOST,
                         ),
                     )
                 } catch (retryError: Exception) {
@@ -178,14 +188,16 @@ class RuntimeConnectionManager(
                     lastConnectionError = result.error
                     lastProcessExit = processStateAfterFailure
                     lastRecoveryResult = "HTTP 401 recovery failed"
+                    rememberCurrentRuntime(result.settings, EffectiveRuntimeOwner.IDE_HOST, result.lifecycleStatus.processState)
                     logSink.append("error", "runtime.401_retry", runtimeCorrelationFields(connection, settings.launchMode, EffectiveRuntimeOwner.IDE_HOST) + mapOf("phase" to "failure", "error" to result.error, "process" to processStateAfterFailure))
                     lastLaunchedByPluginDuringHealth = false
                     return result
                 }
             }
-            val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed", error, lastLaunchedByPluginDuringHealth, lastProcessExit, runtimeOwner)
+            val result = failedRuntimeConnection(settings, connection, "Yet AI local runtime connection failed", error, lastLaunchedByPluginDuringHealth, currentProcessExit(runtimeOwner), runtimeOwner)
             lastHealthResult = if (isHttp401(error)) "HTTP 401 from /v1/ping" else null
             lastConnectionError = result.error
+            rememberCurrentRuntime(result.settings, runtimeOwner, result.lifecycleStatus.processState)
             lastLaunchedByPluginDuringHealth = false
             result
         }
@@ -223,39 +235,21 @@ class RuntimeConnectionManager(
                 runtimeUrl = sanitizeRuntimeUrlForDiagnostics(rawRuntimeUrl),
                 engineBinaryConfigured = rawEngineBinaryPath.isNotBlank(),
                 binaryStatus = "settings invalid: ${redactLogText(error.message ?: error::class.java.simpleName, "")}",
-                launchedByPlugin = launchedProcess?.isAlive == true,
+                launchedByPlugin = false,
                 health = null,
                 error = sanitizedRuntimeError("Yet AI runtime settings are invalid", error),
-                process = lastProcessExit,
+                process = null,
             )
             return diagnosticsBundle().build(diagnosticsSnapshot(diagnostics))
         }
-        val diagnostics = RuntimeDiagnostics(
-            launchMode = settings.launchMode.name.lowercase(),
-            runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
-            engineBinaryConfigured = settings.engineBinaryPath != null,
-            binaryStatus = if (launchedProcess?.isAlive == true && lastConnectionError != null) "plugin-managed runtime process was launched" else describeEngineBinaryStatus(settings),
-            launchedByPlugin = launchedProcess?.isAlive == true,
-            health = lastHealthResult,
-            error = lastConnectionError,
-            process = lastProcessExit,
-        )
+        val diagnostics = runtimeDiagnosticsFor(settings)
         return diagnosticsBundle().build(diagnosticsSnapshot(diagnostics))
     }
 
     @Synchronized
     internal fun runtimeDiagnosticsForTest(settings: RuntimeSettings): String {
         reconcileExitedLaunchedProcess()
-        val diagnostics = RuntimeDiagnostics(
-            launchMode = settings.launchMode.name.lowercase(),
-            runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
-            engineBinaryConfigured = settings.engineBinaryPath != null,
-            binaryStatus = if (launchedProcess?.isAlive == true && lastConnectionError != null) "plugin-managed runtime process was launched" else describeEngineBinaryStatus(settings),
-            launchedByPlugin = launchedProcess?.isAlive == true,
-            health = lastHealthResult,
-            error = lastConnectionError,
-            process = lastProcessExit,
-        )
+        val diagnostics = runtimeDiagnosticsFor(settings)
         return diagnosticsBundle().build(diagnosticsSnapshot(diagnostics))
     }
 
@@ -333,6 +327,7 @@ class RuntimeConnectionManager(
                     logSink.append("warn", "runtime.exit", mapOf("code" to code, "process" to lastProcessExit))
                     launchedProcess = null
                     launchedConnection = null
+                    lastEffectiveProcessState = RuntimeProcessState.EXITED
                 }
             }
         }
@@ -349,6 +344,7 @@ class RuntimeConnectionManager(
         launchedProcess = null
         launchedConnection = null
         lastHealthResult = null
+        lastEffectiveProcessState = RuntimeProcessState.EXITED
     }
 
     private fun attachLogs(process: Process, token: String) {
@@ -373,6 +369,9 @@ class RuntimeConnectionManager(
         launchedConnection = null
         lastHealthResult = null
         lastProcessExit = null
+        lastPreparedRuntimeUrl = null
+        lastEffectiveRuntimeOwner = EffectiveRuntimeOwner.EXTERNAL
+        lastEffectiveProcessState = RuntimeProcessState.NOT_OWNED
         stopProcess(process)
     }
 
@@ -399,18 +398,61 @@ class RuntimeConnectionManager(
         }.getOrNull()
     }
 
+    private fun runtimeDiagnosticsFor(settings: RuntimeSettings): RuntimeDiagnostics {
+        val owner = effectiveDiagnosticsOwnerFor(settings)
+        return RuntimeDiagnostics(
+            launchMode = settings.launchMode.name.lowercase(),
+            runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
+            engineBinaryConfigured = settings.engineBinaryPath != null,
+            binaryStatus = if (owner == EffectiveRuntimeOwner.IDE_HOST && lastConnectionError != null) "plugin-managed runtime process was launched" else describeEngineBinaryStatus(settings),
+            launchedByPlugin = owner == EffectiveRuntimeOwner.IDE_HOST && currentDiagnosticsProcessState(owner) == RuntimeProcessState.RUNNING,
+            health = lastHealthResult,
+            error = lastConnectionError,
+            process = currentProcessExit(owner),
+        )
+    }
+
     @Synchronized
     private fun effectiveRuntimeOwnerFor(connection: RuntimeSettings): EffectiveRuntimeOwner {
         val process = launchedProcess
         return if (process?.isAlive == true && launchedConnection == connection) EffectiveRuntimeOwner.IDE_HOST else EffectiveRuntimeOwner.EXTERNAL
     }
 
+    private fun effectiveDiagnosticsOwnerFor(settings: RuntimeSettings): EffectiveRuntimeOwner {
+        if (settings.launchMode == LaunchMode.CONNECT) return EffectiveRuntimeOwner.EXTERNAL
+        val sanitizedRuntimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl)
+        if (lastPreparedRuntimeUrl != sanitizedRuntimeUrl) return EffectiveRuntimeOwner.EXTERNAL
+        if (lastEffectiveRuntimeOwner != EffectiveRuntimeOwner.IDE_HOST) return EffectiveRuntimeOwner.EXTERNAL
+        val process = launchedProcess
+        val liveCurrentPluginProcess = process?.isAlive == true && launchedConnection?.runtimeUrl == settings.runtimeUrl
+        val terminalCurrentPluginProcess = lastEffectiveProcessState == RuntimeProcessState.EXITED ||
+            lastEffectiveProcessState == RuntimeProcessState.STOPPED ||
+            lastEffectiveProcessState == RuntimeProcessState.FAILED
+        return if (liveCurrentPluginProcess || terminalCurrentPluginProcess) EffectiveRuntimeOwner.IDE_HOST else EffectiveRuntimeOwner.EXTERNAL
+    }
+
+    private fun rememberCurrentRuntime(connection: RuntimeSettings, owner: EffectiveRuntimeOwner, processState: RuntimeProcessState) {
+        lastPreparedRuntimeUrl = sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)
+        lastEffectiveRuntimeOwner = owner
+        lastEffectiveProcessState = processState
+    }
+
     @Synchronized
-    private fun currentProcessState(): RuntimeProcessState = when {
+    private fun currentProcessState(owner: EffectiveRuntimeOwner): RuntimeProcessState = when {
+        owner != EffectiveRuntimeOwner.IDE_HOST -> RuntimeProcessState.NOT_OWNED
         launchedProcess?.isAlive == true -> RuntimeProcessState.RUNNING
         lastProcessExit != null -> RuntimeProcessState.EXITED
         else -> RuntimeProcessState.NOT_OWNED
     }
+
+    private fun currentDiagnosticsProcessState(owner: EffectiveRuntimeOwner): RuntimeProcessState = when {
+        owner != EffectiveRuntimeOwner.IDE_HOST -> RuntimeProcessState.NOT_OWNED
+        launchedProcess?.isAlive == true -> RuntimeProcessState.RUNNING
+        lastProcessExit != null -> RuntimeProcessState.EXITED
+        else -> lastEffectiveProcessState
+    }
+
+    private fun currentProcessExit(owner: EffectiveRuntimeOwner): String? = if (owner == EffectiveRuntimeOwner.IDE_HOST) lastProcessExit else null
 
     override fun dispose() {
         stopLaunchedProcess()
