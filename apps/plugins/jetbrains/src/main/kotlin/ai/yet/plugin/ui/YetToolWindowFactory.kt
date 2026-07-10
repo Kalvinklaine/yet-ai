@@ -958,11 +958,15 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const flushPending = () => {
           while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
-          pendingHostMessages.length = 0;
+          const hostMessages = pendingHostMessages.splice(0, pendingHostMessages.length);
+          for (const message of hostMessages) postToFrame(message);
         };
         const sendToFrame = (message) => {
           if (!isHostMessage(message)) return;
-          if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return;
+          if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) {
+            pushBounded(pendingHostMessages, message, maxPendingHostMessages);
+            return;
+          }
           postToFrame(message);
         };
         window.__yetAiSendHostMessageToFrame = sendToFrame;

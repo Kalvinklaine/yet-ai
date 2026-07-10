@@ -9,6 +9,8 @@ import ai.yet.plugin.runtime.RuntimeLifecycleStatus
 import ai.yet.plugin.runtime.RuntimeProcessState
 import ai.yet.plugin.runtime.RuntimeSettings
 import com.google.gson.JsonParser
+import com.google.gson.JsonPrimitive
+import java.nio.file.Files
 import java.util.concurrent.CompletableFuture
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -43,7 +45,9 @@ class YetToolWindowFactoryTest {
         assertContains(html, "const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics)")
         assertContains(html, "window.__yetAiPendingHostMessages = pendingHostMessages")
         assertContains(html, "window.__yetAiPendingDiagnostics = pendingDiagnostics")
-        assertContains(html, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return;")
+        assertContains(html, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) {")
+        assertContains(html, "pushBounded(pendingHostMessages, message, maxPendingHostMessages);")
+        assertContains(html, "return;")
         assertContains(html, "flushPending()")
         assertContains(html, "message.type === \"host.contextSnapshot\"")
         assertFalse(html.contains("isHostMessage(event.data)"))
@@ -66,6 +70,7 @@ class YetToolWindowFactoryTest {
         )
 
         assertContains(html, "let frameReady = false")
+        assertContains(html, "pushBounded(pendingHostMessages, message, maxPendingHostMessages);")
         assertContains(html, "let frameGeneration = 0;")
         assertContains(html, "let currentFrameWindow = frame?.contentWindow;")
         assertContains(html, "let currentGuiReadyRequestId;")
@@ -93,8 +98,11 @@ class YetToolWindowFactoryTest {
         assertContains(html, "frame && currentFrameWindow && frame.contentWindow === currentFrameWindow")
         assertContains(html, "event.source === currentFrameWindow && event.source === frame?.contentWindow")
         assertContains(html, "while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())")
-        assertContains(html, "pendingHostMessages.length = 0;")
-        assertContains(html, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return;")
+        assertContains(html, "const hostMessages = pendingHostMessages.splice(0, pendingHostMessages.length);")
+        assertContains(html, "for (const message of hostMessages) postToFrame(message);")
+        assertContains(html, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) {")
+        assertContains(html, "pushBounded(pendingHostMessages, message, maxPendingHostMessages);")
+        assertContains(html, "return;")
         assertContains(html, "if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;")
         assertContains(html, "const nextGuiReadySequence = guiReadySequence + 1;")
         assertContains(html, "const nextGuiReadyRequestId = wrapperReadyRequestId(nextGuiReadySequence);")
@@ -350,11 +358,14 @@ class YetToolWindowFactoryTest {
         )
 
         assertContains(html, "const maxPendingHostMessages = 32;")
+        assertPendingHostReplayBehavior()
         assertContains(html, "const maxPendingDiagnostics = 16;")
         assertContains(html, "const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];")
         assertContains(html, "while (queue.length > maxSize) queue.shift();")
         assertContains(html, "pushBounded(pendingDiagnostics, message, maxPendingDiagnostics);")
         assertContains(html, "const invalidateFrameAuthority = (reason) => {")
+        assertContains(html, "const hostMessages = pendingHostMessages.splice(0, pendingHostMessages.length);")
+        assertContains(html, "for (const message of hostMessages) postToFrame(message);")
         assertContains(html, "frameReady = false;")
         assertContains(html, "acceptedHostReadyRequestId = undefined;")
         assertContains(html, "hostReadyAcceptedForCurrentFrame = false;")
@@ -776,7 +787,8 @@ class YetToolWindowFactoryTest {
         assertContains(source, "if (disposed) return")
         assertContains(source, "window.__yetAiPendingHostMessages = Array.isArray(window.__yetAiPendingHostMessages) ? window.__yetAiPendingHostMessages.slice(-maxPendingHostMessages) : []")
         assertContains(source, "window.__yetAiPendingDiagnostics = Array.isArray(window.__yetAiPendingDiagnostics) ? window.__yetAiPendingDiagnostics.slice(-maxPendingDiagnostics) : []")
-        assertContains(source, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return")
+        assertContains(source, "if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) {")
+        assertContains(source, "pushBounded(pendingHostMessages, message, maxPendingHostMessages)")
         assertContains(source, "pushBounded(pendingDiagnostics, message, maxPendingDiagnostics)")
         assertContains(source, "isGuiUnloadedBridgeMessage(raw)")
         assertContains(source, "guiReadyRequestId = null")
@@ -951,6 +963,191 @@ class YetToolWindowFactoryTest {
 private fun applyMessage(): String = """{"version":"2026-05-15","type":"gui.applyWorkspaceEditRequest","requestId":"req-apply-1","payload":{"requiresUserConfirmation":true,"summary":"Replace reviewed range.","cloudRequired":false,"edits":[{"workspaceRelativePath":"src/Main.kt","textReplacements":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"replacementText":"updated"}]}]}}"""
 
 private fun messageType(message: String): String = JsonParser.parseString(message).asJsonObject.get("type").asString
+
+private fun assertPendingHostReplayBehavior() {
+    val bridgeVersion = "2026-05-15"
+    val readyRequestId = "gui-ready-1"
+    val hostReady = JsonParser.parseString(
+        BridgeMessages.hostReady(
+            RuntimeSettings("http://127.0.0.1:8001", null, null),
+            readyRequestId,
+        ),
+    ).asJsonObject
+    val openedFromCommand = JsonParser.parseString(BridgeMessages.openedFromCommand()).asJsonObject
+    val runtimeStatus = JsonParser.parseString(
+        BridgeMessages.runtimeStatus(
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "ide_host",
+                launchMode = "launch",
+                tokenState = "present",
+                processState = RuntimeProcessState.RUNNING,
+                diagnosis = "runtime connected",
+                nextAction = "Continue.",
+            ),
+        ),
+    ).asJsonObject
+    val staleContext = JsonParser.parseString(
+        BridgeMessages.contextSnapshot(
+            ActiveEditorContext.snapshot(displayPath = "src/Stale.kt", workspaceRelativePath = "src/Stale.kt")!!,
+            "old-ready",
+        ),
+    ).asJsonObject
+    val diagnostics = (1..18).map { "diagnostic-$it" }
+    val extraHostMessages = (1..29).map { index ->
+        JsonParser.parseString(
+            BridgeMessages.contextSnapshot(
+                ActiveEditorContext.snapshot(displayPath = "src/File$index.kt", workspaceRelativePath = "src/File$index.kt")!!,
+                readyRequestId,
+            ),
+        ).asJsonObject
+    }
+    val initialHostMessages = listOf(runtimeStatus, hostReady, openedFromCommand, staleContext) + extraHostMessages.take(28)
+    val queuedHostMessage = extraHostMessages.last()
+    val pendingHostJson = JsonPrimitive(jsonArray(initialHostMessages)).toString()
+    val queuedHostJson = queuedHostMessage.toString()
+    val script = """
+        const maxPendingHostMessages = 32;
+        const maxPendingDiagnostics = 16;
+        const window = {};
+        const bridgeVersion = "$bridgeVersion";
+        const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];
+        const pushBounded = (queue, message, maxSize) => {
+          queue.push(message);
+          while (queue.length > maxSize) queue.shift();
+        };
+        const posted = [];
+        const shownDiagnostics = [];
+        const frameTargetOrigin = "http://127.0.0.1:49221";
+        let frameReady = false;
+        let currentGuiReadySequence = 0;
+        let guiReadySequence = 1;
+        let currentGuiReadyRequestId = undefined;
+        let acceptedHostReadyRequestId = undefined;
+        let hostReadyAcceptedForCurrentFrame = false;
+        const frameWindow = { postMessage: (message, origin) => posted.push({ message, origin }) };
+        const frame = { contentWindow: frameWindow };
+        const currentFrameWindow = frameWindow;
+        window.__yetAiPendingHostMessages = JSON.parse($pendingHostJson);
+        window.__yetAiPendingDiagnostics = ${jsonArray(diagnostics)};
+        const pendingHostMessages = boundedArray(window.__yetAiPendingHostMessages, maxPendingHostMessages);
+        const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics);
+        window.__yetAiPendingHostMessages = pendingHostMessages;
+        window.__yetAiPendingDiagnostics = pendingDiagnostics;
+        const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+        const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
+        const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
+        const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
+        const requiredLoopbackRuntimeUrl = (value) => {
+          if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
+          try {
+            const parsed = new URL(value);
+            const hostname = parsed.hostname.toLowerCase();
+            const isLoopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
+            return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopback && /^[1-9][0-9]{0,4}${'$'}/.test(parsed.port) && Number(parsed.port) <= 65535 && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && (parsed.pathname === "" || parsed.pathname === "/");
+          } catch (_) {
+            return false;
+          }
+        };
+        const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= 128);
+        const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.includes("?"));
+        const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512));
+        const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]));
+        const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && payload.source === "jetbrains" && isContextFile(payload.file) && isContextSelection(payload.selection);
+        const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+        const isSafeStatusMessage = (value) => typeof value === "string" && value.length > 0 && value.length <= 1000;
+        const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["protocolVersion", "surface", "lifecycle", "runtimeOwner", "launchMode", "tokenState", "processState", "diagnosis", "nextAction", "cloudRequired", "authority"]) && payload.protocolVersion === "2026-06-21" && payload.surface === "jetbrains" && isSafeStatusMessage(payload.diagnosis) && isSafeStatusMessage(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
+        const isHostMessage = (message) => {
+          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
+          if (message.type === "host.openedFromCommand") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
+          if (!isRequestId(message.requestId)) return false;
+          if (message.type === "host.ready") return isHostReadyPayload(message.payload);
+          if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
+          if (message.type === "host.runtimeStatus") return message.requestId === undefined && isHostRuntimeStatusPayload(message.payload);
+          return false;
+        };
+        const currentReadyRequestId = () => currentGuiReadyRequestId;
+        const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
+        const canDeliverHostMessage = (message) => {
+          if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
+          if (message.type === "host.runtimeStatus") return frameReady && message.requestId === undefined;
+          if (!messageMatchesCurrentReady(message)) return false;
+          if (message.type === "host.ready") return true;
+          return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
+        };
+        const postToFrame = (message) => {
+          if (frame && currentFrameWindow && frame.contentWindow === currentFrameWindow && frameTargetOrigin && isHostMessage(message) && canDeliverHostMessage(message)) {
+            currentFrameWindow.postMessage(message, frameTargetOrigin);
+            if (message.type === "host.ready") {
+              acceptedHostReadyRequestId = message.requestId;
+              hostReadyAcceptedForCurrentFrame = true;
+            }
+          }
+        };
+        const showDiagnostic = (message) => shownDiagnostics.push(message);
+        const flushPending = () => {
+          while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
+          const hostMessages = pendingHostMessages.splice(0, pendingHostMessages.length);
+          for (const message of hostMessages) postToFrame(message);
+        };
+        const sendToFrame = (message) => {
+          if (!isHostMessage(message)) return;
+          if (!frameReady) {
+            pushBounded(pendingHostMessages, message, maxPendingHostMessages);
+            return;
+          }
+          postToFrame(message);
+        };
+        sendToFrame($queuedHostJson);
+        frameReady = true;
+        currentGuiReadySequence = 1;
+        currentGuiReadyRequestId = "$readyRequestId";
+        flushPending();
+        flushPending();
+        console.log(JSON.stringify({ posted, shownDiagnostics, pendingHostLength: pendingHostMessages.length, pendingDiagnosticsLength: pendingDiagnostics.length }));
+    """.trimIndent()
+
+    val output = runNodeScript(script)
+    val result = JsonParser.parseString(output).asJsonObject
+    val posted = result.getAsJsonArray("posted").map { it.asJsonObject.getAsJsonObject("message") }
+    val postedTypes = posted.map { it.get("type").asString }
+    val contextPaths = posted
+        .filter { it.get("type").asString == "host.contextSnapshot" }
+        .map { it.getAsJsonObject("payload").getAsJsonObject("file").get("workspaceRelativePath").asString }
+
+    assertEquals(31, posted.size)
+    assertEquals("host.ready", postedTypes.first())
+    assertEquals(1, postedTypes.count { it == "host.ready" })
+    assertEquals(1, postedTypes.count { it == "host.openedFromCommand" })
+    assertEquals(0, postedTypes.count { it == "host.runtimeStatus" })
+    assertEquals((1..29).map { "src/File$it.kt" }, contextPaths)
+    assertEquals((3..18).map { "diagnostic-$it" }, result.getAsJsonArray("shownDiagnostics").map { it.asString })
+    assertEquals(0, result.get("pendingHostLength").asInt)
+    assertEquals(0, result.get("pendingDiagnosticsLength").asInt)
+}
+
+private fun runNodeScript(script: String): String {
+    val tempFile = Files.createTempFile("yet-wrapper-replay", ".mjs")
+    return try {
+        Files.writeString(tempFile, script)
+        val process = ProcessBuilder("node", tempFile.toAbsolutePath().toString())
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().readText().trim()
+        val exitCode = process.waitFor()
+        assertEquals(0, exitCode, output)
+        output.lines().last()
+    } finally {
+        Files.deleteIfExists(tempFile)
+    }
+}
+
+private fun jsonArray(values: List<Any>): String = values.joinToString(prefix = "[", postfix = "]") { value ->
+    when (value) {
+        is String -> JsonPrimitive(value).toString()
+        else -> value.toString()
+    }
+}
 
 private class FakeIdeActionHost(private val result: IdeActionHostResult) : IdeActionHost {
     override fun execute(request: ControlledIdeActions.Request): CompletableFuture<IdeActionHostResult> = CompletableFuture.completedFuture(result)
