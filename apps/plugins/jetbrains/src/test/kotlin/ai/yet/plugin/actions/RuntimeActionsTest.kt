@@ -146,7 +146,8 @@ class RuntimeActionsTest {
 
         assertTrue(Files.isDirectory(directory))
         assertEquals(listOf(directory), opener.directories)
-        assertEquals(listOf(Presentation("info", "Opened Yet AI logs folder: $directory")), presenter.events)
+        assertEquals(listOf(Presentation("info", "Opened Yet AI logs folder.")), presenter.events)
+        assertFalse(presenter.events.single().message.contains(directory.toString()), presenter.events.single().message)
     }
 
     @Test

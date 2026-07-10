@@ -26,7 +26,7 @@ internal class OpenYetLogsFolderActionRunner(
                 val directory = logDirectory()
                 Files.createDirectories(directory)
                 opener.open(directory)
-                "Opened Yet AI logs folder: $directory"
+                "Opened Yet AI logs folder."
             }
             scheduler.ui {
                 if (project?.isDisposed == true) {
