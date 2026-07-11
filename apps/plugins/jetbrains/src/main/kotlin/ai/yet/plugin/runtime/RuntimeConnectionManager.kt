@@ -1043,6 +1043,7 @@ fun checkHealth(settings: RuntimeSettings) {
             connection.requestMethod = "GET"
             connection.connectTimeout = 250
             connection.readTimeout = 250
+            connection.setRequestProperty("X-Yet-AI-Caller", "jetbrains_health")
             settings.sessionToken?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
             if (connection.responseCode in 200..299) {
                 return

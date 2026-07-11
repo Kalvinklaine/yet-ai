@@ -2,11 +2,13 @@ use axum::body::Body;
 use axum::extract::FromRequestParts;
 use axum::extract::OriginalUri;
 use axum::http::request::Parts;
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 
 use crate::logging::{log_event, EngineLogLevel};
 use crate::AppState;
+
+pub const CALLER_HEADER_NAME: &str = "x-yet-ai-caller";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthToken(String);
@@ -41,6 +43,34 @@ pub enum AuthTokenError {
 pub struct Authenticated;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeCaller {
+    JetBrainsHealth,
+    GuiRuntimeClient,
+    Unknown,
+}
+
+impl RuntimeCaller {
+    pub fn from_headers(headers: &HeaderMap) -> Self {
+        let Some(value) = headers.get(CALLER_HEADER_NAME) else {
+            return Self::Unknown;
+        };
+        match value.to_str().ok() {
+            Some("jetbrains_health") => Self::JetBrainsHealth,
+            Some("gui_runtime_client") => Self::GuiRuntimeClient,
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::JetBrainsHealth => "jetbrains_health",
+            Self::GuiRuntimeClient => "gui_runtime_client",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuthRejectReason {
     MissingHeader,
     InvalidHeader,
@@ -64,6 +94,7 @@ pub struct AuthRejectLogFields {
     pub method: String,
     pub endpoint: String,
     pub auth_header_present: bool,
+    pub caller: RuntimeCaller,
     pub reason: AuthRejectReason,
 }
 
@@ -73,6 +104,7 @@ impl AuthRejectLogFields {
             method: parts.method.as_str().to_string(),
             endpoint: safe_endpoint(parts.uri.path()),
             auth_header_present: parts.headers.contains_key(header::AUTHORIZATION),
+            caller: RuntimeCaller::from_headers(&parts.headers),
             reason,
         }
     }
@@ -82,6 +114,7 @@ impl AuthRejectLogFields {
             method: parts.method.as_str().to_string(),
             endpoint: safe_endpoint(request_path(parts)),
             auth_header_present: parts.headers.contains_key(header::AUTHORIZATION),
+            caller: RuntimeCaller::from_headers(&parts.headers),
             reason,
         }
     }
@@ -97,6 +130,7 @@ impl AuthRejectLogFields {
                     "auth_header_present",
                     &self.auth_header_present as &dyn std::fmt::Display,
                 ),
+                ("caller", &self.caller.as_str() as &dyn std::fmt::Display),
                 ("reason", &self.reason.as_str() as &dyn std::fmt::Display),
             ],
         );

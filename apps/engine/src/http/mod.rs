@@ -21,7 +21,7 @@ use crate::logging::{log_event, EngineLogLevel};
 use crate::project_memory;
 use crate::provider_auth;
 use crate::providers;
-use crate::security::Authenticated;
+use crate::security::{Authenticated, RuntimeCaller, CALLER_HEADER_NAME};
 use crate::AppState;
 
 const V1_BODY_LIMIT_BYTES: usize = 256 * 1024;
@@ -92,6 +92,7 @@ pub struct RequestSummaryLogFields {
     pub method: String,
     pub endpoint: String,
     pub auth_header_present: bool,
+    pub caller: RuntimeCaller,
     pub result_status: u16,
 }
 
@@ -110,6 +111,7 @@ impl RequestSummaryLogFields {
             method: request.method().as_str().to_string(),
             endpoint: endpoint.to_string(),
             auth_header_present: request.headers().contains_key(header::AUTHORIZATION),
+            caller: RuntimeCaller::from_headers(request.headers()),
             result_status: 0,
         })
     }
@@ -125,6 +127,7 @@ impl RequestSummaryLogFields {
                     "auth_header_present",
                     &self.auth_header_present as &dyn std::fmt::Display,
                 ),
+                ("caller", &self.caller.as_str() as &dyn std::fmt::Display),
                 (
                     "result_status",
                     &self.result_status as &dyn std::fmt::Display,
@@ -156,7 +159,12 @@ fn cors_layer() -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE, header::ACCEPT])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::ACCEPT,
+            http::HeaderName::from_static(CALLER_HEADER_NAME),
+        ])
 }
 
 fn is_allowed_loopback_origin(origin: &HeaderValue) -> bool {
@@ -879,6 +887,13 @@ mod tests {
     }
 
     async fn get_models_with_auth(auth_header: Option<&'static str>) -> StatusCode {
+        get_models_with_auth_and_caller(auth_header, None).await
+    }
+
+    async fn get_models_with_auth_and_caller(
+        auth_header: Option<&'static str>,
+        caller: Option<&'static str>,
+    ) -> StatusCode {
         let identity = ProductIdentity::load().unwrap();
         let state = AppState::with_storage_paths(
             identity,
@@ -890,6 +905,9 @@ mod tests {
             .uri("/v1/models?token=query-secret&next=/Users/alice");
         if let Some(auth_header) = auth_header {
             builder = builder.header(header::AUTHORIZATION, auth_header);
+        }
+        if let Some(caller) = caller {
+            builder = builder.header(crate::security::CALLER_HEADER_NAME, caller);
         }
         let response = super::router(state)
             .oneshot(builder.body(Body::empty()).unwrap())
@@ -971,6 +989,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_reject_logs_allowlisted_caller() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth_and_caller(None, Some("gui_runtime_client")).await;
+        let lines = auth_reject_lines();
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("caller=gui_runtime_client"));
+        assert!(!lines[0].contains("X-Yet-AI-Caller"));
+    }
+
+    #[tokio::test]
+    async fn auth_reject_normalizes_malicious_caller_to_unknown() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth_and_caller(None, Some("jetbrains_health_evil")).await;
+        let lines = auth_reject_lines();
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("caller=unknown"));
+        assert!(!lines[0].contains("jetbrains_health_evil"));
+    }
+
+    #[tokio::test]
     async fn correct_bearer_does_not_log_auth_reject() {
         let _guard = http_log_test_lock().lock().await;
         crate::logging::clear_test_log_lines();
@@ -1019,6 +1063,38 @@ mod tests {
         assert!(lines[0].contains("result_status="));
         assert!(!lines[0].contains("test-token"));
         assert!(!lines[0].contains("query-secret"));
+    }
+
+    #[tokio::test]
+    async fn selected_request_summary_logs_allowlisted_caller() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status =
+            get_models_with_auth_and_caller(Some("Bearer test-token"), Some("jetbrains_health"))
+                .await;
+        let lines = model_request_summary_lines();
+
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("caller=jetbrains_health"));
+        assert!(!lines[0].contains("test-token"));
+    }
+
+    #[tokio::test]
+    async fn selected_request_summary_normalizes_malicious_caller_to_unknown() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_models_with_auth_and_caller(
+            Some("Bearer test-token"),
+            Some("gui_runtime_client_evil"),
+        )
+        .await;
+        let lines = model_request_summary_lines();
+
+        assert_ne!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].contains("caller=unknown"));
+        assert!(!lines[0].contains("gui_runtime_client_evil"));
     }
 
     #[tokio::test]

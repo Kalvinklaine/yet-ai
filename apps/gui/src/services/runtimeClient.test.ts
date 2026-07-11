@@ -11,7 +11,9 @@ afterEach(() => {
 
 describe("runtimeClient", () => {
   it("sends authorization only for loopback runtime URLs", () => {
-    expect(new Headers(authHeaders({ baseUrl: "http://127.0.0.1:8001", token: " secret " })).get("Authorization")).toBe("Bearer secret");
+    const loopbackHeaders = new Headers(authHeaders({ baseUrl: "http://127.0.0.1:8001", token: " secret " }));
+    expect(loopbackHeaders.get("Authorization")).toBe("Bearer secret");
+    expect(loopbackHeaders.get("X-Yet-AI-Caller")).toBe("gui_runtime_client");
     expect(new Headers(authHeaders({ baseUrl: "https://localhost:8001", token: "secret" })).get("Authorization")).toBe("Bearer secret");
     expect(new Headers(authHeaders({ baseUrl: "http://example.com", token: "secret" })).get("Authorization")).toBeNull();
   });
@@ -315,11 +317,12 @@ describe("runtimeClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await runtimeFetch({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "/v1/ping", {
-      headers: { Authorization: "Bearer caller-token", Accept: "text/plain" },
+      headers: { Authorization: "Bearer caller-token", Accept: "text/plain", "X-Yet-AI-Caller": "evil" },
     });
 
     const headers = new Headers(fetchMock.mock.calls[0][1].headers);
     expect(headers.get("Authorization")).toBe("Bearer runtime-token");
     expect(headers.get("Accept")).toBe("application/json");
+    expect(headers.get("X-Yet-AI-Caller")).toBe("gui_runtime_client");
   });
 });

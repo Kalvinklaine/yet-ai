@@ -1,12 +1,15 @@
 package ai.yet.plugin.runtime
 
 import ai.yet.plugin.logging.YetLogSink
+import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetSocketAddress
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.io.path.createTempFile
 import kotlin.io.path.deleteIfExists
 import kotlin.io.path.setPosixFilePermissions
@@ -132,6 +135,25 @@ class RuntimeConnectionManagerTest {
     fun defaultPortsFollowScheme() {
         assertEquals(80, parseRuntimePort("http://127.0.0.1"))
         assertEquals(443, parseRuntimePort("https://localhost"))
+    }
+
+    @Test
+    fun healthCheckSendsCallerHeader() {
+        val caller = AtomicReference<String?>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/v1/ping") { exchange ->
+            caller.set(exchange.requestHeaders.getFirst("X-Yet-AI-Caller"))
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.close()
+        }
+        server.start()
+        try {
+            checkHealth(RuntimeSettings("http://127.0.0.1:${server.address.port}", null, "session-token", LaunchMode.CONNECT, null))
+        } finally {
+            server.stop(0)
+        }
+
+        assertEquals("jetbrains_health", caller.get())
     }
 
     @Test

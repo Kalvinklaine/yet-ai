@@ -307,6 +307,7 @@ export function runtimeFetchTraceSnapshot(): RuntimeFetchTraceEvent[] {
 export function authHeaders(settings: RuntimeSettings): HeadersInit {
   const headers: Record<string, string> = {
     Accept: "application/json",
+    "X-Yet-AI-Caller": "gui_runtime_client",
   };
   const token = settings.token.trim();
   if (token && isLoopbackRuntimeUrl(settings.baseUrl)) {
