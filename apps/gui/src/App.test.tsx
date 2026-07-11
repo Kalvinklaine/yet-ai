@@ -483,11 +483,11 @@ describe("runtime refresh feedback", () => {
 
   it("keeps JetBrains controlled task journey partial and fail-closed", async () => {
     const postMessage = vi.fn();
-    const parent = { postMessage };
-    Object.defineProperty(Document.prototype, "referrer", { configurable: true, get: () => "https://wrapper.example/shell.html" });
-    Object.defineProperty(window, "parent", { configurable: true, value: parent });
+    window.postIntellijMessage = postMessage;
     mockRuntimeResponses({ ...readyRuntimeOptions(), capsResponse: capsResponse({ controlledAgentTaskHarness: taskHarnessJetBrainsFixture, controlledAgentWorkflowTranscript: workflowTranscriptBlockedFixture }) });
     renderApp();
+    await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
     expect(container?.textContent).toContain("JetBrains partial/fail-closed");
@@ -3611,6 +3611,80 @@ describe("agent progress panel", () => {
 });
 
 describe("host.ready runtime bootstrap", () => {
+  it("IDE-hosted startup waits for host.ready before runtime requests", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("bridge jetbrains");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/models"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/caps"))).toHaveLength(0);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh")).toHaveLength(0);
+  });
+
+  it("host.ready refresh sends Authorization and clears stale pre-host 401 state", async () => {
+    const postIntellijMessage = vi.fn();
+    const token = "hostReadyAuthLocalValue";
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses({ authStatusCode: 401, modelsFailure: true });
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("bridge jetbrains");
+    expect(container?.textContent).not.toContain("Unauthorized local runtime request");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+
+    mockRuntimeResponses(readyRuntimeOptions());
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: token });
+    await flushAsync();
+    await flushAsync();
+
+    const retargetedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
+    expect(retargetedCalls.length).toBeGreaterThan(0);
+    expect(retargetedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${token}`)).toBe(true);
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(container?.textContent).not.toContain("Unauthorized local runtime request");
+    expect(browserStorageDump()).not.toContain(token);
+  });
+
+  it("same host runtime URL with a new token updates subsequent Authorization", async () => {
+    const postIntellijMessage = vi.fn();
+    const initialToken = "initialHostReadyAuthValue";
+    const updatedToken = "updatedHostReadyAuthValue";
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: initialToken });
+    await flushAsync();
+    fetchMock.mockClear();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: updatedToken });
+    await flushAsync();
+    await flushAsync();
+
+    const refreshedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
+    expect(refreshedCalls.length).toBeGreaterThan(0);
+    expect(refreshedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${updatedToken}`)).toBe(true);
+    expect(browserStorageDump()).not.toContain(initialToken);
+    expect(browserStorageDump()).not.toContain(updatedToken);
+  });
+
+  it("browser standalone still refreshes immediately", async () => {
+    mockRuntimeResponses();
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("bridge browser");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/v1/models"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/v1/caps"))).toBe(true);
+  });
+
   it("updates runtime settings from host.ready without persisting the token", async () => {
     const token = "hostSessionLocalValue";
     mockRuntimeResponses();
@@ -3677,7 +3751,8 @@ describe("host.ready runtime bootstrap", () => {
     window.postIntellijMessage = vi.fn();
     mockRuntimeResponses();
     renderApp();
-
+    await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
     const text = container?.textContent ?? "";
@@ -3900,6 +3975,8 @@ describe("host.ready runtime bootstrap", () => {
       models: [readyModel({ id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo" })],
     });
     renderApp();
+    await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
     expect(findDetails("runtime-connection-details").open).toBe(false);
@@ -5237,6 +5314,7 @@ describe("active editor attached context", () => {
     mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "JetBrains proposal", 1)], chatThreads: { "chat-001": chatThread("chat-001", "JetBrains proposal", [chatMessage("chat-001", "assistant-1", "assistant", JSON.stringify(proposal))]) } });
     renderApp();
     await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
     expect(container?.textContent).toContain("Read-only IDE action proposal");
@@ -9047,6 +9125,7 @@ describe("edit proposal preview", () => {
     });
     renderApp();
     await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
     expect(agentRunPanel().textContent).toContain("S96 useful one-step Agent Run");
@@ -9148,6 +9227,7 @@ describe("edit proposal preview", () => {
 
     renderApp();
     await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
     postIntellijMessage.mockClear();
 
@@ -10193,6 +10273,7 @@ describe("edit proposal preview", () => {
 
     renderApp();
     await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
     const text = container?.textContent ?? "";
@@ -10225,6 +10306,7 @@ describe("edit proposal preview", () => {
 
     renderApp();
     await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
     const text = container?.textContent ?? "";
@@ -10269,6 +10351,7 @@ describe("edit proposal preview", () => {
 
     renderApp();
     await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
     const text = container?.textContent ?? "";

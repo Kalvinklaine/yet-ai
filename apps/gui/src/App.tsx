@@ -69,6 +69,19 @@ import type { AgentRunInput } from "./services/agentRunState";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
+
+function detectInitialBridgeHost(): BridgeHost {
+  if (typeof window === "undefined") {
+    return "browser";
+  }
+  if (window.acquireVsCodeApi) {
+    return "vscode";
+  }
+  if (window.postIntellijMessage || window.parent !== window) {
+    return "jetbrains";
+  }
+  return "browser";
+}
 const agentProgressSnapshotDisplayLimit = 18;
 const agentProgressRecentEventDisplayLimit = 11;
 const manualRunnerPlanProposalStepLimit = 6;
@@ -190,7 +203,7 @@ type CodingTaskTemplate = {
   detail: string;
 };
 
-type RuntimeConnectionSource = "manual" | "host.ready";
+type RuntimeConnectionSource = "startup" | "manual" | "host.ready";
 
 type VerificationOutputBundleItem = Extract<ExplicitContextBundleItem, { kind: "verification_output" }>;
 type WorkspaceSnippetSearchResultPayload = IdeActionResultPayload & { action: "searchWorkspaceSnippets"; status: "succeeded"; queryLabel: string; resultCount: number; snippets: WorkspaceSnippetSearchResult[]; truncated: boolean };
@@ -386,7 +399,7 @@ export function App() {
   const [timeline, setTimeline] = useState<string[]>([]);
   const [codingSessionTrace, setCodingSessionTrace] = useState<CodingSessionTraceEntry[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
-  const [bridgeHost, setBridgeHost] = useState<BridgeHost>("browser");
+  const [bridgeHost, setBridgeHost] = useState<BridgeHost>(() => detectInitialBridgeHost());
   const [controlledHostCapabilities, setControlledHostCapabilities] = useState<HostReadyPayload["controlledCapabilities"] | undefined>(undefined);
   const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string; excerpt?: ActiveFileExcerptAttachment } | null>(null);
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
@@ -409,7 +422,8 @@ export function App() {
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeLifecycle, setRuntimeLifecycle] = useState<{ diagnostics: RuntimeLifecycleDiagnostics; settingsRevision: number } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
-  const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("manual");
+  const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("startup");
+  const [hostReadyRefreshNonce, setHostReadyRefreshNonce] = useState(0);
   const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(true);
   const [providerDetailsOpen, setProviderDetailsOpen] = useState(false);
   const [providerSetupHighlight, setProviderSetupHighlight] = useState(false);
@@ -419,6 +433,7 @@ export function App() {
   const runtimeRefreshAttemptRef = useRef(0);
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
+  const hostReadyAppliedRef = useRef(false);
   const settingsRevisionRef = useRef(0);
   const settingsRef = useRef<RuntimeSettings>({ baseUrl: defaultBaseUrl, token: "" });
   const chatIdRef = useRef("chat-001");
@@ -1205,21 +1220,25 @@ export function App() {
   }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
-    const changed = settingsRef.current.baseUrl !== nextSettings.baseUrl || settingsRef.current.token !== nextSettings.token;
+    const normalizedSettings = { ...nextSettings, token: nextSettings.token ?? "" };
+    const changed = settingsRef.current.baseUrl !== normalizedSettings.baseUrl || settingsRef.current.token !== normalizedSettings.token;
     if (changed) {
-      settingsRef.current = nextSettings;
+      settingsRef.current = normalizedSettings;
       markSettingsChanged();
     }
-    setBaseUrl(nextSettings.baseUrl);
-    setToken(nextSettings.token ?? "");
+    setBaseUrl(normalizedSettings.baseUrl);
+    setToken(normalizedSettings.token);
+    return changed;
   }, [markSettingsChanged]);
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
+    hostReadyAppliedRef.current = false;
     setRuntimeConnectionSource("manual");
     updateRuntimeSettings({ ...settingsRef.current, baseUrl: nextBaseUrl });
   }, [updateRuntimeSettings]);
 
   const updateToken = useCallback((nextToken: string) => {
+    hostReadyAppliedRef.current = false;
     setRuntimeConnectionSource("manual");
     updateRuntimeSettings({ ...settingsRef.current, token: nextToken });
   }, [updateRuntimeSettings]);
@@ -1231,14 +1250,19 @@ export function App() {
     const hostRuntimeUrl = payload.runtimeUrl;
     setControlledHostCapabilities(payload.controlledCapabilities);
     const currentBaseUrl = settingsRef.current.baseUrl;
-    const nextToken = payload.sessionToken !== undefined
+    const nextToken = payload.sessionToken
       ? payload.sessionToken
       : normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)
         ? ""
         : settingsRef.current.token;
+    const wasHostReadyApplied = hostReadyAppliedRef.current;
+    hostReadyAppliedRef.current = true;
     setRuntimeConnectionSource("host.ready");
-    updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
-    runtimeRefreshQueuedRef.current = true;
+    const changed = updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
+    if (changed || !wasHostReadyApplied) {
+      runtimeRefreshQueuedRef.current = true;
+      setHostReadyRefreshNonce((current) => current + 1);
+    }
     setTimeline((current) => ["Host runtime settings received", ...current].slice(0, 80));
     appendTrace({
       family: "host.ready",
@@ -2076,6 +2100,10 @@ export function App() {
     setChatHistoryLoading(false);
   }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
   const connect = useCallback(async () => {
+    if (bridgeHost === "jetbrains" && !hostReadyAppliedRef.current && runtimeConnectionSource !== "manual") {
+      addTimeline("Waiting for IDE host runtime settings");
+      return;
+    }
     if (bridgeHost === "jetbrains") {
       bridgeAdapterRef.current?.post({
         version: "2026-05-15",
@@ -2106,7 +2134,7 @@ export function App() {
       runtimeRefreshQueuedRef.current = false;
       setRuntimeRefreshInFlight(false);
     }
-  }, [addTimeline, bridgeHost, refreshChats, refreshProviderAuthStatus, refreshProviders, refreshRuntime]);
+  }, [addTimeline, bridgeHost, refreshChats, refreshProviderAuthStatus, refreshProviders, refreshRuntime, runtimeConnectionSource]);
 
   const refreshAgentProgress = useCallback(async () => {
     const targetSettings = settingsRef.current;
@@ -2127,7 +2155,7 @@ export function App() {
 
   useEffect(() => {
     void connect();
-  }, [connect, settings]);
+  }, [connect, settings, hostReadyRefreshNonce]);
 
   const submitProvider = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
