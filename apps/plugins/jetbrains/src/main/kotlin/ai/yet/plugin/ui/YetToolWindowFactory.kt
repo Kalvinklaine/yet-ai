@@ -367,13 +367,13 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         )
         acceptedHostReadyRequestId = requestId.takeIf { delivered && !disposed }
         if (delivered && !disposed) {
-            val reason = pendingHostReadyReason ?: "runtime_update"
-            val fields = hostBridgeCorrelationFields(settings, latestConnection.lifecycleStatus, reason)
-            if (fields["runtimeOwner"] == "plugin-managed" && fields["sessionTokenDelivered"] == "absent") {
-                logger.warn("Yet AI delivered plugin-managed host.ready without a session token")
-                logSink.append("warn", "bridge.host_ready.missing_session_token", fields)
-            }
-            logSink.append("info", "bridge.host_ready.delivered", fields)
+            emitHostReadyObservability(
+                settings = settings,
+                lifecycleStatus = latestConnection.lifecycleStatus,
+                reason = pendingHostReadyReason ?: "runtime_update",
+                appendLog = { level, event, metadata -> logSink.append(level, event, metadata) },
+                warn = { logger.warn(it) },
+            )
             pendingHostReadyReason = null
         }
     }
@@ -428,6 +428,21 @@ internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, lifecycleSta
     "reason" to reason,
     "sessionTokenDelivered" to if (settings.sessionToken == null) "absent" else "present",
 )
+
+internal fun emitHostReadyObservability(
+    settings: RuntimeSettings,
+    lifecycleStatus: RuntimeLifecycleStatus,
+    reason: String,
+    appendLog: (String, String, Map<String, Any?>) -> Unit,
+    warn: (String) -> Unit = {},
+) {
+    val fields = hostBridgeCorrelationFields(settings, lifecycleStatus, reason)
+    if (fields["runtimeOwner"] == "plugin-managed" && fields["sessionTokenDelivered"] == "absent") {
+        warn("Yet AI delivered plugin-managed host.ready without a session token")
+        appendLog("warn", "bridge.host_ready.missing_session_token", fields)
+    }
+    appendLog("info", "bridge.host_ready.delivered", fields)
+}
 
 internal fun runtimeUpdateReadyReason(connection: RuntimeConnectionResult): String = if (connection.status?.contains("refreshing the runtime session token", ignoreCase = true) == true) "401_recovery" else "runtime_update"
 

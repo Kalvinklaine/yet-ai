@@ -493,10 +493,13 @@ class YetToolWindowFactoryTest {
     }
 
     @Test
-    fun pluginManagedHostReadyCorrelationReportsSessionTokenDeliveredPresent() {
-        val fields = hostBridgeCorrelationFields(
-            RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
-            RuntimeLifecycleStatus(
+    fun pluginManagedHostReadyDeliveryEmitsSessionTokenDeliveredPresent() {
+        val events = mutableListOf<HostReadyLogEvent>()
+        val warnings = mutableListOf<String>()
+
+        emitHostReadyObservability(
+            settings = RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            lifecycleStatus = RuntimeLifecycleStatus(
                 lifecycle = RuntimeLifecycle.CONNECTED,
                 runtimeOwner = "ide_host",
                 launchMode = "launch",
@@ -505,22 +508,33 @@ class YetToolWindowFactoryTest {
                 diagnosis = "local runtime is reachable",
                 nextAction = "Continue using Yet AI.",
             ),
-            "initial",
+            reason = "initial",
+            appendLog = { level, event, metadata -> events.add(HostReadyLogEvent(level, event, metadata)) },
+            warn = { warnings.add(it) },
         )
 
-        assertEquals("present", fields["sessionTokenDelivered"])
-        assertEquals("present", fields["tokenState"])
-        assertEquals("plugin-managed", fields["runtimeOwner"])
-        val combined = fields.values.joinToString(" ")
+        assertEquals(emptyList(), warnings)
+        assertEquals(1, events.size)
+        val delivered = events.single()
+        assertEquals("info", delivered.level)
+        assertEquals("bridge.host_ready.delivered", delivered.event)
+        assertEquals("present", delivered.metadata["sessionTokenDelivered"])
+        assertEquals("present", delivered.metadata["tokenState"])
+        assertEquals("plugin-managed", delivered.metadata["runtimeOwner"])
+        assertEquals("initial", delivered.metadata["reason"])
+        val combined = delivered.metadata.values.joinToString(" ")
         assertFalse(combined.contains("host-secret-token"), combined)
         assertFalse(combined.contains("must-not-leak"), combined)
     }
 
     @Test
-    fun missingPluginManagedTokenWarningSourceIsSafe() {
-        val fields = hostBridgeCorrelationFields(
-            RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
-            RuntimeLifecycleStatus(
+    fun pluginManagedHostReadyWithoutTokenEmitsSafeMissingTokenWarning() {
+        val events = mutableListOf<HostReadyLogEvent>()
+        val warnings = mutableListOf<String>()
+
+        emitHostReadyObservability(
+            settings = RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            lifecycleStatus = RuntimeLifecycleStatus(
                 lifecycle = RuntimeLifecycle.CONNECTED,
                 runtimeOwner = "ide_host",
                 launchMode = "launch",
@@ -529,17 +543,24 @@ class YetToolWindowFactoryTest {
                 diagnosis = "local runtime is reachable",
                 nextAction = "Continue using Yet AI.",
             ),
-            "runtime_update",
+            reason = "runtime_update",
+            appendLog = { level, event, metadata -> events.add(HostReadyLogEvent(level, event, metadata)) },
+            warn = { warnings.add(it) },
         )
-        val warning = "Yet AI delivered plugin-managed host.ready without a session token"
 
-        assertEquals("absent", fields["sessionTokenDelivered"])
-        assertEquals("plugin-managed", fields["runtimeOwner"])
-        assertFalse(warning.contains("token="))
-        assertFalse(warning.contains("127.0.0.1"))
-        val combined = fields.values.joinToString(" ")
+        assertEquals(listOf("Yet AI delivered plugin-managed host.ready without a session token"), warnings)
+        assertEquals(listOf("bridge.host_ready.missing_session_token", "bridge.host_ready.delivered"), events.map { it.event })
+        val missingToken = events.first()
+        assertEquals("warn", missingToken.level)
+        assertEquals("absent", missingToken.metadata["sessionTokenDelivered"])
+        assertEquals("absent", missingToken.metadata["tokenState"])
+        assertEquals("plugin-managed", missingToken.metadata["runtimeOwner"])
+        assertEquals("runtime_update", missingToken.metadata["reason"])
+        assertEquals(missingToken.metadata, events.last().metadata)
+        val combined = (warnings + events.flatMap { it.metadata.values.map(Any?::toString) }).joinToString(" ")
         assertFalse(combined.contains("must-not-leak"), combined)
         assertFalse(combined.contains("private"), combined)
+        assertFalse(combined.contains("token="), combined)
     }
 
     @Test
@@ -1153,6 +1174,8 @@ class YetToolWindowFactoryTest {
         assertFalse(pluginXml.contains("canCloseContents=\"true\""))
     }
 }
+
+private data class HostReadyLogEvent(val level: String, val event: String, val metadata: Map<String, Any?>)
 
 private fun applyMessage(): String = """{"version":"2026-05-15","type":"gui.applyWorkspaceEditRequest","requestId":"req-apply-1","payload":{"requiresUserConfirmation":true,"summary":"Replace reviewed range.","cloudRequired":false,"edits":[{"workspaceRelativePath":"src/Main.kt","textReplacements":[{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":4}},"replacementText":"updated"}]}]}}"""
 
