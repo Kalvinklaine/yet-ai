@@ -356,6 +356,92 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun diagnosticsForDifferentRuntimeDoNotReusePluginManagedHealthRecoveryOrTokenState() {
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "port-a-plugin-token-that-must-not-leak-1234567890" },
+            healthChecker = {},
+        )
+        val portASettings = RuntimeSettings("http://127.0.0.1:8135", null, null, LaunchMode.LAUNCH, null)
+        val portBSettings = RuntimeSettings("http://127.0.0.1:8136", null, null, LaunchMode.LAUNCH, null)
+
+        manager.prepareForTest(portASettings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(portBSettings)
+
+        assertContains(diagnostics, "Runtime origin: http://127.0.0.1:8136")
+        assertContains(diagnostics, "Runtime owner: external")
+        assertContains(diagnostics, "Token state: absent")
+        assertContains(diagnostics, "Last health: not checked yet")
+        assertContains(diagnostics, "Last recovery: none")
+        assertFalse(diagnostics.contains("Runtime owner: ide_host"), diagnostics)
+        assertFalse(diagnostics.contains("Token state: present"), diagnostics)
+        assertFalse(diagnostics.contains("/v1/ping returned 2xx"), diagnostics)
+        assertFalse(diagnostics.contains("port-a-plugin-token"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
+    fun diagnosticsForDifferentRuntimeDoNotReusePreviousHttp401RecoveryState() {
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "stale-401-plugin-token-${"x".repeat(32)}" },
+            healthChecker = { settings ->
+                throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 Authorization: Bearer ${settings.sessionToken}", 401)
+            },
+        )
+        val portASettings = RuntimeSettings("http://127.0.0.1:8137", null, null, LaunchMode.LAUNCH, null)
+        val portBSettings = RuntimeSettings("http://127.0.0.1:8138", null, null, LaunchMode.LAUNCH, null)
+
+        manager.prepareForTest(portASettings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(portBSettings)
+
+        assertContains(diagnostics, "Runtime origin: http://127.0.0.1:8138")
+        assertContains(diagnostics, "Runtime owner: external")
+        assertContains(diagnostics, "Last health: not checked yet")
+        assertContains(diagnostics, "Last recovery: none")
+        assertContains(diagnostics, "Last error: none")
+        assertFalse(diagnostics.contains("HTTP 401"), diagnostics)
+        assertFalse(diagnostics.contains("stale-401-plugin-token"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
+    fun diagnosticsForMatchingRuntimeKeepLatestRealTokenStateAndRecoveryStatus() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        var healthCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command -> launched += command; FakeAliveProcess() },
+            tokenGenerator = { if (launched.isEmpty()) "matching-old-plugin-token" else "matching-fresh-plugin-token" },
+            healthChecker = { settings ->
+                healthCalls += 1
+                if (healthCalls == 1) throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401", 401)
+                assertEquals("matching-fresh-plugin-token", settings.sessionToken)
+            },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8139", null, null, LaunchMode.LAUNCH, null)
+
+        manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+
+        assertContains(diagnostics, "Runtime owner: ide_host")
+        assertContains(diagnostics, "Lifecycle: connected")
+        assertContains(diagnostics, "Token state: present")
+        assertContains(diagnostics, "Last health: /v1/ping returned 2xx after HTTP 401 recovery")
+        assertContains(diagnostics, "Last recovery: HTTP 401 recovery succeeded")
+        assertFalse(diagnostics.contains("Token state: absent"), diagnostics)
+        assertFalse(diagnostics.contains("matching-old-plugin-token"), diagnostics)
+        assertFalse(diagnostics.contains("matching-fresh-plugin-token"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
     fun latestFailureOverwritesEarlierConnectedDiagnosticsStatus() {
         var healthCalls = 0
         val manager = RuntimeConnectionManager(
