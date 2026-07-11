@@ -368,7 +368,12 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         acceptedHostReadyRequestId = requestId.takeIf { delivered && !disposed }
         if (delivered && !disposed) {
             val reason = pendingHostReadyReason ?: "runtime_update"
-            logSink.append("info", "bridge.host_ready.delivered", hostBridgeCorrelationFields(settings, latestConnection.lifecycleStatus, reason))
+            val fields = hostBridgeCorrelationFields(settings, latestConnection.lifecycleStatus, reason)
+            if (fields["runtimeOwner"] == "plugin-managed" && fields["sessionTokenDelivered"] == "absent") {
+                logger.warn("Yet AI delivered plugin-managed host.ready without a session token")
+                logSink.append("warn", "bridge.host_ready.missing_session_token", fields)
+            }
+            logSink.append("info", "bridge.host_ready.delivered", fields)
             pendingHostReadyReason = null
         }
     }
@@ -421,6 +426,7 @@ internal fun hostBridgeCorrelationFields(settings: RuntimeSettings, lifecycleSta
     "launchMode" to lifecycleStatus.launchMode,
     "tokenState" to lifecycleStatus.tokenState,
     "reason" to reason,
+    "sessionTokenDelivered" to if (settings.sessionToken == null) "absent" else "present",
 )
 
 internal fun runtimeUpdateReadyReason(connection: RuntimeConnectionResult): String = if (connection.status?.contains("refreshing the runtime session token", ignoreCase = true) == true) "401_recovery" else "runtime_update"

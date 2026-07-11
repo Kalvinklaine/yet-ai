@@ -155,6 +155,11 @@ describe("redaction", () => {
     expectRedacted("/Users/Alice Smith/.codex/auth.json C:\\Users\\Alice Smith\\.codex\\auth.json /Users/Alice Smith/auth.json C:\\Users\\Alice Smith\\auth.json", ["Alice Smith", ".codex", "auth.json"]);
   });
 
+  it("redacts broader private path and token patterns from runtime traces", () => {
+    const rawToken = "runtime-token-" + "z".repeat(48);
+    expectRedacted(`runtime.fetch.failure /private/tmp/yet-ai/socket ${rawToken} /Volumes/Secret Drive/auth.json`, ["/private/tmp", rawToken, "/Volumes", "auth.json"]);
+  });
+
   it("redacts JWT sk keys and long opaque values", () => {
     const jwt = `${"a".repeat(16)}.${"b".repeat(16)}.${"c".repeat(16)}`;
     expectRedacted(`sk-secret123456789 ${jwt} ${longOpaque}`, ["sk-secret123456789", jwt, longOpaque]);

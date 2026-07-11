@@ -22,7 +22,7 @@ import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackCh
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity, type EditProposalRejectedDiagnostic } from "./services/editProposal";
@@ -994,6 +994,10 @@ export function App() {
     providerApiKeyInputRef.current?.focus({ preventScroll: true });
   }, [providerSetupFocusRequest]);
 
+  useEffect(() => {
+    setRuntimeFetchTraceConnectionSource(runtimeConnectionSource);
+  }, [runtimeConnectionSource]);
+
   const addTimeline = useCallback((entry: string) => {
     setTimeline((current) => [entry, ...current].slice(0, 80));
   }, []);
@@ -1001,6 +1005,19 @@ export function App() {
   const appendTrace = useCallback((draft: CodingSessionTraceDraft) => {
     setCodingSessionTrace((current) => appendCodingSessionTraceEntry(current, draft));
   }, []);
+
+  useEffect(() => {
+    setRuntimeFetchTraceSink((event) => {
+      appendTrace({
+        family: event.type,
+        title: event.type === "runtime.fetch.start" ? "Runtime fetch started" : "Runtime fetch failed",
+        status: event.type === "runtime.fetch.start" ? "pending" : "failed",
+        summary: event.type === "runtime.fetch.start" ? "Runtime request metadata recorded." : "Runtime request failure metadata recorded.",
+        details: event,
+      });
+    });
+    return () => setRuntimeFetchTraceSink(null);
+  }, [appendTrace]);
 
   const clearExplicitContextBundle = useCallback((status: string | null = null) => {
     setExplicitContextBundleItems([]);
@@ -1259,6 +1276,13 @@ export function App() {
     hostReadyAppliedRef.current = true;
     setRuntimeConnectionSource("host.ready");
     const changed = updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
+    appendTrace({
+      family: "runtime.settings.applied",
+      title: "Runtime settings applied",
+      status: "succeeded",
+      summary: "Trusted host runtime settings applied; token value remains hidden in memory.",
+      details: { connectionSource: "host.ready", runtimeOrigin: runtimeOriginLabel(hostRuntimeUrl), tokenState: nextToken ? "present" : "absent" },
+    });
     if (changed || !wasHostReadyApplied) {
       runtimeRefreshQueuedRef.current = true;
       setHostReadyRefreshNonce((current) => current + 1);
@@ -6334,6 +6358,15 @@ function isSafeAuthUrl(value: string): boolean {
     return isLoopbackRuntimeUrl(url.origin);
   } catch {
     return false;
+  }
+}
+
+function runtimeOriginLabel(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return "invalid";
   }
 }
 

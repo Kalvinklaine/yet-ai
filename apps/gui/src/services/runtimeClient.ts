@@ -280,6 +280,29 @@ export const productIdentity = {
 } as const;
 
 const runtimeFetchTimeoutMs = 10_000;
+const runtimeFetchTraceLimit = 80;
+
+type RuntimeFetchTraceEvent =
+  | { type: "runtime.fetch.start"; endpoint: string; connectionSource: string; authHeaderPresent: boolean; runtimeOrigin: string }
+  | { type: "runtime.fetch.failure"; endpoint: string; status: number | RuntimeError["status"]; connectionSource: string; authHeaderPresent: boolean; runtimeOrigin: string };
+
+type RuntimeFetchTraceSink = (event: RuntimeFetchTraceEvent) => void;
+
+let runtimeFetchTraceSink: RuntimeFetchTraceSink | null = null;
+let runtimeFetchTraceConnectionSource = "startup";
+const runtimeFetchTraceBuffer: RuntimeFetchTraceEvent[] = [];
+
+export function setRuntimeFetchTraceSink(sink: RuntimeFetchTraceSink | null) {
+  runtimeFetchTraceSink = sink;
+}
+
+export function setRuntimeFetchTraceConnectionSource(connectionSource: string) {
+  runtimeFetchTraceConnectionSource = sanitizeRuntimeTraceConnectionSource(connectionSource);
+}
+
+export function runtimeFetchTraceSnapshot(): RuntimeFetchTraceEvent[] {
+  return [...runtimeFetchTraceBuffer];
+}
 
 export function authHeaders(settings: RuntimeSettings): HeadersInit {
   const headers: Record<string, string> = {
@@ -308,6 +331,11 @@ export async function runtimeFetch<T>(
   }
   new Headers(authHeaders(settings)).forEach((value, key) => headers.set(key, value));
 
+  const endpoint = sanitizeRuntimeTraceEndpoint(path);
+  const runtimeOrigin = runtimeOriginLabel(settings.baseUrl);
+  const authHeaderPresent = headers.has("Authorization");
+  emitRuntimeFetchTrace({ type: "runtime.fetch.start", endpoint, connectionSource: runtimeFetchTraceConnectionSource, authHeaderPresent, runtimeOrigin });
+
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(), runtimeFetchTimeoutMs);
   const combinedSignal = combineSignals(init.signal, timeoutController.signal);
@@ -321,24 +349,28 @@ export async function runtimeFetch<T>(
     });
   } catch (error) {
     const timedOut = timeoutController.signal.aborted && !init.signal?.aborted;
+    const runtimeError: RuntimeError = {
+      status: timedOut ? "timeout" : "network",
+      message: timedOut ? "Runtime request timed out." : sanitizeRuntimeErrorText(error instanceof Error ? error.message : "Runtime is unavailable"),
+    };
+    emitRuntimeFetchTrace({ type: "runtime.fetch.failure", endpoint, status: runtimeError.status, connectionSource: runtimeFetchTraceConnectionSource, authHeaderPresent, runtimeOrigin });
     return {
       ok: false,
-      error: {
-        status: timedOut ? "timeout" : "network",
-        message: timedOut ? "Runtime request timed out." : sanitizeRuntimeErrorText(error instanceof Error ? error.message : "Runtime is unavailable"),
-      },
+      error: runtimeError,
     };
   } finally {
     clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
+    const runtimeError: RuntimeError = {
+      status: response.status,
+      message: await errorMessage(response),
+    };
+    emitRuntimeFetchTrace({ type: "runtime.fetch.failure", endpoint, status: runtimeError.status, connectionSource: runtimeFetchTraceConnectionSource, authHeaderPresent, runtimeOrigin });
     return {
       ok: false,
-      error: {
-        status: response.status,
-        message: await errorMessage(response),
-      },
+      error: runtimeError,
     };
   }
 
@@ -350,15 +382,18 @@ export async function runtimeFetch<T>(
     const data = (await response.json()) as T;
     return { ok: true, data };
   } catch (error) {
+    const runtimeError: RuntimeError = {
+      status: "parse",
+      message: sanitizeRuntimeErrorText(error instanceof Error ? error.message : "Invalid runtime JSON response"),
+    };
+    emitRuntimeFetchTrace({ type: "runtime.fetch.failure", endpoint, status: runtimeError.status, connectionSource: runtimeFetchTraceConnectionSource, authHeaderPresent, runtimeOrigin });
     return {
       ok: false,
-      error: {
-        status: "parse",
-        message: sanitizeRuntimeErrorText(error instanceof Error ? error.message : "Invalid runtime JSON response"),
-      },
+      error: runtimeError,
     };
   }
 }
+
 
 export function getPing(settings: RuntimeSettings): Promise<RuntimeResult<PingResponse>> {
   return runtimeFetch<PingResponse>(settings, "/v1/ping");
@@ -511,6 +546,35 @@ export function productIdentityWarning(response: Pick<PingResponse, "productId" 
     return `Runtime identity mismatch: expected ${productIdentity.displayName} (${productIdentity.productId}), received ${displayName} (${response.productId}).`;
   }
   return null;
+}
+
+function emitRuntimeFetchTrace(event: RuntimeFetchTraceEvent) {
+  runtimeFetchTraceBuffer.push(event);
+  while (runtimeFetchTraceBuffer.length > runtimeFetchTraceLimit) {
+    runtimeFetchTraceBuffer.shift();
+  }
+  runtimeFetchTraceSink?.(event);
+}
+
+function sanitizeRuntimeTraceConnectionSource(value: string): string {
+  return value === "host.ready" || value === "manual" || value === "startup" ? value : "startup";
+}
+
+function sanitizeRuntimeTraceEndpoint(path: string): string {
+  const pathname = path.split(/[?#]/, 1)[0] || "/";
+  if (/^\/v1\/[A-Za-z0-9/_-]*$/.test(pathname)) {
+    return pathname.length > 80 ? `${pathname.slice(0, 80)}…` : pathname;
+  }
+  return "/v1/[redacted]";
+}
+
+function runtimeOriginLabel(baseUrl: string): string {
+  try {
+    const parsed = new URL(baseUrl);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "invalid";
+  }
 }
 
 function isLoopbackUrl(url: URL): boolean {

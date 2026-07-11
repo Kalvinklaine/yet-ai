@@ -3650,6 +3650,35 @@ describe("host.ready runtime bootstrap", () => {
     expect(browserStorageDump()).not.toContain(token);
   });
 
+  it("host.ready auth handoff trace proves settings source and Authorization presence", async () => {
+    const postIntellijMessage = vi.fn();
+    const token = "hostReadyTraceLocalValue";
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp();
+    await flushAsync();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: token });
+    await flushAsync();
+    await flushAsync();
+    await act(async () => {
+      const details = findDetails("coding-session-trace-details");
+      details.open = true;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+
+    const trace = findDetails("coding-session-trace-details").textContent ?? "";
+    expect(trace).toContain("runtime.settings.applied");
+    expect(trace).toContain("runtime.fetch.start");
+    expect(trace).toContain("connectionSource");
+    expect(trace).toContain("host.ready");
+    expect(trace).toContain("authHeaderPresent");
+    expect(trace).toContain("true");
+    expect(trace).toContain("/v1/ping");
+    expect(trace).not.toContain(token);
+    expect(browserStorageDump()).not.toContain(token);
+  });
+
   it("same host runtime URL with a new token updates subsequent Authorization", async () => {
     const postIntellijMessage = vi.fn();
     const initialToken = "initialHostReadyAuthValue";

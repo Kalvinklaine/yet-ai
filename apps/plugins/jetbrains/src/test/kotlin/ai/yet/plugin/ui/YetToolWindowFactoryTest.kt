@@ -461,8 +461,8 @@ class YetToolWindowFactoryTest {
         assertEquals("http://127.0.0.1:8001", fields["runtime"])
         assertEquals("connect", fields["launchMode"])
         assertEquals("external/connect", fields["runtimeOwner"])
+        assertEquals("present", fields["sessionTokenDelivered"])
         val combined = fields.values.joinToString(" ")
-        assertFalse(combined.contains("present"), combined)
         assertFalse(combined.contains("host-secret-token"), combined)
         assertFalse(combined.contains("must-not-leak"), combined)
         assertFalse(combined.contains("private"), combined)
@@ -490,6 +490,56 @@ class YetToolWindowFactoryTest {
         assertEquals("auto", fields["launchMode"])
         assertEquals("plugin-managed", fields["runtimeOwner"])
         assertFalse(fields.values.joinToString(" ").contains("host-secret-token"))
+    }
+
+    @Test
+    fun pluginManagedHostReadyCorrelationReportsSessionTokenDeliveredPresent() {
+        val fields = hostBridgeCorrelationFields(
+            RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, "host-secret-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "ide_host",
+                launchMode = "launch",
+                tokenState = "present",
+                processState = RuntimeProcessState.RUNNING,
+                diagnosis = "local runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+            "initial",
+        )
+
+        assertEquals("present", fields["sessionTokenDelivered"])
+        assertEquals("present", fields["tokenState"])
+        assertEquals("plugin-managed", fields["runtimeOwner"])
+        val combined = fields.values.joinToString(" ")
+        assertFalse(combined.contains("host-secret-token"), combined)
+        assertFalse(combined.contains("must-not-leak"), combined)
+    }
+
+    @Test
+    fun missingPluginManagedTokenWarningSourceIsSafe() {
+        val fields = hostBridgeCorrelationFields(
+            RuntimeSettings("http://127.0.0.1:8001/private?token=must-not-leak", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "ide_host",
+                launchMode = "launch",
+                tokenState = "absent",
+                processState = RuntimeProcessState.RUNNING,
+                diagnosis = "local runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+            "runtime_update",
+        )
+        val warning = "Yet AI delivered plugin-managed host.ready without a session token"
+
+        assertEquals("absent", fields["sessionTokenDelivered"])
+        assertEquals("plugin-managed", fields["runtimeOwner"])
+        assertFalse(warning.contains("token="))
+        assertFalse(warning.contains("127.0.0.1"))
+        val combined = fields.values.joinToString(" ")
+        assertFalse(combined.contains("must-not-leak"), combined)
+        assertFalse(combined.contains("private"), combined)
     }
 
     @Test

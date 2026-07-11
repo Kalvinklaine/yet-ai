@@ -21,7 +21,7 @@ const redactionPatterns: Array<[RegExp, string]> = [
   [new RegExp(String.raw`\b${secretKeyPattern}\b\s*[:=]\s*[^\s,;)}\]]+`, "gi"), "[redacted]"],
   [new RegExp(String.raw`\b${rawContentKeyPattern}\b\s*(?::|=)?\s*[^\r\n]*`, "gi"), "[redacted]"],
   [/(?:[A-Za-z]:[\\/][^\r\n,;]*?(?:\.codex[\\/]auth\.json|auth\.json)|\/[^\r\n,;]*?(?:\.codex\/auth\.json|auth\.json)|(?:~|\.{1,2})?[\\/]?\.codex[\\/]auth\.json|\bauth\.json\b)/gi, "[redacted]"],
-  [/(?:\/(?:Users|home)\/[^\r\n,;]+|[A-Za-z]:[\\/]Users[\\/][^\r\n,;]+)/gi, "[redacted]"],
+  [/(?:\/(?:Users|home|private|var|tmp|Volumes|etc|opt|mnt)\/[^\r\n,;]+|[A-Za-z]:[\\/]Users[\\/][^\r\n,;]+)/gi, "[redacted]"],
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, "[redacted]"],
   [/\bsk-[A-Za-z0-9_-]{8,}\b/g, "[redacted]"],
   [/\b[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\b/g, "[redacted]"],
