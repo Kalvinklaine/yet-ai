@@ -355,6 +355,17 @@ Use Tools → `Yet AI: Show Runtime Status` when the tool window cannot connect,
 
 Use Tools → `Yet AI: Restart Runtime` to stop only the process launched by this plugin and prepare the current settings again. It does not stop externally managed runtimes used in `connect` mode, does not inspect provider configuration, and does not expose the local runtime session token. If restart reports a missing binary, invalid configured path, port conflict, runtime-down health failure, or 401/token mismatch, copy the sanitized status text and verify the settings above before reinstalling the ZIP.
 
+Before spending time on an installed-plugin 401, the root local smokes can narrow the failure boundary without launching IntelliJ IDEA:
+
+```sh
+cargo build -p yet-lsp
+npm --prefix apps/gui run build
+npm run smoke:real-engine-startup
+npm run smoke:hosted-gui-host-ready-gate
+```
+
+`npm run smoke:real-engine-startup` proves the real local engine starts with loopback auth and emits structured auth reject/request summary evidence. `npm run smoke:hosted-gui-host-ready-gate` proves the built browser-hosted GUI waits for `host.ready` before runtime fetches and sends bearer auth plus the GUI caller header after handoff. These smokes require no provider credentials or hosted Yet AI service, and they do not replace installed JetBrains/JCEF verification; passing them only points the remaining investigation toward plugin packaging, bridge delivery, runtime lifecycle, or installed IDE token handoff.
+
 ### Logs-based JetBrains 401 checklist
 
 Use this checklist for one fresh local-runtime 401 reproduce in JetBrains Yet AI:

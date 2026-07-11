@@ -76,6 +76,48 @@ npm run smoke:controlled-agent-dev-preview
 
 That aggregate smoke is deterministic local/mock evidence only. It includes bounded sanitized status/report/fixture gates and does not call providers, require hosted services, use credentials, execute real-provider CI, publish artifacts, prove release readiness, or approve production autonomy.
 
+### Real engine and hosted GUI runtime-auth smoke sequence
+
+Use these focused smokes when validating the local runtime-auth boundary and the hosted GUI `host.ready` request gate. They are intentionally not part of `npm run check`; run them explicitly because they require a built engine binary, a built GUI, and Playwright Chromium availability.
+
+Prerequisites from the repository root:
+
+```sh
+cargo build -p yet-lsp
+# or use the repository helper when preparing IDE binaries
+npm run prepare:ide-engine
+npm --prefix apps/gui run build
+```
+
+Then run the focused evidence sequence:
+
+```sh
+npm run smoke:real-engine-startup
+npm run smoke:hosted-gui-host-ready-gate
+```
+
+This combined local smoke evidence proves only the following bounded facts:
+
+- the real local engine can start on loopback with local auth enabled;
+- the real engine returns local auth failures for unauthenticated runtime requests and writes structured auth reject/request summary evidence with caller/auth-present fields;
+- the built hosted GUI waits for trusted `host.ready` before making runtime `/v1/*` fetches;
+- after `host.ready`, the hosted GUI uses bearer auth and the `gui_runtime_client` caller header for runtime requests;
+- the sequence needs no provider credentials, Yet AI hosted backend, account, managed model gateway, product credit balance, cloud workspace, signing, marketplace publication, or production-release workflow.
+
+This browser-hosted smoke does not prove the installed JetBrains/JCEF plugin path is fixed by itself. Use it before or alongside installed-plugin diagnostics to narrow whether a 401 is in engine auth/logging, GUI request gating, or IDE token handoff.
+
+Troubleshooting:
+
+| Symptom | Next action |
+| --- | --- |
+| Engine binary missing | Run `cargo build -p yet-lsp` or `npm run prepare:ide-engine`, then rerun `npm run smoke:real-engine-startup`. |
+| GUI build missing or stale | Run `npm --prefix apps/gui run build`, then rerun `npm run smoke:hosted-gui-host-ready-gate`. |
+| Loopback port is busy or startup times out | Stop the conflicting local process and rerun the smoke; the scripts allocate loopback ports automatically. |
+| Playwright Chromium is unavailable | Run `npx playwright install chromium`, then rerun the hosted GUI smoke. |
+| More evidence is needed | Set `YET_AI_KEEP_SMOKE_EVIDENCE=1` for the real-engine smoke to preserve temporary sanitized log evidence, then delete the preserved directory after review. |
+
+Keep reports sanitized. Do not paste local runtime tokens, bearer headers, provider keys, raw bridge payloads, private paths, or raw request bodies.
+
 ## Useful-reporting focus
 
 S91 documentation and UX should make reports useful without exposing raw data. A good S91 report answers:

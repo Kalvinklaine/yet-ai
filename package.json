@@ -91,6 +91,8 @@
     "smoke:provider-secret-migration": "node scripts/smoke-provider-secret-migration.mjs",
     "smoke:gui-browser": "node scripts/smoke-gui-browser.mjs",
     "smoke:gui-runtime-e2e": "node scripts/smoke-gui-runtime-e2e.mjs",
+    "smoke:real-engine-startup": "node scripts/smoke-real-engine-startup.mjs",
+    "smoke:hosted-gui-host-ready-gate": "node scripts/smoke-hosted-gui-host-ready-gate.mjs",
     "smoke:local-provider-first-message": "node scripts/smoke-local-provider-first-message.mjs",
     "smoke:gui-demo-mode": "node scripts/smoke-gui-demo-mode.mjs",
     "smoke:login-first-message": "node scripts/smoke-login-first-message.mjs",
