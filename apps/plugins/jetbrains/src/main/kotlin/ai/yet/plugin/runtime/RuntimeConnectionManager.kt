@@ -33,6 +33,7 @@ class RuntimeConnectionManager(
     private val healthChecker: (RuntimeSettings) -> Unit = ::checkHealth,
     private val sessionTokenStore: RuntimeSessionTokenStore = PasswordSafeRuntimeSessionTokenStore(),
     private val logSink: YetLogSink = YetLogSink(),
+    private val artifactFreshnessProvider: (RuntimeSettings, EffectiveRuntimeOwner) -> ArtifactFreshness = { settings, owner -> ArtifactFreshnessResources.describe(settings, owner) },
 ) : Disposable {
     private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
     private var launchedProcess: Process? = null
@@ -251,6 +252,7 @@ class RuntimeConnectionManager(
                 error = sanitizedRuntimeError("Yet AI runtime settings are invalid", error),
                 process = null,
                 recovery = null,
+                artifactFreshness = ArtifactFreshness.unknown("unknown"),
             )
             return diagnosticsBundle().build(diagnosticsSnapshot(diagnostics))
         }
@@ -403,6 +405,7 @@ class RuntimeConnectionManager(
         lastProcess = diagnostics.process,
         lastRecovery = diagnostics.recovery,
         engineLogPath = engineLogPathForDiagnostics(diagnostics),
+        artifactFreshness = diagnostics.artifactFreshness,
     )
 
     private fun diagnosticsLifecycleStatus(diagnostics: RuntimeDiagnostics): RuntimeLifecycleStatus {
@@ -429,6 +432,7 @@ class RuntimeConnectionManager(
         val identity = diagnosticsIdentity(settings, owner)
         val scopedState = diagnosticsStateByIdentity[identity]
         val processState = scopedState?.processState ?: RuntimeProcessState.NOT_OWNED
+        val artifactFreshness = runCatching { artifactFreshnessProvider(settings, owner) }.getOrElse { ArtifactFreshness.unknown() }
         return RuntimeDiagnostics(
             launchMode = settings.launchMode.name.lowercase(),
             runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
@@ -439,6 +443,7 @@ class RuntimeConnectionManager(
             error = scopedState?.error,
             process = scopedState?.process,
             recovery = scopedState?.recovery,
+            artifactFreshness = artifactFreshness,
         )
     }
 
@@ -718,9 +723,9 @@ private fun parseLaunchModeOrNull(value: String): LaunchMode? = runCatching { pa
 
 private fun sanitizedLaunchModeForDiagnostics(value: String): String = redactLogText(value.trim().ifBlank { "not configured" }, "")
 
-private fun tokenState(settings: RuntimeSettings, lifecycle: RuntimeLifecycle): String = when (lifecycle) {
-    RuntimeLifecycle.AUTH_MISMATCH -> "mismatch"
-    RuntimeLifecycle.INVALID_SETTINGS -> "unknown"
+private fun tokenState(settings: RuntimeSettings, lifecycle: RuntimeLifecycle): String = when {
+    lifecycle == RuntimeLifecycle.AUTH_MISMATCH -> "mismatch"
+    lifecycle == RuntimeLifecycle.INVALID_SETTINGS && settings.launchMode == LaunchMode.CONNECT -> "unknown"
     else -> if (settings.sessionToken == null) "absent" else "present"
 }
 
@@ -773,6 +778,7 @@ data class RuntimeDiagnostics(
     val error: String?,
     val process: String? = null,
     val recovery: String? = null,
+    val artifactFreshness: ArtifactFreshness = ArtifactFreshness.unknown(),
 ) {
     val pluginManagedRuntime: Boolean
         get() = launchedByPlugin || process?.contains("plugin-launched", ignoreCase = true) == true
@@ -798,6 +804,11 @@ fun formatRuntimeDiagnostics(diagnostics: RuntimeDiagnostics): String {
         "Runtime URL: ${diagnostics.runtimeUrl}",
         "Engine binary path configured: ${if (diagnostics.engineBinaryConfigured) "yes" else "no"}",
         "Binary status: ${redactLogText(diagnostics.binaryStatus, "")}",
+        "Build commit: ${diagnostics.artifactFreshness.buildCommit}",
+        "Build timestamp: ${diagnostics.artifactFreshness.buildTimestamp}",
+        "Packaged GUI fingerprint: ${diagnostics.artifactFreshness.packagedGuiFingerprint}",
+        "Bundled engine fingerprint: ${diagnostics.artifactFreshness.bundledEngineFingerprint}",
+        "Runtime binary freshness: ${diagnostics.artifactFreshness.runtimeBinaryFreshness}",
         "Plugin-launched process: ${if (diagnostics.launchedByPlugin) "running" else "not running"}",
         "Last health: ${diagnostics.health?.let { redactLogText(it, "") } ?: "not checked yet"}",
         "Last process: ${diagnostics.process?.let { redactLogText(it, "") } ?: "no plugin-launched exit recorded"}",

@@ -366,6 +366,26 @@ npm run smoke:hosted-gui-host-ready-gate
 
 `npm run smoke:real-engine-startup` proves the real local engine starts with loopback auth and emits structured auth reject/request summary evidence. `npm run smoke:hosted-gui-host-ready-gate` proves the built browser-hosted GUI waits for `host.ready` before runtime fetches and sends bearer auth plus the GUI caller header after handoff. These smokes require no provider credentials or hosted Yet AI service, and they do not replace installed JetBrains/JCEF verification; passing them only points the remaining investigation toward plugin packaging, bridge delivery, runtime lifecycle, or installed IDE token handoff.
 
+### Installed artifact freshness fields
+
+Tools → `Yet AI: Show Runtime Status` and Tools → `Yet AI: Copy Diagnostics` include non-secret artifact freshness evidence when the installed plugin was built with metadata:
+
+- `Build commit`: short commit SHA for the packaged artifact, or `unknown` when metadata is absent or malformed.
+- `Build timestamp`: ISO build timestamp, or `unknown`.
+- `Packaged GUI fingerprint`: short SHA-256 fingerprint for packaged GUI resources, or `unknown`.
+- `Bundled engine fingerprint`: short SHA-256 fingerprint for the bundled `yet-lsp` resource when the plugin-owned bundled runtime path is in use, or `unknown` for external/connect/configured runtimes.
+- `Runtime binary freshness`: `bundled match`, `mismatch`, `configured external`, `connect-mode external`, `unavailable`, or `unknown`.
+
+Use these fields to confirm whether an installed ZIP includes the current 401 fixes:
+
+1. Run `git rev-parse --short=12 HEAD` in the checkout used to build the artifact.
+2. Open Tools → `Yet AI: Show Runtime Status` or copy diagnostics from the installed plugin.
+3. Compare `Build commit` with the short checkout SHA. If it differs, reinstall a JetBrains artifact built from the intended commit.
+4. For normal `auto`/`launch` installs with no configured engine path, expect `Runtime binary freshness: bundled match`. `mismatch` means the metadata and bundled engine bytes do not agree; rebuild/reinstall the artifact before debugging runtime 401s further.
+5. For `connect` or configured external engine paths, freshness intentionally reports an external classification and does not claim the bundled engine is the runtime being used. Verify the external `yet-lsp` process separately with its own commit/build evidence.
+
+If any metadata is unavailable, diagnostics stay usable and report `unknown` instead of failing. These fields are fingerprints only; they must not include private paths, tokens, provider secrets, full local environment dumps, or raw process output.
+
 ### Logs-based JetBrains 401 checklist
 
 Use this checklist for one fresh local-runtime 401 reproduce in JetBrains Yet AI:

@@ -312,12 +312,20 @@ class RuntimeConnectionManagerTest {
 
     @Test
     fun pluginManagedSuccessfulPrepareDiagnosticsReportTokenStatePresent() {
+        val freshness = ArtifactFreshness(
+            buildCommit = "abcdef123456",
+            buildTimestamp = "2026-07-12T00:00:00Z",
+            packagedGuiFingerprint = "111122223333",
+            bundledEngineFingerprint = "444455556666",
+            runtimeBinaryFreshness = "bundled match",
+        )
         val manager = RuntimeConnectionManager(
             bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
             engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
             processStarter = { FakeAliveProcess() },
             tokenGenerator = { "diagnostics-plugin-token-that-must-not-leak-1234567890" },
             healthChecker = {},
+            artifactFreshnessProvider = { _, _ -> freshness },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8132", null, null, LaunchMode.LAUNCH, null)
 
@@ -328,6 +336,11 @@ class RuntimeConnectionManagerTest {
         assertContains(diagnostics, "Runtime owner: ide_host")
         assertContains(diagnostics, "Lifecycle: connected")
         assertContains(diagnostics, "Token state: present")
+        assertContains(diagnostics, "Build commit: abcdef123456")
+        assertContains(diagnostics, "Build timestamp: 2026-07-12T00:00:00Z")
+        assertContains(diagnostics, "Packaged GUI fingerprint: 111122223333")
+        assertContains(diagnostics, "Bundled engine fingerprint: 444455556666")
+        assertContains(diagnostics, "Runtime binary freshness: bundled match")
         assertFalse(diagnostics.contains("Token state: absent"), diagnostics)
         assertFalse(diagnostics.contains("diagnostics-plugin-token"), diagnostics)
         manager.dispose()

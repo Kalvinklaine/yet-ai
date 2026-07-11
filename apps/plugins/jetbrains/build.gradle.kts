@@ -30,6 +30,7 @@ val copyGuiDist by tasks.registering(Copy::class) {
 // builds green without relying on config-time file detection, which Gradle
 // evaluates before the prepare script has had a chance to copy the binary.
 val packagedEngineResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-engine")
+val artifactMetadataResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-artifact")
 
 dependencies {
     testImplementation(kotlin("test"))
@@ -49,6 +50,7 @@ sourceSets {
     main {
         resources.srcDir(packagedGuiResourcesDir)
         resources.srcDir(packagedEngineResourcesDir)
+        resources.srcDir(artifactMetadataResourcesDir)
     }
 }
 

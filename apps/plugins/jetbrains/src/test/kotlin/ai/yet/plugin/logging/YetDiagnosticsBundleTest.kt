@@ -43,11 +43,23 @@ class YetDiagnosticsBundleTest {
                 lastProcess = null,
                 lastRecovery = "none",
                 engineLogPath = engineLogPath,
+                artifactFreshness = ai.yet.plugin.runtime.ArtifactFreshness(
+                    buildCommit = "abcdef123456",
+                    buildTimestamp = "2026-07-12T00:00:00Z",
+                    packagedGuiFingerprint = "111122223333",
+                    bundledEngineFingerprint = "444455556666",
+                    runtimeBinaryFreshness = "bundled match",
+                ),
             ),
         )
 
         assertContains(bundle, "Yet AI Diagnostics Bundle")
         assertContains(bundle, "Plugin version: test-version")
+        assertContains(bundle, "Build commit: abcdef123456")
+        assertContains(bundle, "Build timestamp: 2026-07-12T00:00:00Z")
+        assertContains(bundle, "Packaged GUI fingerprint: 111122223333")
+        assertContains(bundle, "Bundled engine fingerprint: 444455556666")
+        assertContains(bundle, "Runtime binary freshness: bundled match")
         assertContains(bundle, "Runtime origin: http://127.0.0.1:8123")
         assertContains(bundle, "Lifecycle: connected")
         assertContains(bundle, "Process state: running")

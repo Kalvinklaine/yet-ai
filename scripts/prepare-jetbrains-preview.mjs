@@ -122,8 +122,10 @@ if (skipEnginePrepare) {
 run("npm", ["run", "build"], { cwd: path.join(root, "apps", "gui") });
 await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-gui"), { recursive: true, force: true });
 await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-engine"), { recursive: true, force: true });
+await rm(path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-artifact"), { recursive: true, force: true });
 await stageEngineBinary(engineBinaryPath, binaryName);
 await clearDistributionZips();
+await writeBuildMetadata(engineBinaryPath);
 run("gradle", ["buildPlugin", "--console=plain"], { cwd: jetbrainsRoot, diagnoseGradleFailure: true });
 
 const zips = await findCurrentDistributionZips(expectedGradleZipName);
@@ -211,6 +213,61 @@ async function stageEngineBinary(sourceBinaryPath, binaryFileName) {
     await chmod(stagedPath, 0o755);
   }
   console.log(`Staged ${binaryFileName} into ${path.relative(root, stagedPath)} (${sourceStat.size} bytes).`);
+}
+
+async function writeBuildMetadata(sourceBinaryPath) {
+  const resourceDir = path.join(jetbrainsRoot, "build", "generated", "resources", "yet-ai-artifact", "yet-ai-artifact");
+  await mkdir(resourceDir, { recursive: true });
+  const metadata = {
+    "build.commit": gitCommit() ?? "unknown",
+    "build.timestamp": new Date().toISOString(),
+    "gui.sha256": await directoryFingerprint(path.join(root, "apps", "gui", "dist")) ?? "unknown",
+    "engine.sha256": createHash("sha256").update(await readFile(sourceBinaryPath)).digest("hex"),
+  };
+  const body = Object.entries(metadata)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n") + "\n";
+  await writeFile(path.join(resourceDir, "build.properties"), body, "utf8");
+  console.log(`Wrote JetBrains artifact metadata into ${path.relative(root, resourceDir)}/build.properties.`);
+}
+
+async function directoryFingerprint(directory) {
+  const files = await listFiles(directory).catch(() => []);
+  if (files.length === 0) {
+    return undefined;
+  }
+  const digest = createHash("sha256");
+  for (const filePath of files.sort()) {
+    const relativePath = path.relative(directory, filePath).replaceAll(path.sep, "/");
+    digest.update(relativePath);
+    digest.update("\0");
+    digest.update(await readFile(filePath));
+    digest.update("\0");
+  }
+  return digest.digest("hex");
+}
+
+async function listFiles(directory) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listFiles(entryPath));
+    } else if (entry.isFile()) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+function gitCommit() {
+  const result = spawnSync(platformCommand("git"), ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 ? result.stdout.trim() || undefined : undefined;
 }
 
 async function clearDistributionZips() {

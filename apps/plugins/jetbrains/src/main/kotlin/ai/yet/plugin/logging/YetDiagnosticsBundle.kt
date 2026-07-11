@@ -1,6 +1,7 @@
 package ai.yet.plugin.logging
 
 import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.runtime.ArtifactFreshness
 import ai.yet.plugin.runtime.RuntimeLifecycleStatus
 import ai.yet.plugin.runtime.redactLogText
 import java.net.URI
@@ -22,6 +23,11 @@ class YetDiagnosticsBundle(
         lines += "Plugin ID: ${ProductIdentity.pluginId}"
         lines += "Plugin version: $pluginVersion"
         lines += "Bridge version: ${ProductIdentity.bridgeVersion}"
+        lines += "Build commit: ${snapshot.artifactFreshness.buildCommit}"
+        lines += "Build timestamp: ${snapshot.artifactFreshness.buildTimestamp}"
+        lines += "Packaged GUI fingerprint: ${snapshot.artifactFreshness.packagedGuiFingerprint}"
+        lines += "Bundled engine fingerprint: ${snapshot.artifactFreshness.bundledEngineFingerprint}"
+        lines += "Runtime binary freshness: ${snapshot.artifactFreshness.runtimeBinaryFreshness}"
         lines += "Launch mode: ${snapshot.launchMode}"
         lines += "Runtime origin: ${runtimeOrigin(snapshot.runtimeUrl)}"
         lines += "Lifecycle: ${snapshot.lifecycleStatus.lifecycle.wireName}"
@@ -84,4 +90,5 @@ data class YetDiagnosticsSnapshot(
     val lastProcess: String?,
     val lastRecovery: String?,
     val engineLogPath: Path? = null,
+    val artifactFreshness: ArtifactFreshness = ArtifactFreshness.unknown(),
 )
