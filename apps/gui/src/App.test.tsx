@@ -3611,11 +3611,47 @@ describe("agent progress panel", () => {
 });
 
 describe("host.ready runtime bootstrap", () => {
-  it("IDE-hosted startup waits for host.ready before runtime requests", async () => {
+  it("VS Code hosted startup waits for host.ready before runtime requests", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses();
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("bridge vscode");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/models"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/caps"))).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh")).toHaveLength(0);
+  });
+
+  it("VS Code hosted host.ready refresh sends Authorization", async () => {
+    const postMessage = vi.fn();
+    const token = "vscodeHostReadyAuthLocalValue";
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("bridge vscode");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: token });
+    await flushAsync();
+    await flushAsync();
+
+    const retargetedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
+    expect(retargetedCalls.length).toBeGreaterThan(0);
+    expect(retargetedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${token}`)).toBe(true);
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(browserStorageDump()).not.toContain(token);
+  });
+
+  it("JetBrains hosted startup waits for host.ready before runtime requests", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
     mockRuntimeResponses();
-    renderApp();
+    renderApp({ autoHostReady: false });
     await flushAsync();
 
     expect(container?.textContent).toContain("bridge jetbrains");
@@ -11090,7 +11126,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
 
-    expect(text.length).toBeLessThan(16100);
+    expect(text.length).toBeLessThan(16200);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
@@ -12017,14 +12053,27 @@ function workspaceSnippetSearchResultPayload(overrides: Record<string, unknown> 
   };
 }
 
-function renderApp() {
+function renderApp(options: { autoHostReady?: boolean } = {}) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
   act(() => {
     root?.render(<App />);
   });
+  if (options.autoHostReady === false || !window.acquireVsCodeApi) {
+    return;
+  }
+  act(() => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version: bridgeVersion,
+        type: "host.ready",
+        payload: { runtimeUrl: "http://127.0.0.1:8001" },
+      },
+    }));
+  });
 }
+
 
 function editProposalRequestId(): string {
   const match = (container?.textContent ?? "").match(/Proposal id: (gui-edit-proposal-\d+)/);

@@ -2124,7 +2124,7 @@ export function App() {
     setChatHistoryLoading(false);
   }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
   const connect = useCallback(async () => {
-    if (bridgeHost === "jetbrains" && !hostReadyAppliedRef.current && runtimeConnectionSource !== "manual") {
+    if (bridgeHost !== "browser" && !hostReadyAppliedRef.current && runtimeConnectionSource !== "manual") {
       addTimeline("Waiting for IDE host runtime settings");
       return;
     }
