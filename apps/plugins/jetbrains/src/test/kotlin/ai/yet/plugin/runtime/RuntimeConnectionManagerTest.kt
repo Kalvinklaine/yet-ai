@@ -289,6 +289,79 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun pluginManagedSuccessfulPrepareDiagnosticsReportTokenStatePresent() {
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "diagnostics-plugin-token-that-must-not-leak-1234567890" },
+            healthChecker = {},
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8132", null, null, LaunchMode.LAUNCH, null)
+
+        val result = manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+
+        assertEquals("present", result.lifecycleStatus.tokenState)
+        assertContains(diagnostics, "Runtime owner: ide_host")
+        assertContains(diagnostics, "Lifecycle: connected")
+        assertContains(diagnostics, "Token state: present")
+        assertFalse(diagnostics.contains("Token state: absent"), diagnostics)
+        assertFalse(diagnostics.contains("diagnostics-plugin-token"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
+    fun diagnosticsAfterTokenedPrepareDoNotRegressToAbsentForSyntheticNullSettings() {
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "nonregression-plugin-token-that-must-not-leak-1234567890" },
+            healthChecker = {},
+        )
+        val preparedSettings = RuntimeSettings("http://127.0.0.1:8133", null, null, LaunchMode.AUTO, null)
+        val syntheticSettings = RuntimeSettings("http://127.0.0.1:8133", null, null, LaunchMode.AUTO, null)
+
+        manager.prepareForTest(preparedSettings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(syntheticSettings)
+
+        assertContains(diagnostics, "Runtime owner: ide_host")
+        assertContains(diagnostics, "Token state: present")
+        assertFalse(diagnostics.contains("Token state: absent"), diagnostics)
+        assertFalse(diagnostics.contains("nonregression-plugin-token"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
+    fun latestFailureOverwritesEarlierConnectedDiagnosticsStatus() {
+        var healthCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "latest-failure-token-that-must-not-leak-1234567890" },
+            healthChecker = {
+                healthCalls += 1
+                if (healthCalls > 1) throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: connection refused token=latest-failure-token-that-must-not-leak-1234567890")
+            },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8134", null, null, LaunchMode.LAUNCH, null)
+
+        val connected = manager.prepareForTest(settings)
+        val failed = manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+
+        assertEquals(RuntimeLifecycle.CONNECTED, connected.lifecycleStatus.lifecycle)
+        assertEquals(RuntimeLifecycle.FAILED, failed.lifecycleStatus.lifecycle)
+        assertContains(diagnostics, "Lifecycle: failed")
+        assertContains(diagnostics, "Last error: Yet AI local runtime connection failed")
+        assertFalse(diagnostics.contains("Lifecycle: connected"), diagnostics)
+        assertFalse(diagnostics.contains("latest-failure-token"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
     fun pluginLaunchReusesAliveRuntimeAndLogsCorrelationEvent() {
         val logDir = kotlin.io.path.createTempDirectory("yet-runtime-reuse-log")
         val logSink = YetLogSink(directoryProvider = { logDir })

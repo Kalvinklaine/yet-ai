@@ -61,6 +61,39 @@ class YetDiagnosticsBundleTest {
     }
 
     @Test
+    fun bundleReportsTokenStateWithoutLeakingTokenValue() {
+        val dir = createTempDirectory("yet-diagnostics-token-state")
+        val sink = YetLogSink(directoryProvider = { dir })
+        val lifecycle = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, "bundle-session-token-that-must-not-leak-1234567890", LaunchMode.LAUNCH, null),
+            LaunchMode.LAUNCH,
+            RuntimeLifecycle.CONNECTED,
+            RuntimeProcessState.RUNNING,
+            "local runtime is reachable",
+            "Continue using Yet AI.",
+        )
+
+        val bundle = YetDiagnosticsBundle(sink).build(
+            YetDiagnosticsSnapshot(
+                launchMode = "launch",
+                runtimeUrl = "http://127.0.0.1:8123",
+                engineBinaryConfigured = false,
+                binaryStatus = "bundled plugin runtime binary available",
+                launchedByPlugin = true,
+                lifecycleStatus = lifecycle,
+                lastHealth = "/v1/ping returned 2xx",
+                lastError = null,
+                lastProcess = null,
+                lastRecovery = null,
+            ),
+        )
+
+        assertContains(bundle, "Token state: present")
+        assertFalse(bundle.contains("bundle-session-token"), bundle)
+        assertFalse(bundle.contains("Bearer", ignoreCase = true), bundle)
+    }
+
+    @Test
     fun bundleNotesMissingEngineLogWithoutFailing() {
         val dir = createTempDirectory("yet-diagnostics-missing-engine")
         val sink = YetLogSink(directoryProvider = { dir })

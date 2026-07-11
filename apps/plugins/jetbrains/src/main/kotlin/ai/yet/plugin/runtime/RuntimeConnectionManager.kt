@@ -45,6 +45,7 @@ class RuntimeConnectionManager(
     private var lastPreparedRuntimeUrl: String? = null
     private var lastEffectiveRuntimeOwner: EffectiveRuntimeOwner = EffectiveRuntimeOwner.EXTERNAL
     private var lastEffectiveProcessState: RuntimeProcessState = RuntimeProcessState.NOT_OWNED
+    private var latestRuntimeConnectionResult: RuntimeConnectionResult? = null
 
     @Synchronized
     fun prepare(): RuntimeConnectionResult {
@@ -73,18 +74,24 @@ class RuntimeConnectionManager(
                 ),
             )
             logSink.append("error", "runtime.prepare", mapOf("phase" to "failure", "error" to lastConnectionError))
+            rememberLatestRuntimeConnectionResult(result)
             if (publishUpdates) publishRuntimeConnectionUpdate(result)
             return result
         }
         val previousConnection = launchedConnection
         val result = prepareResolvedSettings(settings)
+        rememberLatestRuntimeConnectionResult(result)
         logSink.append("info", "runtime.prepare", mapOf("phase" to if (result.error == null) "success" else "failure", "launchMode" to settings.launchMode.name.lowercase(), "lifecycle" to result.lifecycleStatus.lifecycle.wireName, "error" to result.error))
         if (publishUpdates && (result.error != null || result.settings != previousConnection)) publishRuntimeConnectionUpdate(result)
         return result
     }
 
     @Synchronized
-    internal fun prepareForTest(settings: RuntimeSettings): RuntimeConnectionResult = prepareResolvedSettings(settings)
+    internal fun prepareForTest(settings: RuntimeSettings): RuntimeConnectionResult {
+        val result = prepareResolvedSettings(settings)
+        rememberLatestRuntimeConnectionResult(result)
+        return result
+    }
 
     @Synchronized
     private fun prepareResolvedSettings(settings: RuntimeSettings): RuntimeConnectionResult {
@@ -383,13 +390,25 @@ class RuntimeConnectionManager(
         engineBinaryConfigured = diagnostics.engineBinaryConfigured,
         binaryStatus = diagnostics.binaryStatus,
         launchedByPlugin = diagnostics.launchedByPlugin,
-        lifecycleStatus = runtimeLifecycleStatusFromDiagnostics(diagnostics),
+        lifecycleStatus = diagnosticsLifecycleStatus(diagnostics),
         lastHealth = diagnostics.health,
         lastError = diagnostics.error,
         lastProcess = diagnostics.process,
         lastRecovery = lastRecoveryResult,
         engineLogPath = engineLogPathForDiagnostics(diagnostics),
     )
+
+    private fun diagnosticsLifecycleStatus(diagnostics: RuntimeDiagnostics): RuntimeLifecycleStatus {
+        val status = runtimeLifecycleStatusFromDiagnostics(diagnostics)
+        val latestStatus = latestRuntimeConnectionResult?.takeIf { latestRuntimeConnectionMatchesDiagnostics(it, diagnostics) }?.lifecycleStatus ?: return status
+        return status.copy(tokenState = latestStatus.tokenState)
+    }
+
+    private fun latestRuntimeConnectionMatchesDiagnostics(result: RuntimeConnectionResult, diagnostics: RuntimeDiagnostics): Boolean {
+        return sanitizeRuntimeUrlForDiagnostics(result.settings.runtimeUrl) == diagnostics.runtimeUrl &&
+            result.lifecycleStatus.launchMode == diagnostics.launchMode &&
+            result.lifecycleStatus.runtimeOwner == runtimeLifecycleStatusFromDiagnostics(diagnostics).runtimeOwner
+    }
 
     private fun engineLogPathForDiagnostics(diagnostics: RuntimeDiagnostics): Path? {
         if (!diagnostics.pluginManagedRuntime) return null
@@ -435,6 +454,10 @@ class RuntimeConnectionManager(
         lastPreparedRuntimeUrl = sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)
         lastEffectiveRuntimeOwner = owner
         lastEffectiveProcessState = processState
+    }
+
+    private fun rememberLatestRuntimeConnectionResult(result: RuntimeConnectionResult) {
+        latestRuntimeConnectionResult = result
     }
 
     @Synchronized
@@ -628,10 +651,10 @@ fun runtimeLifecycleStatusFromDiagnostics(diagnostics: RuntimeDiagnostics): Runt
         diagnostics.process?.contains("exited", ignoreCase = true) == true -> RuntimeLifecycle.STOPPED
         diagnostics.process?.contains("stopped", ignoreCase = true) == true -> RuntimeLifecycle.STOPPED
         diagnosis.contains("token mismatch") -> RuntimeLifecycle.AUTH_MISMATCH
+        diagnostics.health?.contains("2xx") == true -> RuntimeLifecycle.CONNECTED
         diagnosis.contains("launch URL") || diagnosis.contains("engine binary") || diagnosis.contains("no launchable") -> RuntimeLifecycle.INVALID_SETTINGS
         diagnostics.error != null -> RuntimeLifecycle.FAILED
         diagnosis.contains("waiting for a plugin-launched runtime process") -> RuntimeLifecycle.FAILED
-        diagnostics.health?.contains("2xx") == true -> RuntimeLifecycle.CONNECTED
         else -> RuntimeLifecycle.FAILED
     }
     val processState = when {
