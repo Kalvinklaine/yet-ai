@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createChat, deleteChat, getChat, listChats, authHeaders, isPanelScopedProxyBaseUrl, isSameOriginProxyBaseUrl, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
+import { createChat, deleteChat, getChat, listChats, authHeaders, isPanelScopedProxyBaseUrl, isSameOriginProxyBaseUrl, isTrustedLocalPageOrigin, isTrustedSameOriginProxyBaseUrl, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
 
 const fetchMock = vi.fn();
 
@@ -41,9 +41,10 @@ describe("runtimeClient", () => {
   it("uses engine-served same-origin root bootstrap without GUI Authorization", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost:3000/ui"));
 
     expect(isSameOriginProxyBaseUrl("/")).toBe(true);
-    expect(isSameOriginProxyBaseUrl("")).toBe(true);
+    expect(isSameOriginProxyBaseUrl("")).toBe(false);
     expect(isSameOriginProxyBaseUrl("/v1")).toBe(false);
     expect(new Headers(authHeaders({ baseUrl: "/", token: "engine-session-token", runtimeAccess: "same_origin_proxy" })).get("Authorization")).toBeNull();
 
@@ -56,6 +57,50 @@ describe("runtimeClient", () => {
     const headers = new Headers(fetchMock.mock.calls[0][1].headers);
     expect(headers.get("Authorization")).toBeNull();
     expect(headers.get("X-Yet-AI-Caller")).toBe("gui_runtime_client");
+  });
+
+  it("gates same-origin root proxy mode to trusted local page origins", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost:3000/ui"));
+
+    expect(isTrustedLocalPageOrigin("http://localhost:3000/ui")).toBe(true);
+    expect(isTrustedLocalPageOrigin("http://127.0.0.1:3000/ui")).toBe(true);
+    expect(isTrustedLocalPageOrigin("http://[::1]:3000/ui")).toBe(true);
+    expect(isTrustedLocalPageOrigin("https://example.test/ui")).toBe(false);
+    expect(isTrustedSameOriginProxyBaseUrl("/", "http://localhost:3000/ui")).toBe(true);
+    expect(isTrustedSameOriginProxyBaseUrl("/", "https://example.test/ui")).toBe(false);
+    expect(isTrustedSameOriginProxyBaseUrl("", "http://localhost:3000/ui")).toBe(false);
+
+    const result = await runtimeFetch({ baseUrl: "/", token: "engine-session-token", runtimeAccess: "same_origin_proxy" }, "/v1/ping");
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith("/v1/ping", expect.objectContaining({
+      headers: expect.any(Headers),
+    }));
+  });
+
+  it("rejects untrusted same-origin root proxy mode before fetch", async () => {
+    vi.stubGlobal("location", new URL("https://example.test/ui"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runtimeFetch({ baseUrl: "/", token: "engine-session-token", runtimeAccess: "same_origin_proxy" }, "/v1/ping");
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? undefined : result.error.status).toBe("configuration");
+    expect(result.ok ? "" : result.error.message).toContain("same-origin root or panel-scoped path");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects empty same-origin proxy base before fetch", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await runtimeFetch({ baseUrl: "", token: "engine-session-token", runtimeAccess: "same_origin_proxy" }, "/v1/ping");
+
+    expect(isSameOriginProxyBaseUrl("")).toBe(false);
+    expect(result.ok).toBe(false);
+    expect(result.ok ? undefined : result.error.status).toBe("configuration");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects panel proxy paths in direct mode before fetch", async () => {

@@ -490,11 +490,30 @@ export function isPanelScopedProxyBaseUrl(baseUrl: string): boolean {
 }
 
 export function isSameOriginRuntimeBaseUrl(baseUrl: string): boolean {
-  return baseUrl === "/" || baseUrl === "";
+  return baseUrl === "/";
+}
+
+export function isTrustedLocalPageOrigin(pageUrl: string | URL | Location | undefined = currentPageLocation()): boolean {
+  if (!pageUrl) {
+    return false;
+  }
+  try {
+    const parsed = typeof pageUrl === "string" || pageUrl instanceof URL ? new URL(pageUrl) : new URL(pageUrl.href);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopbackHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function isTrustedSameOriginProxyBaseUrl(baseUrl: string, pageUrl: string | URL | Location | undefined = currentPageLocation()): boolean {
+  if (isPanelScopedProxyBaseUrl(baseUrl)) {
+    return true;
+  }
+  return isSameOriginRuntimeBaseUrl(baseUrl) && isTrustedLocalPageOrigin(pageUrl);
 }
 
 export function isSameOriginProxyBaseUrl(baseUrl: string): boolean {
-  return isPanelScopedProxyBaseUrl(baseUrl) || isSameOriginRuntimeBaseUrl(baseUrl);
+  return isTrustedSameOriginProxyBaseUrl(baseUrl);
 }
 
 export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
@@ -619,8 +638,16 @@ function runtimeOriginLabel(baseUrl: string): string {
 }
 
 function isLoopbackUrl(url: URL): boolean {
-  const hostname = url.hostname.toLowerCase();
+  return isLoopbackHostname(url.hostname);
+}
+
+function isLoopbackHostname(value: string): boolean {
+  const hostname = value.toLowerCase();
   return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+}
+
+function currentPageLocation(): Location | undefined {
+  return typeof globalThis !== "undefined" ? globalThis.location : undefined;
 }
 
 function hasRootRawUrlPath(value: string): boolean {

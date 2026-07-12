@@ -1331,7 +1331,17 @@ function optionalLoopbackRuntimeUrl(value: unknown): boolean {
 }
 
 function optionalPanelScopedProxyBaseUrl(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && (value === "/" || value === "" || /^\/panel\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)));
+  return value === undefined || (typeof value === "string" && (/^\/panel\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) || (value === "/" && isTrustedLocalWindowOrigin())));
+}
+
+function isTrustedLocalWindowOrigin(): boolean {
+  try {
+    const parsed = new URL(window.location.href);
+    const hostname = parsed.hostname.toLowerCase();
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]");
+  } catch {
+    return false;
+  }
 }
 
 function isContextFile(value: unknown): boolean {

@@ -3692,7 +3692,7 @@ describe("host.ready runtime bootstrap", () => {
     expect(browserStorageDump()).not.toContain("panel-bootstrap");
   });
 
-  it("engine-served Web UI bootstrap uses same-origin root before any host.ready", async () => {
+  it("engine-served Web UI bootstrap uses same-origin root before any host.ready on loopback origin", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     window.__yetAiInitialRuntimeConfig = {
       runtimeAccess: "same_origin_proxy",
@@ -3710,6 +3710,25 @@ describe("host.ready runtime bootstrap", () => {
     expect(container?.textContent).toContain("Runtime connected");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("engine-session-token");
+  });
+
+  it("rejects non-loopback root same-origin bootstrap before tokenless runtime requests", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    vi.stubGlobal("location", new URL("https://malicious.example/ui"));
+    window.__yetAiInitialRuntimeConfig = {
+      runtimeAccess: "same_origin_proxy",
+      runtimeBaseUrl: "/",
+    };
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/v1/"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("http://127.0.0.1:8001/"))).toBe(true);
+    expect(container?.textContent).toContain("Runtime unavailable");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("same_origin_proxy");
   });
 
   it("JetBrains packaged proxy mode ignores later raw direct host.ready URL", async () => {
