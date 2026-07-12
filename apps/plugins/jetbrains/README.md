@@ -54,6 +54,26 @@ The helper reuses `prepare:ide-engine`, runs the GUI build, and invokes `gradle 
 
 The ZIP and checksum are install-from-file dev-preview evidence only. They are not JetBrains Marketplace publication, signed plugin distribution, notarized engine packaging, an updater channel, a production installer, or a production release.
 
+### Searchable options build modes
+
+For local/dev-preview artifact builds, use the deterministic non-daemon Gradle path:
+
+```sh
+cd apps/plugins/jetbrains
+gradle buildPlugin --no-daemon
+```
+
+The Gradle `buildSearchableOptions` task is disabled by default because it can hang in headless local environments. Keeping it off for local artifact builds makes the dev-preview ZIP path non-interactive and repeatable.
+
+For a release/full artifact build that intentionally includes JetBrains searchable options, opt in explicitly:
+
+```sh
+cd apps/plugins/jetbrains
+gradle buildPlugin --no-daemon -PyetAiBuildSearchableOptions=true
+```
+
+Verify that opt-in release path only in an environment where `buildSearchableOptions` is known not to hang. Do not treat the default local/dev-preview build as release searchable-options evidence.
+
 ### Bundled engine resource inside the plugin JAR
 
 `npm run prepare:jetbrains-preview` also stages the local cargo-built `yet-lsp` (or `yet-lsp.exe` on Windows) as a stable bundled engine resource at `yet-ai-engine/yet-lsp` (or `yet-ai-engine/yet-lsp.exe` on Windows) inside the plugin JAR. The IDE extracts that resource on first launch and prefers it over `PATH` lookup, so the installable artifact no longer requires the user to copy or configure an absolute `Engine binary path` when `cargo build -p yet-lsp` has already produced the local binary. The bundled binary is the dev-preview local cargo build output staged from `target/debug/yet-lsp` (or `target/debug/yet-lsp.exe`), not a signed or notarized production engine; no signing, notarization, marketplace publication, production installer, or production release claim is made for this artifact. The `smoke:jetbrains-installable` and `smoke:github-ide-artifacts` smokes require both the unzip-first and the direct-install plugin ZIPs to contain this resource path with non-zero bytes. Run `npm run smoke:jetbrains-bundled-runtime` after `npm run prepare:jetbrains-preview` to extract the bundled engine from the root dev-preview ZIP, start it on loopback with a generated local token, verify authenticated `/v1/ping`, and stop it without launching IntelliJ. This startup smoke uses no provider credentials, real provider calls, hosted backend, signing, publishing, release upload, or production-release claim.

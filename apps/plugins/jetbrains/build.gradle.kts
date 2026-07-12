@@ -76,8 +76,9 @@ tasks {
     }
 
     matching { it.name == "buildSearchableOptions" }.configureEach {
-        // Local dev-preview artifact builds must be deterministic and non-interactive;
-        // searchable options can hang in headless local builds, so opt in explicitly.
+        // Local/dev-preview artifact builds keep searchable options disabled by default
+        // because this task can hang in headless environments. Release/full builds
+        // must opt in explicitly with -PyetAiBuildSearchableOptions=true.
         enabled = buildSearchableOptionsEnabled.get()
     }
 
