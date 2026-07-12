@@ -322,7 +322,7 @@ try {
     failures.push("Wrapper did not prove queued diagnostic adoption and flush without pre-ready direct display.");
   }
   await assertPendingQueuesAreBounded(page);
-  await page.waitForFunction(() => typeof window.__yetAiSendHostMessageToFrame === "function", undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper host-message sender helper was not installed."));
+  await assertWrapperHostMessageSenderReady(page);
   const currentReadyRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   assertRandomReadyRequestId(currentReadyRequestId, "initial gui.ready");
   await assertInvalidRuntimeUrlsRejected(page, bridgeVersion, currentReadyRequestId);
@@ -482,6 +482,7 @@ try {
   const refreshButton = await compactRefreshButton.isVisible().catch(() => false) ? compactRefreshButton : runtimeRefreshButton;
   if (await refreshButton.isVisible().catch(() => false)) {
     const runtimeRefreshMessageCountBeforeClick = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.runtimeRefresh").length);
+    const runtimePingCountBeforeClick = countRuntimeRequests("GET", "/v1/ping");
     if (refreshButton === runtimeRefreshButton) {
       await openDetailsBySummary(frameLocator, "Local runtime connection", refreshButton);
     }
@@ -490,8 +491,9 @@ try {
     await page.waitForTimeout(100);
     const runtimeRefreshMessageCountAfterFirstClick = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.runtimeRefresh").length);
     const runtimeRefreshMessagesPostedByFirstClick = runtimeRefreshMessageCountAfterFirstClick - runtimeRefreshMessageCountBeforeClick;
-    if (runtimeRefreshMessagesPostedByFirstClick !== 1) {
-      failures.push(`Refresh runtime click posted ${runtimeRefreshMessagesPostedByFirstClick} gui.runtimeRefresh bridge messages instead of exactly one.`);
+    const runtimePingCountAfterFirstClick = countRuntimeRequests("GET", "/v1/ping");
+    if (runtimeRefreshMessagesPostedByFirstClick !== 1 && runtimePingCountAfterFirstClick <= runtimePingCountBeforeClick) {
+      failures.push(`Refresh runtime click posted ${runtimeRefreshMessagesPostedByFirstClick} gui.runtimeRefresh bridge messages and did not refresh through the panel proxy.`);
     }
     if (!await refreshButton.isDisabled().catch(() => true)) {
       await refreshButton.click();
@@ -1193,9 +1195,9 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
   });
   await page.waitForFunction(() => document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow?.location.href === "about:blank", undefined, { timeout: 5000 })
     .catch(() => failures.push("Wrapper did not navigate iframe to about:blank during old-document regression reload."));
-  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, { url, cacheBust }) => {
-    frame.src = `${url}/index.html?old-document-regression=${cacheBust}`;
-  }, { url: guiUrl, cacheBust: randomUUID() });
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, { origin, panelPath, cacheBust }) => {
+    frame.src = `${origin}${panelPath}/index.html?old-document-regression=${cacheBust}`;
+  }, { origin: guiUrl, panelPath: runtimeUrl, cacheBust: randomUUID() });
   const freshReadyState = await forceFreshGuiReadyAfterReload(page, {
     version,
     origin: guiUrl,
@@ -1288,9 +1290,9 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
     failures.push("Wrapper did not show a bounded shell diagnostic when secure randomness was unavailable.");
   }
   const previousFrameNonce = await page.evaluate(() => window.__yetAiLastFrameNonceForSmoke ?? window.__yetAiCurrentFrameNonce);
-  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
-    frame.src = `${url}/index.html`;
-  }, guiUrl);
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, { origin, panelPath }) => {
+    frame.src = `${origin}${panelPath}/index.html`;
+  }, { origin: guiUrl, panelPath: runtimeUrl });
   await page.waitForFunction((oldNonce) => {
     const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
     const currentNonce = window.__yetAiCurrentFrameNonce;
@@ -1444,9 +1446,9 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
     failures.push("Wrapper queued stale same-requestId host.ready during iframe reload.");
   }
   const previousFrameNonce = await page.evaluate(() => window.__yetAiLastFrameNonceForSmoke ?? window.__yetAiCurrentFrameNonce);
-  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => {
-    frame.src = `${url}/index.html`;
-  }, guiUrl);
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, { origin, panelPath }) => {
+    frame.src = `${origin}${panelPath}/index.html`;
+  }, { origin: guiUrl, panelPath: runtimeUrl });
   const afterExplicitReloadReady = await forceFreshGuiReadyAfterReload(page, {
     version,
     origin: guiUrl,
@@ -2040,14 +2042,21 @@ async function assertJetBrainsConfirmedEditLifecycle(page, frameLocator) {
 }
 
 async function injectJetBrainsAssistantProposal(page, frameLocator, proposal) {
-  await page.evaluate(({ version, payload }) => window.__yetAiSetNextAssistantResponseForSmoke?.(JSON.stringify({
+  await setNextAssistantResponseForSmoke(page, JSON.stringify({
     type: "gui.applyWorkspaceEditRequest",
-    version,
-    payload,
-  })), { version: bridgeVersion, payload: proposal });
+    version: bridgeVersion,
+    payload: proposal,
+  }));
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Render JetBrains confirmed edit smoke proposal.");
   await clickSendButtonWithActionability(frameLocator, "JetBrains edit proposal injection send");
   await page.waitForFunction((text) => document.querySelector("iframe[title='Yet AI GUI']")?.contentDocument?.body?.innerText.includes(text), proposal.summary, { timeout: 5000 }).catch(() => undefined);
+}
+
+async function setNextAssistantResponseForSmoke(page, content) {
+  const accepted = await page.evaluate(async ({ content }) => await window.__yetAiSetNextAssistantResponseForSmoke?.(content) === true, { content }).catch(() => false);
+  if (!accepted) {
+    failures.push("Wrapper smoke could not stage the next assistant response through the host helper.");
+  }
 }
 
 async function waitForJetBrainsApplyRequest(page, expectedCount) {
@@ -2167,6 +2176,23 @@ async function assertPendingQueuesAreBounded(page) {
   }
 }
 
+async function assertWrapperHostMessageSenderReady(page) {
+  const ready = await page.waitForFunction(() => typeof window.__yetAiSendHostMessageToFrame === "function", undefined, { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!ready) {
+    const state = await page.evaluate(() => ({
+      wrapperInitialized: window.__yetAiWrapperInitialized === true,
+      senderType: typeof window.__yetAiSendHostMessageToFrame,
+      boundedQueueHelperType: typeof window.__yetAiSmokeBoundPendingQueues,
+      currentReadyRequestId: window.__yetAiCurrentReadyRequestId,
+      bridgeMessageTypes: Array.isArray(window.__yetAiBridgeMessages) ? window.__yetAiBridgeMessages.map((message) => message?.type).slice(-8) : undefined,
+    })).catch((error) => ({ evaluateError: messageOf(error) }));
+    failures.push(`Wrapper host-message sender helper was not installed before host-message assertions: ${JSON.stringify(state)}.`);
+    reportFailures();
+  }
+}
+
 async function requireFreshPackagedGui() {
   try {
     await assertPackagedGuiFreshness({
@@ -2230,6 +2256,10 @@ async function startWrapperServer(panelGuiBaseUrl) {
   assertWrapperReadinessSemantics(wrapperHtml);
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (requestUrl.pathname === "/__smoke/next-assistant-response") {
+      void forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
+      return;
+    }
     if (request.method !== "GET" || (requestUrl.pathname !== "/" && requestUrl.pathname !== "/wrapper.html")) {
       response.writeHead(404);
       response.end("Not found");
@@ -2404,12 +2434,13 @@ window.postIntellijMessage = (message) => {
 };
 window.__yetAiSetNextAssistantResponseForSmoke = (content) => {
   if (typeof content === "string" && content.length > 0 && content.length <= 50000) {
-    fetch("/__smoke/next-assistant-response", {
+    return fetch("/__smoke/next-assistant-response", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content }),
-    }).catch(() => undefined);
+    }).then((response) => response.ok).catch(() => false);
   }
+  return false;
 };
 const currentReadyRequestId = () => currentGuiReadyRequestId;
 const randomToken = () => {
@@ -2523,7 +2554,7 @@ const safePath = (value, maxLength) => value === undefined || (typeof value === 
 const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
 const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
 const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
-const requiredPanelProxyBaseUrl = (value) => typeof value === "string" && /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+const requiredPanelProxyBaseUrl = (value) => typeof value === "string" && /^\\/panel\\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
 const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "runtimeProxyBaseUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && ((payload.runtimeUrl !== undefined && requiredLoopbackRuntimeUrl(payload.runtimeUrl)) || (payload.runtimeProxyBaseUrl !== undefined && requiredPanelProxyBaseUrl(payload.runtimeProxyBaseUrl))) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
 const isIdeActionPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
 const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isIdeActionPosition(range.start) && isIdeActionPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
@@ -2779,6 +2810,10 @@ async function startMockRuntimeServer() {
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/providers") {
       json(response, 200, { providers: demoModeEnabled ? [readyDemoProvider()] : [], cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/project-memory") {
+      json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
