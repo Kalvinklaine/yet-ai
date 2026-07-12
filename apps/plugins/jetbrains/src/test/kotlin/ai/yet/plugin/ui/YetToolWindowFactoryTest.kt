@@ -30,9 +30,10 @@ class YetToolWindowFactoryTest {
 
         assertContains(html, "<iframe title=\"Yet AI GUI\" src=\"http://127.0.0.1:49221/panel/panel-1/index.html\"></iframe>")
         assertContains(html, "const frameTargetOrigin = \"http://127.0.0.1:49221\";")
-        assertContains(html, "Loading packaged Yet AI GUI from <code>http://127.0.0.1:49221/panel/panel-1/index.html</code>")
+        assertContains(html, "Installed plugin packaged panel: <code>http://127.0.0.1:49221/panel/panel-1/index.html</code>")
+        assertContains(html, "Engine-served Web UI: <code>http://127.0.0.1:8001/</code>")
         assertContains(html, "Connecting to Yet AI local runtime")
-        assertContains(html, "Packaged Yet AI GUI did not finish loading from the local loopback server")
+        assertContains(html, "Open the engine-served Web UI at <code>http://127.0.0.1:8001/</code>")
         assertContains(html, "window.setTimeout")
         assertContains(html, "window.__yetAiSendHostMessageToFrame = sendToFrame")
         assertContains(html, "window.__yetAiSetRuntimeDiagnostic")
@@ -102,7 +103,8 @@ class YetToolWindowFactoryTest {
         assertContains(html, "if (shellFallback && frame) armReadinessFallbackTimer(frameGeneration);")
         assertContains(html, "const readinessMessage = frameLoaded")
         assertContains(html, "Packaged Yet AI GUI loaded but did not send a validated ready signal")
-        assertContains(html, "Packaged Yet AI GUI did not finish loading from the local loopback server")
+        assertContains(html, "Packaged Yet AI GUI did not finish loading")
+        assertContains(html, "See the fallback panel above for the engine-served Web UI URL and repair steps")
         assertContains(html, "showReadinessFallback(readinessMessage);")
         assertContains(html, "shellStatus.textContent = message;")
         assertContains(html, "if (shellFallback) shellFallback.hidden = false;")
@@ -153,6 +155,106 @@ class YetToolWindowFactoryTest {
         assertContains(html, "if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;")
         assertFalse(html.contains("if (event.source === frame?.contentWindow)"))
         assertFalse(html.contains("postMessage(message, \"*\")"))
+    }
+
+    @Test
+    fun pluginManagedWrapperShowsEngineServedRootWithoutToken() {
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+            .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
+        val connection = RuntimeConnectionResult(
+            RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            "Connected to Yet AI local runtime.",
+            null,
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "ide_host",
+                launchMode = "launch",
+                tokenState = "present",
+                processState = RuntimeProcessState.RUNNING,
+                diagnosis = "local runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+        )
+
+        val html = renderHtml(connection, "console.log('bridge')", packagedGui)
+
+        assertContains(html, "Installed plugin packaged panel: <code>http://127.0.0.1:49221/panel/panel-1/index.html</code>")
+        assertContains(html, "Engine-served Web UI: <code>http://127.0.0.1:8123/</code>")
+        assertContains(html, "Open the engine-served Web UI at <code>http://127.0.0.1:8123/</code>")
+        assertFalse(html.contains("must-not-leak"), html)
+        assertFalse(html.contains("raw-static-session-token"), html)
+        assertFalse(html.contains("/private"), html)
+        assertFalse(html.contains("token="), html)
+    }
+
+    @Test
+    fun externalRuntimeWrapperDoesNotPromiseManagedWebUi() {
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val connection = RuntimeConnectionResult(
+            RuntimeSettings("http://127.0.0.1:8123", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.CONNECT),
+            "Connected to external runtime.",
+            null,
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "external",
+                launchMode = "connect",
+                tokenState = "not_required",
+                processState = RuntimeProcessState.NOT_OWNED,
+                diagnosis = "external runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+        )
+
+        val html = renderHtml(connection, "console.log('bridge')", packagedGui)
+
+        assertContains(html, "External/connect runtime: <code>http://127.0.0.1:8123/</code>")
+        assertContains(html, "The plugin cannot guarantee that this runtime serves the Web UI")
+        assertContains(html, "switch to plugin launch mode")
+        assertFalse(html.contains("Engine-served Web UI: <code>http://127.0.0.1:8123/</code>"), html)
+        assertFalse(html.contains("Open the engine-served Web UI at <code>http://127.0.0.1:8123/</code>"), html)
+    }
+
+    @Test
+    fun devGuiWrapperIdentifiesDevelopmentPathWithoutManagedPromise() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8123", "http://127.0.0.1:5173/gui", null), "Connected", null),
+            "console.log('bridge')",
+            null,
+        )
+
+        assertContains(html, "Development GUI iframe: <code>http://127.0.0.1:5173/gui</code>")
+        assertContains(html, "Runtime: <code>http://127.0.0.1:8123/</code>")
+        assertContains(html, "Development GUI did not finish loading from <code>http://127.0.0.1:5173/gui</code>")
+        assertFalse(html.contains("Engine-served Web UI:"), html)
+        assertFalse(html.contains("Open the engine-served Web UI"), html)
+    }
+
+    @Test
+    fun missingPackagedPanelFallbackIsActionableForPluginManagedRuntime() {
+        val html = renderHtml(
+            RuntimeConnectionResult(
+                RuntimeSettings("http://127.0.0.1:8123", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+                "Connected",
+                null,
+                RuntimeLifecycleStatus(
+                    lifecycle = RuntimeLifecycle.CONNECTED,
+                    runtimeOwner = "ide_host",
+                    launchMode = "launch",
+                    tokenState = "present",
+                    processState = RuntimeProcessState.RUNNING,
+                    diagnosis = "local runtime is reachable",
+                    nextAction = "Continue using Yet AI.",
+                ),
+            ),
+            "console.log('bridge')",
+            null,
+        )
+
+        assertContains(html, "Packaged Yet AI panel is unavailable")
+        assertContains(html, "Engine-served Web UI should be available at <code>http://127.0.0.1:8123/</code>")
+        assertContains(html, "Packaged Yet AI panel is missing or blank")
+        assertContains(html, "rebuild the GUI")
+        assertContains(html, "reinstall the plugin ZIP")
     }
     @Test
     fun wrapperFlushesQueuedMessagesOnlyWhenGuiIsReady() {

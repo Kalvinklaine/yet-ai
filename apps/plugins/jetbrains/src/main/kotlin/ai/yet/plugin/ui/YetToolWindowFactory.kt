@@ -731,20 +731,55 @@ object ActiveEditorContextCollector {
 
 }
 
+internal fun engineServedWebUiRootUrl(runtimeUrl: String): String? = try {
+    "${loopbackOrigin(runtimeUrl)}/"
+} catch (_: Exception) {
+    null
+}
+
+internal fun isPluginManagedRuntime(connection: RuntimeConnectionResult): Boolean = connection.lifecycleStatus.runtimeOwner == EffectiveRuntimeOwner.IDE_HOST.lifecycleOwner
+
+private fun shellStatusCopy(connection: RuntimeConnectionResult, packagedGui: PackagedGui?): String {
+    val settings = connection.settings
+    val engineRoot = engineServedWebUiRootUrl(settings.runtimeUrl)
+    val status = html(connection.status ?: "Connecting to Yet AI local runtime...")
+    return when {
+        settings.guiDevUrl != null -> "Development GUI iframe: <code>${html(settings.guiDevUrl)}</code>. Runtime: <code>${html(engineRoot ?: sanitizeRuntimeUrlForShell(settings.runtimeUrl))}</code>. $status"
+        packagedGui != null && isPluginManagedRuntime(connection) && engineRoot != null -> "Installed plugin packaged panel: <code>${html(packagedGui.indexUrl)}</code>. Engine-served Web UI: <code>${html(engineRoot)}</code>. $status"
+        packagedGui != null -> "Installed plugin packaged panel: <code>${html(packagedGui.indexUrl)}</code>. External/connect runtime: <code>${html(engineRoot ?: sanitizeRuntimeUrlForShell(settings.runtimeUrl))}</code>. The plugin cannot guarantee that this runtime serves the Web UI. $status"
+        isPluginManagedRuntime(connection) && engineRoot != null -> "Packaged Yet AI panel is unavailable. Engine-served Web UI should be available at <code>${html(engineRoot)}</code>. $status"
+        else -> "Packaged Yet AI panel is unavailable. External/connect runtime: <code>${html(engineRoot ?: sanitizeRuntimeUrlForShell(settings.runtimeUrl))}</code>. The plugin cannot guarantee that this runtime serves the Web UI. $status"
+    }
+}
+
+private fun shellFallbackCopy(connection: RuntimeConnectionResult, packagedGui: PackagedGui?): String {
+    val settings = connection.settings
+    val engineRoot = engineServedWebUiRootUrl(settings.runtimeUrl)
+    return when {
+        settings.guiDevUrl != null -> "Development GUI did not finish loading from <code>${html(settings.guiDevUrl)}</code>. Check that the loopback dev server is running, then click Refresh runtime."
+        packagedGui != null && isPluginManagedRuntime(connection) && engineRoot != null -> "Packaged Yet AI GUI did not finish loading from the installed plugin panel. Open the engine-served Web UI at <code>${html(engineRoot)}</code>, reinstall the latest ZIP, or rebuild with <code>npm run prepare:jetbrains-preview</code>."
+        packagedGui != null -> "Packaged Yet AI GUI did not finish loading from the installed plugin panel. This is an external/connect runtime, so the plugin cannot guarantee a Web UI at <code>${html(engineRoot ?: sanitizeRuntimeUrlForShell(settings.runtimeUrl))}</code>. Check the runtime owner or switch to plugin launch mode."
+        isPluginManagedRuntime(connection) && engineRoot != null -> "Packaged Yet AI panel is missing or blank. Open the engine-served Web UI at <code>${html(engineRoot)}</code>, rebuild the GUI, then reinstall the plugin ZIP."
+        else -> "Packaged Yet AI panel is missing or blank. This is an external/connect runtime, so the plugin cannot guarantee a Web UI at <code>${html(engineRoot ?: sanitizeRuntimeUrlForShell(settings.runtimeUrl))}</code>. Check runtime settings or switch to plugin launch mode."
+    }
+}
+
+private fun sanitizeRuntimeUrlForShell(runtimeUrl: String): String = engineServedWebUiRootUrl(runtimeUrl) ?: "unavailable"
+
 fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packagedGui: PackagedGui?): String {
     val settings = connection.settings
     val frame = buildGuiFrame(settings.guiDevUrl, packagedGui)
     val frameOrigin = buildFrameOrigin(settings.guiDevUrl, packagedGui)
     val status = connection.status?.let { "<p>${html(it)}</p>" } ?: ""
     val error = connection.error?.let { "<p><strong>Runtime error:</strong> ${html(it)}</p>" } ?: ""
+    val shellStatusCopy = shellStatusCopy(connection, packagedGui)
+    val shellFallbackCopy = shellFallbackCopy(connection, packagedGui)
     val placeholder = if (settings.guiDevUrl == null && packagedGui == null) {
-        "<main><h1>Yet AI</h1>$status$error<p>Runtime: <code>${html(settings.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> before <code>cd apps/plugins/jetbrains && gradle build --console=plain</code> to package the GUI, or set the GUI dev URL to a loopback Vite server during development.</p></main>"
+        "<main><h1>Yet AI</h1>$status$error<p>$shellStatusCopy</p><p>Run <code>cd apps/gui && npm run build</code> before <code>cd apps/plugins/jetbrains && gradle build --console=plain</code> to package the GUI, or set the GUI dev URL to a loopback Vite server during development.</p></main>"
     } else {
         ""
     }
-    val diagnostics = packagedGui?.let {
-        "<div id=\"yet-ai-shell-status\" role=\"status\">Loading packaged Yet AI GUI from <code>${html(it.indexUrl)}</code> with origin <code>${html(it.origin)}</code>. ${html(connection.status ?: "Connecting to Yet AI local runtime...")}</div><div id=\"yet-ai-shell-fallback\" role=\"alert\" hidden>Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with <code>npm run prepare:jetbrains-preview</code>.</div>"
-    } ?: "<div id=\"yet-ai-shell-status\" role=\"status\">${html(connection.status ?: "Connecting to Yet AI local runtime...")}</div>"
+    val diagnostics = "<div id=\"yet-ai-shell-status\" role=\"status\">$shellStatusCopy</div><div id=\"yet-ai-shell-fallback\" role=\"alert\" hidden>$shellFallbackCopy</div>"
     return """
         <!DOCTYPE html>
         <html lang="en">
@@ -836,8 +871,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             readinessFallbackTimerId = undefined;
             if (frameReady || readinessFallbackGeneration !== generation || frameGeneration !== generation) return;
             const readinessMessage = frameLoaded
-              ? "Packaged Yet AI GUI loaded but did not send a validated ready signal. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview."
-              : "Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview.";
+              ? "Packaged Yet AI GUI loaded but did not send a validated ready signal. See the fallback panel above for the engine-served Web UI URL and repair steps."
+              : "Packaged Yet AI GUI did not finish loading. See the fallback panel above for the engine-served Web UI URL and repair steps.";
             showReadinessFallback(readinessMessage);
           }, 8000);
         };
