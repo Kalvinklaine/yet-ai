@@ -1,4 +1,4 @@
-import { authHeaders, joinUrl, validateRuntimeBaseUrl, type RuntimeError, type RuntimeSettings } from "./runtimeClient";
+import { authHeaders, joinUrl, validateRuntimeSettings, type RuntimeError, type RuntimeSettings } from "./runtimeClient";
 
 export type SseEvent = {
   seq: number;
@@ -50,7 +50,7 @@ export async function subscribeToChat(
   callbacks: SseCallbacks,
   signal: AbortSignal,
 ): Promise<void> {
-  const validation = validateRuntimeBaseUrl(settings.baseUrl);
+  const validation = validateRuntimeSettings(settings);
   if (!validation.ok) {
     callbacks.onError(validation.error);
     return;

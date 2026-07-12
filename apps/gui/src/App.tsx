@@ -85,14 +85,14 @@ declare global {
 
 function readInitialRuntimeSettings(): RuntimeSettings {
   if (typeof window === "undefined") {
-    return { baseUrl: defaultBaseUrl, token: "" };
+    return { baseUrl: defaultBaseUrl, token: "", runtimeAccess: "direct" };
   }
   const config = window.__yetAiInitialRuntimeConfig;
   const proxyBaseUrl = config?.runtimeProxyBaseUrl ?? config?.runtimeBaseUrl;
   if (config?.runtimeAccess === "same_origin_proxy" && proxyBaseUrl && isPanelScopedProxyBaseUrl(proxyBaseUrl)) {
-    return { baseUrl: proxyBaseUrl, token: "" };
+    return { baseUrl: proxyBaseUrl, token: "", runtimeAccess: "same_origin_proxy" };
   }
-  return { baseUrl: defaultBaseUrl, token: "" };
+  return { baseUrl: defaultBaseUrl, token: "", runtimeAccess: "direct" };
 }
 
 function detectInitialBridgeHost(): BridgeHost {
@@ -385,6 +385,7 @@ export function App() {
   const initialRuntimeSettings = useMemo(() => readInitialRuntimeSettings(), []);
   const [baseUrl, setBaseUrl] = useState(initialRuntimeSettings.baseUrl);
   const [token, setToken] = useState(initialRuntimeSettings.token);
+  const [runtimeAccess, setRuntimeAccess] = useState(initialRuntimeSettings.runtimeAccess);
   const [ping, setPing] = useState<PingResponse | null>(null);
   const [caps, setCaps] = useState<CapsResponse | null>(null);
   const [models, setModels] = useState<ModelSummary[]>([]);
@@ -566,7 +567,7 @@ export function App() {
   const [oneStepLoopState, setOneStepLoopState] = useState<ControlledOneStepAgentLoopState>(() => createControlledOneStepAgentLoopState());
   const [controlledRunHistory, setControlledRunHistory] = useState<ControlledRunHistoryItem[]>([]);
 
-  const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token }), [baseUrl, token]);
+  const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token, runtimeAccess }), [baseUrl, runtimeAccess, token]);
   settingsRef.current = settings;
   chatIdRef.current = chatId;
   chatViewMessagesRef.current = chatView.messages;
@@ -1265,14 +1266,15 @@ export function App() {
   }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState]);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
-    const normalizedSettings = { ...nextSettings, token: nextSettings.token ?? "" };
-    const changed = settingsRef.current.baseUrl !== normalizedSettings.baseUrl || settingsRef.current.token !== normalizedSettings.token;
+    const normalizedSettings: RuntimeSettings = { ...nextSettings, token: nextSettings.token ?? "", runtimeAccess: nextSettings.runtimeAccess ?? "direct" };
+    const changed = settingsRef.current.baseUrl !== normalizedSettings.baseUrl || settingsRef.current.token !== normalizedSettings.token || settingsRef.current.runtimeAccess !== normalizedSettings.runtimeAccess;
     if (changed) {
       settingsRef.current = normalizedSettings;
       markSettingsChanged();
     }
     setBaseUrl(normalizedSettings.baseUrl);
     setToken(normalizedSettings.token);
+    setRuntimeAccess(normalizedSettings.runtimeAccess);
     return changed;
   }, [markSettingsChanged]);
 
@@ -1280,14 +1282,14 @@ export function App() {
     hostReadyAppliedRef.current = false;
     preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("manual");
-    updateRuntimeSettings({ ...settingsRef.current, baseUrl: nextBaseUrl });
+    updateRuntimeSettings({ ...settingsRef.current, baseUrl: nextBaseUrl, runtimeAccess: "direct" });
   }, [updateRuntimeSettings]);
 
   const updateToken = useCallback((nextToken: string) => {
     hostReadyAppliedRef.current = false;
     preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("manual");
-    updateRuntimeSettings({ ...settingsRef.current, token: nextToken });
+    updateRuntimeSettings({ ...settingsRef.current, token: nextToken, runtimeAccess: "direct" });
   }, [updateRuntimeSettings]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
@@ -1297,6 +1299,9 @@ export function App() {
     }
     const proxyMode = Boolean(payload?.runtimeProxyBaseUrl);
     setControlledHostCapabilities(payload.controlledCapabilities);
+    if (!proxyMode && settingsRef.current.runtimeAccess === "same_origin_proxy") {
+      return;
+    }
     const currentBaseUrl = settingsRef.current.baseUrl;
     const nextToken = proxyMode
       ? ""
@@ -1309,7 +1314,7 @@ export function App() {
     hostReadyAppliedRef.current = true;
     preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("host.ready");
-    const changed = updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
+    const changed = updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken, runtimeAccess: proxyMode ? "same_origin_proxy" : "direct" });
     appendTrace({
       family: "runtime.settings.applied",
       title: "Runtime settings applied",

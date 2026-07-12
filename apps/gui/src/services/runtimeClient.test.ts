@@ -10,12 +10,13 @@ afterEach(() => {
 });
 
 describe("runtimeClient", () => {
-  it("sends authorization only for loopback runtime URLs", () => {
-    const loopbackHeaders = new Headers(authHeaders({ baseUrl: "http://127.0.0.1:8001", token: " secret " }));
+  it("sends authorization only for direct loopback runtime URLs", () => {
+    const loopbackHeaders = new Headers(authHeaders({ baseUrl: "http://127.0.0.1:8001", token: " secret ", runtimeAccess: "direct" }));
     expect(loopbackHeaders.get("Authorization")).toBe("Bearer secret");
     expect(loopbackHeaders.get("X-Yet-AI-Caller")).toBe("gui_runtime_client");
-    expect(new Headers(authHeaders({ baseUrl: "https://localhost:8001", token: "secret" })).get("Authorization")).toBe("Bearer secret");
-    expect(new Headers(authHeaders({ baseUrl: "http://example.com", token: "secret" })).get("Authorization")).toBeNull();
+    expect(new Headers(authHeaders({ baseUrl: "https://localhost:8001", token: "secret", runtimeAccess: "direct" })).get("Authorization")).toBe("Bearer secret");
+    expect(new Headers(authHeaders({ baseUrl: "http://example.com", token: "secret", runtimeAccess: "direct" })).get("Authorization")).toBeNull();
+    expect(new Headers(authHeaders({ baseUrl: "/panel/panel-123", token: "secret", runtimeAccess: "same_origin_proxy" })).get("Authorization")).toBeNull();
   });
 
   it("uses panel-scoped same-origin proxy paths without GUI Authorization", async () => {
@@ -24,9 +25,9 @@ describe("runtimeClient", () => {
 
     expect(isPanelScopedProxyBaseUrl("/panel/panel-123")).toBe(true);
     expect(isPanelScopedProxyBaseUrl("/panel/panel-123/v1")).toBe(false);
-    expect(new Headers(authHeaders({ baseUrl: "/panel/panel-123", token: "proxy-mode-token" })).get("Authorization")).toBeNull();
+    expect(new Headers(authHeaders({ baseUrl: "/panel/panel-123", token: "proxy-mode-token", runtimeAccess: "same_origin_proxy" })).get("Authorization")).toBeNull();
 
-    const result = await runtimeFetch({ baseUrl: "/panel/panel-123", token: "proxy-mode-token" }, "/v1/ping");
+    const result = await runtimeFetch({ baseUrl: "/panel/panel-123", token: "proxy-mode-token", runtimeAccess: "same_origin_proxy" }, "/v1/ping");
 
     expect(result.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith("/panel/panel-123/v1/ping", expect.objectContaining({
@@ -35,6 +36,14 @@ describe("runtimeClient", () => {
     const headers = new Headers(fetchMock.mock.calls[0][1].headers);
     expect(headers.get("Authorization")).toBeNull();
     expect(headers.get("X-Yet-AI-Caller")).toBe("gui_runtime_client");
+  });
+
+  it("rejects panel proxy paths in direct mode before fetch", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await runtimeFetch({ baseUrl: "/panel/panel-123", token: "runtime-token", runtimeAccess: "direct" }, "/v1/ping");
+    expect(result.ok).toBe(false);
+    expect(result.ok ? undefined : result.error.status).toBe("configuration");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects non-loopback runtime URLs before fetch", async () => {

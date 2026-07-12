@@ -1,8 +1,11 @@
 import { sanitizeErrorText } from "./redaction";
 
+export type RuntimeAccessMode = "direct" | "same_origin_proxy";
+
 export type RuntimeSettings = {
   baseUrl: string;
   token: string;
+  runtimeAccess?: RuntimeAccessMode;
 };
 
 export type RuntimeError = {
@@ -309,6 +312,9 @@ export function authHeaders(settings: RuntimeSettings): HeadersInit {
     Accept: "application/json",
     "X-Yet-AI-Caller": "gui_runtime_client",
   };
+  if (runtimeAccessMode(settings) === "same_origin_proxy") {
+    return headers;
+  }
   const token = settings.token.trim();
   if (token && validateRuntimeBaseUrl(settings.baseUrl).ok) {
     headers.Authorization = `Bearer ${token}`;
@@ -321,8 +327,8 @@ export async function runtimeFetch<T>(
   path: string,
   init: RequestInit = {},
 ): Promise<RuntimeResult<T>> {
-  const validation = validateRuntimeBaseUrl(settings.baseUrl);
-  if (!validation.ok && !isPanelScopedProxyBaseUrl(settings.baseUrl)) {
+  const validation = validateRuntimeSettings(settings);
+  if (!validation.ok) {
     return { ok: false, error: validation.error };
   }
 
@@ -542,6 +548,26 @@ export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
 
 export function isLoopbackRuntimeUrl(baseUrl: string): boolean {
   return validateRuntimeBaseUrl(baseUrl).ok || isPanelScopedProxyBaseUrl(baseUrl);
+}
+
+export function runtimeAccessMode(settings: Pick<RuntimeSettings, "baseUrl"> & Partial<Pick<RuntimeSettings, "runtimeAccess">>): RuntimeAccessMode {
+  return settings.runtimeAccess === "same_origin_proxy" ? "same_origin_proxy" : "direct";
+}
+
+export function validateRuntimeSettings(settings: RuntimeSettings): RuntimeResult<URL | string> {
+  if (runtimeAccessMode(settings) === "same_origin_proxy") {
+    if (isPanelScopedProxyBaseUrl(settings.baseUrl)) {
+      return { ok: true, data: settings.baseUrl };
+    }
+    return {
+      ok: false,
+      error: {
+        status: "configuration",
+        message: "Runtime proxy base URL must be a panel-scoped same-origin path.",
+      },
+    };
+  }
+  return validateRuntimeBaseUrl(settings.baseUrl);
 }
 
 export function productIdentityWarning(response: Pick<PingResponse, "productId" | "displayName"> | Pick<CapsResponse, "productId">): string | null {

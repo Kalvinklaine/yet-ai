@@ -3692,6 +3692,29 @@ describe("host.ready runtime bootstrap", () => {
     expect(browserStorageDump()).not.toContain("panel-bootstrap");
   });
 
+  it("JetBrains packaged proxy mode ignores later raw direct host.ready URL", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    window.__yetAiInitialRuntimeConfig = {
+      runtimeAccess: "same_origin_proxy",
+      runtimeBaseUrl: "/panel/panel-stable",
+      runtimeProxyBaseUrl: "/panel/panel-stable",
+    };
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+    fetchMock.mockClear();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: "rawDirectToken" });
+    await flushAsync();
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("http://127.0.0.1:8765/"))).toBe(false);
+    expect(findInputValue("/panel/panel-stable")).toBeDefined();
+    expect(container?.textContent).not.toContain("rawDirectToken");
+    expect(browserStorageDump()).not.toContain("rawDirectToken");
+  });
+
   it("JetBrains packaged proxy host.ready provides same-origin runtime config before first refresh", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
