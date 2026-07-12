@@ -257,6 +257,118 @@ class YetToolWindowFactoryTest {
         assertContains(html, "reinstall the plugin ZIP")
     }
     @Test
+    fun wrapperExposesShellRuntimeCopyUpdateHelper() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "const applyShellRuntimeCopy = (payload) => {")
+        assertContains(html, "typeof payload.statusHtml !== \"string\"")
+        assertContains(html, "shellStatus.innerHTML = payload.statusHtml;")
+        assertContains(html, "if (!frameReady) shellStatus.hidden = false;")
+        assertContains(html, "shellFallback.innerHTML = payload.fallbackHtml;")
+        assertContains(html, "window.__yetAiSetShellRuntimeCopy = (payload) => {")
+        assertContains(java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt")), "window.__yetAiPendingShellRuntimeCopy = payload;")
+        assertContains(html, "window.__yetAiSetShellRuntimeCopy(window.__yetAiPendingShellRuntimeCopy);")
+    }
+
+    @Test
+    fun shellRuntimeCopyUpdateScriptAdvertisesPluginManagedEngineServedWebUiOnlyWithSanitizedRoot() {
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+            .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
+        val connection = RuntimeConnectionResult(
+            RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            "Connected to Yet AI local runtime.",
+            null,
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "ide_host",
+                launchMode = "launch",
+                tokenState = "present",
+                processState = RuntimeProcessState.RUNNING,
+                diagnosis = "local runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+        )
+
+        val script = shellRuntimeCopyScript(connection, packagedGui)
+        val decodedScript = script.replace("\\u003c", "<")
+
+        assertContains(script, "window.__yetAiSetShellRuntimeCopy(payload);")
+        assertContains(decodedScript, "Engine-served Web UI: <code>http://127.0.0.1:8123/</code>")
+        assertContains(decodedScript, "Open the engine-served Web UI at <code>http://127.0.0.1:8123/</code>")
+        assertFalse(script.contains("must-not-leak"), script)
+        assertFalse(script.contains("raw-static-session-token"), script)
+        assertFalse(script.contains("/private"), script)
+        assertFalse(script.contains("token="), script)
+    }
+
+    @Test
+    fun shellRuntimeCopyUpdateScriptKeepsExternalRuntimeCopyExternal() {
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val connection = RuntimeConnectionResult(
+            RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.CONNECT),
+            "Connected to external runtime.",
+            null,
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "external",
+                launchMode = "connect",
+                tokenState = "not_required",
+                processState = RuntimeProcessState.NOT_OWNED,
+                diagnosis = "external runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+        )
+
+        val script = shellRuntimeCopyScript(connection, packagedGui)
+        val decodedScript = script.replace("\\u003c", "<")
+
+        assertContains(decodedScript, "External/connect runtime: <code>http://127.0.0.1:8123/</code>")
+        assertContains(script, "The plugin cannot guarantee that this runtime serves the Web UI")
+        assertContains(script, "switch to plugin launch mode")
+        assertFalse(script.contains("Engine-served Web UI: <code>http://127.0.0.1:8123/</code>"), script)
+        assertFalse(script.contains("Open the engine-served Web UI at <code>http://127.0.0.1:8123/</code>"), script)
+        assertFalse(script.contains("must-not-leak"), script)
+        assertFalse(script.contains("/private"), script)
+        assertFalse(script.contains("token="), script)
+    }
+
+    @Test
+    fun shellRuntimeCopyUpdateScriptClassifiesPluginOwnedPreStartFailureAsRebuildGuidance() {
+        val connection = RuntimeConnectionResult(
+            RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            "Launch preparation failed.",
+            "Packaged Yet AI GUI dist unavailable; rebuild and reinstall the latest JetBrains plugin ZIP before launching the plugin-owned runtime.",
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.FAILED,
+                runtimeOwner = "ide_host",
+                launchMode = "launch",
+                tokenState = "present",
+                processState = RuntimeProcessState.FAILED,
+                diagnosis = "packaged Yet AI GUI dist unavailable for plugin-owned runtime launch",
+                nextAction = "Rebuild and reinstall the latest JetBrains plugin ZIP, then click Refresh runtime or run Yet AI: Restart Runtime.",
+            ),
+        )
+
+        val script = shellRuntimeCopyScript(connection, null)
+        val decodedScript = script.replace("\\u003c", "<")
+
+        assertContains(script, "Packaged Yet AI panel is unavailable")
+        assertContains(decodedScript, "Engine-served Web UI should be available at <code>http://127.0.0.1:8123/</code>")
+        assertContains(script, "Packaged Yet AI panel is missing or blank")
+        assertContains(script, "rebuild the GUI")
+        assertContains(script, "reinstall the plugin ZIP")
+        assertFalse(script.contains("External/connect runtime"), script)
+        assertFalse(script.contains("must-not-leak"), script)
+        assertFalse(script.contains("raw-static-session-token"), script)
+        assertFalse(script.contains("/private"), script)
+        assertFalse(script.contains("token="), script)
+    }
+
+    @Test
     fun wrapperFlushesQueuedMessagesOnlyWhenGuiIsReady() {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, "runtime unavailable"),

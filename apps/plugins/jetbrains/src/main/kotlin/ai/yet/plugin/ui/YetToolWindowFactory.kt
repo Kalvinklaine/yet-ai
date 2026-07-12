@@ -82,6 +82,21 @@ class WrapperScriptDelivery {
             })();
         """.trimIndent()
     }
+
+    fun shellRuntimeCopy(statusHtml: String, fallbackHtml: String): String {
+        val escapedStatus = BridgeMessages.escapeScriptJson(JsonPrimitive(statusHtml).toString())
+        val escapedFallback = BridgeMessages.escapeScriptJson(JsonPrimitive(fallbackHtml).toString())
+        return """
+            (() => {
+              const payload = { statusHtml: $escapedStatus, fallbackHtml: $escapedFallback };
+              if (typeof window.__yetAiSetShellRuntimeCopy === "function") {
+                window.__yetAiSetShellRuntimeCopy(payload);
+                return;
+              }
+              window.__yetAiPendingShellRuntimeCopy = payload;
+            })();
+        """.trimIndent()
+    }
 }
 
 class YetToolWindowFactory : ToolWindowFactory {
@@ -221,6 +236,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     private val delivery = WrapperScriptDelivery()
     private var packagedGuiServer: PackagedGuiServer? = null
     private var packagedGuiPanel: PackagedGuiPanel? = null
+    private var packagedGui: PackagedGui? = null
     private val contextRefreshAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     @Volatile
     private var latestConnection = pendingRuntimeConnection(RuntimeSettings.safeFallback())
@@ -290,7 +306,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             server.start()?.let { gui ->
                 val panel = server.registerPanel(initialSettings)
                 packagedGuiPanel = panel
-                gui.forPanel(panel)
+                gui.forPanel(panel).also { packagedGui = it }
             }
         } else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
@@ -351,6 +367,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         latestConnection = connection
         runtimePrepared = connection.error == null
         packagedGuiPanel?.let { panel -> packagedGuiServer?.updatePanel(panel.id, connection.settings) }
+        updateShellRuntimeCopy(connection)
         sendRuntimeStatus(connection.lifecycleStatus)
         if (connection.error == null) {
             if (pendingHostReadyReason == null && guiReadyRequestId != null) pendingHostReadyReason = runtimeUpdateReadyReason(connection)
@@ -358,6 +375,11 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         } else {
             sendDiagnostic(connection.error)
         }
+    }
+
+    private fun updateShellRuntimeCopy(connection: RuntimeConnectionResult) {
+        if (disposed) return
+        browser.cefBrowser.executeJavaScript(shellRuntimeCopyScript(connection, packagedGui, delivery), browser.cefBrowser.url, 0)
     }
 
     private fun refreshRuntimeFromGui() {
@@ -428,6 +450,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         contextRefreshAlarm.cancelAllRequests()
         packagedGuiPanel?.let { panel -> packagedGuiServer?.unregisterPanel(panel.id) }
         packagedGuiPanel = null
+        packagedGui = null
         packagedGuiServer = null
         query.dispose()
         browser.dispose()
@@ -739,6 +762,9 @@ internal fun engineServedWebUiRootUrl(runtimeUrl: String): String? = try {
 
 internal fun isPluginManagedRuntime(connection: RuntimeConnectionResult): Boolean = connection.lifecycleStatus.runtimeOwner == EffectiveRuntimeOwner.IDE_HOST.lifecycleOwner
 
+internal fun shellRuntimeCopyScript(connection: RuntimeConnectionResult, packagedGui: PackagedGui?, delivery: WrapperScriptDelivery = WrapperScriptDelivery()): String =
+    delivery.shellRuntimeCopy(shellStatusCopy(connection, packagedGui), shellFallbackCopy(connection, packagedGui))
+
 private fun shellStatusCopy(connection: RuntimeConnectionResult, packagedGui: PackagedGui?): String {
     val settings = connection.settings
     val engineRoot = engineServedWebUiRootUrl(settings.runtimeUrl)
@@ -828,6 +854,23 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics);
         window.__yetAiPendingHostMessages = pendingHostMessages;
         window.__yetAiPendingDiagnostics = pendingDiagnostics;
+        const applyShellRuntimeCopy = (payload) => {
+          if (typeof payload !== "object" || payload === null || Array.isArray(payload) || typeof payload.statusHtml !== "string" || typeof payload.fallbackHtml !== "string") return;
+          if (shellStatus) {
+            shellStatus.innerHTML = payload.statusHtml;
+            if (!frameReady) shellStatus.hidden = false;
+          }
+          if (shellFallback) {
+            shellFallback.innerHTML = payload.fallbackHtml;
+          }
+        };
+        window.__yetAiSetShellRuntimeCopy = (payload) => {
+          window.__yetAiPendingShellRuntimeCopy = undefined;
+          applyShellRuntimeCopy(payload);
+        };
+        if (window.__yetAiPendingShellRuntimeCopy !== undefined) {
+          window.__yetAiSetShellRuntimeCopy(window.__yetAiPendingShellRuntimeCopy);
+        }
         const showDiagnostic = (message) => {
           if (shellStatus && typeof message === "string") {
             shellStatus.hidden = false;
