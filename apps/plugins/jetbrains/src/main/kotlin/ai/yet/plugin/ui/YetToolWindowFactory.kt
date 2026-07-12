@@ -780,6 +780,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         let hostReadyAcceptedForCurrentFrame = false;
         let currentFrameNonce;
         let frameNonceChallengeAttempts = 0;
+        let readinessFallbackTimerId;
+        let readinessFallbackGeneration = 0;
         const maxPendingHostMessages = 32;
         const maxPendingDiagnostics = 16;
         const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];
@@ -820,16 +822,26 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (shellStatus) shellStatus.hidden = true;
           if (shellFallback) shellFallback.hidden = true;
         };
-        if (shellFallback && frame) {
-          window.setTimeout(() => {
-            if (!frameReady) {
-              const readinessMessage = frameLoaded
-                ? "Packaged Yet AI GUI loaded but did not send a validated ready signal. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview."
-                : "Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview.";
-              showReadinessFallback(readinessMessage);
-            }
+        const clearReadinessFallbackTimer = () => {
+          if (readinessFallbackTimerId !== undefined) {
+            window.clearTimeout(readinessFallbackTimerId);
+            readinessFallbackTimerId = undefined;
+          }
+        };
+        const armReadinessFallbackTimer = (generation) => {
+          clearReadinessFallbackTimer();
+          if (!shellFallback || !frame) return;
+          readinessFallbackGeneration = generation;
+          readinessFallbackTimerId = window.setTimeout(() => {
+            readinessFallbackTimerId = undefined;
+            if (frameReady || readinessFallbackGeneration !== generation || frameGeneration !== generation) return;
+            const readinessMessage = frameLoaded
+              ? "Packaged Yet AI GUI loaded but did not send a validated ready signal. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview."
+              : "Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview.";
+            showReadinessFallback(readinessMessage);
           }, 8000);
-        }
+        };
+        if (shellFallback && frame) armReadinessFallbackTimer(frameGeneration);
         window.postIntellijMessage = (message) => { $postIntellij };
         const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
         const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
@@ -1026,6 +1038,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           sendFrameNonceChallenge();
         };
         const invalidateFrameAuthority = (reason) => {
+          clearReadinessFallbackTimer();
           frameReady = false;
           currentGuiReadySequence = 0;
           currentGuiReadyRequestId = undefined;
@@ -1076,6 +1089,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             }
             if (isGuiUnloadedMessage(event.data)) {
               invalidateFrameAuthority("gui.unloaded");
+              armReadinessFallbackTimer(frameGeneration);
               window.postIntellijMessage(event.data);
             } else if (isGuiRuntimeRefresh(event.data)) {
               if (!frameReady) {
@@ -1123,6 +1137,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
                 return;
               }
               frameReady = true;
+              clearReadinessFallbackTimer();
               console.log("Yet AI received validated gui.ready from current iframe");
               hideShellAfterReady();
               guiReadySequence = nextGuiReadySequence;
@@ -1146,6 +1161,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             currentFrameWindow = frame.contentWindow;
             window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
             markFrameLoaded();
+            armReadinessFallbackTimer(frameGeneration);
             resetFrameNonceChallenge();
           });
         }
