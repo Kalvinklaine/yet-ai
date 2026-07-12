@@ -3715,6 +3715,60 @@ describe("host.ready runtime bootstrap", () => {
     expect(browserStorageDump()).not.toContain("rawDirectToken");
   });
 
+  it("JetBrains packaged proxy mode fails closed for malformed host.ready and accepts a later valid proxy payload", async () => {
+    const postIntellijMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    const malformedToken = "malformedProxyHostReadyToken";
+    const directToken = "directHostReadyTokenShouldNotStick";
+    const validProxyToken = "validProxyServerSideOnlyToken";
+    window.postIntellijMessage = postIntellijMessage;
+    window.__yetAiInitialRuntimeConfig = {
+      runtimeAccess: "same_origin_proxy",
+      runtimeBaseUrl: "/panel/panel-stable",
+      runtimeProxyBaseUrl: "/panel/panel-stable",
+    };
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("/panel/panel-stable/v1/"))).toBe(true);
+    fetchMock.mockClear();
+
+    await dispatchHostMessage({ version: bridgeVersion, type: "host.ready", payload: undefined });
+    await dispatchHostMessage({
+      version: bridgeVersion,
+      type: "host.ready",
+      payload: { runtimeProxyBaseUrl: "/panel", sessionToken: malformedToken },
+    });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: directToken });
+    await flushAsync();
+    await flushAsync();
+
+    expect(fetchMock.mock.calls).toHaveLength(0);
+    expect(findInputValue("/panel/panel-stable")).toBeDefined();
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
+    expect(container?.textContent).not.toContain(malformedToken);
+    expect(container?.textContent).not.toContain(directToken);
+    expect(browserStorageDump()).not.toContain(malformedToken);
+    expect(browserStorageDump()).not.toContain(directToken);
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", runtimeProxyBaseUrl: "/panel/panel-next", sessionToken: validProxyToken });
+    await flushAsync();
+    await flushAsync();
+
+    const validProxyCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/panel/panel-next/v1/"));
+    expect(validProxyCalls.length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("http://127.0.0.1:8765/"))).toBe(false);
+    expect(validProxyCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === null)).toBe(true);
+    expect(findInputValue("/panel/panel-next")).toBeDefined();
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(container?.textContent).not.toContain(validProxyToken);
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(validProxyToken);
+  });
+
   it("JetBrains packaged proxy host.ready provides same-origin runtime config before first refresh", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
