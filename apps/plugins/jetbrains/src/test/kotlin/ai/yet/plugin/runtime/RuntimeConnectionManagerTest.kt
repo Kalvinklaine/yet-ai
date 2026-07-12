@@ -52,6 +52,22 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun launchCommandPassesGuiDistDirectoryWithSpaces() {
+        val guiDist = Path.of("/tmp/Yet AI/gui dist")
+        val command = buildEngineLaunchCommand(
+            runtimeUrl = "http://127.0.0.1:8123",
+            binaryPath = Path.of("/tmp/yet-lsp"),
+            sessionToken = "session-secret",
+            baseEnvironment = mapOf("PATH" to "/bin"),
+            guiDistDirectory = guiDist,
+        )
+
+        assertEquals(guiDist.toString(), command.environment["YET_AI_WEB_UI_DIST_DIR"])
+        assertEquals("session-secret", command.environment["YET_AI_AUTH_TOKEN"])
+        assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
+    }
+
+    @Test
     fun launchCommandPreservesExplicitEngineLogLevelOverride() {
         val command = buildEngineLaunchCommand(
             runtimeUrl = "http://127.0.0.1:8123",
@@ -274,6 +290,76 @@ class RuntimeConnectionManagerTest {
         assertEquals(bundledPath, command.binaryPath)
         assertEquals("generated-session-token", command.environment["YET_AI_AUTH_TOKEN"])
         assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
+    }
+
+    @Test
+    fun autoModePluginLaunchPassesExtractedGuiDistToEngineEnvironment() {
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val guiDist = Path.of("/Users/alice/Library/Application Support/Yet AI/gui dist")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
+            tokenGenerator = { "generated-session-token" },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(guiDist, null) },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
+
+        manager.prepareConnectionSettings(settings)
+
+        val command = assertNotNull(launched.singleOrNull())
+        assertEquals(guiDist.toString(), command.environment["YET_AI_WEB_UI_DIST_DIR"])
+        assertEquals("generated-session-token", command.environment["YET_AI_AUTH_TOKEN"])
+        assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
+    }
+
+    @Test
+    fun connectModeDoesNotResolveOrPassGuiDistToEngineEnvironment() {
+        var guiResolveCalls = 0
+        var launchCalls = 0
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("connect mode must not resolve engine binaries") },
+            processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
+            tokenGenerator = { "unused-token" },
+            bundledGuiResolver = { guiResolveCalls += 1; BundledGuiResources.ExtractionResult(Path.of("/tmp/gui-dist"), null) },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, "connect-token", LaunchMode.CONNECT, null)
+
+        assertEquals(settings, manager.prepareConnectionSettings(settings))
+        assertEquals(0, guiResolveCalls)
+        assertEquals(0, launchCalls)
+    }
+
+    @Test
+    fun missingExtractedGuiDistKeepsLaunchAuthPortEnvAndLogsDiagnostic() {
+        val logDir = kotlin.io.path.createTempDirectory("yet-runtime-missing-gui-dist")
+        val logSink = YetLogSink(directoryProvider = { logDir })
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val launched = mutableListOf<EngineLaunchCommand>()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
+            tokenGenerator = { "generated-session-token" },
+            logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(null, "Bundled Yet AI GUI resource is missing yet-ai-gui/index.html") },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
+
+        manager.prepareConnectionSettings(settings)
+
+        val command = assertNotNull(launched.singleOrNull())
+        assertFalse(command.environment.containsKey("YET_AI_WEB_UI_DIST_DIR"))
+        assertEquals("generated-session-token", command.environment["YET_AI_AUTH_TOKEN"])
+        assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
+        val logText = java.nio.file.Files.readString(logSink.logPath())
+        assertContains(logText, "runtime.web_ui_dist")
+        assertContains(logText, "phase=unavailable")
+        assertContains(logText, "packaged_Web_UI_dist_unavailable")
+        assertFalse(logText.contains("generated-session-token"), logText)
+        manager.dispose()
     }
 
     @Test

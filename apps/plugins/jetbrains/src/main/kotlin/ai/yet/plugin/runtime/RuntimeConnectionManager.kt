@@ -34,6 +34,10 @@ class RuntimeConnectionManager(
     private val sessionTokenStore: RuntimeSessionTokenStore = PasswordSafeRuntimeSessionTokenStore(),
     private val logSink: YetLogSink = YetLogSink(),
     private val artifactFreshnessProvider: (RuntimeBinaryProvenance) -> ArtifactFreshness = { provenance -> ArtifactFreshnessResources.describe(provenance) },
+    private val bundledGuiResolver: (RuntimeBinaryProvenance) -> BundledGuiResources.ExtractionResult = { provenance ->
+        val fingerprint = ArtifactFreshnessResources.describe(provenance).packagedGuiFingerprint
+        BundledGuiResources.resolveOrExtract(fingerprint)
+    },
 ) : Disposable {
     private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
     private var launchedProcess: Process? = null
@@ -316,7 +320,8 @@ class RuntimeConnectionManager(
         stopLaunchedProcess()
         val token = tokenGenerator()
         logSink.append("info", "runtime.token.generated", runtimeCorrelationFields(settings.copyWithSessionToken(token), settings.launchMode))
-        val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token, logDirectory = logSink.logDirectory())
+        val bundledGuiDist = resolveBundledGuiDistForLaunch(provenance)
+        val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token, logDirectory = logSink.logDirectory(), guiDistDirectory = bundledGuiDist)
         logSink.append("info", "runtime.launch", mapOf("phase" to "start", "launchMode" to settings.launchMode.name.lowercase(), "runtime" to sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl), "binary" to binaryPath.fileName.toString(), "refreshSessionToken" to refreshSessionToken))
         val process = try {
             processStarter(command)
@@ -372,6 +377,20 @@ class RuntimeConnectionManager(
         launchedProvenance = null
         lastHealthResult = null
         lastEffectiveProcessState = RuntimeProcessState.EXITED
+    }
+
+    private fun resolveBundledGuiDistForLaunch(provenance: RuntimeBinaryProvenance): Path? {
+        val result = runCatching { bundledGuiResolver(provenance) }.getOrElse { error ->
+            BundledGuiResources.ExtractionResult(null, sanitizedRuntimeError("Bundled Yet AI GUI extraction failed", error as? Exception ?: IllegalStateException(error.message ?: error::class.java.simpleName)))
+        }
+        val path = result.path
+        return if (path != null) {
+            logSink.append("info", "runtime.web_ui_dist", mapOf("phase" to "available"))
+            path
+        } else {
+            logSink.append("warn", "runtime.web_ui_dist", mapOf("phase" to "unavailable", "diagnosis" to "packaged Web UI dist unavailable", "reason" to redactLogText(result.unavailableReason ?: "Bundled Yet AI GUI dist unavailable", "")))
+            null
+        }
     }
 
     private fun attachLogs(process: Process, token: String) {
@@ -949,12 +968,14 @@ fun buildEngineLaunchCommand(
     sessionToken: String,
     baseEnvironment: Map<String, String> = System.getenv(),
     logDirectory: Path? = null,
+    guiDistDirectory: Path? = null,
 ): EngineLaunchCommand {
     val env = sanitizedEngineLaunchEnvironment(baseEnvironment).toMutableMap()
     val port = parseExplicitRuntimePort(runtimeUrl)
     env["YET_AI_AUTH_TOKEN"] = sessionToken
     env["YET_AI_HTTP_PORT"] = port.toString()
     logDirectory?.let { env["YET_AI_LOG_DIR"] = it.toString() }
+    guiDistDirectory?.let { env["YET_AI_WEB_UI_DIST_DIR"] = it.toString() }
     env.putIfAbsent("YET_AI_LOG_LEVEL", "info")
     return EngineLaunchCommand(binaryPath, env)
 }
