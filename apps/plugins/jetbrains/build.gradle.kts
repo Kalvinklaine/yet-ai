@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.PathSensitivity
+
 plugins {
     kotlin("jvm") version "2.2.21"
     id("org.jetbrains.intellij.platform") version "2.10.4"
@@ -17,8 +19,15 @@ val guiDistDir = layout.projectDirectory.dir("../../gui/dist")
 val packagedGuiResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-gui")
 val copyGuiDist by tasks.registering(Copy::class) {
     onlyIf { guiDistDir.file("index.html").asFile.exists() }
+    inputs.dir(guiDistDir)
+        .withPropertyName("guiDist")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .optional()
     from(guiDistDir)
     into(packagedGuiResourcesDir.map { it.dir("yet-ai-gui") })
+    doFirst {
+        delete(packagedGuiResourcesDir.map { it.dir("yet-ai-gui") })
+    }
 }
 
 // Generated resource directory where `scripts/prepare-jetbrains-preview.mjs`
