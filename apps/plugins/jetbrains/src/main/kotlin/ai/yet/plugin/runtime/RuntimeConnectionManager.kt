@@ -33,11 +33,12 @@ class RuntimeConnectionManager(
     private val healthChecker: (RuntimeSettings) -> Unit = ::checkHealth,
     private val sessionTokenStore: RuntimeSessionTokenStore = PasswordSafeRuntimeSessionTokenStore(),
     private val logSink: YetLogSink = YetLogSink(),
-    private val artifactFreshnessProvider: (RuntimeSettings, EffectiveRuntimeOwner) -> ArtifactFreshness = { settings, owner -> ArtifactFreshnessResources.describe(settings, owner) },
+    private val artifactFreshnessProvider: (RuntimeBinaryProvenance) -> ArtifactFreshness = { provenance -> ArtifactFreshnessResources.describe(provenance) },
 ) : Disposable {
     private val logger = Logger.getInstance(RuntimeConnectionManager::class.java)
     private var launchedProcess: Process? = null
     private var launchedConnection: RuntimeSettings? = null
+    private var launchedProvenance: RuntimeBinaryProvenance? = null
     private var lastHealthResult: String? = null
     private var lastConnectionError: String? = null
     private var lastProcessExit: String? = null
@@ -46,6 +47,7 @@ class RuntimeConnectionManager(
     private var lastPreparedRuntimeUrl: String? = null
     private var lastEffectiveRuntimeOwner: EffectiveRuntimeOwner = EffectiveRuntimeOwner.EXTERNAL
     private var lastEffectiveProcessState: RuntimeProcessState = RuntimeProcessState.NOT_OWNED
+    private var lastRuntimeBinaryProvenance: RuntimeBinaryProvenance = RuntimeBinaryProvenance.UNKNOWN
     private var latestRuntimeConnectionResult: RuntimeConnectionResult? = null
     private val diagnosticsStateByIdentity = mutableMapOf<RuntimeDiagnosticsIdentity, RuntimeDiagnosticsState>()
 
@@ -269,40 +271,45 @@ class RuntimeConnectionManager(
 
     @Synchronized
     fun prepareConnectionSettings(settings: RuntimeSettings, refreshSessionToken: Boolean = false): RuntimeSettings {
-        val binaryPath = when (settings.launchMode) {
-            LaunchMode.CONNECT -> null
+        val resolvedBinary = when (settings.launchMode) {
+            LaunchMode.CONNECT -> ResolvedRuntimeBinary(null, RuntimeBinaryProvenance.CONNECT_EXTERNAL)
             LaunchMode.LAUNCH -> {
                 val configured = settings.engineBinaryPath
                 if (configured != null) {
-                    engineBinaryFinder(configured)
+                    val resolved = engineBinaryFinder(configured)
+                    ResolvedRuntimeBinary(resolved, resolved?.let { RuntimeBinaryProvenance.configuredExternal(it) } ?: RuntimeBinaryProvenance.UNKNOWN)
                 } else {
                     val bundled = resolveBundledEngineOrThrow(bundledEngineProvider)
                     if (bundled != null) {
-                        bundled
+                        ResolvedRuntimeBinary(bundled, RuntimeBinaryProvenance.bundled(bundled))
                     } else {
-                        engineBinaryFinder(null)
+                        val pathFallback = engineBinaryFinder(null)
                             ?: throw IllegalArgumentException("Yet AI engine binary path must point to ${ProductIdentity.engineBinaryName} when launch mode is enabled")
+                        ResolvedRuntimeBinary(pathFallback, RuntimeBinaryProvenance.pathFallback(pathFallback))
                     }
                 }
             }
-            LaunchMode.AUTO -> resolveEngineBinary(settings.engineBinaryPath, resolveBundledEngineOrThrow(bundledEngineProvider), engineBinaryFinder)
+            LaunchMode.AUTO -> resolveRuntimeBinary(settings.engineBinaryPath, resolveBundledEngineOrThrow(bundledEngineProvider), engineBinaryFinder)
         }
         val shouldLaunch = settings.launchMode == LaunchMode.LAUNCH ||
-            (settings.launchMode == LaunchMode.AUTO && binaryPath != null)
+            (settings.launchMode == LaunchMode.AUTO && resolvedBinary.binaryPath != null)
         return if (shouldLaunch) {
-            launchOrReuse(settings, requireNotNull(binaryPath), refreshSessionToken)
+            launchOrReuse(settings, requireNotNull(resolvedBinary.binaryPath), resolvedBinary.provenance, refreshSessionToken)
         } else {
+            lastRuntimeBinaryProvenance = resolvedBinary.provenance
             settings
         }
     }
 
     @Synchronized
-    private fun launchOrReuse(settings: RuntimeSettings, binaryPath: Path, refreshSessionToken: Boolean): RuntimeSettings {
+    private fun launchOrReuse(settings: RuntimeSettings, binaryPath: Path, provenance: RuntimeBinaryProvenance, refreshSessionToken: Boolean): RuntimeSettings {
         reconcileExitedLaunchedProcess()
         val existing = launchedProcess
         val existingConnection = launchedConnection
         if (!refreshSessionToken && existing != null && existing.isAlive && existingConnection?.runtimeUrl == settings.runtimeUrl) {
             logSink.append("info", "runtime.connection.reuse", runtimeCorrelationFields(existingConnection, settings.launchMode))
+            launchedProvenance = launchedProvenance ?: provenance
+            lastRuntimeBinaryProvenance = launchedProvenance ?: provenance
             return existingConnection
         }
         logSink.append("info", "runtime.connection.relaunch", runtimeCorrelationFields(settings, settings.launchMode) + mapOf("refreshSessionToken" to refreshSessionToken))
@@ -329,6 +336,8 @@ class RuntimeConnectionManager(
         }
         launchedProcess = process
         launchedConnection = connection
+        launchedProvenance = provenance
+        lastRuntimeBinaryProvenance = provenance
         attachLogs(process, token)
         logger.info("Started Yet AI local runtime")
         logSink.append("info", "runtime.launch", mapOf("phase" to "success", "runtime" to sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)))
@@ -341,6 +350,7 @@ class RuntimeConnectionManager(
                     logSink.append("warn", "runtime.exit", mapOf("code" to code, "process" to lastProcessExit))
                     launchedProcess = null
                     launchedConnection = null
+                    launchedProvenance = null
                     lastEffectiveProcessState = RuntimeProcessState.EXITED
                     rememberDiagnosticsState(connection, EffectiveRuntimeOwner.IDE_HOST, RuntimeProcessState.EXITED)
                 }
@@ -359,6 +369,7 @@ class RuntimeConnectionManager(
         launchedConnection?.let { rememberDiagnosticsState(it, EffectiveRuntimeOwner.IDE_HOST, RuntimeProcessState.EXITED) }
         launchedProcess = null
         launchedConnection = null
+        launchedProvenance = null
         lastHealthResult = null
         lastEffectiveProcessState = RuntimeProcessState.EXITED
     }
@@ -383,6 +394,7 @@ class RuntimeConnectionManager(
         val process = launchedProcess ?: return
         launchedProcess = null
         launchedConnection = null
+        launchedProvenance = null
         lastHealthResult = null
         lastProcessExit = null
         lastPreparedRuntimeUrl = null
@@ -432,7 +444,8 @@ class RuntimeConnectionManager(
         val identity = diagnosticsIdentity(settings, owner)
         val scopedState = diagnosticsStateByIdentity[identity]
         val processState = scopedState?.processState ?: RuntimeProcessState.NOT_OWNED
-        val artifactFreshness = runCatching { artifactFreshnessProvider(settings, owner) }.getOrElse { ArtifactFreshness.unknown() }
+        val provenance = scopedState?.provenance ?: diagnosticsProvenanceFor(settings, owner)
+        val artifactFreshness = runCatching { artifactFreshnessProvider(provenance) }.getOrElse { ArtifactFreshness.unknown() }
         return RuntimeDiagnostics(
             launchMode = settings.launchMode.name.lowercase(),
             runtimeUrl = sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl),
@@ -486,7 +499,15 @@ class RuntimeConnectionManager(
             process = if (owner == EffectiveRuntimeOwner.IDE_HOST) lastProcessExit else null,
             recovery = lastRecoveryResult,
             processState = processState,
+            provenance = if (owner == EffectiveRuntimeOwner.IDE_HOST) lastRuntimeBinaryProvenance else diagnosticsProvenanceFor(connection, owner),
         )
+    }
+
+    private fun diagnosticsProvenanceFor(settings: RuntimeSettings, owner: EffectiveRuntimeOwner): RuntimeBinaryProvenance = when {
+        settings.launchMode == LaunchMode.CONNECT -> RuntimeBinaryProvenance.CONNECT_EXTERNAL
+        settings.engineBinaryPath != null -> RuntimeBinaryProvenance.CONFIGURED_EXTERNAL
+        owner == EffectiveRuntimeOwner.IDE_HOST -> lastRuntimeBinaryProvenance
+        else -> RuntimeBinaryProvenance.UNAVAILABLE
     }
 
     private fun rememberLatestRuntimeConnectionResult(result: RuntimeConnectionResult) {
@@ -569,6 +590,7 @@ private data class RuntimeDiagnosticsState(
     val process: String? = null,
     val recovery: String? = null,
     val processState: RuntimeProcessState = RuntimeProcessState.NOT_OWNED,
+    val provenance: RuntimeBinaryProvenance = RuntimeBinaryProvenance.UNKNOWN,
 )
 
 class RuntimeHealthCheckException(message: String, val statusCode: Int? = null, cause: Throwable? = null) : IllegalStateException(message, cause)
@@ -1060,6 +1082,27 @@ fun resolveEngineBinary(
         return bundled
     }
     return finder(null)
+}
+
+private data class ResolvedRuntimeBinary(
+    val binaryPath: Path?,
+    val provenance: RuntimeBinaryProvenance,
+)
+
+private fun resolveRuntimeBinary(
+    configuredPath: Path?,
+    bundled: Path?,
+    finder: (Path?) -> Path?,
+): ResolvedRuntimeBinary {
+    if (configuredPath != null) {
+        val resolved = finder(configuredPath)
+        return ResolvedRuntimeBinary(resolved, resolved?.let { RuntimeBinaryProvenance.configuredExternal(it) } ?: RuntimeBinaryProvenance.UNKNOWN)
+    }
+    if (bundled != null) {
+        return ResolvedRuntimeBinary(bundled, RuntimeBinaryProvenance.bundled(bundled))
+    }
+    val pathFallback = finder(null)
+    return ResolvedRuntimeBinary(pathFallback, pathFallback?.let { RuntimeBinaryProvenance.pathFallback(it) } ?: RuntimeBinaryProvenance.UNAVAILABLE)
 }
 
 fun findEngineBinary(configuredPath: Path?): Path? {

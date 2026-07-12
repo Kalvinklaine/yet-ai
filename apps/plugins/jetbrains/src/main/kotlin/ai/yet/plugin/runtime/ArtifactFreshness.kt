@@ -21,27 +21,50 @@ data class ArtifactFreshness(
     }
 }
 
+enum class RuntimeBinaryProvenanceKind {
+    BUNDLED,
+    CONFIGURED_EXTERNAL,
+    PATH_FALLBACK,
+    CONNECT_EXTERNAL,
+    UNAVAILABLE,
+    UNKNOWN,
+}
+
+data class RuntimeBinaryProvenance(
+    val kind: RuntimeBinaryProvenanceKind,
+    internal val binaryPath: java.nio.file.Path? = null,
+) {
+    companion object {
+        val CONNECT_EXTERNAL = RuntimeBinaryProvenance(RuntimeBinaryProvenanceKind.CONNECT_EXTERNAL)
+        val CONFIGURED_EXTERNAL = RuntimeBinaryProvenance(RuntimeBinaryProvenanceKind.CONFIGURED_EXTERNAL)
+        val UNAVAILABLE = RuntimeBinaryProvenance(RuntimeBinaryProvenanceKind.UNAVAILABLE)
+        val UNKNOWN = RuntimeBinaryProvenance(RuntimeBinaryProvenanceKind.UNKNOWN)
+
+        fun bundled(binaryPath: java.nio.file.Path): RuntimeBinaryProvenance = RuntimeBinaryProvenance(RuntimeBinaryProvenanceKind.BUNDLED, binaryPath)
+        fun configuredExternal(binaryPath: java.nio.file.Path): RuntimeBinaryProvenance = RuntimeBinaryProvenance(RuntimeBinaryProvenanceKind.CONFIGURED_EXTERNAL, binaryPath)
+        fun pathFallback(binaryPath: java.nio.file.Path): RuntimeBinaryProvenance = RuntimeBinaryProvenance(RuntimeBinaryProvenanceKind.PATH_FALLBACK, binaryPath)
+    }
+}
+
 internal object ArtifactFreshnessResources {
     const val METADATA_RESOURCE: String = "yet-ai-artifact/build.properties"
 
     fun describe(
-        settings: RuntimeSettings,
-        owner: EffectiveRuntimeOwner,
+        provenance: RuntimeBinaryProvenance,
         classLoader: ClassLoader = ArtifactFreshnessResources::class.java.classLoader,
         osName: String = System.getProperty("os.name"),
         metadataLoader: (String) -> InputStream? = { path -> classLoader.getResourceAsStream(path) },
         bundledResourceLoader: (String) -> InputStream? = { path -> classLoader.getResourceAsStream(path) },
     ): ArtifactFreshness {
-        if (settings.launchMode == LaunchMode.CONNECT) {
-            return metadata(metadataLoader).toFreshness("connect-mode external", null)
-        }
-        if (settings.engineBinaryPath != null) {
-            return metadata(metadataLoader).toFreshness("configured external", null)
-        }
-        if (owner != EffectiveRuntimeOwner.IDE_HOST) {
-            return metadata(metadataLoader).toFreshness("unavailable", null)
-        }
         val metadata = metadata(metadataLoader)
+        when (provenance.kind) {
+            RuntimeBinaryProvenanceKind.CONNECT_EXTERNAL -> return metadata.toFreshness("connect-mode external", null)
+            RuntimeBinaryProvenanceKind.CONFIGURED_EXTERNAL -> return metadata.toFreshness("configured external", null)
+            RuntimeBinaryProvenanceKind.PATH_FALLBACK -> return metadata.toFreshness("path fallback external", null)
+            RuntimeBinaryProvenanceKind.UNAVAILABLE -> return metadata.toFreshness("unavailable", null)
+            RuntimeBinaryProvenanceKind.UNKNOWN -> return metadata.toFreshness("unknown", null)
+            RuntimeBinaryProvenanceKind.BUNDLED -> Unit
+        }
         val actualBundled = bundledResourceSha256(osName, bundledResourceLoader)
         val expectedBundled = metadata.bundledEngineSha256
         val classification = when {

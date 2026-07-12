@@ -325,7 +325,7 @@ class RuntimeConnectionManagerTest {
             processStarter = { FakeAliveProcess() },
             tokenGenerator = { "diagnostics-plugin-token-that-must-not-leak-1234567890" },
             healthChecker = {},
-            artifactFreshnessProvider = { _, _ -> freshness },
+            artifactFreshnessProvider = { freshness },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8132", null, null, LaunchMode.LAUNCH, null)
 
@@ -344,6 +344,133 @@ class RuntimeConnectionManagerTest {
         assertFalse(diagnostics.contains("Token state: absent"), diagnostics)
         assertFalse(diagnostics.contains("diagnostics-plugin-token"), diagnostics)
         manager.dispose()
+    }
+
+    @Test
+    fun diagnosticsFreshnessUsesActualBundledLaunchProvenance() {
+        val seen = mutableListOf<RuntimeBinaryProvenanceKind>()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "bundled-provenance-token" },
+            healthChecker = {},
+            artifactFreshnessProvider = { provenance ->
+                seen += provenance.kind
+                ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
+            },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8140", null, null, LaunchMode.AUTO, null)
+
+        manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+
+        assertEquals(listOf(RuntimeBinaryProvenanceKind.BUNDLED), seen)
+        assertContains(diagnostics, "Runtime binary freshness: bundled")
+        assertFalse(diagnostics.contains("/Users/alice"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
+    fun diagnosticsFreshnessUsesConfiguredExternalProvenance() {
+        val seen = mutableListOf<RuntimeBinaryProvenanceKind>()
+        val configuredPath = Path.of("/Users/alice/bin/yet-lsp")
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")),
+            engineBinaryFinder = { configured -> assertEquals(configuredPath, configured); configuredPath },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "configured-provenance-token" },
+            healthChecker = {},
+            artifactFreshnessProvider = { provenance ->
+                seen += provenance.kind
+                ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
+            },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8141", null, null, LaunchMode.AUTO, configuredPath)
+
+        manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+
+        assertEquals(listOf(RuntimeBinaryProvenanceKind.CONFIGURED_EXTERNAL), seen)
+        assertContains(diagnostics, "Runtime binary freshness: configured_external")
+        assertFalse(diagnostics.contains("/Users/alice"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
+    fun diagnosticsFreshnessUsesPathFallbackProvenanceForAutoLaunch() {
+        val seen = mutableListOf<RuntimeBinaryProvenanceKind>()
+        val pathFallback = Path.of("/Users/alice/.local/bin/yet-lsp")
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(null),
+            engineBinaryFinder = { configured -> assertEquals(null, configured); pathFallback },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "path-fallback-provenance-token" },
+            healthChecker = {},
+            artifactFreshnessProvider = { provenance ->
+                seen += provenance.kind
+                ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
+            },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8142", null, null, LaunchMode.AUTO, null)
+
+        manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+
+        assertEquals(listOf(RuntimeBinaryProvenanceKind.PATH_FALLBACK), seen)
+        assertContains(diagnostics, "Runtime binary freshness: path_fallback")
+        assertFalse(diagnostics.contains("Runtime binary freshness: bundled"), diagnostics)
+        assertFalse(diagnostics.contains("/Users/alice"), diagnostics)
+        manager.dispose()
+    }
+
+    @Test
+    fun diagnosticsFreshnessPreservesReusedLaunchProvenance() {
+        val seen = mutableListOf<RuntimeBinaryProvenanceKind>()
+        val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(bundledPath),
+            engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
+            processStarter = { FakeAliveProcess() },
+            tokenGenerator = { "reuse-provenance-token" },
+            healthChecker = {},
+            artifactFreshnessProvider = { provenance ->
+                seen += provenance.kind
+                ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
+            },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8143", null, null, LaunchMode.AUTO, null)
+
+        manager.prepareForTest(settings)
+        manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+
+        assertEquals(listOf(RuntimeBinaryProvenanceKind.BUNDLED), seen)
+        assertContains(diagnostics, "Runtime binary freshness: bundled")
+        manager.dispose()
+    }
+
+    @Test
+    fun diagnosticsFreshnessReportsUnavailableForAutoConnectOnlyFallback() {
+        val seen = mutableListOf<RuntimeBinaryProvenanceKind>()
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(null),
+            engineBinaryFinder = { configured -> assertEquals(null, configured); null },
+            processStarter = { error("connect-only fallback must not launch") },
+            tokenGenerator = { "unused-token" },
+            healthChecker = {},
+            artifactFreshnessProvider = { provenance ->
+                seen += provenance.kind
+                ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
+            },
+        )
+        val settings = RuntimeSettings("http://127.0.0.1:8144", null, null, LaunchMode.AUTO, null)
+
+        manager.prepareForTest(settings)
+        val diagnostics = manager.runtimeDiagnosticsForTest(settings)
+
+        assertEquals(listOf(RuntimeBinaryProvenanceKind.UNAVAILABLE), seen)
+        assertContains(diagnostics, "Runtime binary freshness: unavailable")
     }
 
     @Test

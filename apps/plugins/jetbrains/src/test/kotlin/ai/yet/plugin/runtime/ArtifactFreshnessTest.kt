@@ -14,8 +14,7 @@ class ArtifactFreshnessTest {
         val metadata = metadata(engineSha = sha256(engine), guiSha = sha256(gui))
 
         val freshness = ArtifactFreshnessResources.describe(
-            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null),
-            EffectiveRuntimeOwner.IDE_HOST,
+            RuntimeBinaryProvenance.bundled(java.nio.file.Path.of("/tmp/yet-lsp")),
             metadataLoader = loader(mapOf(ArtifactFreshnessResources.METADATA_RESOURCE to metadata.toByteArray())),
             bundledResourceLoader = loader(mapOf("yet-ai-engine/yet-lsp" to engine)),
         )
@@ -34,8 +33,7 @@ class ArtifactFreshnessTest {
         val metadata = metadata(engineSha = sha256(expectedEngine), guiSha = sha256("gui".toByteArray()))
 
         val freshness = ArtifactFreshnessResources.describe(
-            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null),
-            EffectiveRuntimeOwner.IDE_HOST,
+            RuntimeBinaryProvenance.bundled(java.nio.file.Path.of("/tmp/yet-lsp")),
             metadataLoader = loader(mapOf(ArtifactFreshnessResources.METADATA_RESOURCE to metadata.toByteArray())),
             bundledResourceLoader = loader(mapOf("yet-ai-engine/yet-lsp" to actualEngine)),
         )
@@ -51,14 +49,17 @@ class ArtifactFreshnessTest {
         val metadataLoader = loader(mapOf(ArtifactFreshnessResources.METADATA_RESOURCE to metadata.toByteArray()))
 
         val connect = ArtifactFreshnessResources.describe(
-            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.CONNECT, null),
-            EffectiveRuntimeOwner.EXTERNAL,
+            RuntimeBinaryProvenance.CONNECT_EXTERNAL,
             metadataLoader = metadataLoader,
             bundledResourceLoader = loader(mapOf("yet-ai-engine/yet-lsp" to engine)),
         )
         val configured = ArtifactFreshnessResources.describe(
-            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, java.nio.file.Path.of("/tmp/yet-lsp")),
-            EffectiveRuntimeOwner.EXTERNAL,
+            RuntimeBinaryProvenance.configuredExternal(java.nio.file.Path.of("/tmp/yet-lsp")),
+            metadataLoader = metadataLoader,
+            bundledResourceLoader = loader(mapOf("yet-ai-engine/yet-lsp" to engine)),
+        )
+        val pathFallback = ArtifactFreshnessResources.describe(
+            RuntimeBinaryProvenance.pathFallback(java.nio.file.Path.of("/usr/local/bin/yet-lsp")),
             metadataLoader = metadataLoader,
             bundledResourceLoader = loader(mapOf("yet-ai-engine/yet-lsp" to engine)),
         )
@@ -67,14 +68,15 @@ class ArtifactFreshnessTest {
         assertEquals("unknown", connect.bundledEngineFingerprint)
         assertEquals("configured external", configured.runtimeBinaryFreshness)
         assertEquals("unknown", configured.bundledEngineFingerprint)
+        assertEquals("path fallback external", pathFallback.runtimeBinaryFreshness)
+        assertEquals("unknown", pathFallback.bundledEngineFingerprint)
     }
 
     @Test
     fun absentOrMalformedMetadataReportsUnknownSafely() {
         val malformed = "build.commit=not-a-sha\nbuild.timestamp=nope\ngui.sha256=short\nengine.sha256=also-short\n"
         val freshness = ArtifactFreshnessResources.describe(
-            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.LAUNCH, null),
-            EffectiveRuntimeOwner.IDE_HOST,
+            RuntimeBinaryProvenance.bundled(java.nio.file.Path.of("/tmp/yet-lsp")),
             metadataLoader = loader(mapOf(ArtifactFreshnessResources.METADATA_RESOURCE to malformed.toByteArray())),
             bundledResourceLoader = loader(emptyMap()),
         )
