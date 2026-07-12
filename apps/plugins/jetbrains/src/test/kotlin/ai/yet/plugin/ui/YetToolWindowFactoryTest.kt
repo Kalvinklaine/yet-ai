@@ -267,8 +267,11 @@ class YetToolWindowFactoryTest {
         assertContains(html, "const applyShellRuntimeCopy = (payload) => {")
         assertContains(html, "typeof payload.statusHtml !== \"string\"")
         assertContains(html, "shellStatus.innerHTML = payload.statusHtml;")
-        assertContains(html, "if (!frameReady) shellStatus.hidden = false;")
+        assertContains(html, "const showStatus = payload.showStatus === true;")
+        assertContains(html, "const showFallback = payload.showFallback === true;")
+        assertContains(html, "shellStatus.hidden = frameReady ? !showStatus : false;")
         assertContains(html, "shellFallback.innerHTML = payload.fallbackHtml;")
+        assertContains(html, "shellFallback.hidden = frameReady ? !showFallback : shellFallback.hidden && !showFallback;")
         assertContains(html, "window.__yetAiSetShellRuntimeCopy = (payload) => {")
         assertContains(java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt")), "window.__yetAiPendingShellRuntimeCopy = payload;")
         assertContains(html, "window.__yetAiSetShellRuntimeCopy(window.__yetAiPendingShellRuntimeCopy);")
@@ -362,6 +365,70 @@ class YetToolWindowFactoryTest {
         assertContains(script, "rebuild the GUI")
         assertContains(script, "reinstall the plugin ZIP")
         assertFalse(script.contains("External/connect runtime"), script)
+        assertFalse(script.contains("must-not-leak"), script)
+        assertFalse(script.contains("raw-static-session-token"), script)
+        assertFalse(script.contains("/private"), script)
+        assertFalse(script.contains("token="), script)
+    }
+
+    @Test
+    fun shellRuntimeCopyUpdateScriptShowsPluginOwnedFailureAfterGuiReady() {
+        val connection = RuntimeConnectionResult(
+            RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            null,
+            "Yet AI local runtime connection failed: connection refused",
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.FAILED,
+                runtimeOwner = "ide_host",
+                launchMode = "launch",
+                tokenState = "present",
+                processState = RuntimeProcessState.FAILED,
+                diagnosis = "plugin-launched runtime process did not answer ping",
+                nextAction = "Click Refresh runtime, then run Yet AI: Restart Runtime.",
+            ),
+        )
+
+        val script = shellRuntimeCopyScript(connection, null)
+        val decodedScript = script.replace("\\u003c", "<")
+
+        assertTrue(shouldShowShellRuntimeFallback(connection))
+        assertContains(script, "showStatus: true")
+        assertContains(script, "showFallback: true")
+        assertContains(script, "window.__yetAiSetShellRuntimeCopy(payload);")
+        assertContains(decodedScript, "Engine-served Web UI should be available at <code>http://127.0.0.1:8123/</code>")
+        assertContains(script, "rebuild the GUI")
+        assertContains(script, "reinstall the plugin ZIP")
+        assertFalse(script.contains("must-not-leak"), script)
+        assertFalse(script.contains("raw-static-session-token"), script)
+        assertFalse(script.contains("/private"), script)
+        assertFalse(script.contains("token="), script)
+    }
+
+    @Test
+    fun shellRuntimeCopyUpdateScriptHidesFallbackForConnectedHealthyRuntime() {
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+            .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
+        val connection = RuntimeConnectionResult(
+            RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
+            "Connected to Yet AI local runtime.",
+            null,
+            RuntimeLifecycleStatus(
+                lifecycle = RuntimeLifecycle.CONNECTED,
+                runtimeOwner = "ide_host",
+                launchMode = "launch",
+                tokenState = "present",
+                processState = RuntimeProcessState.RUNNING,
+                diagnosis = "local runtime is reachable",
+                nextAction = "Continue using Yet AI.",
+            ),
+        )
+
+        val script = shellRuntimeCopyScript(connection, packagedGui)
+
+        assertFalse(shouldShowShellRuntimeFallback(connection))
+        assertContains(script, "showStatus: false")
+        assertContains(script, "showFallback: false")
+        assertContains(script, "Engine-served Web UI")
         assertFalse(script.contains("must-not-leak"), script)
         assertFalse(script.contains("raw-static-session-token"), script)
         assertFalse(script.contains("/private"), script)

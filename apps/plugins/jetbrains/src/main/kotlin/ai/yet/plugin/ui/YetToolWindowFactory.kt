@@ -85,12 +85,12 @@ class WrapperScriptDelivery {
         """.trimIndent()
     }
 
-    fun shellRuntimeCopy(statusHtml: String, fallbackHtml: String): String {
+    fun shellRuntimeCopy(statusHtml: String, fallbackHtml: String, showStatus: Boolean, showFallback: Boolean): String {
         val escapedStatus = BridgeMessages.escapeScriptJson(JsonPrimitive(statusHtml).toString())
         val escapedFallback = BridgeMessages.escapeScriptJson(JsonPrimitive(fallbackHtml).toString())
         return """
             (() => {
-              const payload = { statusHtml: $escapedStatus, fallbackHtml: $escapedFallback };
+              const payload = { statusHtml: $escapedStatus, fallbackHtml: $escapedFallback, showStatus: $showStatus, showFallback: $showFallback };
               if (typeof window.__yetAiSetShellRuntimeCopy === "function") {
                 window.__yetAiSetShellRuntimeCopy(payload);
                 return;
@@ -765,7 +765,20 @@ internal fun engineServedWebUiRootUrl(runtimeUrl: String): String? = try {
 internal fun isPluginManagedRuntime(connection: RuntimeConnectionResult): Boolean = connection.lifecycleStatus.runtimeOwner == EffectiveRuntimeOwner.IDE_HOST.lifecycleOwner
 
 internal fun shellRuntimeCopyScript(connection: RuntimeConnectionResult, packagedGui: PackagedGui?, delivery: WrapperScriptDelivery = WrapperScriptDelivery()): String =
-    delivery.shellRuntimeCopy(shellStatusCopy(connection, packagedGui), shellFallbackCopy(connection, packagedGui))
+    delivery.shellRuntimeCopy(
+        shellStatusCopy(connection, packagedGui),
+        shellFallbackCopy(connection, packagedGui),
+        showStatus = shouldShowShellRuntimeFallback(connection),
+        showFallback = shouldShowShellRuntimeFallback(connection),
+    )
+
+internal fun shouldShowShellRuntimeFallback(connection: RuntimeConnectionResult): Boolean {
+    val status = connection.lifecycleStatus
+    return connection.error != null ||
+        status.lifecycle != RuntimeLifecycle.CONNECTED ||
+        (isPluginManagedRuntime(connection) && status.processState != RuntimeProcessState.RUNNING) ||
+        (!isPluginManagedRuntime(connection) && status.processState != RuntimeProcessState.NOT_OWNED)
+}
 
 private fun sanitizeRuntimeStatusForShell(value: String?): String? {
     if (value == null) return null
@@ -868,12 +881,15 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         window.__yetAiPendingDiagnostics = pendingDiagnostics;
         const applyShellRuntimeCopy = (payload) => {
           if (typeof payload !== "object" || payload === null || Array.isArray(payload) || typeof payload.statusHtml !== "string" || typeof payload.fallbackHtml !== "string") return;
+          const showStatus = payload.showStatus === true;
+          const showFallback = payload.showFallback === true;
           if (shellStatus) {
             shellStatus.innerHTML = payload.statusHtml;
-            if (!frameReady) shellStatus.hidden = false;
+            shellStatus.hidden = frameReady ? !showStatus : false;
           }
           if (shellFallback) {
             shellFallback.innerHTML = payload.fallbackHtml;
+            shellFallback.hidden = frameReady ? !showFallback : shellFallback.hidden && !showFallback;
           }
         };
         window.__yetAiSetShellRuntimeCopy = (payload) => {
