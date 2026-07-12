@@ -21,6 +21,8 @@ const headed = process.argv.includes("--headed");
 const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
+const panelId = `panel-${randomUUID().replaceAll("-", "")}`;
+const panelBasePath = `/panel/${panelId}`;
 const oauthSentinels = {
   accessToken: `jb-oauth-access-${randomUUID()}`,
   refreshToken: `jb-oauth-refresh-${randomUUID()}`,
@@ -158,11 +160,12 @@ try {
   process.exit(1);
 }
 
-const guiServer = await startStaticServer(packagedGuiRoot);
-const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
 const runtimeServer = await startMockRuntimeServer();
 const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
-const wrapperServer = await startWrapperServer(guiBaseUrl, runtimeBaseUrl);
+const packagedGuiServer = await startPackagedGuiPanelServer(packagedGuiRoot, runtimeBaseUrl);
+const guiBaseUrl = `http://127.0.0.1:${packagedGuiServer.port}`;
+const panelGuiBaseUrl = `${guiBaseUrl}${panelBasePath}`;
+const wrapperServer = await startWrapperServer(panelGuiBaseUrl);
 const wrapperBaseUrl = `http://127.0.0.1:${wrapperServer.port}`;
 let browser;
 
@@ -183,7 +186,7 @@ try {
       await route.abort();
       return;
     }
-    if (isAllowedBrowserUrl(url, [wrapperBaseUrl, guiBaseUrl, runtimeBaseUrl])) {
+    if (isAllowedBrowserUrl(url, [wrapperBaseUrl, guiBaseUrl])) {
       await route.continue();
       return;
     }
@@ -247,6 +250,7 @@ try {
 
   const frameLocator = page.frameLocator("iframe[title='Yet AI GUI']");
   await frameLocator.locator("body").waitFor({ state: "visible", timeout: 5000 });
+  await assertPanelScopedBootstrap(page);
   const hiddenHeroTitle = await frameLocator.locator(".hero h1").first().evaluate((element) => {
     const hero = element.closest(".hero");
     return getComputedStyle(element).display === "none"
@@ -322,37 +326,36 @@ try {
   const currentReadyRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   assertRandomReadyRequestId(currentReadyRequestId, "initial gui.ready");
   await assertInvalidRuntimeUrlsRejected(page, bridgeVersion, currentReadyRequestId);
-  await assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
+  await assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, bridgeVersion, guiBaseUrl, panelBasePath, runtimeToken);
   if (failures.length > 0) {
     reportFailures();
   }
   const activeReadyRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
-  await page.evaluate(({ version, runtimeUrl, token, requestId }) => {
+  await page.evaluate(({ version, runtimeUrl, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.ready",
       requestId,
       payload: {
-        runtimeUrl,
-        sessionToken: token,
+        runtimeProxyBaseUrl: runtimeUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
       },
     });
-  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, requestId: activeReadyRequestId });
+  }, { version: bridgeVersion, runtimeUrl: panelBasePath, requestId: activeReadyRequestId });
 
   const runtimeInput = frameLocator.getByLabel("Runtime base URL");
   await page.waitForTimeout(250);
   const runtimeInputValue = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
-  if (runtimeInputValue !== runtimeBaseUrl) {
+  if (runtimeInputValue !== panelBasePath) {
     failures.push("Iframe GUI did not apply wrapper host.ready runtime settings.");
   }
   const sessionTokenInputMetadata = await frameLocator.locator('input[type="password"]').first().evaluate((input) => ({ autocomplete: input.autocomplete, placeholder: input.placeholder })).catch(() => undefined);
   if (sessionTokenInputMetadata?.autocomplete !== "off") {
     failures.push("Runtime Session token input did not disable browser autocomplete in the JetBrains wrapper GUI.");
   }
-  const deliveredHostReady = await page.evaluate((readyUrl) => window.__yetAiHostMessagesPosted?.some((message) => message?.type === "host.ready" && message?.payload?.runtimeUrl === readyUrl), runtimeBaseUrl);
+  const deliveredHostReady = await page.evaluate((readyUrl) => window.__yetAiHostMessagesPosted?.some((message) => message?.type === "host.ready" && message?.payload?.runtimeProxyBaseUrl === readyUrl), panelBasePath);
   if (!deliveredHostReady) {
     failures.push("Wrapper did not deliver trusted host.ready runtime bootstrap to the GUI iframe.");
   }
@@ -451,13 +454,13 @@ try {
   }, bridgeVersion);
   await page.waitForTimeout(250);
   const runtimeInputValueAfterHostileMessage = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
-  if (runtimeInputValueAfterHostileMessage !== runtimeBaseUrl) {
+  if (runtimeInputValueAfterHostileMessage !== panelBasePath) {
     failures.push("Wrapper relayed an arbitrary wrapper-origin host.ready postMessage into the iframe.");
   }
 
-  await assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocator, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
-  await assertReloadRequiresFreshGuiReady(page, bridgeVersion, guiBaseUrl, runtimeBaseUrl, runtimeToken);
-  await resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, bridgeVersion, runtimeBaseUrl, runtimeToken);
+  await assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocator, bridgeVersion, guiBaseUrl, panelBasePath, runtimeToken);
+  await assertReloadRequiresFreshGuiReady(page, bridgeVersion, guiBaseUrl, panelBasePath, runtimeToken);
+  await resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, bridgeVersion, panelBasePath, runtimeToken);
 
   await frameLocator.getByText("Runtime connected", { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Runtime refresh did not reach connected/provider-required state after trusted host.ready."));
   await frameLocator.getByText("Provider setup", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Provider setup panel was not mounted in the JetBrains first-use GUI path."));
@@ -521,6 +524,7 @@ try {
   if (!observedRuntimeAuthorization) {
     failures.push("Mock runtime did not observe the wrapper-supplied runtime session token.");
   }
+  assertPanelProxyRuntimeCoverage();
 
   await frameLocator.getByText("Ready to send.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show compact ready-to-send status for the experimental account path."));
   await assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator);
@@ -532,15 +536,14 @@ try {
     failures.push("Send was not enabled for the JetBrains first-message preview path after safe mock readiness.");
   }
 
-  const contextRequestId = await page.evaluate(({ version, runtimeUrl, token, payload }) => {
+  const contextRequestId = await page.evaluate(({ version, runtimeUrl, payload }) => {
     const requestId = window.__yetAiCurrentReadyRequestId;
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.ready",
       requestId,
       payload: {
-        runtimeUrl,
-        sessionToken: token,
+        runtimeProxyBaseUrl: runtimeUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
@@ -558,20 +561,19 @@ try {
       payload,
     });
     return requestId;
-  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, payload: jetbrainsContextSnapshot });
+  }, { version: bridgeVersion, runtimeUrl: panelBasePath, payload: jetbrainsContextSnapshot });
   await frameLocator.getByText("Active editor context", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show attached context preview for JetBrains context."));
   await frameLocator.getByText("jetbrains", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context source label."));
   await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
   await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
   await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
-  await page.evaluate(({ version, runtimeUrl, token, payload, requestId }) => {
+  await page.evaluate(({ version, runtimeUrl, payload, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.ready",
       requestId,
       payload: {
-        runtimeUrl,
-        sessionToken: token,
+        runtimeProxyBaseUrl: runtimeUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
@@ -708,7 +710,18 @@ try {
   await browser?.close().catch(() => undefined);
   await wrapperServer.close();
   await runtimeServer.close();
-  await guiServer.close();
+  await packagedGuiServer.close();
+}
+
+async function assertPanelScopedBootstrap(page) {
+  const frameUrl = await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => frame.src).catch(() => "");
+  if (new URL(frameUrl).pathname !== `${panelBasePath}/index.html`) {
+    failures.push(`Wrapper iframe did not load panel-scoped packaged index: ${redactUrl(frameUrl)}.`);
+  }
+  const bootstrap = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => window.__yetAiInitialRuntimeConfig).catch(() => undefined);
+  if (bootstrap?.runtimeAccess !== "same_origin_proxy" || bootstrap?.runtimeBaseUrl !== panelBasePath || bootstrap?.runtimeProxyBaseUrl !== panelBasePath) {
+    failures.push(`Panel index did not inject PackagedGuiServer bootstrap config: ${JSON.stringify(bootstrap)}.`);
+  }
 }
 
 async function assertWrapperLoadedButNotReadyFallbackPath(page) {  const fallbackState = await page.evaluate(() => {
@@ -1109,7 +1122,7 @@ async function assertInvalidRuntimeUrlsRejected(page, version, currentReadyReque
   }
 }
 
-async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocator, version, guiUrl, runtimeUrl, token) {
+async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocator, version, guiUrl, runtimeUrl) {
   const beforeUnloadEvents = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length);
   const oldFrameState = await page.evaluate(() => ({
     oldWindow: document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow,
@@ -1134,7 +1147,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
   if (afterUnloadState.currentRequestId !== undefined || afterUnloadState.currentNonce !== undefined || afterUnloadState.pendingHostMessages !== 0) {
     failures.push("Wrapper did not invalidate ready id, frame nonce, and pending host messages on gui.unloaded before iframe load.");
   }
-  const staleAttempt = await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, oldNonce, origin }) => new Promise((resolve) => {
+  const staleAttempt = await page.evaluate(({ bridgeVersion, readyUrl, oldNonce, origin }) => new Promise((resolve) => {
     const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
     const currentNonce = window.__yetAiCurrentFrameNonce;
     const attempts = [undefined, "0".repeat(32), oldNonce].filter((nonce) => nonce !== currentNonce);
@@ -1156,8 +1169,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
         type: "host.ready",
         requestId,
         payload: {
-          runtimeUrl: readyUrl,
-          sessionToken,
+          runtimeProxyBaseUrl: readyUrl,
           productId: "yet-ai",
           displayName: "Yet AI",
           cloudRequired: false,
@@ -1168,7 +1180,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
         postedCount: window.__yetAiHostMessagesPostedCount,
       });
     }, 50);
-  }), { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, oldNonce: oldFrameState.oldNonce, origin: guiUrl });
+  }), { bridgeVersion: version, readyUrl: runtimeUrl, oldNonce: oldFrameState.oldNonce, origin: guiUrl });
   if (staleAttempt.readySequence !== beforeReadySequence) {
     failures.push("Wrapper accepted stale, missing, or wrong-nonce gui.ready through the parent message handler.");
   }
@@ -1195,40 +1207,38 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
   }
   const currentRequestId = freshReadyState.currentRequestId;
   assertRandomReadyRequestId(currentRequestId, "fresh gui.ready after old-document regression");
-  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, requestId }) => {
+  await page.evaluate(({ bridgeVersion, readyUrl, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.ready",
       requestId,
       payload: {
-        runtimeUrl: readyUrl,
-        sessionToken,
+        runtimeProxyBaseUrl: readyUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
       },
     });
-  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: currentRequestId });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, requestId: currentRequestId });
   await frameLocator.getByLabel("Runtime base URL").inputValue({ timeout: 5000 }).catch(() => failures.push("Current gui.ready path did not keep working after old-document regression."));
 }
 
 
-async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeUrl, token) {
+async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeUrl) {
   const beforeUnloadEvents = await page.evaluate(() => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => {
     frame.src = "about:blank";
   });
   await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length > count, beforeUnloadEvents, { timeout: 5000 }).catch(() => failures.push("Wrapper did not report iframe unload during reload smoke."));
   const beforeReloadCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
-  const afterReloadState = await page.evaluate(({ bridgeVersion, readyUrl, sessionToken }) => {
+  const afterReloadState = await page.evaluate(({ bridgeVersion, readyUrl }) => {
     const staleRequestId = "stale-before-fresh-ready";
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.ready",
       requestId: staleRequestId,
       payload: {
-        runtimeUrl: readyUrl,
-        sessionToken,
+        runtimeProxyBaseUrl: readyUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
@@ -1240,7 +1250,7 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
       bridgeMessages: window.__yetAiBridgeMessages,
       guiReadySequence: window.__yetAiGuiReadySequence ?? 0,
     };
-  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl });
   if (afterReloadState.count !== beforeReloadCount) {
     failures.push("Wrapper delivered host.ready after iframe reload before fresh gui.ready.");
   }
@@ -1328,14 +1338,13 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   }
   await page.waitForFunction(() => window.__yetAiCurrentReadyRequestId !== undefined, undefined, { timeout: 5000 }).catch(() => failures.push("Wrapper did not expose current ready id after reload."));
   const currentRequestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
-  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, requestId }) => {
+  await page.evaluate(({ bridgeVersion, readyUrl, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.ready",
       requestId,
       payload: {
-        runtimeUrl: readyUrl,
-        sessionToken,
+        runtimeProxyBaseUrl: readyUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
@@ -1346,22 +1355,21 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
       type: "host.openedFromCommand",
       payload: {},
     });
-  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: currentRequestId });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, requestId: currentRequestId });
 }
 
-async function resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, version, runtimeUrl, token) {
+async function resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, version, runtimeUrl) {
   await page.waitForFunction(() => window.__yetAiCurrentReadyRequestId !== undefined, undefined, { timeout: 5000 }).catch(() => undefined);
   const requestId = await page.evaluate(() => window.__yetAiCurrentReadyRequestId);
   assertRandomReadyRequestId(requestId, "post-reload host.ready resend");
   if (typeof requestId !== "string") return;
-  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, currentRequestId }) => {
+  await page.evaluate(({ bridgeVersion, readyUrl, currentRequestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.ready",
       requestId: currentRequestId,
       payload: {
-        runtimeUrl: readyUrl,
-        sessionToken,
+        runtimeProxyBaseUrl: readyUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
@@ -1372,7 +1380,7 @@ async function resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, 
       type: "host.openedFromCommand",
       payload: {},
     });
-  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, currentRequestId: requestId });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, currentRequestId: requestId });
 
   const runtimeInput = frameLocator.getByLabel("Runtime base URL");
   const deadline = Date.now() + 5000;
@@ -1385,7 +1393,7 @@ async function resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, 
   failures.push(`Iframe GUI did not apply post-reload wrapper host.ready runtime settings. Expected ${runtimeUrl}, got ${value || "<empty>"}.`);
 }
 
-async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, version, guiUrl, runtimeUrl, token) {
+async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocator, version, guiUrl, runtimeUrl) {
   await page.evaluate(({ bridgeVersion, origin }) => {
     const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
     window.dispatchEvent(new MessageEvent("message", {
@@ -1411,20 +1419,19 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
   });
   await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).filter((message) => message?.type === "gui.unloaded").length > count, beforeUnloadEvents, { timeout: 5000 }).catch(() => failures.push("Wrapper did not report iframe unload during repeated requestId smoke."));
   const beforeStaleCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
-  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken }) => {
+  await page.evaluate(({ bridgeVersion, readyUrl }) => {
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.ready",
       requestId: "same",
       payload: {
-        runtimeUrl: readyUrl,
-        sessionToken,
+        runtimeProxyBaseUrl: readyUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
       },
     });
-  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl });
   const afterStaleState = await page.evaluate(() => ({
     count: window.__yetAiHostMessagesPostedCount,
     queueLength: window.__yetAiPendingHostMessages.length,
@@ -1463,20 +1470,19 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
     failures.push("Wrapper delivered stale host message after repeated explicit gui.ready requestId across reload.");
   }
   const beforeOldNonceReplayCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
-  await page.evaluate(({ bridgeVersion, readyUrl, sessionToken, requestId }) => {
+  await page.evaluate(({ bridgeVersion, readyUrl, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version: bridgeVersion,
       type: "host.ready",
       requestId,
       payload: {
-        runtimeUrl: readyUrl,
-        sessionToken,
+        runtimeProxyBaseUrl: readyUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
         cloudRequired: false,
       },
     });
-  }, { bridgeVersion: version, readyUrl: runtimeUrl, sessionToken: token, requestId: oldNonce });
+  }, { bridgeVersion: version, readyUrl: runtimeUrl, requestId: oldNonce });
   const afterOldNonceReplayCount = await page.evaluate(() => window.__yetAiHostMessagesPostedCount);
   if (afterOldNonceReplayCount !== beforeOldNonceReplayCount) {
     failures.push("Wrapper delivered a stale host.ready bound to the previous authoritative ready id after a new ready id was accepted.");
@@ -2219,8 +2225,8 @@ function assertWrapperReadinessSemantics(wrapperHtml) {
   }
 }
 
-async function startWrapperServer(guiBaseUrl, runtimeBaseUrl) {
-  const wrapperHtml = renderWrapperHtml(guiBaseUrl, runtimeBaseUrl);
+async function startWrapperServer(panelGuiBaseUrl) {
+  const wrapperHtml = renderWrapperHtml(panelGuiBaseUrl);
   assertWrapperReadinessSemantics(wrapperHtml);
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -2235,8 +2241,9 @@ async function startWrapperServer(guiBaseUrl, runtimeBaseUrl) {
   return listen(server);
 }
 
-function renderWrapperHtml(guiBaseUrl, runtimeBaseUrl) {
-  const indexUrl = `${guiBaseUrl}/index.html`;
+function renderWrapperHtml(panelGuiBaseUrl) {
+  const indexUrl = `${panelGuiBaseUrl}/index.html`;
+  const frameTargetOrigin = new URL(panelGuiBaseUrl).origin;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2252,7 +2259,7 @@ iframe { width: 100vw; height: 100vh; border: 0; }
 </style>
 </head>
 <body>
-<div id="yet-ai-shell-status" role="status">Loading packaged Yet AI GUI from <code>${escapeHtml(indexUrl)}</code> with origin <code>${escapeHtml(guiBaseUrl)}</code>.</div>
+<div id="yet-ai-shell-status" role="status">Loading packaged Yet AI GUI from <code>${escapeHtml(indexUrl)}</code> with origin <code>${escapeHtml(frameTargetOrigin)}</code>.</div>
 <div id="yet-ai-shell-fallback" role="alert" hidden>Packaged Yet AI GUI did not finish loading from the local loopback server.</div>
 <iframe title="Yet AI GUI" src="${escapeHtml(indexUrl)}"></iframe>
 <script>
@@ -2261,7 +2268,7 @@ window.__yetAiPendingHostMessages = [{
   type: "host.ready",
   requestId: "gui-ready",
   payload: {
-    runtimeUrl: "${runtimeBaseUrl}",
+    runtimeProxyBaseUrl: "${panelBasePath}",
     productId: "yet-ai",
     displayName: "Yet AI",
     cloudRequired: false,
@@ -2280,7 +2287,7 @@ const maxApplyWorkspaceEditRequestBytes = 16384;
 const maxPendingHostMessages = ${maxPendingHostMessages};
 const maxPendingDiagnostics = ${maxPendingDiagnostics};
 const frame = document.querySelector("iframe");
-const frameTargetOrigin = "${guiBaseUrl}";
+const frameTargetOrigin = "${frameTargetOrigin}";
 const shellStatus = document.getElementById("yet-ai-shell-status");
 const shellFallback = document.getElementById("yet-ai-shell-fallback");
 window.__yetAiBridgeMessages = [];
@@ -2397,7 +2404,7 @@ window.postIntellijMessage = (message) => {
 };
 window.__yetAiSetNextAssistantResponseForSmoke = (content) => {
   if (typeof content === "string" && content.length > 0 && content.length <= 50000) {
-    fetch("${runtimeBaseUrl}/__smoke/next-assistant-response", {
+    fetch("/__smoke/next-assistant-response", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ content }),
@@ -2516,7 +2523,8 @@ const safePath = (value, maxLength) => value === undefined || (typeof value === 
 const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
 const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
 const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
-const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+const requiredPanelProxyBaseUrl = (value) => typeof value === "string" && /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
+const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "runtimeProxyBaseUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && ((payload.runtimeUrl !== undefined && requiredLoopbackRuntimeUrl(payload.runtimeUrl)) || (payload.runtimeProxyBaseUrl !== undefined && requiredPanelProxyBaseUrl(payload.runtimeProxyBaseUrl))) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
 const isIdeActionPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
 const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isIdeActionPosition(range.start) && isIdeActionPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
 const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
@@ -2697,9 +2705,9 @@ async function startMockRuntimeServer() {
     if (authorized) {
       observedRuntimeAuthorization = true;
     }
-    const runtimeLogEntry = { method: request.method ?? "GET", pathname: requestUrl.pathname, authorized };
+    const runtimeLogEntry = { method: request.method ?? "GET", pathname: requestUrl.pathname, authorized, browserPath: request.headers["x-yet-ai-smoke-browser-path"], browserOrigin: request.headers.origin };
     runtimeRequestLog.push(runtimeLogEntry);
-    const allowedOrigin = request.headers.origin === undefined || request.headers.origin === runtimeBaseUrl || request.headers.origin === wrapperBaseUrl || request.headers.origin === guiBaseUrl;
+    const allowedOrigin = request.headers.origin === undefined;
     if (!allowedOrigin) {
       failures.push(`Mock runtime received request from unexpected origin ${String(request.headers.origin)}.`);
     }
@@ -3036,8 +3044,8 @@ async function assertLeakDetectorSelfCheck(page) {
     marker.id = "yet-ai-leak-detector-self-check";
     marker.textContent = token;
     document.body.append(marker);
-    window.localStorage.setItem("yet-ai-leak-detector-self-check", token);
-    window.sessionStorage.setItem("yet-ai-leak-detector-self-check", token);
+    window.localStorage.setItem("yet-ai-leak-detector-self-check");
+    window.sessionStorage.setItem("yet-ai-leak-detector-self-check");
     return JSON.stringify({
       dom: document.documentElement.innerText,
       localStorage: { ...window.localStorage },
@@ -3129,64 +3137,138 @@ function assertNoSecretLeak(text, markers) {
   }
 }
 
-async function startStaticServer(staticRoot) {
+async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
-    if (request.method !== "GET" && request.method !== "HEAD") {
-      response.writeHead(405, { allow: "GET, HEAD" });
-      response.end("Method not allowed");
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (requestUrl.pathname === "/__smoke/next-assistant-response") {
+      await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
       return;
     }
-    let requestUrl;
-    let pathname;
-    try {
-      requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-      pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    } catch {
-      response.writeHead(400);
-      response.end("Bad request");
+    const panelPrefix = `${panelBasePath}/`;
+    if (requestUrl.pathname === panelBasePath || requestUrl.pathname === `${panelBasePath}/` || requestUrl.pathname === `${panelBasePath}/index.html`) {
+      if (request.method !== "GET" && request.method !== "HEAD") {
+        response.writeHead(405, { allow: "GET, HEAD" });
+        response.end("Method not allowed");
+        return;
+      }
+      await servePanelIndexHtml(request, response, realStaticRoot);
       return;
     }
-    const requestedPath = path.normalize(path.join(realStaticRoot, pathname));
-    let realRequestedPath;
-    try {
-      realRequestedPath = await realpath(requestedPath);
-    } catch {
+    if (requestUrl.pathname.startsWith(`${panelBasePath}/v1/`)) {
+      await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname.slice(panelBasePath.length), true);
+      return;
+    }
+    if (!requestUrl.pathname.startsWith(panelPrefix)) {
       response.writeHead(404);
       response.end("Not found");
       return;
     }
-    if (!isPathInsideRoot(realStaticRoot, realRequestedPath)) {
-      response.writeHead(403);
-      response.end("Forbidden");
-      return;
-    }
-    try {
-      const fileStat = await stat(realRequestedPath);
-      if (!fileStat.isFile()) {
-        response.writeHead(404);
-        response.end("Not found");
-        return;
-      }
-      response.writeHead(200, { "content-type": contentType(realRequestedPath) });
-      if (request.method === "HEAD") {
-        response.end();
-        return;
-      }
-      const stream = createReadStream(realRequestedPath);
-      stream.on("error", () => {
-        if (!response.headersSent) {
-          response.writeHead(404);
-        }
-        response.end();
-      });
-      stream.pipe(response);
-    } catch {
-      response.writeHead(404);
-      response.end("Not found");
-    }
+    await servePackagedGuiAsset(request, response, realStaticRoot, requestUrl.pathname.slice(panelBasePath.length));
   });
   return listen(server);
+}
+
+async function servePanelIndexHtml(request, response, realStaticRoot) {
+  const indexFile = path.join(realStaticRoot, "index.html");
+  const realIndexFile = await realpath(indexFile);
+  if (!isPathInsideRoot(realStaticRoot, realIndexFile)) {
+    response.writeHead(403);
+    response.end("Forbidden");
+    return;
+  }
+  const indexHtml = await readFile(realIndexFile, "utf8");
+  const body = injectPanelBootstrap(indexHtml);
+  response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(body);
+}
+
+function injectPanelBootstrap(indexHtml) {
+  const script = `<script>window.__yetAiInitialRuntimeConfig={runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"${panelBasePath}",runtimeProxyBaseUrl:"${panelBasePath}"};</script>`;
+  return indexHtml.includes("<head>") ? indexHtml.replace("<head>", `<head>\n${script}`) : `${script}\n${indexHtml}`;
+}
+
+async function servePackagedGuiAsset(request, response, realStaticRoot, pathname) {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    response.writeHead(405, { allow: "GET, HEAD" });
+    response.end("Method not allowed");
+    return;
+  }
+  const decoded = safeDecodePath(pathname);
+  if (decoded === undefined || decoded.includes("\\") || decoded.includes("..") || decoded === "/" || decoded.includes("//")) {
+    response.writeHead(404);
+    response.end("Not found");
+    return;
+  }
+  const requestedPath = path.normalize(path.join(realStaticRoot, decoded));
+  let realRequestedPath;
+  try {
+    realRequestedPath = await realpath(requestedPath);
+  } catch {
+    response.writeHead(404);
+    response.end("Not found");
+    return;
+  }
+  if (!isPathInsideRoot(realStaticRoot, realRequestedPath)) {
+    response.writeHead(403);
+    response.end("Forbidden");
+    return;
+  }
+  const fileStat = await stat(realRequestedPath).catch(() => undefined);
+  if (!fileStat?.isFile()) {
+    response.writeHead(404);
+    response.end("Not found");
+    return;
+  }
+  response.writeHead(200, { "content-type": contentType(realRequestedPath), "cache-control": "no-store" });
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+  const stream = createReadStream(realRequestedPath);
+  stream.on("error", () => {
+    if (!response.headersSent) response.writeHead(404);
+    response.end();
+  });
+  stream.pipe(response);
+}
+
+async function forwardPanelProxyRequest(request, response, runtimeBaseUrl, rawPath, requireAuthorization) {
+  if (request.method !== "GET" && request.method !== "POST" && request.method !== "OPTIONS") {
+    response.writeHead(405, { allow: "GET, POST, OPTIONS" });
+    response.end("Method not allowed");
+    return;
+  }
+  const target = new URL(rawPath, runtimeBaseUrl);
+  const targetResponse = await fetch(target, {
+    method: request.method,
+    headers: {
+      ...(request.headers["content-type"] ? { "content-type": String(request.headers["content-type"]) } : {}),
+      ...(requireAuthorization ? { authorization: `Bearer ${runtimeToken}` } : {}),
+      "x-yet-ai-smoke-browser-path": requireAuthorization ? `${panelBasePath}${rawPath}` : rawPath,
+    },
+    body: request.method === "POST" ? request : undefined,
+    duplex: request.method === "POST" ? "half" : undefined,
+  });
+  const body = Buffer.from(await targetResponse.arrayBuffer());
+  response.writeHead(targetResponse.status, {
+    ...corsHeaders(),
+    "content-type": targetResponse.headers.get("content-type") ?? "application/octet-stream",
+    "cache-control": "no-store",
+  });
+  response.end(body);
+}
+
+function safeDecodePath(rawPath) {
+  try {
+    return decodeURIComponent(rawPath.replaceAll("+", "%2B"));
+  } catch {
+    return undefined;
+  }
 }
 
 function isPathInsideRoot(rootPath, requestedPath) {
@@ -3283,6 +3365,19 @@ function sanitizeEvidenceText(text) {
     .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
     .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]")
     .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
+}
+
+function assertPanelProxyRuntimeCoverage() {
+  const requiredPaths = ["/v1/demo-mode", "/v1/ping", "/v1/models", "/v1/caps"];
+  for (const pathname of requiredPaths) {
+    if (!runtimeRequestLog.some((entry) => entry.pathname === pathname && entry.browserPath === `${panelBasePath}${pathname}`)) {
+      failures.push(`Panel proxy smoke did not observe browser-scoped ${panelBasePath}${pathname} forwarded to runtime ${pathname}.`);
+    }
+  }
+  const directRuntimeCalls = runtimeRequestLog.filter((entry) => entry.browserOrigin === runtimeBaseUrl);
+  if (directRuntimeCalls.length > 0) {
+    failures.push(`GUI made direct runtime request(s) instead of panel proxy: ${formatRuntimeRequestLog(directRuntimeCalls)}.`);
+  }
 }
 
 function countRuntimeRequests(method, pathname) {
