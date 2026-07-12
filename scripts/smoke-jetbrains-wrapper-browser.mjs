@@ -3044,8 +3044,8 @@ async function assertLeakDetectorSelfCheck(page) {
     marker.id = "yet-ai-leak-detector-self-check";
     marker.textContent = token;
     document.body.append(marker);
-    window.localStorage.setItem("yet-ai-leak-detector-self-check");
-    window.sessionStorage.setItem("yet-ai-leak-detector-self-check");
+    window.localStorage.setItem("yet-ai-leak-detector-self-check", token);
+    window.sessionStorage.setItem("yet-ai-leak-detector-self-check", token);
     return JSON.stringify({
       dom: document.documentElement.innerText,
       localStorage: { ...window.localStorage },
