@@ -107,11 +107,14 @@ class RuntimeConnectionManager(
         var connection = try {
             prepareConnectionSettings(settings)
         } catch (error: Exception) {
-            val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed", error)
+            val owner = preStartFailureRuntimeOwner(settings)
+            val process = preStartFailureProcessMessage(owner)
+            val result = failedRuntimeConnection(settings, null, "Yet AI local runtime launch failed", error, processExit = process, effectiveRuntimeOwner = owner)
             lastHealthResult = null
             lastRecoveryResult = null
             lastConnectionError = result.error
-            rememberCurrentRuntime(result.settings, EffectiveRuntimeOwner.EXTERNAL, result.lifecycleStatus.processState)
+            lastProcessExit = process
+            rememberCurrentRuntime(result.settings, owner, result.lifecycleStatus.processState)
             logSink.append("error", "runtime.launch", mapOf("phase" to "failure", "launchMode" to settings.launchMode.name.lowercase(), "error" to result.error))
             return result
         }
@@ -396,6 +399,12 @@ class RuntimeConnectionManager(
         }
     }
 
+    private fun preStartFailureRuntimeOwner(settings: RuntimeSettings): EffectiveRuntimeOwner =
+        if (settings.launchMode == LaunchMode.CONNECT) EffectiveRuntimeOwner.EXTERNAL else EffectiveRuntimeOwner.IDE_HOST
+
+    private fun preStartFailureProcessMessage(owner: EffectiveRuntimeOwner): String? =
+        if (owner == EffectiveRuntimeOwner.IDE_HOST) "plugin-launched runtime process was not started because launch preparation failed; rebuild or reinstall the latest plugin artifact, then click Refresh runtime or run Yet AI: Restart Runtime" else null
+
     private fun guiDistUnavailableLaunchError(reason: String): String {
         return "Packaged Yet AI GUI dist unavailable; rebuild and reinstall the latest JetBrains plugin ZIP before launching the plugin-owned runtime. ${redactLogText(reason, "")}".take(1000)
     }
@@ -657,7 +666,13 @@ fun failedRuntimeConnection(
         launchMode = settings.launchMode.name.lowercase(),
         runtimeUrl = sanitizeRuntimeUrlForDiagnostics(resultSettings.runtimeUrl),
         engineBinaryConfigured = settings.engineBinaryPath != null,
-        binaryStatus = if (effectiveRuntimeOwner == EffectiveRuntimeOwner.IDE_HOST) "plugin-managed runtime process was launched" else describeEngineBinaryStatus(settings),
+        binaryStatus = if (effectiveRuntimeOwner == EffectiveRuntimeOwner.IDE_HOST && processExit?.contains("not started", ignoreCase = true) == true) {
+            "plugin-managed runtime launch was attempted"
+        } else if (effectiveRuntimeOwner == EffectiveRuntimeOwner.IDE_HOST) {
+            "plugin-managed runtime process was launched"
+        } else {
+            describeEngineBinaryStatus(settings)
+        },
         launchedByPlugin = effectiveRuntimeOwner == EffectiveRuntimeOwner.IDE_HOST && attemptedSettings != null && processExit == null && (launchedByPluginDuringHealth || error !is RuntimeHealthCheckException),
         health = if (isHttp401(error)) "HTTP 401 from /v1/ping" else null,
         error = errorText,
@@ -885,6 +900,8 @@ private fun runtimeDiagnosis(diagnostics: RuntimeDiagnostics): String {
             "plugin-launched runtime process exited unexpectedly"
         diagnostics.pluginManagedRuntime && (combined.contains("relaunch failed during session recovery") || combined.contains("plugin-owned runtime relaunch failed during http 401 recovery")) ->
             "plugin-owned runtime relaunch failed during HTTP 401 recovery"
+        diagnostics.pluginManagedRuntime && combined.contains("packaged yet ai gui dist unavailable") ->
+            "packaged Yet AI GUI dist unavailable for plugin-owned runtime launch"
         combined.contains("http 401") ->
             "local runtime rejected the session token (HTTP 401 token mismatch)"
         diagnostics.binaryStatus.contains("not executable", ignoreCase = true) ->
@@ -914,6 +931,8 @@ private fun runtimeNextAction(diagnostics: RuntimeDiagnostics, diagnosis: String
         "Start or update the external loopback runtime, make the IDE debug/session token match the external runtime, then click Refresh runtime or Show Runtime Status; this is not a provider API key."
     diagnosis.contains("token mismatch") ->
         "Start or update the external runtime, verify the URL/port/debug session token match, then click Refresh runtime or Show Runtime Status; this is not a provider API key."
+    diagnosis.lowercase().contains("packaged yet ai gui dist") ->
+        "Rebuild and reinstall the latest JetBrains plugin ZIP, then click Refresh runtime or run Yet AI: Restart Runtime."
     diagnosis.contains("engine binary") ->
         "Keep Launch mode auto/launch and leave Engine binary path empty when the bundled runtime is available; otherwise reinstall the matching artifact or configure an absolute executable ${ProductIdentity.engineBinaryName} path. PATH discovery is dev-preview-only fallback, not the installable expectation."
     diagnosis.contains("launch URL") ->
