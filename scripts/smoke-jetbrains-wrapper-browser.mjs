@@ -237,6 +237,7 @@ try {
     failures.push("Wrapper did not deterministically adopt the pre-init diagnostic queue.");
   }
   await page.waitForSelector("iframe[title='Yet AI GUI']", { state: "visible", timeout: 5000 });
+  await assertWrapperLoadedButNotReadyFallbackPath(page);
 
   const iframeElement = page.locator("iframe[title='Yet AI GUI']");
   const iframeBox = await iframeElement.boundingBox();
@@ -708,6 +709,32 @@ try {
   await wrapperServer.close();
   await runtimeServer.close();
   await guiServer.close();
+}
+
+async function assertWrapperLoadedButNotReadyFallbackPath(page) {  const fallbackState = await page.evaluate(() => {
+    const fallback = document.getElementById("yet-ai-shell-fallback");
+    const status = document.getElementById("yet-ai-shell-status");
+    const previous = {
+      fallbackHidden: fallback?.hidden,
+      statusHidden: status?.hidden,
+      statusText: status?.textContent ?? "",
+    };
+    window.__yetAiSmokeTriggerLoadedButNotReadyFallback?.();
+    const current = {
+      fallbackHidden: fallback?.hidden,
+      statusHidden: status?.hidden,
+      statusText: status?.textContent ?? "",
+    };
+    if (fallback && previous.fallbackHidden !== undefined) fallback.hidden = previous.fallbackHidden;
+    if (status && previous.statusHidden !== undefined) {
+      status.hidden = previous.statusHidden;
+      status.textContent = previous.statusText;
+    }
+    return current;
+  });
+  if (fallbackState.fallbackHidden !== false || fallbackState.statusHidden !== false || !fallbackState.statusText.includes("loaded but did not send a validated ready signal")) {
+    failures.push(`Wrapper did not expose loaded-but-not-ready fallback before gui.ready: ${JSON.stringify(fallbackState)}.`);
+  }
 }
 
 function assertRandomReadyRequestId(requestId, label) {
@@ -2151,8 +2178,50 @@ async function requireFreshPackagedGui() {
   }
 }
 
+function assertWrapperReadinessSemantics(wrapperHtml) {
+  const stalePatterns = [
+    /const\s+markLoaded\s*=\s*\(\)\s*=>\s*\{[\s\S]*?shellFallback\.hidden\s*=\s*true[\s\S]*?\};/,
+    /frame\.addEventListener\("load",\s*\(\)\s*=>\s*\{[\s\S]*?shellFallback\.hidden\s*=\s*true[\s\S]*?\}\);/,
+    /if\s*\(!frameLoaded\)\s*shellFallback\.hidden\s*=\s*false/,
+  ];
+  for (const pattern of stalePatterns) {
+    if (pattern.test(wrapperHtml)) {
+      throw new Error("JetBrains wrapper smoke contains stale iframe-load-only fallback readiness logic.");
+    }
+  }
+  const requiredSnippets = [
+    "let readinessFallbackTimerId;",
+    "let readinessFallbackGeneration = 0;",
+    "const markFrameLoaded = () => {",
+    "const showReadinessFallback = (message) => {",
+    "const hideShellAfterReady = () => {",
+    "const clearReadinessFallbackTimer = () => {",
+    "const armReadinessFallbackTimer = (generation) => {",
+    "if (frameReady || readinessFallbackGeneration !== generation || frameGeneration !== generation) return;",
+    "? \"Packaged Yet AI GUI loaded but did not send a validated ready signal.",
+    "hideShellAfterReady();",
+    "markFrameLoaded();\n    armReadinessFallbackTimer(frameGeneration);",
+    "window.__yetAiSmokeTriggerLoadedButNotReadyFallback",
+  ];
+  for (const snippet of requiredSnippets) {
+    if (!wrapperHtml.includes(snippet)) {
+      throw new Error(`JetBrains wrapper smoke is missing current readiness fallback semantics: ${snippet}`);
+    }
+  }
+  const requiredPatterns = [
+    /const\s+invalidateFrameAuthority\s*=\s*\([^)]*\)\s*=>\s*\{\s*clearReadinessFallbackTimer\(\);\s*frameReady\s*=\s*false;/,
+    /frameReady\s*=\s*true;\s*clearReadinessFallbackTimer\(\);[\s\S]*?hideShellAfterReady\(\);/,
+  ];
+  for (const pattern of requiredPatterns) {
+    if (!pattern.test(wrapperHtml)) {
+      throw new Error(`JetBrains wrapper smoke is missing current readiness fallback semantics: ${pattern}`);
+    }
+  }
+}
+
 async function startWrapperServer(guiBaseUrl, runtimeBaseUrl) {
   const wrapperHtml = renderWrapperHtml(guiBaseUrl, runtimeBaseUrl);
+  assertWrapperReadinessSemantics(wrapperHtml);
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method !== "GET" || (requestUrl.pathname !== "/" && requestUrl.pathname !== "/wrapper.html")) {
@@ -2231,6 +2300,8 @@ let acceptedHostReadyRequestId;
 let hostReadyAcceptedForCurrentFrame = false;
 let currentFrameNonce;
 let frameNonceChallengeAttempts = 0;
+let readinessFallbackTimerId;
+let readinessFallbackGeneration = 0;
 let flushingPending = false;
 const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];
 const pushBounded = (queue, message, maxSize) => {
@@ -2281,16 +2352,46 @@ window.__yetAiSmokeBoundPendingQueues = () => {
     restoredDiagnosticContents: pendingDiagnostics.length === initialDiagnostics.length && pendingDiagnostics.every((message, index) => message === initialDiagnostics[index]),
   };
 };
-const markLoaded = () => {
+const markFrameLoaded = () => {
   frameLoaded = true;
+  console.log("Yet AI iframe loaded; waiting for validated gui.ready");
+};
+const showReadinessFallback = (message) => {
+  if (shellStatus) {
+    shellStatus.hidden = false;
+    shellStatus.textContent = message;
+  }
+  if (shellFallback) shellFallback.hidden = false;
+  console.log("Yet AI GUI readiness fallback shown");
+};
+const hideShellAfterReady = () => {
   if (shellStatus) shellStatus.hidden = true;
   if (shellFallback) shellFallback.hidden = true;
 };
-if (shellFallback && frame) {
-  window.setTimeout(() => {
-    if (!frameLoaded) shellFallback.hidden = false;
+const clearReadinessFallbackTimer = () => {
+  if (readinessFallbackTimerId !== undefined) {
+    window.clearTimeout(readinessFallbackTimerId);
+    readinessFallbackTimerId = undefined;
+  }
+};
+const armReadinessFallbackTimer = (generation) => {
+  clearReadinessFallbackTimer();
+  if (!shellFallback || !frame) return;
+  readinessFallbackGeneration = generation;
+  readinessFallbackTimerId = window.setTimeout(() => {
+    readinessFallbackTimerId = undefined;
+    if (frameReady || readinessFallbackGeneration !== generation || frameGeneration !== generation) return;
+    const readinessMessage = frameLoaded
+      ? "Packaged Yet AI GUI loaded but did not send a validated ready signal. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview."
+      : "Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview.";
+    showReadinessFallback(readinessMessage);
   }, 8000);
-}
+};
+if (shellFallback && frame) armReadinessFallbackTimer(frameGeneration);
+window.__yetAiSmokeTriggerLoadedButNotReadyFallback = () => {
+  markFrameLoaded();
+  showReadinessFallback("Packaged Yet AI GUI loaded but did not send a validated ready signal. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview.");
+};
 window.postIntellijMessage = (message) => {
   window.__yetAiBridgeMessages.push(message);
 };
@@ -2339,6 +2440,7 @@ const resetFrameNonceChallenge = () => {
   sendFrameNonceChallenge();
 };
 const invalidateFrameAuthority = (reason) => {
+  clearReadinessFallbackTimer();
   frameReady = false;
   currentGuiReadySequence = 0;
   currentGuiReadyRequestId = undefined;
@@ -2494,6 +2596,7 @@ window.addEventListener("message", (event) => {
     }
     if (isGuiUnloadedMessage(event.data)) {
       invalidateFrameAuthority("gui.unloaded");
+      armReadinessFallbackTimer(frameGeneration);
       window.postIntellijMessage(event.data);
     } else if (isGuiRuntimeRefresh(event.data)) {
       if (!frameReady) {
@@ -2523,6 +2626,9 @@ window.addEventListener("message", (event) => {
         return;
       }
       frameReady = true;
+      clearReadinessFallbackTimer();
+      console.log("Yet AI received validated gui.ready from current iframe");
+      hideShellAfterReady();
       guiReadySequence = nextGuiReadySequence;
       currentGuiReadySequence = nextGuiReadySequence;
       window.__yetAiGuiReadySequence = guiReadySequence;
@@ -2546,7 +2652,8 @@ if (frame) {
     frameGeneration += 1;
     currentFrameWindow = frame.contentWindow;
     window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
-    markLoaded();
+    markFrameLoaded();
+    armReadinessFallbackTimer(frameGeneration);
     resetFrameNonceChallenge();
   });
 }
