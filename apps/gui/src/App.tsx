@@ -1293,20 +1293,24 @@ export function App() {
   }, [updateRuntimeSettings]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
-    const hostRuntimeUrl = payload?.runtimeProxyBaseUrl ?? payload?.runtimeUrl;
+    if (!payload) {
+      return;
+    }
+    const readyPayload = payload;
+    const hostRuntimeUrl = readyPayload.runtimeProxyBaseUrl ?? readyPayload.runtimeUrl;
     if (!hostRuntimeUrl || !isLoopbackRuntimeUrl(hostRuntimeUrl)) {
       return;
     }
-    const proxyMode = Boolean(payload?.runtimeProxyBaseUrl);
-    setControlledHostCapabilities(payload.controlledCapabilities);
+    const proxyMode = Boolean(readyPayload.runtimeProxyBaseUrl);
+    setControlledHostCapabilities(readyPayload.controlledCapabilities);
     if (!proxyMode && settingsRef.current.runtimeAccess === "same_origin_proxy") {
       return;
     }
     const currentBaseUrl = settingsRef.current.baseUrl;
     const nextToken = proxyMode
       ? ""
-      : payload.sessionToken
-      ? payload.sessionToken
+      : readyPayload.sessionToken
+      ? readyPayload.sessionToken
       : normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)
         ? ""
         : settingsRef.current.token;
@@ -1332,7 +1336,7 @@ export function App() {
       title: "Host runtime settings received",
       status: "info",
       summary: "IDE host supplied loopback runtime settings; token value remains hidden in memory.",
-      details: { hasSessionToken: Boolean(payload.sessionToken), runtimeUrl: hostRuntimeUrl },
+      details: { hasSessionToken: Boolean(readyPayload.sessionToken), runtimeUrl: hostRuntimeUrl },
     });
   }, [appendTrace, updateRuntimeSettings]);
 
