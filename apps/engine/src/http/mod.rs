@@ -8,9 +8,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::Utc;
-use http::{header, HeaderValue, Method, Request, StatusCode};
+use http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::path::{Component, PathBuf};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::agent_progress;
@@ -25,9 +26,14 @@ use crate::security::{Authenticated, RuntimeCaller, CALLER_HEADER_NAME};
 use crate::AppState;
 
 const V1_BODY_LIMIT_BYTES: usize = 256 * 1024;
+const WEB_UI_BOOTSTRAP: &str = r#"<script>window.__yetAiInitialRuntimeConfig={runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"/",runtimeProxyBaseUrl:"/"};</script>"#;
+const WEB_UI_DIST_DIR_ENV: &str = "YET_AI_WEB_UI_DIST_DIR";
 
 pub fn router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(web_ui_index))
+        .route("/index.html", get(web_ui_index))
+        .route("/assets/*asset_path", get(web_ui_asset))
         .nest(
             "/v1",
             Router::new()
@@ -75,6 +81,133 @@ pub fn router(state: AppState) -> Router {
         )
         .layer(cors_layer())
         .with_state(state)
+}
+
+async fn web_ui_index(headers: HeaderMap) -> Response {
+    if !web_ui_request_uses_loopback_host(&headers) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match tokio::fs::read_to_string(web_ui_dist_dir().join("index.html")).await {
+        Ok(index_html) => match inject_web_ui_bootstrap(&index_html) {
+            Ok(html) => html_response(html),
+            Err(message) => web_ui_unavailable(message),
+        },
+        Err(error) => web_ui_unavailable(format!(
+            "Built Web UI is missing at {}. Run `npm --prefix apps/gui run build` or set {WEB_UI_DIST_DIR_ENV} to a built GUI dist directory. ({error})",
+            web_ui_dist_dir().join("index.html").display()
+        )),
+    }
+}
+
+async fn web_ui_asset(headers: HeaderMap, Path(asset_path): Path<String>) -> Response {
+    if !web_ui_request_uses_loopback_host(&headers) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Some(relative_path) = safe_web_ui_asset_path(&asset_path) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let asset_path = web_ui_dist_dir().join("assets").join(relative_path);
+    match tokio::fs::read(&asset_path).await {
+        Ok(bytes) => {
+            let content_type = web_ui_content_type(&asset_path);
+            (
+                [(header::CONTENT_TYPE, HeaderValue::from_static(content_type))],
+                bytes,
+            )
+                .into_response()
+        }
+        Err(_) => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+fn web_ui_dist_dir() -> PathBuf {
+    std::env::var_os(WEB_UI_DIST_DIR_ENV)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("apps/gui/dist"))
+}
+
+fn web_ui_request_uses_loopback_host(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(header::HOST) else {
+        return false;
+    };
+    let Ok(host) = host.to_str() else {
+        return false;
+    };
+    let host = host.trim();
+    if host.contains('@') || host.contains('/') || host.contains('?') || host.contains('#') {
+        return false;
+    }
+    let hostname = if let Some(rest) = host.strip_prefix('[') {
+        let Some((hostname, port)) = rest.split_once(']') else {
+            return false;
+        };
+        if !port.is_empty() && !port.strip_prefix(':').is_some_and(valid_port) {
+            return false;
+        }
+        hostname
+    } else if let Some((hostname, port)) = host.rsplit_once(':') {
+        if !valid_port(port) {
+            return false;
+        }
+        hostname
+    } else {
+        host
+    };
+    matches!(hostname.to_ascii_lowercase().as_str(), "127.0.0.1" | "localhost" | "::1")
+}
+
+fn valid_port(port: &str) -> bool {
+    !port.is_empty() && port.chars().all(|value| value.is_ascii_digit())
+}
+
+fn inject_web_ui_bootstrap(index_html: &str) -> Result<String, String> {
+    let Some(script_index) = index_html.find("<script type=\"module\"") else {
+        return Err("Built Web UI index.html does not contain a Vite module script.".to_string());
+    };
+    let mut html = String::with_capacity(index_html.len() + WEB_UI_BOOTSTRAP.len() + 1);
+    html.push_str(&index_html[..script_index]);
+    html.push_str(WEB_UI_BOOTSTRAP);
+    html.push('\n');
+    html.push_str(&index_html[script_index..]);
+    Ok(html)
+}
+
+fn html_response(html: String) -> Response {
+    (
+        [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+        html,
+    )
+        .into_response()
+}
+
+fn web_ui_unavailable(message: String) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"))],
+        message,
+    )
+        .into_response()
+}
+
+fn safe_web_ui_asset_path(asset_path: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(asset_path.trim_start_matches('/'));
+    if path.components().all(|component| matches!(component, Component::Normal(_))) {
+        Some(path)
+    } else {
+        None
+    }
+}
+
+fn web_ui_content_type(path: &std::path::Path) -> &'static str {
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some("css") => "text/css; charset=utf-8",
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("wasm") => "application/wasm",
+        _ => "application/octet-stream",
+    }
 }
 
 async fn request_summary_middleware(request: Request<Body>, next: Next) -> Response {
@@ -835,7 +968,9 @@ async fn chats_subscribe(
 mod tests {
     use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
+    use axum::response::Response;
     use http_body_util::BodyExt;
+    use std::path::PathBuf;
     use tower::ServiceExt;
 
     use crate::identity::ProductIdentity;
@@ -846,9 +981,15 @@ mod tests {
     static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     static HTTP_LOG_TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
         std::sync::OnceLock::new();
+    static WEB_UI_TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
 
     fn http_log_test_lock() -> &'static tokio::sync::Mutex<()> {
         HTTP_LOG_TEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    fn web_ui_test_lock() -> &'static tokio::sync::Mutex<()> {
+        WEB_UI_TEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
     }
 
     fn temp_storage_paths() -> StoragePaths {
@@ -860,6 +1001,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         let identity = ProductIdentity::load().unwrap();
         resolve_storage_paths(&identity, &root, &root, &root)
+    }
+
+    fn temp_web_ui_dist() -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "yet-ai-http-web-ui-test-{}-{}",
+            std::process::id(),
+            TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        root
+    }
+
+    fn test_app() -> axum::Router {
+        let identity = ProductIdentity::load().unwrap();
+        super::router(AppState::with_storage_paths(
+            identity,
+            AuthToken::new("test-token").unwrap(),
+            temp_storage_paths(),
+        ))
+    }
+
+    async fn response_text(response: Response) -> String {
+        String::from_utf8(response.into_body().collect().await.unwrap().to_bytes().to_vec())
+            .unwrap()
     }
 
     async fn post_provider_auth(path: &str, body: &'static str) -> StatusCode {
@@ -884,6 +1050,146 @@ mod tests {
         let status = response.status();
         let _ = response.into_body().collect().await.unwrap();
         status
+    }
+
+    #[tokio::test]
+    async fn web_ui_index_injects_same_origin_bootstrap_before_module_script_without_token() {
+        let _guard = web_ui_test_lock().lock().await;
+        let dist = temp_web_ui_dist();
+        std::fs::write(
+            dist.join("index.html"),
+            r#"<!doctype html><html><head><title>Yet</title></head><body><div id="root"></div><script type="module" crossorigin src="/assets/index-test.js"></script></body></html>"#,
+        )
+        .unwrap();
+        std::env::set_var(super::WEB_UI_DIST_DIR_ENV, &dist);
+
+        let response = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header(header::HOST, "127.0.0.1:8001")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = response_text(response).await;
+        let config_index = html.find("window.__yetAiInitialRuntimeConfig").unwrap();
+        let module_index = html.find("<script type=\"module\"").unwrap();
+        assert!(config_index < module_index);
+        assert!(html.contains("runtimeAccess:\"same_origin_proxy\""));
+        assert!(html.contains("runtimeBaseUrl:\"/\""));
+        assert!(html.contains("runtimeProxyBaseUrl:\"/\""));
+        assert!(!html.contains("test-token"));
+        assert!(!html.contains("Authorization"));
+        let _ = std::fs::remove_dir_all(dist);
+    }
+
+    #[tokio::test]
+    async fn web_ui_missing_index_returns_clear_diagnostic() {
+        let _guard = web_ui_test_lock().lock().await;
+        let dist = temp_web_ui_dist();
+        std::env::set_var(super::WEB_UI_DIST_DIR_ENV, &dist);
+
+        let response = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header(header::HOST, "127.0.0.1:8001")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let message = response_text(response).await;
+        assert!(message.contains("Built Web UI is missing"));
+        assert!(message.contains("npm --prefix apps/gui run build"));
+        assert!(!message.contains("test-token"));
+        let _ = std::fs::remove_dir_all(dist);
+    }
+
+    #[tokio::test]
+    async fn web_ui_index_rejects_non_loopback_host() {
+        let _guard = web_ui_test_lock().lock().await;
+        let dist = temp_web_ui_dist();
+        std::fs::write(
+            dist.join("index.html"),
+            r#"<html><body><script type="module" src="/assets/index-test.js"></script></body></html>"#,
+        )
+        .unwrap();
+        std::env::set_var(super::WEB_UI_DIST_DIR_ENV, &dist);
+
+        let response = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/")
+                    .header(header::HOST, "example.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let _ = response.into_body().collect().await.unwrap();
+        let _ = std::fs::remove_dir_all(dist);
+    }
+
+    #[tokio::test]
+    async fn web_ui_asset_serves_built_asset_from_loopback_host() {
+        let _guard = web_ui_test_lock().lock().await;
+        let dist = temp_web_ui_dist();
+        std::fs::write(dist.join("assets/index-test.js"), "console.log('yet');").unwrap();
+        std::env::set_var(super::WEB_UI_DIST_DIR_ENV, &dist);
+
+        let response = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/assets/index-test.js")
+                    .header(header::HOST, "localhost:8001")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(response_text(response).await, "console.log('yet');");
+        let _ = std::fs::remove_dir_all(dist);
+    }
+
+    #[tokio::test]
+    async fn web_ui_route_does_not_disable_v1_authentication() {
+        let _guard = web_ui_test_lock().lock().await;
+        let dist = temp_web_ui_dist();
+        std::fs::write(
+            dist.join("index.html"),
+            r#"<html><body><script type="module" src="/assets/index-test.js"></script></body></html>"#,
+        )
+        .unwrap();
+        std::env::set_var(super::WEB_UI_DIST_DIR_ENV, &dist);
+
+        let response = test_app()
+            .oneshot(Request::builder().uri("/v1/ping").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let _ = response.into_body().collect().await.unwrap();
+        let _ = std::fs::remove_dir_all(dist);
     }
 
     async fn get_models_with_auth(auth_header: Option<&'static str>) -> StatusCode {
