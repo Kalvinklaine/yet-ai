@@ -434,6 +434,7 @@ export function App() {
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
   const hostReadyAppliedRef = useRef(false);
+  const preHostRuntimeRefreshRequestedRef = useRef(false);
   const settingsRevisionRef = useRef(0);
   const settingsRef = useRef<RuntimeSettings>({ baseUrl: defaultBaseUrl, token: "" });
   const chatIdRef = useRef("chat-001");
@@ -1250,12 +1251,14 @@ export function App() {
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
     hostReadyAppliedRef.current = false;
+    preHostRuntimeRefreshRequestedRef.current = false;
     setRuntimeConnectionSource("manual");
     updateRuntimeSettings({ ...settingsRef.current, baseUrl: nextBaseUrl });
   }, [updateRuntimeSettings]);
 
   const updateToken = useCallback((nextToken: string) => {
     hostReadyAppliedRef.current = false;
+    preHostRuntimeRefreshRequestedRef.current = false;
     setRuntimeConnectionSource("manual");
     updateRuntimeSettings({ ...settingsRef.current, token: nextToken });
   }, [updateRuntimeSettings]);
@@ -1274,6 +1277,7 @@ export function App() {
         : settingsRef.current.token;
     const wasHostReadyApplied = hostReadyAppliedRef.current;
     hostReadyAppliedRef.current = true;
+    preHostRuntimeRefreshRequestedRef.current = false;
     setRuntimeConnectionSource("host.ready");
     const changed = updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
     appendTrace({
@@ -2123,8 +2127,18 @@ export function App() {
     setDeletingChatId(null);
     setChatHistoryLoading(false);
   }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (requestHostRefresh = false) => {
     if (bridgeHost !== "browser" && !hostReadyAppliedRef.current && runtimeConnectionSource !== "manual") {
+      if (requestHostRefresh && bridgeHost === "jetbrains" && !preHostRuntimeRefreshRequestedRef.current) {
+        preHostRuntimeRefreshRequestedRef.current = true;
+        bridgeAdapterRef.current?.post({
+          version: "2026-05-15",
+          type: "gui.runtimeRefresh",
+          requestId: `gui-runtime-refresh-${runtimeRefreshAttemptRef.current + 1}`,
+          payload: {},
+        });
+        addTimeline("Requested IDE-managed runtime refresh");
+      }
       addTimeline("Waiting for IDE host runtime settings");
       return;
     }
@@ -3583,7 +3597,7 @@ export function App() {
             providerTestState={providerTestState}
             demoModeEnabled={demoModeEnabled}
             demoModeWorking={demoModeWorking}
-            onRefreshRuntime={() => void connect()}
+            onRefreshRuntime={() => void connect(true)}
             onToggleDemoMode={(enabled) => void toggleDemoMode(enabled)}
             onApiKeyFallback={applyOpenAiApiPreset}
             onTestProvider={(providerId) => void runProviderTest(providerId)}
@@ -3600,7 +3614,7 @@ export function App() {
             <div className="compact-host-setup-body stack">
               <span className="subtle">Chat stays primary in compact IDE layout. Runtime, provider API-key setup, experimental OpenAI account login, and Demo Mode controls remain available below.</span>
               <div className="row">
-                <button type="button" onClick={() => { setRuntimeDetailsOpen(true); void connect(); }} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
+                <button type="button" onClick={() => { setRuntimeDetailsOpen(true); void connect(true); }} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
                 <button type="button" onClick={() => { setProviderDetailsOpen(true); applyOpenAiApiPreset(); }}>Use OpenAI API key fallback</button>
                 <button type="button" onClick={() => void toggleDemoMode(!demoModeEnabled)} disabled={demoModeWorking}>{demoModeWorking ? "Changing Demo Mode…" : demoModeToggleLabel}</button>
                 <button type="button" className="secondary-button" onClick={() => setProviderDetailsOpen(true)}>Open provider/login setup below</button>
@@ -3658,7 +3672,7 @@ export function App() {
             </details>
             <div className="chat-scroll-region" ref={chatScrollRegionRef} aria-label="Chat messages">
               <div className="chat-panel">
-                {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect()} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
+                {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect(true)} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
                 <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
                 {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
               </div>
@@ -3744,7 +3758,7 @@ export function App() {
           <span>Use JetBrains Tools → Yet AI: Copy Diagnostics or Open Logs Folder for a sanitized bundle and local logs folder. Raw logs are not shown in the Web UI.</span>
         </div>}
         <div className="row">
-          <button onClick={() => void connect()} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
+          <button onClick={() => void connect(true)} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
           <span className="subtle">Authorization header is sent only to validated loopback runtime URLs.</span>
         </div>
         {runtimeRefreshStatus && <div className={`refresh-status ${runtimeRefreshStatus.state}`} role="status"><strong>{runtimeRefreshStatus.detail}</strong><span>Attempt {runtimeRefreshStatus.attempt} at {runtimeRefreshStatus.checkedAt}</span></div>}

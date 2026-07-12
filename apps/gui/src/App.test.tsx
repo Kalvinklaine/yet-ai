@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +23,8 @@ import taskHarnessHappyFixture from "../../../packages/contracts/examples/engine
 import taskHarnessJetBrainsFixture from "../../../packages/contracts/examples/engine/controlled-agent-task-harness-jetbrains-partial.json";
 import workflowTranscriptCompletedFixture from "../../../packages/contracts/examples/engine/controlled-agent-workflow-transcript-completed.json";
 import workflowTranscriptBlockedFixture from "../../../packages/contracts/examples/engine/controlled-agent-workflow-transcript-blocked.json";
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const bridgeVersion = "2026-05-15";
 const fetchMock = vi.fn();
@@ -3659,6 +3662,50 @@ describe("host.ready runtime bootstrap", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/models"))).toHaveLength(0);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/caps"))).toHaveLength(0);
     expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh")).toHaveLength(0);
+  });
+
+  it("JetBrains pre-host.ready Refresh runtime requests host redelivery and recovers after host.ready", async () => {
+    const postIntellijMessage = vi.fn();
+    const token = "jetbrainsPreHostRecoveryValue";
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("bridge jetbrains");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh")).toHaveLength(0);
+
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    const refreshRequests = postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh").map(([message]) => message);
+    expect(refreshRequests).toEqual([{
+      version: bridgeVersion,
+      type: "gui.runtimeRefresh",
+      requestId: "gui-runtime-refresh-1",
+      payload: {},
+    }]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/models"))).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/caps"))).toHaveLength(0);
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: token });
+    await flushAsync();
+    await flushAsync();
+
+    const retargetedCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("http://127.0.0.1:8765/"));
+    expect(retargetedCalls.length).toBeGreaterThan(0);
+    expect(retargetedCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${token}`)).toBe(true);
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
+    expect(container?.textContent).not.toContain("State: Runtime unavailable");
+    expect(container?.textContent).not.toContain(token);
+    expect(browserStorageDump()).not.toContain(token);
   });
 
   it("host.ready refresh sends Authorization and clears stale pre-host 401 state", async () => {
