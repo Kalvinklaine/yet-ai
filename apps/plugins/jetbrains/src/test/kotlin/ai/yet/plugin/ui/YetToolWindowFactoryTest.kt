@@ -60,6 +60,87 @@ class YetToolWindowFactoryTest {
         assertFalse(html.contains("/assets/index-"))
     }
 
+
+    @Test
+    fun iframeLoadAloneDoesNotMarkGuiReadyOrHideFallback() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "let frameLoaded = false;")
+        assertContains(html, "let frameReady = false;")
+        assertContains(html, "const markFrameLoaded = () => {")
+        assertContains(html, "frameLoaded = true;")
+        assertContains(html, "Yet AI iframe loaded; waiting for validated gui.ready")
+        assertContains(html, "markFrameLoaded();")
+        assertContains(html, "resetFrameNonceChallenge();")
+        assertFalse(html.contains("const markLoaded = () =>"))
+        assertFalse(html.contains("const markFrameLoaded = () => {\n          frameLoaded = true;\n          if (shellStatus) shellStatus.hidden = true;"))
+        assertFalse(html.contains("const markFrameLoaded = () => {\n          frameLoaded = true;\n          if (shellFallback) shellFallback.hidden = true;"))
+        assertFalse(html.contains("frameReady = true;\n              guiReadySequence = nextGuiReadySequence;"))
+    }
+
+    @Test
+    fun fallbackIsShownIfGuiReadyNeverArrivesAfterLoad() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "if (!frameReady) {")
+        assertContains(html, "const readinessMessage = frameLoaded")
+        assertContains(html, "Packaged Yet AI GUI loaded but did not send a validated ready signal")
+        assertContains(html, "Packaged Yet AI GUI did not finish loading from the local loopback server")
+        assertContains(html, "showReadinessFallback(readinessMessage);")
+        assertContains(html, "shellStatus.textContent = message;")
+        assertContains(html, "if (shellFallback) shellFallback.hidden = false;")
+        assertContains(html, "Yet AI GUI readiness fallback shown")
+        assertFalse(html.contains("if (!frameLoaded) shellFallback.hidden = false;"))
+    }
+
+    @Test
+    fun validatedGuiReadyHidesStatusFallbackAndAllowsHostReadyDelivery() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "} else if (isGuiMessage(event.data)) {")
+        assertContains(html, "isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce")
+        assertContains(html, "frameReady = true;")
+        assertContains(html, "Yet AI received validated gui.ready from current iframe")
+        assertContains(html, "hideShellAfterReady();")
+        assertContains(html, "const hideShellAfterReady = () => {")
+        assertContains(html, "if (shellStatus) shellStatus.hidden = true;")
+        assertContains(html, "if (shellFallback) shellFallback.hidden = true;")
+        assertContains(html, "window.postIntellijMessage(readyMessage);")
+        assertContains(html, "if (message.type === \"host.ready\") {")
+        assertContains(html, "acceptedHostReadyRequestId = message.requestId;")
+        assertContains(html, "hostReadyAcceptedForCurrentFrame = true;")
+    }
+
+    @Test
+    fun wrapperStillRejectsStaleOrWrongOriginMessages() {
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        assertContains(html, "event.source === currentFrameWindow && event.source === frame?.contentWindow")
+        assertContains(html, "if (frameTargetOrigin && frameTargetOrigin !== \"*\" && event.origin !== frameTargetOrigin)")
+        assertContains(html, "Yet AI rejected iframe message from unexpected origin")
+        assertContains(html, "invalidateFrameAuthority(\"frame.load\")")
+        assertContains(html, "currentFrameWindow = frame.contentWindow;")
+        assertContains(html, "const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();")
+        assertContains(html, "if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;")
+        assertFalse(html.contains("if (event.source === frame?.contentWindow)"))
+        assertFalse(html.contains("postMessage(message, \"*\")"))
+    }
     @Test
     fun wrapperFlushesQueuedMessagesOnlyWhenGuiIsReady() {
         val html = renderHtml(

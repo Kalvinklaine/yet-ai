@@ -804,14 +804,30 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           }
           showDiagnostic(message);
         };
-        const markLoaded = () => {
+        const markFrameLoaded = () => {
           frameLoaded = true;
+          console.log("Yet AI iframe loaded; waiting for validated gui.ready");
+        };
+        const showReadinessFallback = (message) => {
+          if (shellStatus) {
+            shellStatus.hidden = false;
+            shellStatus.textContent = message;
+          }
+          if (shellFallback) shellFallback.hidden = false;
+          console.log("Yet AI GUI readiness fallback shown");
+        };
+        const hideShellAfterReady = () => {
           if (shellStatus) shellStatus.hidden = true;
           if (shellFallback) shellFallback.hidden = true;
         };
         if (shellFallback && frame) {
           window.setTimeout(() => {
-            if (!frameLoaded) shellFallback.hidden = false;
+            if (!frameReady) {
+              const readinessMessage = frameLoaded
+                ? "Packaged Yet AI GUI loaded but did not send a validated ready signal. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview."
+                : "Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview.";
+              showReadinessFallback(readinessMessage);
+            }
           }, 8000);
         }
         window.postIntellijMessage = (message) => { $postIntellij };
@@ -1107,6 +1123,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
                 return;
               }
               frameReady = true;
+              console.log("Yet AI received validated gui.ready from current iframe");
+              hideShellAfterReady();
               guiReadySequence = nextGuiReadySequence;
               currentGuiReadySequence = nextGuiReadySequence;
               currentGuiReadyRequestId = nextGuiReadyRequestId;
@@ -1127,7 +1145,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             frameGeneration += 1;
             currentFrameWindow = frame.contentWindow;
             window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
-            markLoaded();
+            markFrameLoaded();
             resetFrameNonceChallenge();
           });
         }
