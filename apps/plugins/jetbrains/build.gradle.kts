@@ -88,6 +88,14 @@ intellijPlatform {
 
 tasks {
     processResources {
+        mustRunAfter(copyGuiDist)
+    }
+
+    named("buildPlugin") {
+        dependsOn(copyGuiDist)
+    }
+
+    named("prepareSandbox") {
         dependsOn(copyGuiDist)
     }
 
