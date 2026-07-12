@@ -69,6 +69,7 @@ import type { AgentRunInput } from "./services/agentRunState";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
+const preHostRuntimeRefreshRetryCooldownMs = 1500;
 
 function detectInitialBridgeHost(): BridgeHost {
   if (typeof window === "undefined") {
@@ -434,7 +435,8 @@ export function App() {
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
   const hostReadyAppliedRef = useRef(false);
-  const preHostRuntimeRefreshRequestedRef = useRef(false);
+  const preHostRuntimeRefreshRequestedAtRef = useRef<number | null>(null);
+  const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
   const settingsRef = useRef<RuntimeSettings>({ baseUrl: defaultBaseUrl, token: "" });
   const chatIdRef = useRef("chat-001");
@@ -1251,14 +1253,14 @@ export function App() {
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
     hostReadyAppliedRef.current = false;
-    preHostRuntimeRefreshRequestedRef.current = false;
+    preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("manual");
     updateRuntimeSettings({ ...settingsRef.current, baseUrl: nextBaseUrl });
   }, [updateRuntimeSettings]);
 
   const updateToken = useCallback((nextToken: string) => {
     hostReadyAppliedRef.current = false;
-    preHostRuntimeRefreshRequestedRef.current = false;
+    preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("manual");
     updateRuntimeSettings({ ...settingsRef.current, token: nextToken });
   }, [updateRuntimeSettings]);
@@ -1277,7 +1279,7 @@ export function App() {
         : settingsRef.current.token;
     const wasHostReadyApplied = hostReadyAppliedRef.current;
     hostReadyAppliedRef.current = true;
-    preHostRuntimeRefreshRequestedRef.current = false;
+    preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("host.ready");
     const changed = updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken });
     appendTrace({
@@ -2129,15 +2131,22 @@ export function App() {
   }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
   const connect = useCallback(async (requestHostRefresh = false) => {
     if (bridgeHost !== "browser" && !hostReadyAppliedRef.current && runtimeConnectionSource !== "manual") {
-      if (requestHostRefresh && bridgeHost === "jetbrains" && !preHostRuntimeRefreshRequestedRef.current) {
-        preHostRuntimeRefreshRequestedRef.current = true;
-        bridgeAdapterRef.current?.post({
-          version: "2026-05-15",
-          type: "gui.runtimeRefresh",
-          requestId: `gui-runtime-refresh-${runtimeRefreshAttemptRef.current + 1}`,
-          payload: {},
-        });
-        addTimeline("Requested IDE-managed runtime refresh");
+      if (requestHostRefresh && bridgeHost === "jetbrains") {
+        const adapter = bridgeAdapterRef.current;
+        const now = Date.now();
+        const lastRequestedAt = preHostRuntimeRefreshRequestedAtRef.current;
+        const canRetry = lastRequestedAt === null || now - lastRequestedAt >= preHostRuntimeRefreshRetryCooldownMs;
+        if (adapter && canRetry) {
+          preHostRuntimeRefreshRequestedAtRef.current = now;
+          preHostRuntimeRefreshRequestCounterRef.current += 1;
+          adapter.post({
+            version: "2026-05-15",
+            type: "gui.runtimeRefresh",
+            requestId: `gui-runtime-refresh-${preHostRuntimeRefreshRequestCounterRef.current}`,
+            payload: {},
+          });
+          addTimeline("Requested IDE-managed runtime refresh");
+        }
       }
       addTimeline("Waiting for IDE host runtime settings");
       return;

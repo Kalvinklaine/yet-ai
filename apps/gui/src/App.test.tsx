@@ -3708,6 +3708,54 @@ describe("host.ready runtime bootstrap", () => {
     expect(browserStorageDump()).not.toContain(token);
   });
 
+  it("JetBrains pre-host.ready Refresh runtime allows a later retry when host.ready is lost", async () => {
+    const postIntellijMessage = vi.fn();
+    const now = vi.spyOn(Date, "now");
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+
+    now.mockReturnValue(10_000);
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    now.mockReturnValue(10_100);
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh").map(([message]) => message)).toEqual([{
+      version: bridgeVersion,
+      type: "gui.runtimeRefresh",
+      requestId: "gui-runtime-refresh-1",
+      payload: {},
+    }]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+
+    now.mockReturnValue(11_600);
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh").map(([message]) => message)).toEqual([
+      {
+        version: bridgeVersion,
+        type: "gui.runtimeRefresh",
+        requestId: "gui-runtime-refresh-1",
+        payload: {},
+      },
+      {
+        version: bridgeVersion,
+        type: "gui.runtimeRefresh",
+        requestId: "gui-runtime-refresh-2",
+        payload: {},
+      },
+    ]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+  });
+
   it("host.ready refresh sends Authorization and clears stale pre-host 401 state", async () => {
     const postIntellijMessage = vi.fn();
     const token = "hostReadyAuthLocalValue";
