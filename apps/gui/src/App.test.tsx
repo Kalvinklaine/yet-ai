@@ -3692,6 +3692,26 @@ describe("host.ready runtime bootstrap", () => {
     expect(browserStorageDump()).not.toContain("panel-bootstrap");
   });
 
+  it("engine-served Web UI bootstrap uses same-origin root before any host.ready", async () => {
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.__yetAiInitialRuntimeConfig = {
+      runtimeAccess: "same_origin_proxy",
+      runtimeBaseUrl: "/",
+    };
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+    await flushAsync();
+
+    const sameOriginCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/v1/"));
+    expect(sameOriginCalls.length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("http://127.0.0.1:8001/"))).toBe(false);
+    expect(sameOriginCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === null)).toBe(true);
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("engine-session-token");
+  });
+
   it("JetBrains packaged proxy mode ignores later raw direct host.ready URL", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;

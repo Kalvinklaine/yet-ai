@@ -489,6 +489,14 @@ export function isPanelScopedProxyBaseUrl(baseUrl: string): boolean {
   return /^\/panel\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(baseUrl);
 }
 
+export function isSameOriginRuntimeBaseUrl(baseUrl: string): boolean {
+  return baseUrl === "/" || baseUrl === "";
+}
+
+export function isSameOriginProxyBaseUrl(baseUrl: string): boolean {
+  return isPanelScopedProxyBaseUrl(baseUrl) || isSameOriginRuntimeBaseUrl(baseUrl);
+}
+
 export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
   let parsed: URL;
   try {
@@ -547,7 +555,7 @@ export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
 }
 
 export function isLoopbackRuntimeUrl(baseUrl: string): boolean {
-  return validateRuntimeBaseUrl(baseUrl).ok || isPanelScopedProxyBaseUrl(baseUrl);
+  return validateRuntimeBaseUrl(baseUrl).ok || isSameOriginProxyBaseUrl(baseUrl);
 }
 
 export function runtimeAccessMode(settings: Pick<RuntimeSettings, "baseUrl"> & Partial<Pick<RuntimeSettings, "runtimeAccess">>): RuntimeAccessMode {
@@ -556,14 +564,14 @@ export function runtimeAccessMode(settings: Pick<RuntimeSettings, "baseUrl"> & P
 
 export function validateRuntimeSettings(settings: RuntimeSettings): RuntimeResult<URL | string> {
   if (runtimeAccessMode(settings) === "same_origin_proxy") {
-    if (isPanelScopedProxyBaseUrl(settings.baseUrl)) {
+    if (isSameOriginProxyBaseUrl(settings.baseUrl)) {
       return { ok: true, data: settings.baseUrl };
     }
     return {
       ok: false,
       error: {
         status: "configuration",
-        message: "Runtime proxy base URL must be a panel-scoped same-origin path.",
+        message: "Runtime proxy base URL must be a same-origin root or panel-scoped path.",
       },
     };
   }
@@ -599,7 +607,7 @@ function sanitizeRuntimeTraceEndpoint(path: string): string {
 }
 
 function runtimeOriginLabel(baseUrl: string): string {
-  if (isPanelScopedProxyBaseUrl(baseUrl)) {
+  if (isSameOriginProxyBaseUrl(baseUrl)) {
     return "same-origin-proxy";
   }
   try {

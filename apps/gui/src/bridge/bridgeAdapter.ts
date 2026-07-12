@@ -1331,7 +1331,7 @@ function optionalLoopbackRuntimeUrl(value: unknown): boolean {
 }
 
 function optionalPanelScopedProxyBaseUrl(value: unknown): boolean {
-  return value === undefined || (typeof value === "string" && /^\/panel\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value));
+  return value === undefined || (typeof value === "string" && (value === "/" || value === "" || /^\/panel\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value)));
 }
 
 function isContextFile(value: unknown): boolean {

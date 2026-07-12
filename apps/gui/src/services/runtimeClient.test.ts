@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createChat, deleteChat, getChat, listChats, authHeaders, isPanelScopedProxyBaseUrl, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
+import { createChat, deleteChat, getChat, listChats, authHeaders, isPanelScopedProxyBaseUrl, isSameOriginProxyBaseUrl, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
 
 const fetchMock = vi.fn();
 
@@ -31,6 +31,26 @@ describe("runtimeClient", () => {
 
     expect(result.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledWith("/panel/panel-123/v1/ping", expect.objectContaining({
+      headers: expect.any(Headers),
+    }));
+    const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+    expect(headers.get("Authorization")).toBeNull();
+    expect(headers.get("X-Yet-AI-Caller")).toBe("gui_runtime_client");
+  });
+
+  it("uses engine-served same-origin root bootstrap without GUI Authorization", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(isSameOriginProxyBaseUrl("/")).toBe(true);
+    expect(isSameOriginProxyBaseUrl("")).toBe(true);
+    expect(isSameOriginProxyBaseUrl("/v1")).toBe(false);
+    expect(new Headers(authHeaders({ baseUrl: "/", token: "engine-session-token", runtimeAccess: "same_origin_proxy" })).get("Authorization")).toBeNull();
+
+    const result = await runtimeFetch({ baseUrl: "/", token: "engine-session-token", runtimeAccess: "same_origin_proxy" }, "/v1/ping");
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith("/v1/ping", expect.objectContaining({
       headers: expect.any(Headers),
     }));
     const headers = new Headers(fetchMock.mock.calls[0][1].headers);

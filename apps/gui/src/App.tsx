@@ -22,7 +22,7 @@ import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackCh
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isPanelScopedProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity, type EditProposalRejectedDiagnostic } from "./services/editProposal";
@@ -89,7 +89,7 @@ function readInitialRuntimeSettings(): RuntimeSettings {
   }
   const config = window.__yetAiInitialRuntimeConfig;
   const proxyBaseUrl = config?.runtimeProxyBaseUrl ?? config?.runtimeBaseUrl;
-  if (config?.runtimeAccess === "same_origin_proxy" && proxyBaseUrl && isPanelScopedProxyBaseUrl(proxyBaseUrl)) {
+  if (config?.runtimeAccess === "same_origin_proxy" && proxyBaseUrl !== undefined && isSameOriginProxyBaseUrl(proxyBaseUrl)) {
     return { baseUrl: proxyBaseUrl, token: "", runtimeAccess: "same_origin_proxy" };
   }
   return { baseUrl: defaultBaseUrl, token: "", runtimeAccess: "direct" };
@@ -449,7 +449,7 @@ export function App() {
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeLifecycle, setRuntimeLifecycle] = useState<{ diagnostics: RuntimeLifecycleDiagnostics; settingsRevision: number } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
-  const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>(() => isPanelScopedProxyBaseUrl(initialRuntimeSettings.baseUrl) ? "host.ready" : "startup");
+  const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>(() => isSameOriginProxyBaseUrl(initialRuntimeSettings.baseUrl) ? "host.ready" : "startup");
   const [hostReadyRefreshNonce, setHostReadyRefreshNonce] = useState(0);
   const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(true);
   const [providerDetailsOpen, setProviderDetailsOpen] = useState(false);
@@ -460,7 +460,7 @@ export function App() {
   const runtimeRefreshAttemptRef = useRef(0);
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
-  const hostReadyAppliedRef = useRef(isPanelScopedProxyBaseUrl(initialRuntimeSettings.baseUrl));
+  const hostReadyAppliedRef = useRef(isSameOriginProxyBaseUrl(initialRuntimeSettings.baseUrl));
   const preHostRuntimeRefreshRequestedAtRef = useRef<number | null>(null);
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
@@ -2193,7 +2193,7 @@ export function App() {
       addTimeline("Waiting for IDE host runtime settings");
       return;
     }
-    if (bridgeHost === "jetbrains" && !isPanelScopedProxyBaseUrl(settingsRef.current.baseUrl)) {
+    if (bridgeHost === "jetbrains" && !isSameOriginProxyBaseUrl(settingsRef.current.baseUrl)) {
       bridgeAdapterRef.current?.post({
         version: GUI_BRIDGE_VERSION,
         type: "gui.runtimeRefresh",

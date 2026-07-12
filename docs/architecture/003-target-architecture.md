@@ -313,6 +313,16 @@ The GUI should not own provider secrets, filesystem mutation, shell execution, o
 
 Provider setup screens should render provider availability, status, model summaries, validation errors, and secret placeholders returned by the engine. They must not persist raw provider secrets in GUI storage and must not call model providers directly.
 
+#### Web UI runtime access modes
+
+Web UI remains a product foundation, not only an IDE webview. Runtime access is split into explicit local-first modes:
+
+- **Development/browser standalone direct mode** is for local testing from a separate Vite/browser origin. The user or developer supplies a loopback runtime URL and the current local runtime Session token manually. A browser standalone `401` means the local runtime URL/token pair does not match or the token is missing. This is expected for direct development mode and is not the intended final Web UI production foundation.
+- **Production/local engine-served same-origin mode** is the target browser Web UI path. The engine serves or otherwise bootstraps the GUI from the same local origin as the runtime API, before the first runtime request. The GUI receives a same-origin runtime base such as `/` through trusted bootstrap metadata, uses `runtimeAccess: "same_origin_proxy"`, and does not attach a visible bearer token or persist raw runtime tokens in browser storage. Auth remains engine-owned/server-side, local-only, and BYOK provider calls still go directly from the engine to configured providers or local runtimes.
+- **IDE packaged proxy mode** remains a separate host-owned mode. VS Code and JetBrains can package or host GUI assets and provide host-specific runtime metadata. JetBrains packaged proxy mode uses a panel-scoped same-origin base such as `/panel/{panelId}` with server-side Authorization injection by the host proxy. This must not be treated as the only same-origin Web UI design.
+
+The current code foundation proves that `same_origin_proxy` is host-agnostic: the GUI runtime client accepts both panel-scoped IDE proxy bases and an engine-served same-origin root, omits GUI Authorization headers in that mode, and makes first runtime calls relative to the bootstrapped same-origin base. Broad engine static-file serving, cache policy, asset freshness, content security policy, and an engine route layout for production Web UI are intentionally deferred to a dedicated implementation card; they must preserve the local-first BYOK contract and keep raw provider/runtime tokens out of GUI storage, logs, and GUI-facing responses.
+
 A dedicated visual/browser GUI smoke is planned in GitHub issue #2. Until that issue is implemented and verified, docs and reports should describe it as planned only. The planned smoke must stay local-first, use loopback/mock fixtures, and require no provider credentials, hosted Yet AI backend, managed model gateway, product credit balance, or cloud workspace.
 
 ### `apps/plugins/vscode`
