@@ -1039,6 +1039,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const invalidateFrameAuthority = (reason) => {
           clearReadinessFallbackTimer();
+          frameLoaded = false;
           frameReady = false;
           currentGuiReadySequence = 0;
           currentGuiReadyRequestId = undefined;
