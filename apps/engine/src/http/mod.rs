@@ -1172,7 +1172,8 @@ mod tests {
 
     #[tokio::test]
     async fn web_ui_route_does_not_disable_v1_authentication() {
-        let _guard = web_ui_test_lock().lock().await;
+        let _web_ui_guard = web_ui_test_lock().lock().await;
+        let _http_log_guard = http_log_test_lock().lock().await;
         let dist = temp_web_ui_dist();
         std::fs::write(
             dist.join("index.html"),
