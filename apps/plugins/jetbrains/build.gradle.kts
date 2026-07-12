@@ -32,6 +32,10 @@ val copyGuiDist by tasks.registering(Copy::class) {
 val packagedEngineResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-engine")
 val artifactMetadataResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-artifact")
 
+val buildSearchableOptionsEnabled = providers.gradleProperty("yetAiBuildSearchableOptions")
+    .map(String::toBoolean)
+    .orElse(false)
+
 dependencies {
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
@@ -69,6 +73,12 @@ intellijPlatform {
 tasks {
     processResources {
         dependsOn(copyGuiDist)
+    }
+
+    matching { it.name == "buildSearchableOptions" }.configureEach {
+        // Local dev-preview artifact builds must be deterministic and non-interactive;
+        // searchable options can hang in headless local builds, so opt in explicitly.
+        enabled = buildSearchableOptionsEnabled.get()
     }
 
     test {
