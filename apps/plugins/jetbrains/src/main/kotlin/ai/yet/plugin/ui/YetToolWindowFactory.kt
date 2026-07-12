@@ -879,8 +879,10 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics);
         window.__yetAiPendingHostMessages = pendingHostMessages;
         window.__yetAiPendingDiagnostics = pendingDiagnostics;
+        let latestShellRuntimeCopyPayload;
         const applyShellRuntimeCopy = (payload) => {
           if (typeof payload !== "object" || payload === null || Array.isArray(payload) || typeof payload.statusHtml !== "string" || typeof payload.fallbackHtml !== "string") return;
+          latestShellRuntimeCopyPayload = payload;
           const showStatus = payload.showStatus === true;
           const showFallback = payload.showFallback === true;
           if (shellStatus) {
@@ -1247,6 +1249,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
               clearReadinessFallbackTimer();
               console.log("Yet AI received validated gui.ready from current iframe");
               hideShellAfterReady();
+              if (latestShellRuntimeCopyPayload !== undefined) applyShellRuntimeCopy(latestShellRuntimeCopyPayload);
               guiReadySequence = nextGuiReadySequence;
               currentGuiReadySequence = nextGuiReadySequence;
               currentGuiReadyRequestId = nextGuiReadyRequestId;

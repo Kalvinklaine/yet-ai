@@ -126,6 +126,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "clearReadinessFallbackTimer();")
         assertContains(html, "Yet AI received validated gui.ready from current iframe")
         assertContains(html, "hideShellAfterReady();")
+        assertContains(html, "if (latestShellRuntimeCopyPayload !== undefined) applyShellRuntimeCopy(latestShellRuntimeCopyPayload);")
         assertContains(html, "const hideShellAfterReady = () => {")
         assertContains(html, "if (shellStatus) shellStatus.hidden = true;")
         assertContains(html, "if (shellFallback) shellFallback.hidden = true;")
@@ -264,8 +265,10 @@ class YetToolWindowFactoryTest {
             PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
         )
 
+        assertContains(html, "let latestShellRuntimeCopyPayload;")
         assertContains(html, "const applyShellRuntimeCopy = (payload) => {")
         assertContains(html, "typeof payload.statusHtml !== \"string\"")
+        assertContains(html, "latestShellRuntimeCopyPayload = payload;")
         assertContains(html, "shellStatus.innerHTML = payload.statusHtml;")
         assertContains(html, "const showStatus = payload.showStatus === true;")
         assertContains(html, "const showFallback = payload.showFallback === true;")
