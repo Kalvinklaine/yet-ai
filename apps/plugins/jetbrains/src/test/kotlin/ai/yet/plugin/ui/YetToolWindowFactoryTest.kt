@@ -163,7 +163,7 @@ class YetToolWindowFactoryTest {
             .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
         val connection = RuntimeConnectionResult(
             RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
-            "Connected to Yet AI local runtime.",
+            "Connected to Yet AI local runtime at http://127.0.0.1:8123/private?token=must-not-leak.",
             null,
             RuntimeLifecycleStatus(
                 lifecycle = RuntimeLifecycle.CONNECTED,
@@ -280,7 +280,7 @@ class YetToolWindowFactoryTest {
             .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
         val connection = RuntimeConnectionResult(
             RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
-            "Connected to Yet AI local runtime.",
+            "Connected to Yet AI local runtime at http://127.0.0.1:8123/private?token=must-not-leak.",
             null,
             RuntimeLifecycleStatus(
                 lifecycle = RuntimeLifecycle.CONNECTED,

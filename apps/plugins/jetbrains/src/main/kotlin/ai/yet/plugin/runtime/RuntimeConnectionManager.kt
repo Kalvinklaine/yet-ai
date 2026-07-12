@@ -132,7 +132,7 @@ class RuntimeConnectionManager(
             lastLaunchedByPluginDuringHealth = false
             RuntimeConnectionResult(
                 connection,
-                "Connected to Yet AI local runtime at ${connection.runtimeUrl}.",
+                "Connected to Yet AI local runtime at ${sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)}.",
                 null,
                 runtimeLifecycleStatus(
                     connection,
@@ -187,7 +187,7 @@ class RuntimeConnectionManager(
                     lastLaunchedByPluginDuringHealth = false
                     RuntimeConnectionResult(
                         connection,
-                        "Connected to Yet AI local runtime at ${connection.runtimeUrl} after refreshing the runtime session token.",
+                        "Connected to Yet AI local runtime at ${sanitizeRuntimeUrlForDiagnostics(connection.runtimeUrl)} after refreshing the runtime session token.",
                         null,
                         runtimeLifecycleStatus(
                             connection,

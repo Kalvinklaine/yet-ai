@@ -914,6 +914,23 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
+    fun prepareSuccessStatusUsesSanitizedRuntimeOrigin() {
+        val manager = RuntimeConnectionManager(
+            bundledEngineProvider = RecordingBundledProvider(null),
+            engineBinaryFinder = { null },
+            healthChecker = {},
+        )
+
+        val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, null, LaunchMode.CONNECT, null))
+
+        assertEquals(null, result.error)
+        assertContains(result.status.orEmpty(), "http://127.0.0.1:8123")
+        listOf("/private", "token=", "must-not-leak").forEach { privateValue ->
+            assertFalse(result.status.orEmpty().contains(privateValue, ignoreCase = true), result.status)
+        }
+    }
+
+    @Test
     fun prepareClassifiesPluginProcessThatExitsDuringHealthAsStopped() {
         val exitingProcess = FakeManuallyKillableProcess(exitCode = 42)
         val manager = RuntimeConnectionManager(

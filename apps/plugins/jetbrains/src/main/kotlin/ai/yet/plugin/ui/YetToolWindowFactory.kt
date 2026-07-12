@@ -19,7 +19,9 @@ import ai.yet.plugin.runtime.RuntimeSettings
 import ai.yet.plugin.runtime.loopbackOrigin
 import ai.yet.plugin.runtime.effectiveRuntimeOwnerFromLifecycleOwner
 import ai.yet.plugin.runtime.runtimeCorrelationFields
+import ai.yet.plugin.runtime.redactLogText
 import ai.yet.plugin.runtime.runtimeLifecycleStatus
+import ai.yet.plugin.runtime.sanitizeRuntimeUrlForDiagnostics
 import com.google.gson.JsonParser
 import com.google.gson.JsonPrimitive
 import com.intellij.openapi.Disposable
@@ -765,10 +767,20 @@ internal fun isPluginManagedRuntime(connection: RuntimeConnectionResult): Boolea
 internal fun shellRuntimeCopyScript(connection: RuntimeConnectionResult, packagedGui: PackagedGui?, delivery: WrapperScriptDelivery = WrapperScriptDelivery()): String =
     delivery.shellRuntimeCopy(shellStatusCopy(connection, packagedGui), shellFallbackCopy(connection, packagedGui))
 
+private fun sanitizeRuntimeStatusForShell(value: String?): String? {
+    if (value == null) return null
+    val sanitizedUrls = Regex("https?://[^\\s<>\"']+").replace(value) { match ->
+        val url = match.value.trimEnd('.', ',', ';', ')')
+        val suffix = match.value.removePrefix(url)
+        sanitizeRuntimeUrlForDiagnostics(url) + suffix
+    }
+    return redactLogText(sanitizedUrls, "")
+}
+
 private fun shellStatusCopy(connection: RuntimeConnectionResult, packagedGui: PackagedGui?): String {
     val settings = connection.settings
     val engineRoot = engineServedWebUiRootUrl(settings.runtimeUrl)
-    val status = html(connection.status ?: "Connecting to Yet AI local runtime...")
+    val status = html(sanitizeRuntimeStatusForShell(connection.status) ?: "Connecting to Yet AI local runtime...")
     return when {
         settings.guiDevUrl != null -> "Development GUI iframe: <code>${html(settings.guiDevUrl)}</code>. Runtime: <code>${html(engineRoot ?: sanitizeRuntimeUrlForShell(settings.runtimeUrl))}</code>. $status"
         packagedGui != null && isPluginManagedRuntime(connection) && engineRoot != null -> "Installed plugin packaged panel: <code>${html(packagedGui.indexUrl)}</code>. Engine-served Web UI: <code>${html(engineRoot)}</code>. $status"
@@ -796,8 +808,8 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
     val settings = connection.settings
     val frame = buildGuiFrame(settings.guiDevUrl, packagedGui)
     val frameOrigin = buildFrameOrigin(settings.guiDevUrl, packagedGui)
-    val status = connection.status?.let { "<p>${html(it)}</p>" } ?: ""
-    val error = connection.error?.let { "<p><strong>Runtime error:</strong> ${html(it)}</p>" } ?: ""
+    val status = sanitizeRuntimeStatusForShell(connection.status)?.let { "<p>${html(it)}</p>" } ?: ""
+    val error = connection.error?.let { "<p><strong>Runtime error:</strong> ${html(sanitizeRuntimeStatusForShell(it) ?: "Runtime failure detected; details are sanitized above")}</p>" } ?: ""
     val shellStatusCopy = shellStatusCopy(connection, packagedGui)
     val shellFallbackCopy = shellFallbackCopy(connection, packagedGui)
     val placeholder = if (settings.guiDevUrl == null && packagedGui == null) {
