@@ -3,6 +3,7 @@ package ai.yet.plugin.ui
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PackagedGuiServerTest {
     @Test
@@ -26,6 +27,56 @@ class PackagedGuiServerTest {
         assertNull(resourcePath("/assets\\index.js"))
         assertNull(resourcePath("/favicon.ico"))
         assertNull(resourcePath("/assets/"))
+    }
+
+    @Test
+    fun forwardsPanelScopedV1RequestsWithServerSideAuthorization() {
+        val decision = packagedGuiProxyDecision(
+            "panel-1",
+            "/v1/ping",
+            mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", "safe-test-token")),
+        )
+
+        assertTrue(decision is PackagedGuiProxyDecision.Forward)
+        assertEquals("http://127.0.0.1:8765/v1/ping", decision.request.targetUrl)
+        assertEquals("Bearer safe-test-token", decision.request.headers["Authorization"])
+    }
+
+    @Test
+    fun forwardsWithoutAuthorizationWhenRuntimeTokenIsAbsent() {
+        val decision = packagedGuiProxyDecision(
+            "panel-1",
+            "/v1/models",
+            mapOf("panel-1" to PackagedGuiPanelRuntime("http://localhost:8765", null)),
+        )
+
+        assertTrue(decision is PackagedGuiProxyDecision.Forward)
+        assertEquals("http://localhost:8765/v1/models", decision.request.targetUrl)
+        assertEquals(emptyMap(), decision.request.headers)
+    }
+
+    @Test
+    fun failsClosedForUnknownPanelOrNonV1Path() {
+        val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", "safe-test-token"))
+
+        assertEquals(PackagedGuiProxyDecision.Reject, packagedGuiProxyDecision("missing", "/v1/ping", panels))
+        assertEquals(PackagedGuiProxyDecision.Reject, packagedGuiProxyDecision("panel-1", "/assets/index.js", panels))
+    }
+
+    @Test
+    fun rejectsNonLoopbackRuntimeTargets() {
+        for (runtimeUrl in listOf(
+            "https://example.test:8765",
+            "http://192.168.0.2:8765",
+            "http://127.0.0.1:8765/runtime",
+            "http://user:pass@127.0.0.1:8765",
+            "http://127.0.0.1:8765?token=value",
+        )) {
+            assertEquals(
+                PackagedGuiProxyDecision.Reject,
+                packagedGuiProxyDecision("panel-1", "/v1/ping", mapOf("panel-1" to PackagedGuiPanelRuntime(runtimeUrl, "safe-test-token"))),
+            )
+        }
     }
 
     @Test

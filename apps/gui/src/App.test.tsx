@@ -3665,6 +3665,29 @@ describe("host.ready runtime bootstrap", () => {
     expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh")).toHaveLength(0);
   });
 
+  it("JetBrains packaged proxy host.ready provides same-origin runtime config before first refresh", async () => {
+    const postIntellijMessage = vi.fn();
+    window.postIntellijMessage = postIntellijMessage;
+    const hostToken = "packagedProxyServerSideToken";
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/"))).toHaveLength(0);
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", runtimeProxyBaseUrl: "/panel/panel-abc", sessionToken: hostToken });
+    await flushAsync();
+    await flushAsync();
+
+    const proxyCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/panel/panel-abc/v1/"));
+    expect(proxyCalls.length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("http://127.0.0.1:8765/"))).toBe(false);
+    expect(proxyCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === null)).toBe(true);
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(container?.textContent).not.toContain(hostToken);
+    expect(browserStorageDump()).not.toContain(hostToken);
+  });
+
   it("JetBrains pre-host.ready Refresh runtime requests host redelivery and recovers after host.ready", async () => {
     const postIntellijMessage = vi.fn();
     const token = "jetbrainsPreHostRecoveryValue";
@@ -11954,7 +11977,7 @@ function controlledHostCapabilitiesFixture() {
   };
 }
 
-async function dispatchHostReady(payload: { runtimeUrl: string; sessionToken?: string; controlledCapabilities?: Record<string, unknown> }) {
+async function dispatchHostReady(payload: { runtimeUrl?: string; runtimeProxyBaseUrl?: string; sessionToken?: string; controlledCapabilities?: Record<string, unknown> }) {
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {

@@ -310,7 +310,7 @@ export function authHeaders(settings: RuntimeSettings): HeadersInit {
     "X-Yet-AI-Caller": "gui_runtime_client",
   };
   const token = settings.token.trim();
-  if (token && isLoopbackRuntimeUrl(settings.baseUrl)) {
+  if (token && validateRuntimeBaseUrl(settings.baseUrl).ok) {
     headers.Authorization = `Bearer ${token}`;
   }
   return headers;
@@ -322,7 +322,7 @@ export async function runtimeFetch<T>(
   init: RequestInit = {},
 ): Promise<RuntimeResult<T>> {
   const validation = validateRuntimeBaseUrl(settings.baseUrl);
-  if (!validation.ok) {
+  if (!validation.ok && !isPanelScopedProxyBaseUrl(settings.baseUrl)) {
     return { ok: false, error: validation.error };
   }
 
@@ -479,6 +479,10 @@ export function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
 }
 
+export function isPanelScopedProxyBaseUrl(baseUrl: string): boolean {
+  return /^\/panel\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(baseUrl);
+}
+
 export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
   let parsed: URL;
   try {
@@ -537,8 +541,7 @@ export function validateRuntimeBaseUrl(baseUrl: string): RuntimeResult<URL> {
 }
 
 export function isLoopbackRuntimeUrl(baseUrl: string): boolean {
-  const validation = validateRuntimeBaseUrl(baseUrl);
-  return validation.ok;
+  return validateRuntimeBaseUrl(baseUrl).ok || isPanelScopedProxyBaseUrl(baseUrl);
 }
 
 export function productIdentityWarning(response: Pick<PingResponse, "productId" | "displayName"> | Pick<CapsResponse, "productId">): string | null {

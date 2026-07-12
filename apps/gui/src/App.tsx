@@ -1266,13 +1266,16 @@ export function App() {
   }, [updateRuntimeSettings]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
-    if (!payload?.runtimeUrl || !isLoopbackRuntimeUrl(payload.runtimeUrl)) {
+    const hostRuntimeUrl = payload?.runtimeProxyBaseUrl ?? payload?.runtimeUrl;
+    if (!hostRuntimeUrl || !isLoopbackRuntimeUrl(hostRuntimeUrl)) {
       return;
     }
-    const hostRuntimeUrl = payload.runtimeUrl;
+    const proxyMode = Boolean(payload?.runtimeProxyBaseUrl);
     setControlledHostCapabilities(payload.controlledCapabilities);
     const currentBaseUrl = settingsRef.current.baseUrl;
-    const nextToken = payload.sessionToken
+    const nextToken = proxyMode
+      ? ""
+      : payload.sessionToken
       ? payload.sessionToken
       : normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)
         ? ""

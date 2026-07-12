@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createChat, deleteChat, getChat, listChats, authHeaders, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
+import { createChat, deleteChat, getChat, listChats, authHeaders, isPanelScopedProxyBaseUrl, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
 
 const fetchMock = vi.fn();
 
@@ -16,6 +16,25 @@ describe("runtimeClient", () => {
     expect(loopbackHeaders.get("X-Yet-AI-Caller")).toBe("gui_runtime_client");
     expect(new Headers(authHeaders({ baseUrl: "https://localhost:8001", token: "secret" })).get("Authorization")).toBe("Bearer secret");
     expect(new Headers(authHeaders({ baseUrl: "http://example.com", token: "secret" })).get("Authorization")).toBeNull();
+  });
+
+  it("uses panel-scoped same-origin proxy paths without GUI Authorization", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(isPanelScopedProxyBaseUrl("/panel/panel-123")).toBe(true);
+    expect(isPanelScopedProxyBaseUrl("/panel/panel-123/v1")).toBe(false);
+    expect(new Headers(authHeaders({ baseUrl: "/panel/panel-123", token: "proxy-mode-token" })).get("Authorization")).toBeNull();
+
+    const result = await runtimeFetch({ baseUrl: "/panel/panel-123", token: "proxy-mode-token" }, "/v1/ping");
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith("/panel/panel-123/v1/ping", expect.objectContaining({
+      headers: expect.any(Headers),
+    }));
+    const headers = new Headers(fetchMock.mock.calls[0][1].headers);
+    expect(headers.get("Authorization")).toBeNull();
+    expect(headers.get("X-Yet-AI-Caller")).toBe("gui_runtime_client");
   });
 
   it("rejects non-loopback runtime URLs before fetch", async () => {

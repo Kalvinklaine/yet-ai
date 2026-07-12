@@ -143,6 +143,7 @@ type FrameNonceMessage = {
 
 export type HostReadyPayload = {
   runtimeUrl?: string;
+  runtimeProxyBaseUrl?: string;
   sessionToken?: string;
   productId?: string;
   displayName?: string;
@@ -789,11 +790,12 @@ export function isHostMessage(value: unknown): value is HostMessage {
 }
 
 export function isHostReadyPayload(value: unknown): value is HostReadyPayload {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired", "controlledCapabilities"])) {
+  if (!isPlainObject(value) || !hasOnlyKeys(value, ["runtimeUrl", "runtimeProxyBaseUrl", "sessionToken", "productId", "displayName", "cloudRequired", "controlledCapabilities"])) {
     return false;
   }
   return (
     optionalLoopbackRuntimeUrl(value.runtimeUrl) &&
+    optionalPanelScopedProxyBaseUrl(value.runtimeProxyBaseUrl) &&
     optionalSessionToken(value.sessionToken) &&
     optionalProductId(value.productId) &&
     optionalDisplayName(value.displayName) &&
@@ -1326,6 +1328,10 @@ function optionalLoopbackRuntimeUrl(value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function optionalPanelScopedProxyBaseUrl(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && /^\/panel\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value));
 }
 
 function isContextFile(value: unknown): boolean {

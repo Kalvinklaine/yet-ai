@@ -8,6 +8,7 @@ import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayInputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ExecutorService
@@ -59,6 +60,43 @@ class PackagedGuiServer : Disposable {
 }
 
 data class PackagedGui(val indexUrl: String, val origin: String)
+
+data class PackagedGuiPanelRuntime(val runtimeUrl: String, val sessionToken: String?)
+
+data class PackagedGuiProxyRequest(val targetUrl: String, val headers: Map<String, String>)
+
+sealed class PackagedGuiProxyDecision {
+    data class Forward(val request: PackagedGuiProxyRequest) : PackagedGuiProxyDecision()
+    data object Reject : PackagedGuiProxyDecision()
+}
+
+fun packagedGuiProxyDecision(panelId: String, rawPath: String, panels: Map<String, PackagedGuiPanelRuntime>): PackagedGuiProxyDecision {
+    val panel = panels[panelId] ?: return PackagedGuiProxyDecision.Reject
+    if (!rawPath.startsWith("/v1/") && rawPath != "/v1") return PackagedGuiProxyDecision.Reject
+    if (!isLoopbackRuntimeRoot(panel.runtimeUrl)) return PackagedGuiProxyDecision.Reject
+    val targetUrl = URI(panel.runtimeUrl).resolve(rawPath).toString()
+    val headers = panel.sessionToken?.takeIf { it.isNotBlank() }?.let { mapOf("Authorization" to "Bearer $it") } ?: emptyMap()
+    return PackagedGuiProxyDecision.Forward(PackagedGuiProxyRequest(targetUrl, headers))
+}
+
+private fun isLoopbackRuntimeRoot(value: String): Boolean {
+    val uri = try {
+        URI(value)
+    } catch (_: Exception) {
+        return false
+    }
+    val scheme = uri.scheme?.lowercase() ?: return false
+    val host = uri.host?.removeSurrounding("[", "]")?.lowercase() ?: return false
+    val path = uri.rawPath ?: ""
+    return uri.isAbsolute &&
+        (scheme == "http" || scheme == "https") &&
+        (host == "127.0.0.1" || host == "localhost" || host == "::1") &&
+        uri.rawUserInfo == null &&
+        uri.port in 1..65535 &&
+        uri.rawQuery == null &&
+        uri.rawFragment == null &&
+        (path.isEmpty() || path == "/")
+}
 
 fun handle(exchange: HttpExchange, loadResource: (String) -> ByteArray?) {
     try {
