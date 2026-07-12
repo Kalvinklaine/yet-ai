@@ -106,6 +106,114 @@ class YetDiagnosticsBundleTest {
     }
 
     @Test
+    fun bundleIncludesSafeProxyAuthPathDiagnostics() {
+        val dir = createTempDirectory("yet-diagnostics-proxy-auth")
+        val sink = YetLogSink(directoryProvider = { dir })
+        val rawToken = "proxy-token-that-must-not-leak-1234567890"
+        val lifecycle = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, rawToken, LaunchMode.LAUNCH, null),
+            LaunchMode.LAUNCH,
+            RuntimeLifecycle.CONNECTED,
+            RuntimeProcessState.RUNNING,
+            "local runtime is reachable",
+            "Continue using Yet AI.",
+        )
+
+        val bundle = YetDiagnosticsBundle(sink).build(
+            YetDiagnosticsSnapshot(
+                launchMode = "launch",
+                runtimeUrl = "http://127.0.0.1:8123",
+                engineBinaryConfigured = false,
+                binaryStatus = "bundled plugin runtime binary available",
+                launchedByPlugin = true,
+                lifecycleStatus = lifecycle,
+                lastHealth = "/v1/ping returned 2xx",
+                lastError = null,
+                lastProcess = null,
+                lastRecovery = null,
+                proxyAuth = YetProxyAuthDiagnostics(
+                    runtimePath = "same_origin_proxy",
+                    sessionRegistered = "yes",
+                    authInjectedUpstream = "present",
+                    safeSessionId = "panel-123456",
+                    upstreamStatus = "200",
+                ),
+            ),
+        )
+
+        assertContains(bundle, "GUI runtime auth path: same_origin_proxy")
+        assertContains(bundle, "Proxy session registered: yes")
+        assertContains(bundle, "Proxy auth injected upstream: present")
+        assertContains(bundle, "Proxy session id: panel-123456")
+        assertContains(bundle, "Proxy upstream status: 200")
+        assertContains(bundle, "GUI auth failure class: none_observed")
+        assertFalse(bundle.contains(rawToken), bundle)
+        assertFalse(bundle.contains("Bearer", ignoreCase = true), bundle)
+    }
+
+    @Test
+    fun bundleDistinguishesProxyUpstream401FromDirectNoAuth401() {
+        val dir = createTempDirectory("yet-diagnostics-auth-class")
+        val sink = YetLogSink(directoryProvider = { dir })
+        val directLifecycle = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.CONNECT, null),
+            LaunchMode.CONNECT,
+            RuntimeLifecycle.AUTH_MISMATCH,
+            RuntimeProcessState.FAILED,
+            "runtime rejected the current local credentials",
+            "Refresh runtime",
+        )
+        val proxyLifecycle = runtimeLifecycleStatus(
+            RuntimeSettings("http://127.0.0.1:8123", null, "safe-token", LaunchMode.LAUNCH, null),
+            LaunchMode.LAUNCH,
+            RuntimeLifecycle.AUTH_MISMATCH,
+            RuntimeProcessState.RUNNING,
+            "runtime rejected the current local credentials",
+            "Refresh runtime",
+        )
+
+        val direct = YetDiagnosticsBundle(sink).build(
+            YetDiagnosticsSnapshot(
+                launchMode = "connect",
+                runtimeUrl = "http://127.0.0.1:8123",
+                engineBinaryConfigured = false,
+                binaryStatus = "not used in connect mode",
+                launchedByPlugin = false,
+                lifecycleStatus = directLifecycle,
+                lastHealth = "HTTP 401 from /v1/ping",
+                lastError = null,
+                lastProcess = null,
+                lastRecovery = null,
+                proxyAuth = YetProxyAuthDiagnostics(runtimePath = "direct_token_bridge"),
+            ),
+        )
+        val proxy = YetDiagnosticsBundle(sink).build(
+            YetDiagnosticsSnapshot(
+                launchMode = "launch",
+                runtimeUrl = "http://127.0.0.1:8123",
+                engineBinaryConfigured = false,
+                binaryStatus = "bundled plugin runtime binary available",
+                launchedByPlugin = true,
+                lifecycleStatus = proxyLifecycle,
+                lastHealth = "HTTP 401 from /v1/ping",
+                lastError = null,
+                lastProcess = null,
+                lastRecovery = null,
+                proxyAuth = YetProxyAuthDiagnostics(
+                    runtimePath = "same_origin_proxy",
+                    sessionRegistered = "yes",
+                    authInjectedUpstream = "present",
+                    safeSessionId = "panel-abcdef",
+                    upstreamStatus = "401",
+                ),
+            ),
+        )
+
+        assertContains(direct, "GUI auth failure class: direct_no_auth_401")
+        assertContains(proxy, "GUI auth failure class: same_origin_proxy_upstream_401")
+    }
+
+    @Test
     fun bundleNotesMissingEngineLogWithoutFailing() {
         val dir = createTempDirectory("yet-diagnostics-missing-engine")
         val sink = YetLogSink(directoryProvider = { dir })

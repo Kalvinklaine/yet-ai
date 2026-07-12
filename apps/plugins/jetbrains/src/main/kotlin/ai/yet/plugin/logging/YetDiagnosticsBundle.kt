@@ -2,6 +2,7 @@ package ai.yet.plugin.logging
 
 import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.runtime.ArtifactFreshness
+import ai.yet.plugin.runtime.RuntimeLifecycle
 import ai.yet.plugin.runtime.RuntimeLifecycleStatus
 import ai.yet.plugin.runtime.redactLogText
 import java.net.URI
@@ -33,6 +34,12 @@ class YetDiagnosticsBundle(
         lines += "Lifecycle: ${snapshot.lifecycleStatus.lifecycle.wireName}"
         lines += "Runtime owner: ${snapshot.lifecycleStatus.runtimeOwner}"
         lines += "Token state: ${snapshot.lifecycleStatus.tokenState}"
+        lines += "GUI runtime auth path: ${snapshot.proxyAuth.runtimePath}"
+        lines += "Proxy session registered: ${snapshot.proxyAuth.sessionRegistered}"
+        lines += "Proxy auth injected upstream: ${snapshot.proxyAuth.authInjectedUpstream}"
+        lines += "Proxy session id: ${snapshot.proxyAuth.safeSessionId ?: "unavailable"}"
+        lines += "Proxy upstream status: ${snapshot.proxyAuth.upstreamStatus ?: "not_observed"}"
+        lines += "GUI auth failure class: ${authFailureClass(snapshot)}"
         lines += "Process state: ${snapshot.lifecycleStatus.processState.wireName}"
         lines += "Diagnosis: ${snapshot.lifecycleStatus.diagnosis}"
         lines += "Next action: ${snapshot.lifecycleStatus.nextAction}"
@@ -76,6 +83,72 @@ class YetDiagnosticsBundle(
             "$scheme://$host$port"
         }.getOrElse { "invalid runtime URL" }
     }
+
+    private fun authFailureClass(snapshot: YetDiagnosticsSnapshot): String {
+        if (snapshot.proxyAuth.runtimePath == "same_origin_proxy" && snapshot.proxyAuth.upstreamStatus == "401") {
+            return "same_origin_proxy_upstream_401"
+        }
+        val direct401 = snapshot.proxyAuth.runtimePath == "direct_token_bridge" &&
+            snapshot.lifecycleStatus.lifecycle == RuntimeLifecycle.AUTH_MISMATCH &&
+            snapshot.lastHealth?.contains("HTTP 401", ignoreCase = true) == true
+        return if (direct401) "direct_no_auth_401" else "none_observed"
+    }
+}
+
+data class YetProxyAuthDiagnostics(
+    val runtimePath: String = "direct_token_bridge",
+    val sessionRegistered: String = "no",
+    val authInjectedUpstream: String = "not_observed",
+    val safeSessionId: String? = null,
+    val upstreamStatus: String? = null,
+)
+
+object YetProxyAuthDiagnosticsStore {
+    @Volatile
+    private var current = YetProxyAuthDiagnostics()
+
+    fun snapshot(): YetProxyAuthDiagnostics = current
+
+    fun directTokenBridge() {
+        current = YetProxyAuthDiagnostics(runtimePath = "direct_token_bridge")
+    }
+
+    fun sameOriginProxyRegistered(panelId: String) {
+        current = YetProxyAuthDiagnostics(
+            runtimePath = "same_origin_proxy",
+            sessionRegistered = "yes",
+            authInjectedUpstream = "not_observed",
+            safeSessionId = safePanelId(panelId),
+            upstreamStatus = null,
+        )
+    }
+
+    fun sameOriginProxyUnregistered(panelId: String) {
+        val existing = current
+        current = YetProxyAuthDiagnostics(
+            runtimePath = if (existing.safeSessionId == safePanelId(panelId)) "same_origin_proxy" else existing.runtimePath,
+            sessionRegistered = "no",
+            authInjectedUpstream = "not_observed",
+            safeSessionId = safePanelId(panelId),
+            upstreamStatus = existing.upstreamStatus,
+        )
+    }
+
+    fun sameOriginProxyRequest(panelId: String, authInjected: Boolean, upstreamStatus: Int?) {
+        current = YetProxyAuthDiagnostics(
+            runtimePath = "same_origin_proxy",
+            sessionRegistered = "yes",
+            authInjectedUpstream = if (authInjected) "present" else "absent",
+            safeSessionId = safePanelId(panelId),
+            upstreamStatus = upstreamStatus?.toString() ?: "not_observed",
+        )
+    }
+
+    private fun safePanelId(panelId: String): String? {
+        val safe = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+        if (!safe.matches(panelId)) return null
+        return panelId.take(12)
+    }
 }
 
 data class YetDiagnosticsSnapshot(
@@ -91,4 +164,5 @@ data class YetDiagnosticsSnapshot(
     val lastRecovery: String?,
     val engineLogPath: Path? = null,
     val artifactFreshness: ArtifactFreshness = ArtifactFreshness.unknown(),
+    val proxyAuth: YetProxyAuthDiagnostics = YetProxyAuthDiagnosticsStore.snapshot(),
 )

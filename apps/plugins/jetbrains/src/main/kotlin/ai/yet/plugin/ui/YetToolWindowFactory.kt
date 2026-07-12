@@ -6,6 +6,7 @@ import ai.yet.plugin.bridge.ControlledFileRead
 import ai.yet.plugin.bridge.ControlledIdeActions
 import ai.yet.plugin.identity.ProductIdentity
 import ai.yet.plugin.logging.YetLogSink
+import ai.yet.plugin.logging.YetProxyAuthDiagnosticsStore
 import ai.yet.plugin.runtime.EffectiveRuntimeOwner
 import ai.yet.plugin.runtime.LaunchMode
 import ai.yet.plugin.runtime.RuntimeConnectionManager
@@ -281,6 +282,9 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         }
         val initialSettings = initialSettings()
         latestConnection = pendingRuntimeConnection(initialSettings)
+        if (initialSettings.guiDevUrl != null) {
+            YetProxyAuthDiagnosticsStore.directTokenBridge()
+        }
         val packagedGui = if (initialSettings.guiDevUrl == null) PackagedGuiServer.getInstance().let { server ->
             packagedGuiServer = server
             server.start()?.let { gui ->

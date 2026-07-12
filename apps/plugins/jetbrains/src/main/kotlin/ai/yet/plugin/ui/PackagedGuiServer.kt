@@ -1,5 +1,6 @@
 package ai.yet.plugin.ui
 
+import ai.yet.plugin.logging.YetProxyAuthDiagnosticsStore
 import ai.yet.plugin.runtime.RuntimeSettings
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service
@@ -49,6 +50,7 @@ class PackagedGuiServer : Disposable {
     fun registerPanel(settings: RuntimeSettings): PackagedGuiPanel {
         val panelId = generatePanelId()
         updatePanel(panelId, settings)
+        YetProxyAuthDiagnosticsStore.sameOriginProxyRegistered(panelId)
         return PackagedGuiPanel(panelId, "/panel/$panelId")
     }
 
@@ -59,6 +61,7 @@ class PackagedGuiServer : Disposable {
 
     fun unregisterPanel(panelId: String) {
         panels.remove(panelId)
+        YetProxyAuthDiagnosticsStore.sameOriginProxyUnregistered(panelId)
     }
 
     @Synchronized
@@ -247,6 +250,7 @@ private fun proxyPanelRequest(exchange: HttpExchange, panelId: String, rawPath: 
         exchange.requestBody.use { input -> connection.outputStream.use { output -> input.copyTo(output) } }
     }
     val status = connection.responseCode
+    YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), status)
     val contentType = connection.headerFields["Content-Type"]?.firstOrNull() ?: "application/octet-stream"
     val body = try {
         (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)

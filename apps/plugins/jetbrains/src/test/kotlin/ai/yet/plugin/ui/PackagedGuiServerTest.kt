@@ -1,5 +1,6 @@
 package ai.yet.plugin.ui
 
+import ai.yet.plugin.logging.YetProxyAuthDiagnosticsStore
 import ai.yet.plugin.runtime.RuntimeSettings
 import com.sun.net.httpserver.HttpServer
 import java.net.HttpURLConnection
@@ -110,6 +111,7 @@ class PackagedGuiServerTest {
 
     @Test
     fun registeredPanelProxyForwardsToRuntimeAndInjectsAuthorization() = withRuntimeServer { runtime ->
+        YetProxyAuthDiagnosticsStore.directTokenBridge()
         withPackagedServer(mapOf("panel-1" to PackagedGuiPanelRuntime(runtime.origin, "safe-test-token"))) { proxy ->
             val response = request("${proxy.origin}/panel/panel-1/v1/ping?hello=world")
 
@@ -117,6 +119,31 @@ class PackagedGuiServerTest {
             assertEquals("runtime-ok", response.body)
             assertEquals("/v1/ping?hello=world", runtime.requests.single().target)
             assertEquals("Bearer safe-test-token", runtime.requests.single().authorization)
+            val diagnostics = YetProxyAuthDiagnosticsStore.snapshot()
+            assertEquals("same_origin_proxy", diagnostics.runtimePath)
+            assertEquals("yes", diagnostics.sessionRegistered)
+            assertEquals("present", diagnostics.authInjectedUpstream)
+            assertEquals("panel-1", diagnostics.safeSessionId)
+            assertEquals("200", diagnostics.upstreamStatus)
+        }
+    }
+
+    @Test
+    fun proxyDiagnosticsRecordAbsentAuthorizationAndUpstream401WithoutTokenValue() = withRuntimeServer(401) { runtime ->
+        YetProxyAuthDiagnosticsStore.directTokenBridge()
+        withPackagedServer(mapOf("panel-401" to PackagedGuiPanelRuntime(runtime.origin, null))) { proxy ->
+            val response = request("${proxy.origin}/panel/panel-401/v1/ping")
+
+            assertEquals(401, response.status)
+            assertEquals(null, runtime.requests.single().authorization)
+            val diagnostics = YetProxyAuthDiagnosticsStore.snapshot()
+            assertEquals("same_origin_proxy", diagnostics.runtimePath)
+            assertEquals("yes", diagnostics.sessionRegistered)
+            assertEquals("absent", diagnostics.authInjectedUpstream)
+            assertEquals("panel-401", diagnostics.safeSessionId)
+            assertEquals("401", diagnostics.upstreamStatus)
+            assertTrue(!diagnostics.toString().contains("safe-test-token"))
+            assertTrue(!diagnostics.toString().contains("Bearer", ignoreCase = true))
         }
     }
 
@@ -166,13 +193,17 @@ class PackagedGuiServerTest {
 
     @Test
     fun panelRegistryGeneratesScopedProxyBaseAndUnregisters() {
+        YetProxyAuthDiagnosticsStore.directTokenBridge()
         val server = PackagedGuiServer()
         val panel = server.registerPanel(RuntimeSettings("http://127.0.0.1:8765", null, "safe-test-token"))
 
         assertTrue(isValidPanelId(panel.id))
         assertEquals("/panel/${panel.id}", panel.proxyBaseUrl)
+        assertEquals("same_origin_proxy", YetProxyAuthDiagnosticsStore.snapshot().runtimePath)
+        assertEquals("yes", YetProxyAuthDiagnosticsStore.snapshot().sessionRegistered)
         assertTrue(packagedGuiProxyDecision(panel.id, "/v1/ping", mapOf(panel.id to PackagedGuiPanelRuntime("http://127.0.0.1:8765", "safe-test-token"))) is PackagedGuiProxyDecision.Forward)
         server.unregisterPanel(panel.id)
+        assertEquals("no", YetProxyAuthDiagnosticsStore.snapshot().sessionRegistered)
         server.dispose()
     }
 
@@ -200,13 +231,13 @@ private class RuntimeTestServer(private val server: HttpServer, val requests: Mu
     fun stop() = server.stop(0)
 }
 
-private fun withRuntimeServer(block: (RuntimeTestServer) -> Unit) {
+private fun withRuntimeServer(status: Int = 200, block: (RuntimeTestServer) -> Unit) {
     val requests = mutableListOf<RuntimeRequest>()
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
     server.createContext("/") { exchange ->
         requests.add(RuntimeRequest(exchange.requestURI.rawPath + exchange.requestURI.rawQuery?.let { "?$it" }.orEmpty(), exchange.requestHeaders.getFirst("Authorization")))
         val body = "runtime-ok".toByteArray()
-        exchange.sendResponseHeaders(200, body.size.toLong())
+        exchange.sendResponseHeaders(status, body.size.toLong())
         exchange.responseBody.use { it.write(body) }
         exchange.close()
     }
