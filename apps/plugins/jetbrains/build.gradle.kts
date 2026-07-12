@@ -1,4 +1,6 @@
+import org.gradle.api.GradleException
 import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.Sync
 
 plugins {
     kotlin("jvm") version "2.2.21"
@@ -17,17 +19,22 @@ repositories {
 
 val guiDistDir = layout.projectDirectory.dir("../../gui/dist")
 val packagedGuiResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-gui")
-val copyGuiDist by tasks.registering(Copy::class) {
-    onlyIf { guiDistDir.file("index.html").asFile.exists() }
+val validateGuiDist by tasks.registering {
+    doLast {
+        if (!guiDistDir.file("index.html").asFile.isFile) {
+            throw GradleException(
+                "Missing apps/gui/dist/index.html. Run `npm --prefix apps/gui run build` before building the JetBrains plugin."
+            )
+        }
+    }
+}
+val copyGuiDist by tasks.registering(Sync::class) {
+    dependsOn(validateGuiDist)
     inputs.dir(guiDistDir)
         .withPropertyName("guiDist")
         .withPathSensitivity(PathSensitivity.RELATIVE)
-        .optional()
     from(guiDistDir)
     into(packagedGuiResourcesDir.map { it.dir("yet-ai-gui") })
-    doFirst {
-        delete(packagedGuiResourcesDir.map { it.dir("yet-ai-gui") })
-    }
 }
 
 // Generated resource directory where `scripts/prepare-jetbrains-preview.mjs`
