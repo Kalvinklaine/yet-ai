@@ -115,6 +115,7 @@ let chatCommandRequestCount = 0;
 let chatSubscriptionCount = 0;
 let chatCommandRequestCountBeforeEditSmoke = 0;
 let demoModeEnabled = false;
+let mockAssistantMessageCounter = 0;
 const chatSseSubscribers = new Map();
 const pendingAssistantResponsesByChat = new Map();
 let nextAssistantResponseContent;
@@ -2939,10 +2940,26 @@ function emitAssistantResponseToSubscriber(chatId, subscriber) {
   const assistantChunks = customAssistantContent === undefined
     ? (demoModeFirstMessage ? ["JetBrains", " Demo Mode smoke"] : ["JetBrains", " login smoke"])
     : [customAssistantContent];
+  const assistantContent = assistantChunks.join("");
+  mockAssistantMessageCounter += 1;
   const events = [
     { type: "stream_started", chatId, payload: { role: "assistant" } },
     { type: "stream_delta", chatId, payload: { delta: { content: assistantChunks[0] } } },
     ...(assistantChunks[1] ? [{ type: "stream_delta", chatId, payload: { delta: { content: assistantChunks[1] } } }] : []),
+    {
+      type: "message_added",
+      chatId,
+      payload: {
+        message: {
+          id: `${chatId}-assistant-smoke-${mockAssistantMessageCounter}`,
+          chatId,
+          role: "assistant",
+          content: assistantContent,
+          createdAt: new Date(0).toISOString(),
+          status: "complete",
+        },
+      },
+    },
     { type: "stream_finished", chatId, payload: { finishReason: "stop" } },
   ];
   try {
@@ -3191,7 +3208,7 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
       return;
     }
     if (requestUrl.pathname.startsWith(`${panelBasePath}/v1/`)) {
-      await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname.slice(panelBasePath.length), true);
+      await forwardPanelProxyRequest(request, response, runtimeBaseUrl, `${requestUrl.pathname.slice(panelBasePath.length)}${requestUrl.search}`, true);
       return;
     }
     if (!requestUrl.pathname.startsWith(panelPrefix)) {
@@ -3278,6 +3295,10 @@ async function forwardPanelProxyRequest(request, response, runtimeBaseUrl, rawPa
     response.end("Method not allowed");
     return;
   }
+  if (request.method === "GET" && rawPath.startsWith("/v1/chats/subscribe")) {
+    await forwardEventStreamProxyRequest(request, response, runtimeBaseUrl, rawPath, requireAuthorization);
+    return;
+  }
   const target = new URL(rawPath, runtimeBaseUrl);
   const targetResponse = await fetch(target, {
     method: request.method,
@@ -3296,6 +3317,43 @@ async function forwardPanelProxyRequest(request, response, runtimeBaseUrl, rawPa
     "cache-control": "no-store",
   });
   response.end(body);
+}
+
+function forwardEventStreamProxyRequest(request, response, runtimeBaseUrl, rawPath, requireAuthorization) {
+  return new Promise((resolve) => {
+    const target = new URL(rawPath, runtimeBaseUrl);
+    const upstream = http.request(target, {
+      method: request.method,
+      headers: {
+        ...(request.headers.accept ? { accept: String(request.headers.accept) } : {}),
+        ...(requireAuthorization ? { authorization: `Bearer ${runtimeToken}` } : {}),
+        "x-yet-ai-smoke-browser-path": requireAuthorization ? `${panelBasePath}${rawPath}` : rawPath,
+      },
+    }, (upstreamResponse) => {
+      response.writeHead(upstreamResponse.statusCode ?? 502, {
+        ...corsHeaders(),
+        "content-type": upstreamResponse.headers["content-type"] ?? "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+      });
+      upstreamResponse.pipe(response);
+      upstreamResponse.on("end", resolve);
+    });
+    const close = () => {
+      upstream.destroy();
+      resolve();
+    };
+    request.on("close", close);
+    response.on("close", close);
+    upstream.on("error", () => {
+      if (!response.headersSent) {
+        response.writeHead(502, corsHeaders());
+      }
+      if (!response.destroyed && !response.writableEnded) response.end();
+      resolve();
+    });
+    upstream.end();
+  });
 }
 
 function safeDecodePath(rawPath) {
