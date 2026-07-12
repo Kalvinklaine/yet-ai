@@ -83,7 +83,7 @@ object BridgeMessages {
 
     private data class OptionalRequestId(val value: String?)
 
-    fun hostReady(settings: RuntimeSettings, requestId: String?): String {
+    fun hostReady(settings: RuntimeSettings, requestId: String?, runtimeProxyBaseUrl: String? = null): String {
         val message = JsonObject().apply {
             addProperty("version", ProductIdentity.bridgeVersion)
             addProperty("type", "host.ready")
@@ -92,7 +92,8 @@ object BridgeMessages {
                 addProperty("productId", ProductIdentity.productId)
                 addProperty("displayName", ProductIdentity.pluginName)
                 addProperty("runtimeUrl", settings.runtimeUrl)
-                settings.sessionToken?.let { addProperty("sessionToken", it) }
+                runtimeProxyBaseUrl?.let { addProperty("runtimeProxyBaseUrl", it) }
+                if (runtimeProxyBaseUrl == null) settings.sessionToken?.let { addProperty("sessionToken", it) }
                 addProperty("cloudRequired", false)
             })
         }

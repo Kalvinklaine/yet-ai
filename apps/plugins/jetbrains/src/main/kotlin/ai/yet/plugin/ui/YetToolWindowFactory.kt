@@ -218,6 +218,8 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     private val browser = JBCefBrowser()
     private val query = JBCefJSQuery.create(browser as JBCefBrowser)
     private val delivery = WrapperScriptDelivery()
+    private var packagedGuiServer: PackagedGuiServer? = null
+    private var packagedGuiPanel: PackagedGuiPanel? = null
     private val contextRefreshAlarm = Alarm(Alarm.ThreadToUse.SWING_THREAD, this)
     @Volatile
     private var latestConnection = pendingRuntimeConnection(RuntimeSettings.safeFallback())
@@ -279,7 +281,10 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         }
         val initialSettings = initialSettings()
         latestConnection = pendingRuntimeConnection(initialSettings)
-        val packagedGui = if (initialSettings.guiDevUrl == null) PackagedGuiServer.getInstance().start() else null
+        val packagedGui = if (initialSettings.guiDevUrl == null) PackagedGuiServer.getInstance().let { server ->
+            packagedGuiServer = server
+            server.start()?.also { packagedGuiPanel = server.registerPanel(initialSettings) }
+        } else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
         browser.loadHTML(renderHtml(latestConnection, postIntellij, packagedGui))
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(
@@ -337,6 +342,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     private fun handleRuntimeConnection(connection: RuntimeConnectionResult) {
         latestConnection = connection
         runtimePrepared = connection.error == null
+        packagedGuiPanel?.let { panel -> packagedGuiServer?.updatePanel(panel.id, connection.settings) }
         sendRuntimeStatus(connection.lifecycleStatus)
         if (connection.error == null) {
             if (pendingHostReadyReason == null && guiReadyRequestId != null) pendingHostReadyReason = runtimeUpdateReadyReason(connection)
@@ -361,6 +367,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         val delivered = JetBrainsReadyMessageDelivery.deliver(
             settings = settings,
             requestId = requestId,
+            runtimeProxyBaseUrl = packagedGuiPanel?.proxyBaseUrl,
             send = ::sendToGui,
             contextSupplier = { ActiveEditorContextCollector.snapshot(project) },
             logContextStatus = { logger.info(it) },
@@ -411,6 +418,9 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     override fun dispose() {
         disposed = true
         contextRefreshAlarm.cancelAllRequests()
+        packagedGuiPanel?.let { panel -> packagedGuiServer?.unregisterPanel(panel.id) }
+        packagedGuiPanel = null
+        packagedGuiServer = null
         query.dispose()
         browser.dispose()
     }
@@ -619,15 +629,16 @@ object JetBrainsReadyMessageDelivery {
     fun deliver(
         settings: RuntimeSettings,
         requestId: String?,
+        runtimeProxyBaseUrl: String? = null,
         send: (String) -> Unit,
         contextSupplier: () -> ActiveEditorContext.Snapshot?,
         logContextStatus: (String) -> Unit,
     ): Boolean {
-        if (!isValidRuntimeUrl(settings.runtimeUrl)) {
+        if (!isValidRuntimeUrl(settings.runtimeUrl) || !isValidRuntimeProxyBaseUrl(runtimeProxyBaseUrl)) {
             logContextStatus("Yet AI rejected invalid runtime URL for GUI bridge ready batch")
             return false
         }
-        send(BridgeMessages.hostReady(settings, requestId))
+        send(BridgeMessages.hostReady(settings, requestId, runtimeProxyBaseUrl))
         send(BridgeMessages.openedFromCommand())
         val snapshot = try {
             contextSupplier()
@@ -640,6 +651,8 @@ object JetBrainsReadyMessageDelivery {
         }
         return true
     }
+
+    private fun isValidRuntimeProxyBaseUrl(value: String?): Boolean = value == null || Regex("^/panel/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$").matches(value)
 
     private fun isValidRuntimeUrl(value: String): Boolean {
         if (value.isBlank()) return false
@@ -820,6 +833,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             return false;
           }
         };
+        const optionalPanelScopedProxyBaseUrl = (value) => value === undefined || (typeof value === "string" && /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value));
         const optionalNumber = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= 1000000);
         const isSecretLikePathSegment = (value) => /^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:\.|-|_|$)/i.test(value) || /(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)/i.test(value) || /^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
         const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && /^[^\u0000-\u001f\u007f-\u009f]+$/.test(value) && value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && !isSecretLikePathSegment(part)));
@@ -835,7 +849,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
         const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
         const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
-        const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+        const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "runtimeProxyBaseUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalPanelScopedProxyBaseUrl(payload.runtimeProxyBaseUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
         const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
         const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
         const isActiveFileExcerptText = (text) => typeof text === "string" && text.length > 0 && text.length <= 8000 && !/(authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|\/(?:Users|Home|Tmp|Var|Etc|Opt|Mnt|Volumes|Private)(?=\/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:\/|\\)|~(?:\/|\\)|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(text);
