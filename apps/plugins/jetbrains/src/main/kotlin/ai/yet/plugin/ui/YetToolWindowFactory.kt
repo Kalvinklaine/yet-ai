@@ -283,7 +283,11 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         latestConnection = pendingRuntimeConnection(initialSettings)
         val packagedGui = if (initialSettings.guiDevUrl == null) PackagedGuiServer.getInstance().let { server ->
             packagedGuiServer = server
-            server.start()?.also { packagedGuiPanel = server.registerPanel(initialSettings) }
+            server.start()?.let { gui ->
+                val panel = server.registerPanel(initialSettings)
+                packagedGuiPanel = panel
+                gui.forPanel(panel)
+            }
         } else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
         browser.loadHTML(renderHtml(latestConnection, postIntellij, packagedGui))

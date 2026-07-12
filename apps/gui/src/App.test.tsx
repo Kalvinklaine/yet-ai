@@ -46,6 +46,7 @@ afterEach(() => {
   sessionStorage.clear();
   delete window.acquireVsCodeApi;
   delete window.postIntellijMessage;
+  delete window.__yetAiInitialRuntimeConfig;
   if (appParentDescriptor) Object.defineProperty(window, "parent", appParentDescriptor);
   if (appReferrerDescriptor) Object.defineProperty(Document.prototype, "referrer", appReferrerDescriptor);
   vi.restoreAllMocks();
@@ -3663,6 +3664,32 @@ describe("host.ready runtime bootstrap", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/models"))).toHaveLength(0);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/v1/caps"))).toHaveLength(0);
     expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh")).toHaveLength(0);
+  });
+
+  it("JetBrains packaged bootstrap uses initial same-origin proxy config before host.ready", async () => {
+    const postIntellijMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.postIntellijMessage = postIntellijMessage;
+    window.__yetAiInitialRuntimeConfig = {
+      runtimeAccess: "same_origin_proxy",
+      runtimeBaseUrl: "/panel/panel-bootstrap",
+      runtimeProxyBaseUrl: "/panel/panel-bootstrap",
+    };
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+    await flushAsync();
+
+    const proxyCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith("/panel/panel-bootstrap/v1/"));
+    expect(proxyCalls.length).toBeGreaterThan(0);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("http://127.0.0.1:8001/"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).startsWith("http://127.0.0.1:8765/"))).toBe(false);
+    expect(proxyCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === null)).toBe(true);
+    expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.runtimeRefresh")).toHaveLength(0);
+    expect(container?.textContent).toContain("Runtime connected");
+    expect(container?.textContent).toContain("Runtime connection is IDE-managed");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("panel-bootstrap");
   });
 
   it("JetBrains packaged proxy host.ready provides same-origin runtime config before first refresh", async () => {

@@ -573,6 +573,9 @@ function sanitizeRuntimeTraceEndpoint(path: string): string {
 }
 
 function runtimeOriginLabel(baseUrl: string): string {
+  if (isPanelScopedProxyBaseUrl(baseUrl)) {
+    return "same-origin-proxy";
+  }
   try {
     const parsed = new URL(baseUrl);
     return `${parsed.protocol}//${parsed.host}`;

@@ -90,7 +90,9 @@ class PackagedGuiServer : Disposable {
     }
 }
 
-data class PackagedGui(val indexUrl: String, val origin: String)
+data class PackagedGui(val indexUrl: String, val origin: String) {
+    fun forPanel(panel: PackagedGuiPanel): PackagedGui = copy(indexUrl = origin + panel.proxyBaseUrl + "/index.html")
+}
 
 data class PackagedGuiPanel(val id: String, val proxyBaseUrl: String)
 
@@ -136,6 +138,11 @@ private fun isLoopbackRuntimeRoot(value: String): Boolean {
 
 fun handle(exchange: HttpExchange, loadResource: (String) -> ByteArray?, panels: () -> Map<String, PackagedGuiPanelRuntime> = { emptyMap() }) {
     try {
+        val panelIndex = panelIndexRoute(exchange.requestURI.rawPath)
+        if (panelIndex != null) {
+            servePanelIndex(exchange, panelIndex, loadResource, panels())
+            return
+        }
         val panelRoute = panelProxyRoute(exchange.requestURI.rawPath)
         if (panelRoute != null) {
             proxyPanelRequest(exchange, panelRoute.first, panelRoute.second, panels())
@@ -158,6 +165,48 @@ fun handle(exchange: HttpExchange, loadResource: (String) -> ByteArray?, panels:
         send(exchange, 200, mimeType(resource), body)
     } finally {
         exchange.close()
+    }
+}
+
+private fun panelIndexRoute(rawPath: String): String? {
+    val prefix = "/panel/"
+    if (!rawPath.startsWith(prefix)) return null
+    val remainder = rawPath.removePrefix(prefix)
+    val separator = remainder.indexOf('/')
+    if (separator < 0) return null
+    val panelId = remainder.substring(0, separator)
+    val path = remainder.substring(separator)
+    if (!isValidPanelId(panelId)) return null
+    if (path != "/" && path != "/index.html") return null
+    return panelId
+}
+
+private fun servePanelIndex(exchange: HttpExchange, panelId: String, loadResource: (String) -> ByteArray?, panels: Map<String, PackagedGuiPanelRuntime>) {
+    if (exchange.requestMethod != "GET") {
+        send(exchange, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    if (!panels.containsKey(panelId)) {
+        send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    val index = loadResource("/yet-ai-gui/index.html")
+    if (index == null) {
+        send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    send(exchange, 200, "text/html; charset=utf-8", injectPanelBootstrap(String(index, StandardCharsets.UTF_8), panelId).toByteArray(StandardCharsets.UTF_8))
+}
+
+fun injectPanelBootstrap(indexHtml: String, panelId: String): String {
+    if (!isValidPanelId(panelId)) return indexHtml
+    val script = """
+        <script>window.__yetAiInitialRuntimeConfig={runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"/panel/$panelId",runtimeProxyBaseUrl:"/panel/$panelId"};</script>
+    """.trimIndent()
+    return if (indexHtml.contains("<head>")) {
+        indexHtml.replace("<head>", "<head>\n$script", ignoreCase = false)
+    } else {
+        "$script\n$indexHtml"
     }
 }
 

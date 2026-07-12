@@ -22,7 +22,7 @@ import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackCh
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isPanelScopedProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity, type EditProposalRejectedDiagnostic } from "./services/editProposal";
@@ -70,6 +70,30 @@ import type { AgentRunInput } from "./services/agentRunState";
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
 const preHostRuntimeRefreshRetryCooldownMs = 1500;
+
+type InitialRuntimeConfig = {
+  runtimeAccess?: "same_origin_proxy";
+  runtimeBaseUrl?: string;
+  runtimeProxyBaseUrl?: string;
+};
+
+declare global {
+  interface Window {
+    __yetAiInitialRuntimeConfig?: InitialRuntimeConfig;
+  }
+}
+
+function readInitialRuntimeSettings(): RuntimeSettings {
+  if (typeof window === "undefined") {
+    return { baseUrl: defaultBaseUrl, token: "" };
+  }
+  const config = window.__yetAiInitialRuntimeConfig;
+  const proxyBaseUrl = config?.runtimeProxyBaseUrl ?? config?.runtimeBaseUrl;
+  if (config?.runtimeAccess === "same_origin_proxy" && proxyBaseUrl && isPanelScopedProxyBaseUrl(proxyBaseUrl)) {
+    return { baseUrl: proxyBaseUrl, token: "" };
+  }
+  return { baseUrl: defaultBaseUrl, token: "" };
+}
 
 function detectInitialBridgeHost(): BridgeHost {
   if (typeof window === "undefined") {
@@ -358,8 +382,9 @@ export function generateApplyRequestSessionNonce(): string {
 }
 
 export function App() {
-  const [baseUrl, setBaseUrl] = useState(defaultBaseUrl);
-  const [token, setToken] = useState("");
+  const initialRuntimeSettings = useMemo(() => readInitialRuntimeSettings(), []);
+  const [baseUrl, setBaseUrl] = useState(initialRuntimeSettings.baseUrl);
+  const [token, setToken] = useState(initialRuntimeSettings.token);
   const [ping, setPing] = useState<PingResponse | null>(null);
   const [caps, setCaps] = useState<CapsResponse | null>(null);
   const [models, setModels] = useState<ModelSummary[]>([]);
@@ -423,7 +448,7 @@ export function App() {
   const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeLifecycle, setRuntimeLifecycle] = useState<{ diagnostics: RuntimeLifecycleDiagnostics; settingsRevision: number } | null>(null);
   const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
-  const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>("startup");
+  const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>(() => isPanelScopedProxyBaseUrl(initialRuntimeSettings.baseUrl) ? "host.ready" : "startup");
   const [hostReadyRefreshNonce, setHostReadyRefreshNonce] = useState(0);
   const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(true);
   const [providerDetailsOpen, setProviderDetailsOpen] = useState(false);
@@ -434,11 +459,11 @@ export function App() {
   const runtimeRefreshAttemptRef = useRef(0);
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
-  const hostReadyAppliedRef = useRef(false);
+  const hostReadyAppliedRef = useRef(isPanelScopedProxyBaseUrl(initialRuntimeSettings.baseUrl));
   const preHostRuntimeRefreshRequestedAtRef = useRef<number | null>(null);
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
-  const settingsRef = useRef<RuntimeSettings>({ baseUrl: defaultBaseUrl, token: "" });
+  const settingsRef = useRef<RuntimeSettings>(initialRuntimeSettings);
   const chatIdRef = useRef("chat-001");
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
@@ -2159,7 +2184,7 @@ export function App() {
       addTimeline("Waiting for IDE host runtime settings");
       return;
     }
-    if (bridgeHost === "jetbrains") {
+    if (bridgeHost === "jetbrains" && !isPanelScopedProxyBaseUrl(settingsRef.current.baseUrl)) {
       bridgeAdapterRef.current?.post({
         version: GUI_BRIDGE_VERSION,
         type: "gui.runtimeRefresh",

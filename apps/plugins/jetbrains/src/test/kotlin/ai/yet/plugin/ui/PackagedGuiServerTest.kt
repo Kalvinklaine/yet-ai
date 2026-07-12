@@ -62,6 +62,28 @@ class PackagedGuiServerTest {
     }
 
     @Test
+    fun panelScopedIndexInjectsInitialProxyRuntimeConfigWithoutToken() {
+        val html = injectPanelBootstrap("<html><head><title>Yet</title></head><body><div id=\"root\"></div></body></html>", "panel-1")
+
+        assertTrue(html.contains("window.__yetAiInitialRuntimeConfig"))
+        assertTrue(html.contains("runtimeAccess:\"same_origin_proxy\""))
+        assertTrue(html.contains("runtimeBaseUrl:\"/panel/panel-1\""))
+        assertTrue(html.contains("runtimeProxyBaseUrl:\"/panel/panel-1\""))
+        assertTrue(html.indexOf("window.__yetAiInitialRuntimeConfig") < html.indexOf("<title>Yet</title>"))
+        assertTrue(!html.contains("sessionToken"))
+        assertTrue(!html.contains("Authorization"))
+    }
+
+    @Test
+    fun packagedGuiPanelUrlUsesPanelScopedIndex() {
+        val gui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val panelGui = gui.forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
+
+        assertEquals("http://127.0.0.1:49221/panel/panel-1/index.html", panelGui.indexUrl)
+        assertEquals(gui.origin, panelGui.origin)
+    }
+
+    @Test
     fun failsClosedForUnknownInvalidPanelOrNonV1Path() {
         val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", "safe-test-token"))
 

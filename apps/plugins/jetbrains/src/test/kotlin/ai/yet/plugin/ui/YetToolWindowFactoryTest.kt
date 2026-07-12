@@ -21,15 +21,16 @@ class YetToolWindowFactoryTest {
     @Test
     fun packagedGuiUsesLoopbackServerIframe() {
         val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+            .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
             packagedGui,
         )
 
-        assertContains(html, "<iframe title=\"Yet AI GUI\" src=\"http://127.0.0.1:49221/index.html\"></iframe>")
+        assertContains(html, "<iframe title=\"Yet AI GUI\" src=\"http://127.0.0.1:49221/panel/panel-1/index.html\"></iframe>")
         assertContains(html, "const frameTargetOrigin = \"http://127.0.0.1:49221\";")
-        assertContains(html, "Loading packaged Yet AI GUI from <code>http://127.0.0.1:49221/index.html</code>")
+        assertContains(html, "Loading packaged Yet AI GUI from <code>http://127.0.0.1:49221/panel/panel-1/index.html</code>")
         assertContains(html, "Connecting to Yet AI local runtime")
         assertContains(html, "Packaged Yet AI GUI did not finish loading from the local loopback server")
         assertContains(html, "window.setTimeout")
