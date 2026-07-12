@@ -220,7 +220,8 @@ declare global {
   }
 }
 
-const bridgeVersion = "2026-05-15";
+export const GUI_BRIDGE_VERSION = "2026-05-15";
+const bridgeVersion = GUI_BRIDGE_VERSION;
 const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.ready",
   "host.openedFromCommand",

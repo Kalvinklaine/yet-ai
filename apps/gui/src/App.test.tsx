@@ -6,6 +6,7 @@ import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLim
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
 import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
+import { GUI_BRIDGE_VERSION } from "./bridge/bridgeAdapter";
 import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
 import fileReadSuccess from "../../../packages/contracts/examples/engine/controlled-agent-file-read-success.json";
 import fileReadBlocked from "../../../packages/contracts/examples/engine/controlled-agent-file-read-blocked.json";
@@ -26,7 +27,7 @@ import workflowTranscriptBlockedFixture from "../../../packages/contracts/exampl
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const bridgeVersion = "2026-05-15";
+const bridgeVersion = GUI_BRIDGE_VERSION;
 const fetchMock = vi.fn();
 
 let root: Root | undefined;
@@ -3753,6 +3754,44 @@ describe("host.ready runtime bootstrap", () => {
         payload: {},
       },
     ]);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+  });
+
+  it("JetBrains pre-host.ready Refresh runtime does not burn retry guard when the bridge post path is unusable", async () => {
+    const acceptedMessages: unknown[] = [];
+    let runtimeRefreshBridgeUsable = false;
+    const postIntellijMessage = vi.fn((message) => {
+      if (message.type === "gui.runtimeRefresh" && !runtimeRefreshBridgeUsable) {
+        throw new Error("post bridge unavailable");
+      }
+      acceptedMessages.push(message);
+    });
+    const now = vi.spyOn(Date, "now");
+    window.postIntellijMessage = postIntellijMessage;
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderApp({ autoHostReady: false });
+    await flushAsync();
+
+    now.mockReturnValue(20_000);
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(acceptedMessages.filter((message) => (message as { type?: string }).type === "gui.runtimeRefresh")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
+
+    runtimeRefreshBridgeUsable = true;
+    now.mockReturnValue(20_100);
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+
+    expect(acceptedMessages.filter((message) => (message as { type?: string }).type === "gui.runtimeRefresh")).toEqual([{
+      version: bridgeVersion,
+      type: "gui.runtimeRefresh",
+      requestId: "gui-runtime-refresh-1",
+      payload: {},
+    }]);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(0);
   });
 

@@ -1,5 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type HostRuntimeStatusPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type VerificationCommandId, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
+import { GUI_BRIDGE_VERSION, createBridgeAdapter, type ApplyWorkspaceEditPayload, type ApplyWorkspaceEditResultPayload, type BridgeAdapter, type BridgeHost, type HostContextSnapshotPayload, type HostReadyPayload, type HostRuntimeStatusPayload, type IdeActionProgressPayload, type IdeActionRequestPayload, type IdeActionResultPayload, type IdeActionType, type VerificationCommandId, type ActiveFileExcerptAttachment, type WorkspaceSnippetSearchResult } from "./bridge/bridgeAdapter";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant, type ChatViewMessage } from "./services/chatViewState";
 import { activeEditorSourceLabel, activeFileExcerptPreview, activeFileExcerptSummary, activeFileExcerptToBundleItem, activeFileExcerptToChatContext, addExplicitContextBundleItem, explicitContextBundleMaxItems, explicitContextBundleToChatContext, attachedContextFileLabel, attachedContextRequiresAcknowledgement, attachedContextSummary, classifyBoundedContextPreview, formatSelectionRange, hasUsableAttachedContext, projectMemoryToBundleItem, rangeFromContextSelection, summarizeExplicitContextBundleItem, validateWorkspaceSnippetQuery, workspaceSnippetToBundleItem, type ExplicitContextBundleItem, type ProjectMemoryBundleItem, type WorkspaceSnippetBundleItem } from "./services/activeEditorContext";
 import { AgentRunPanel } from "./components/AgentRunPanel";
@@ -2137,15 +2137,20 @@ export function App() {
         const lastRequestedAt = preHostRuntimeRefreshRequestedAtRef.current;
         const canRetry = lastRequestedAt === null || now - lastRequestedAt >= preHostRuntimeRefreshRetryCooldownMs;
         if (adapter && canRetry) {
-          preHostRuntimeRefreshRequestedAtRef.current = now;
-          preHostRuntimeRefreshRequestCounterRef.current += 1;
-          adapter.post({
-            version: "2026-05-15",
-            type: "gui.runtimeRefresh",
-            requestId: `gui-runtime-refresh-${preHostRuntimeRefreshRequestCounterRef.current}`,
-            payload: {},
-          });
-          addTimeline("Requested IDE-managed runtime refresh");
+          const nextRequestCounter = preHostRuntimeRefreshRequestCounterRef.current + 1;
+          try {
+            adapter.post({
+              version: GUI_BRIDGE_VERSION,
+              type: "gui.runtimeRefresh",
+              requestId: `gui-runtime-refresh-${nextRequestCounter}`,
+              payload: {},
+            });
+            preHostRuntimeRefreshRequestedAtRef.current = now;
+            preHostRuntimeRefreshRequestCounterRef.current = nextRequestCounter;
+            addTimeline("Requested IDE-managed runtime refresh");
+          } catch {
+            addTimeline("IDE-managed runtime refresh bridge unavailable");
+          }
         }
       }
       addTimeline("Waiting for IDE host runtime settings");
@@ -2153,7 +2158,7 @@ export function App() {
     }
     if (bridgeHost === "jetbrains") {
       bridgeAdapterRef.current?.post({
-        version: "2026-05-15",
+        version: GUI_BRIDGE_VERSION,
         type: "gui.runtimeRefresh",
         requestId: `gui-runtime-refresh-${runtimeRefreshAttemptRef.current + 1}`,
         payload: {},
@@ -2614,7 +2619,7 @@ export function App() {
     setApplyResult(null);
     setApplyNote(null);
     bridgeAdapterRef.current?.post({
-      version: "2026-05-15",
+      version: GUI_BRIDGE_VERSION,
       type: "gui.applyWorkspaceEditRequest",
       requestId: applyRequestId,
       payload: editProposal.payload,
@@ -2659,7 +2664,7 @@ export function App() {
     setAgentRunVerificationResult(null);
     setAgentRunVerificationFixDraft(null);
     bridgeAdapterRef.current?.post({
-      version: "2026-05-15",
+      version: GUI_BRIDGE_VERSION,
       type: "gui.applyWorkspaceEditRequest",
       requestId: applyRequestId,
       payload: activeEditProposal.payload,
@@ -2919,7 +2924,7 @@ export function App() {
       range: "range" in payload ? payload.range : undefined,
     });
     bridgeAdapterRef.current?.post({
-      version: "2026-05-15",
+      version: GUI_BRIDGE_VERSION,
       type: "gui.ideActionRequest",
       requestId,
       payload,
