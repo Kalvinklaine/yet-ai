@@ -21,6 +21,8 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
+private val testGuiDist: Path = Path.of("/tmp/yet-ai-test-gui-dist")
+
 class RuntimeConnectionManagerTest {
     @Test
     fun launchCommandPassesSessionTokenAndPort() {
@@ -263,6 +265,7 @@ class RuntimeConnectionManagerTest {
             engineBinaryFinder = { finderCalls += 1; error("connect mode must not resolve engine binaries") },
             processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
             tokenGenerator = { "fixed-session-token" },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         assertEquals(settings, manager.prepareConnectionSettings(settings))
@@ -280,6 +283,7 @@ class RuntimeConnectionManagerTest {
             engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
             processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
             tokenGenerator = { "generated-session-token" },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
 
@@ -333,32 +337,38 @@ class RuntimeConnectionManagerTest {
     }
 
     @Test
-    fun missingExtractedGuiDistKeepsLaunchAuthPortEnvAndLogsDiagnostic() {
+    fun missingExtractedGuiDistFailsPluginLaunchBeforeProcessStart() {
         val logDir = kotlin.io.path.createTempDirectory("yet-runtime-missing-gui-dist")
         val logSink = YetLogSink(directoryProvider = { logDir })
         val bundledPath = Path.of("/Users/alice/Library/Caches/yet-ai/engine/cache-yet-lsp")
-        val launched = mutableListOf<EngineLaunchCommand>()
+        var launchCalls = 0
+        var tokenCalls = 0
         val manager = RuntimeConnectionManager(
             bundledEngineProvider = RecordingBundledProvider(bundledPath),
             engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
-            processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
-            tokenGenerator = { "generated-session-token" },
+            processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
+            tokenGenerator = { tokenCalls += 1; "generated-session-token" },
             logSink = logSink,
-            bundledGuiResolver = { BundledGuiResources.ExtractionResult(null, "Bundled Yet AI GUI resource is missing yet-ai-gui/index.html") },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(null, "Bundled Yet AI GUI resource is missing yet-ai-gui/index.html token=gui-secret-token /Users/alice/private/gui") },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
 
-        manager.prepareConnectionSettings(settings)
+        val error = assertFailsWith<IllegalStateException> { manager.prepareConnectionSettings(settings) }
 
-        val command = assertNotNull(launched.singleOrNull())
-        assertFalse(command.environment.containsKey("YET_AI_WEB_UI_DIST_DIR"))
-        assertEquals("generated-session-token", command.environment["YET_AI_AUTH_TOKEN"])
-        assertEquals("8123", command.environment["YET_AI_HTTP_PORT"])
+        val message = error.message.orEmpty()
+        assertEquals(0, launchCalls)
+        assertEquals(0, tokenCalls)
+        assertContains(message, "Packaged Yet AI GUI dist unavailable")
+        assertContains(message, "rebuild and reinstall the latest JetBrains plugin ZIP")
+        assertContains(message, "yet-ai-gui/index.html")
         val logText = java.nio.file.Files.readString(logSink.logPath())
         assertContains(logText, "runtime.web_ui_dist")
-        assertContains(logText, "phase=unavailable")
+        assertContains(logText, "phase=failure")
         assertContains(logText, "packaged_Web_UI_dist_unavailable")
-        assertFalse(logText.contains("generated-session-token"), logText)
+        listOf("generated-session-token", "gui-secret-token", "/Users/alice", "private/gui").forEach { privateValue ->
+            assertFalse(message.contains(privateValue, ignoreCase = true), message)
+            assertFalse(logText.contains(privateValue, ignoreCase = true), logText)
+        }
         manager.dispose()
     }
 
@@ -376,6 +386,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { "generated-plugin-owned-token" },
             sessionTokenStore = tokenStore,
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8123", null, "stale-cached-token", LaunchMode.AUTO, null)
 
@@ -412,6 +423,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { "diagnostics-plugin-token-that-must-not-leak-1234567890" },
             healthChecker = {},
             artifactFreshnessProvider = { freshness },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8132", null, null, LaunchMode.LAUNCH, null)
 
@@ -445,6 +457,7 @@ class RuntimeConnectionManagerTest {
                 seen += provenance.kind
                 ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8140", null, null, LaunchMode.AUTO, null)
 
@@ -471,6 +484,7 @@ class RuntimeConnectionManagerTest {
                 seen += provenance.kind
                 ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8141", null, null, LaunchMode.AUTO, configuredPath)
 
@@ -497,6 +511,7 @@ class RuntimeConnectionManagerTest {
                 seen += provenance.kind
                 ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8142", null, null, LaunchMode.AUTO, null)
 
@@ -524,6 +539,7 @@ class RuntimeConnectionManagerTest {
                 seen += provenance.kind
                 ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8143", null, null, LaunchMode.AUTO, null)
 
@@ -549,6 +565,7 @@ class RuntimeConnectionManagerTest {
                 seen += provenance.kind
                 ArtifactFreshness(runtimeBinaryFreshness = provenance.kind.name.lowercase())
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8144", null, null, LaunchMode.AUTO, null)
 
@@ -567,6 +584,7 @@ class RuntimeConnectionManagerTest {
             processStarter = { FakeAliveProcess() },
             tokenGenerator = { "nonregression-plugin-token-that-must-not-leak-1234567890" },
             healthChecker = {},
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val preparedSettings = RuntimeSettings("http://127.0.0.1:8133", null, null, LaunchMode.AUTO, null)
         val syntheticSettings = RuntimeSettings("http://127.0.0.1:8133", null, null, LaunchMode.AUTO, null)
@@ -589,6 +607,7 @@ class RuntimeConnectionManagerTest {
             processStarter = { FakeAliveProcess() },
             tokenGenerator = { "port-a-plugin-token-that-must-not-leak-1234567890" },
             healthChecker = {},
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val portASettings = RuntimeSettings("http://127.0.0.1:8135", null, null, LaunchMode.LAUNCH, null)
         val portBSettings = RuntimeSettings("http://127.0.0.1:8136", null, null, LaunchMode.LAUNCH, null)
@@ -618,6 +637,7 @@ class RuntimeConnectionManagerTest {
             healthChecker = { settings ->
                 throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 Authorization: Bearer ${settings.sessionToken}", 401)
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val portASettings = RuntimeSettings("http://127.0.0.1:8137", null, null, LaunchMode.LAUNCH, null)
         val portBSettings = RuntimeSettings("http://127.0.0.1:8138", null, null, LaunchMode.LAUNCH, null)
@@ -650,6 +670,7 @@ class RuntimeConnectionManagerTest {
                 if (healthCalls == 1) throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401", 401)
                 assertEquals("matching-fresh-plugin-token", settings.sessionToken)
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8139", null, null, LaunchMode.LAUNCH, null)
 
@@ -679,6 +700,7 @@ class RuntimeConnectionManagerTest {
                 healthCalls += 1
                 if (healthCalls > 1) throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: connection refused token=latest-failure-token-that-must-not-leak-1234567890")
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8134", null, null, LaunchMode.LAUNCH, null)
 
@@ -707,6 +729,7 @@ class RuntimeConnectionManagerTest {
             processStarter = { command -> launched += command; FakeAliveProcess() },
             tokenGenerator = { "reuse-secret-token" },
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
 
@@ -783,6 +806,7 @@ class RuntimeConnectionManagerTest {
             engineBinaryFinder = { error("launch mode should not require PATH when bundled engine is available") },
             processStarter = { command -> launched += command; FakeProcess(listOf(true)) },
             tokenGenerator = { "launch-session-token" },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val prepared = manager.prepareConnectionSettings(RuntimeSettings("http://127.0.0.1:8124", null, null, LaunchMode.LAUNCH, null))
@@ -809,6 +833,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { if (launched.isEmpty()) "first-plugin-token" else "second-plugin-token" },
             healthChecker = {},
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.AUTO, null)
 
@@ -846,6 +871,7 @@ class RuntimeConnectionManagerTest {
             healthChecker = { settings ->
                 throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: timed out Authorization: Bearer ${settings.sessionToken} /Users/alice/private/yet-lsp")
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.LAUNCH, null))
@@ -880,6 +906,7 @@ class RuntimeConnectionManagerTest {
                 exitingProcess.killManually()
                 throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: connection refused Authorization: Bearer exiting-session-token-that-must-not-leak-1234567890 /Users/alice/private/yet-lsp")
             },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8125", null, null, LaunchMode.LAUNCH, null))
@@ -921,6 +948,7 @@ class RuntimeConnectionManagerTest {
             },
             logSink = logSink,
             sessionTokenStore = tokenStore,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8125", null, "stale-initial-token", LaunchMode.LAUNCH, null))
@@ -983,6 +1011,7 @@ class RuntimeConnectionManagerTest {
                 throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 Authorization: Bearer first-plugin-token /Users/alice/private/yet-lsp", 401)
             },
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8131", null, "stale-initial-token", LaunchMode.LAUNCH, null))
@@ -1039,6 +1068,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { if (launched.isEmpty()) "old-plugin-token" else "fresh-plugin-token" },
             healthChecker = {},
             sessionTokenStore = tokenStore,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8125", null, "stale-browser-token", LaunchMode.LAUNCH, null)
 
@@ -1064,6 +1094,7 @@ class RuntimeConnectionManagerTest {
             processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
             tokenGenerator = { "unused-generated-token" },
             healthChecker = { throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 with token=connect-secret-token", 401) },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8126", null, "connect-secret-token", LaunchMode.CONNECT, null))
@@ -1094,6 +1125,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { "unused-token" },
             healthChecker = { throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: connection refused") },
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8126", null, null, LaunchMode.CONNECT, null))
@@ -1118,6 +1150,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { "plugin-engine-log-token" },
             healthChecker = {},
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8128", null, null, LaunchMode.LAUNCH, null))
@@ -1145,6 +1178,7 @@ class RuntimeConnectionManagerTest {
                 throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 Authorization: Bearer ${settings.sessionToken} /Users/alice/private/yet-lsp", 401)
             },
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val result = manager.prepareForTest(RuntimeSettings("http://127.0.0.1:8127", null, "initial-secret-token", LaunchMode.LAUNCH, null))
@@ -1201,6 +1235,7 @@ class RuntimeConnectionManagerTest {
             engineBinaryFinder = { configured -> assertEquals(null, configured); null },
             processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
             tokenGenerator = { "unused-token" },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8123", null, null, LaunchMode.AUTO, null)
 
@@ -1220,6 +1255,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { "unused-token" },
             healthChecker = {},
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8129", null, "external-runtime-token", LaunchMode.AUTO, null)
 
@@ -1254,6 +1290,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { "stale-plugin-token" },
             healthChecker = {},
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val pluginSettings = RuntimeSettings("http://127.0.0.1:8131", null, null, LaunchMode.LAUNCH, null)
         val connectSettings = RuntimeSettings("http://127.0.0.1:8131", null, "external-connect-token", LaunchMode.CONNECT, null)
@@ -1301,6 +1338,7 @@ class RuntimeConnectionManagerTest {
             tokenGenerator = { "unused-token" },
             healthChecker = { throw RuntimeHealthCheckException("Yet AI local runtime health check failed at /v1/ping: HTTP 401 with token=external-secret-token", 401) },
             logSink = logSink,
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
         val settings = RuntimeSettings("http://127.0.0.1:8130", null, "external-secret-token", LaunchMode.AUTO, null)
 
@@ -1336,6 +1374,7 @@ class RuntimeConnectionManagerTest {
             engineBinaryFinder = { finderCalls += 1; Path.of("/tmp/path-yet-lsp") },
             processStarter = { launchCalls += 1; FakeProcess(listOf(true)) },
             tokenGenerator = { token },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val error = assertFailsWith<IllegalStateException> {
@@ -1360,6 +1399,7 @@ class RuntimeConnectionManagerTest {
             engineBinaryFinder = { finderCalls += 1; Path.of("/tmp/path-yet-lsp") },
             processStarter = { FakeProcess(listOf(true)) },
             tokenGenerator = { "unused-token" },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val error = assertFailsWith<IllegalStateException> {
@@ -1396,6 +1436,7 @@ class RuntimeConnectionManagerTest {
             engineBinaryFinder = { error("bundled engine should avoid PATH lookup") },
             processStarter = { error("spawn failed for $bundledPath with token=fixed-session-token") },
             tokenGenerator = { "fixed-session-token" },
+            bundledGuiResolver = { BundledGuiResources.ExtractionResult(testGuiDist, null) },
         )
 
         val error = assertFailsWith<IllegalStateException> {

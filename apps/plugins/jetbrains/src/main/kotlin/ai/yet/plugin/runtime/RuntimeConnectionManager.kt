@@ -318,9 +318,9 @@ class RuntimeConnectionManager(
         }
         logSink.append("info", "runtime.connection.relaunch", runtimeCorrelationFields(settings, settings.launchMode) + mapOf("refreshSessionToken" to refreshSessionToken))
         stopLaunchedProcess()
+        val bundledGuiDist = resolveBundledGuiDistForLaunch(provenance)
         val token = tokenGenerator()
         logSink.append("info", "runtime.token.generated", runtimeCorrelationFields(settings.copyWithSessionToken(token), settings.launchMode))
-        val bundledGuiDist = resolveBundledGuiDistForLaunch(provenance)
         val command = buildEngineLaunchCommand(settings.runtimeUrl, binaryPath, token, logDirectory = logSink.logDirectory(), guiDistDirectory = bundledGuiDist)
         logSink.append("info", "runtime.launch", mapOf("phase" to "start", "launchMode" to settings.launchMode.name.lowercase(), "runtime" to sanitizeRuntimeUrlForDiagnostics(settings.runtimeUrl), "binary" to binaryPath.fileName.toString(), "refreshSessionToken" to refreshSessionToken))
         val process = try {
@@ -379,18 +379,25 @@ class RuntimeConnectionManager(
         lastEffectiveProcessState = RuntimeProcessState.EXITED
     }
 
-    private fun resolveBundledGuiDistForLaunch(provenance: RuntimeBinaryProvenance): Path? {
+    private fun resolveBundledGuiDistForLaunch(provenance: RuntimeBinaryProvenance): Path {
         val result = runCatching { bundledGuiResolver(provenance) }.getOrElse { error ->
-            BundledGuiResources.ExtractionResult(null, sanitizedRuntimeError("Bundled Yet AI GUI extraction failed", error as? Exception ?: IllegalStateException(error.message ?: error::class.java.simpleName)))
+            val sanitized = sanitizedRuntimeError("Bundled Yet AI GUI extraction failed", error as? Exception ?: IllegalStateException(error.message ?: error::class.java.simpleName))
+            logSink.append("error", "runtime.web_ui_dist", mapOf("phase" to "failure", "diagnosis" to "packaged Web UI dist unavailable", "reason" to sanitized))
+            throw IllegalStateException(guiDistUnavailableLaunchError(sanitized))
         }
         val path = result.path
         return if (path != null) {
             logSink.append("info", "runtime.web_ui_dist", mapOf("phase" to "available"))
             path
         } else {
-            logSink.append("warn", "runtime.web_ui_dist", mapOf("phase" to "unavailable", "diagnosis" to "packaged Web UI dist unavailable", "reason" to redactLogText(result.unavailableReason ?: "Bundled Yet AI GUI dist unavailable", "")))
-            null
+            val reason = redactLogText(result.unavailableReason ?: "Bundled Yet AI GUI dist unavailable", "")
+            logSink.append("error", "runtime.web_ui_dist", mapOf("phase" to "failure", "diagnosis" to "packaged Web UI dist unavailable", "reason" to reason))
+            throw IllegalStateException(guiDistUnavailableLaunchError(reason))
         }
+    }
+
+    private fun guiDistUnavailableLaunchError(reason: String): String {
+        return "Packaged Yet AI GUI dist unavailable; rebuild and reinstall the latest JetBrains plugin ZIP before launching the plugin-owned runtime. ${redactLogText(reason, "")}".take(1000)
     }
 
     private fun attachLogs(process: Process, token: String) {
