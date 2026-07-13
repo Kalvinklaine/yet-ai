@@ -16,6 +16,7 @@ const crateName = identity.engine.rustCrate;
 const binaryFileName = process.platform === "win32" ? `${binaryName}.exe` : binaryName;
 const token = `smoke-${randomUUID()}`;
 const timeoutMs = 10_000;
+const runtimePaths = ["/v1/ping", "/v1/models", "/v1/caps", "/v1/demo-mode"];
 let child;
 let childExit;
 let childExitResult;
@@ -64,8 +65,11 @@ try {
   assert(assetResponse.status === 200, `Expected asset ${assetPath} to return 200, got ${assetResponse.status}.`);
   await assetResponse.arrayBuffer();
 
+  await verifyRuntimeApiAuth(port);
+
   console.log("Engine-served Web UI smoke passed.");
   console.log(`Verified root HTML and ${assetPath} from ${path.relative(root, engineBinary)} on 127.0.0.1:${port}.`);
+  console.log(`Verified authenticated same-origin Web UI runtime path: no 401 from ${runtimePaths.join(", ")}.`);
 } catch (error) {
   console.error(redact(error.message));
   process.exitCode = 1;
@@ -142,6 +146,34 @@ async function pollWebUiRoot(port) {
 function firstAssetPath(html) {
   const match = html.match(/(?:src|href)=["'](?:\.?\/)?(assets\/[^"']+)["']/);
   return match ? `/${match[1]}` : null;
+}
+
+async function verifyRuntimeApiAuth(port) {
+  for (const runtimePath of runtimePaths) {
+    const webUiResponse = await fetch(`http://127.0.0.1:${port}${runtimePath}`, {
+      headers: sameOriginWebUiHeaders(),
+    });
+    const webUiBody = await webUiResponse.text();
+    assert(webUiResponse.status !== 401, `Expected same-origin Web UI ${runtimePath} to avoid 401, got 401: ${webUiBody.slice(0, 200)}`);
+    assert(webUiResponse.ok, `Expected same-origin Web UI ${runtimePath} to succeed, got ${webUiResponse.status}: ${webUiBody.slice(0, 200)}`);
+    if (webUiBody) {
+      JSON.parse(webUiBody);
+    }
+
+    const unauthenticatedResponse = await fetch(`http://127.0.0.1:${port}${runtimePath}`, {
+      headers: { Accept: "application/json" },
+    });
+    await unauthenticatedResponse.arrayBuffer();
+    assert(unauthenticatedResponse.status === 401, `Expected unauthenticated ${runtimePath} without same-origin Web UI proof to reject with 401, got ${unauthenticatedResponse.status}.`);
+  }
+}
+
+function sameOriginWebUiHeaders() {
+  return {
+    Accept: "application/json",
+    "X-Yet-AI-Caller": "gui_runtime_client",
+    "Sec-Fetch-Site": "same-origin",
+  };
 }
 
 async function cleanup() {
