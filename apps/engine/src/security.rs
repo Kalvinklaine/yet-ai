@@ -4,11 +4,13 @@ use axum::extract::OriginalUri;
 use axum::http::request::Parts;
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
+use base64::Engine;
 
 use crate::logging::{log_event, EngineLogLevel};
 use crate::AppState;
 
 pub const CALLER_HEADER_NAME: &str = "x-yet-ai-caller";
+pub const BROWSER_SESSION_COOKIE_NAME: &str = "yet_ai_loopback_session";
 const SEC_FETCH_SITE_HEADER_NAME: &str = "sec-fetch-site";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,6 +35,47 @@ impl AuthToken {
     pub fn is_valid_bearer(&self, value: &str) -> bool {
         value == format!("Bearer {}", self.0)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BrowserSessionId(String);
+
+impl BrowserSessionId {
+    pub fn random() -> Self {
+        let mut bytes = [0u8; 32];
+        getrandom::getrandom(&mut bytes).expect("failed to generate browser session id");
+        Self(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+    }
+
+    pub fn new(session_id: impl Into<String>) -> Result<Self, BrowserSessionIdError> {
+        let session_id = session_id.into();
+        if session_id.is_empty() {
+            return Err(BrowserSessionIdError::Empty);
+        }
+        Ok(Self(session_id))
+    }
+
+    pub fn cookie_value(&self) -> String {
+        format!(
+            "{BROWSER_SESSION_COOKIE_NAME}={}; HttpOnly; SameSite=Strict; Path=/",
+            self.0
+        )
+    }
+
+    fn matches_cookie_header(&self, cookie_header: &str) -> bool {
+        cookie_header.split(';').any(|part| {
+            let Some((name, value)) = part.trim().split_once('=') else {
+                return false;
+            };
+            name == BROWSER_SESSION_COOKIE_NAME && value == self.0
+        })
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum BrowserSessionIdError {
+    #[error("browser session id must not be empty")]
+    Empty,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -159,10 +202,25 @@ fn reject(parts: &Parts, reason: AuthRejectReason) -> Response<Body> {
     StatusCode::UNAUTHORIZED.into_response()
 }
 
-fn is_same_origin_web_ui_request(headers: &HeaderMap) -> bool {
+fn is_same_origin_web_ui_request(
+    headers: &HeaderMap,
+    browser_session_id: &BrowserSessionId,
+) -> bool {
     RuntimeCaller::from_headers(headers) == RuntimeCaller::GuiRuntimeClient
         && header_value_eq(headers, SEC_FETCH_SITE_HEADER_NAME, "same-origin")
         && request_uses_loopback_host_with_port(headers)
+        && has_valid_browser_session_cookie(headers, browser_session_id)
+}
+
+fn has_valid_browser_session_cookie(
+    headers: &HeaderMap,
+    browser_session_id: &BrowserSessionId,
+) -> bool {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .any(|value| browser_session_id.matches_cookie_header(value))
 }
 
 fn header_value_eq(headers: &HeaderMap, name: &'static str, expected: &str) -> bool {
@@ -259,7 +317,34 @@ mod tests {
             .unwrap();
         let (parts, _) = request.into_parts();
 
-        assert!(is_same_origin_web_ui_request(&parts.headers));
+        let browser_session_id = BrowserSessionId::new("test-session").unwrap();
+
+        assert!(!is_same_origin_web_ui_request(
+            &parts.headers,
+            &browser_session_id
+        ));
+    }
+
+    #[test]
+    fn same_origin_web_ui_auth_requires_valid_session_cookie() {
+        let browser_session_id = BrowserSessionId::new("test-session").unwrap();
+        let request = Request::builder()
+            .uri("/v1/ping")
+            .header(header::HOST, "127.0.0.1:8001")
+            .header(CALLER_HEADER_NAME, "gui_runtime_client")
+            .header(SEC_FETCH_SITE_HEADER_NAME, "same-origin")
+            .header(
+                header::COOKIE,
+                "other=value; yet_ai_loopback_session=test-session",
+            )
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+
+        assert!(is_same_origin_web_ui_request(
+            &parts.headers,
+            &browser_session_id
+        ));
     }
 
     #[test]
@@ -272,7 +357,12 @@ mod tests {
             .unwrap();
         let (parts, _) = request.into_parts();
 
-        assert!(!is_same_origin_web_ui_request(&parts.headers));
+        let browser_session_id = BrowserSessionId::new("test-session").unwrap();
+
+        assert!(!is_same_origin_web_ui_request(
+            &parts.headers,
+            &browser_session_id
+        ));
     }
 
     #[test]
@@ -286,7 +376,12 @@ mod tests {
             .unwrap();
         let (parts, _) = request.into_parts();
 
-        assert!(!is_same_origin_web_ui_request(&parts.headers));
+        let browser_session_id = BrowserSessionId::new("test-session").unwrap();
+
+        assert!(!is_same_origin_web_ui_request(
+            &parts.headers,
+            &browser_session_id
+        ));
     }
 
     #[test]
@@ -297,11 +392,16 @@ mod tests {
                 .header(header::HOST, host)
                 .header(CALLER_HEADER_NAME, "gui_runtime_client")
                 .header(SEC_FETCH_SITE_HEADER_NAME, "same-origin")
+                .header(header::COOKIE, "yet_ai_loopback_session=test-session")
                 .body(())
                 .unwrap();
             let (parts, _) = request.into_parts();
+            let browser_session_id = BrowserSessionId::new("test-session").unwrap();
 
-            assert!(is_same_origin_web_ui_request(&parts.headers), "{host}");
+            assert!(
+                is_same_origin_web_ui_request(&parts.headers, &browser_session_id),
+                "{host}"
+            );
         }
     }
 }
@@ -315,7 +415,7 @@ impl FromRequestParts<AppState> for Authenticated {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let Some(value) = parts.headers.get(header::AUTHORIZATION) else {
-            if is_same_origin_web_ui_request(&parts.headers) {
+            if is_same_origin_web_ui_request(&parts.headers, &state.browser_session_id) {
                 return Ok(Self);
             }
             return Err(reject(parts, AuthRejectReason::MissingHeader));

@@ -54,7 +54,7 @@ try {
     stderr = rememberOutput(stderr, error.message);
   });
 
-  const html = await pollWebUiRoot(port);
+  const { html } = await pollWebUiRoot(port);
   assert(html.includes("window.__yetAiInitialRuntimeConfig"), "Root HTML did not include injected runtime config.");
   assert(html.includes('runtimeAccess:"same_origin_proxy"'), "Root HTML did not set same-origin proxy runtime access.");
   assert(!html.includes(token), "Root HTML leaked the runtime token.");
@@ -65,11 +65,12 @@ try {
   assert(assetResponse.status === 200, `Expected asset ${assetPath} to return 200, got ${assetResponse.status}.`);
   await assetResponse.arrayBuffer();
 
-  await verifyRuntimeApiAuth(port);
+  const refreshedCookie = await refreshBrowserSession(port);
+  await verifyRuntimeApiAuth(port, refreshedCookie);
 
   console.log("Engine-served Web UI smoke passed.");
   console.log(`Verified root HTML and ${assetPath} from ${path.relative(root, engineBinary)} on 127.0.0.1:${port}.`);
-  console.log(`Verified authenticated same-origin Web UI runtime path: no 401 from ${runtimePaths.join(", ")}.`);
+  console.log(`Verified authenticated same-origin Web UI runtime path: browser session cookie required for no 401 from ${runtimePaths.join(", ")}.`);
 } catch (error) {
   console.error(redact(error.message));
   process.exitCode = 1;
@@ -133,7 +134,7 @@ async function pollWebUiRoot(port) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/`);
       const html = await response.text();
-      if (response.status === 200) return html;
+      if (response.status === 200) return { html, cookie: requireBrowserSessionCookie(response) };
       lastError = `status ${response.status}: ${html.slice(0, 200)}`;
     } catch (error) {
       lastError = error.message;
@@ -148,17 +149,43 @@ function firstAssetPath(html) {
   return match ? `/${match[1]}` : null;
 }
 
-async function verifyRuntimeApiAuth(port) {
+async function refreshBrowserSession(port) {
+  const response = await fetch(`http://127.0.0.1:${port}/_yet_ai/browser-session`, {
+    headers: { Connection: "close" },
+  });
+  await response.arrayBuffer();
+  assert(response.status === 204, `Expected browser session refresh to return 204, got ${response.status}.`);
+  return requireBrowserSessionCookie(response);
+}
+
+function requireBrowserSessionCookie(response) {
+  const setCookie = response.headers.get("set-cookie");
+  assert(setCookie, "Response did not set a browser session cookie.");
+  assert(setCookie.startsWith("yet_ai_loopback_session="), "Browser session cookie used an unexpected name.");
+  assert(setCookie.includes("HttpOnly"), "Browser session cookie was not HttpOnly.");
+  assert(setCookie.includes("SameSite=Strict"), "Browser session cookie was not SameSite=Strict.");
+  assert(setCookie.includes("Path=/"), "Browser session cookie was not scoped to Path=/.");
+  assert(!setCookie.includes(token), "Browser session cookie leaked the runtime token.");
+  return setCookie.split(";")[0];
+}
+
+async function verifyRuntimeApiAuth(port, cookie) {
   for (const runtimePath of runtimePaths) {
     const webUiResponse = await fetch(`http://127.0.0.1:${port}${runtimePath}`, {
-      headers: sameOriginWebUiHeaders(),
+      headers: sameOriginWebUiHeaders(cookie),
     });
     const webUiBody = await webUiResponse.text();
-    assert(webUiResponse.status !== 401, `Expected same-origin Web UI ${runtimePath} to avoid 401, got 401: ${webUiBody.slice(0, 200)}`);
+    assert(webUiResponse.status !== 401, `Expected same-origin Web UI ${runtimePath} to avoid 401 with browser session cookie, got 401: ${webUiBody.slice(0, 200)}`);
     assert(webUiResponse.ok, `Expected same-origin Web UI ${runtimePath} to succeed, got ${webUiResponse.status}: ${webUiBody.slice(0, 200)}`);
     if (webUiBody) {
       JSON.parse(webUiBody);
     }
+
+    const missingCookieResponse = await fetch(`http://127.0.0.1:${port}${runtimePath}`, {
+      headers: sameOriginWebUiHeaders(),
+    });
+    await missingCookieResponse.arrayBuffer();
+    assert(missingCookieResponse.status === 401, `Expected same-origin Web UI proof without browser session cookie to reject with 401, got ${missingCookieResponse.status}.`);
 
     const unauthenticatedResponse = await fetch(`http://127.0.0.1:${port}${runtimePath}`, {
       headers: { Accept: "application/json" },
@@ -168,11 +195,12 @@ async function verifyRuntimeApiAuth(port) {
   }
 }
 
-function sameOriginWebUiHeaders() {
+function sameOriginWebUiHeaders(cookie) {
   return {
     Accept: "application/json",
     "X-Yet-AI-Caller": "gui_runtime_client",
     "Sec-Fetch-Site": "same-origin",
+    ...(cookie ? { Cookie: cookie } : {}),
   };
 }
 

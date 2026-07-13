@@ -33,6 +33,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(web_ui_index))
         .route("/index.html", get(web_ui_index))
+        .route("/_yet_ai/browser-session", get(browser_session))
         .route("/assets/*asset_path", get(web_ui_asset))
         .nest(
             "/v1",
@@ -83,13 +84,13 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn web_ui_index(headers: HeaderMap) -> Response {
+async fn web_ui_index(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if !web_ui_request_uses_loopback_host(&headers) {
         return StatusCode::NOT_FOUND.into_response();
     }
     match tokio::fs::read_to_string(web_ui_dist_dir().join("index.html")).await {
         Ok(index_html) => match inject_web_ui_bootstrap(&index_html) {
-            Ok(html) => html_response(html),
+            Ok(html) => html_response(html, &state),
             Err(message) => web_ui_unavailable(message),
         },
         Err(error) => web_ui_unavailable(format!(
@@ -97,6 +98,17 @@ async fn web_ui_index(headers: HeaderMap) -> Response {
             web_ui_dist_dir().join("index.html").display()
         )),
     }
+}
+
+async fn browser_session(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if !web_ui_request_uses_loopback_host(&headers) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    (
+        StatusCode::NO_CONTENT,
+        [(header::SET_COOKIE, browser_session_cookie(&state))],
+    )
+        .into_response()
 }
 
 async fn web_ui_asset(headers: HeaderMap, Path(asset_path): Path<String>) -> Response {
@@ -175,15 +187,22 @@ fn inject_web_ui_bootstrap(index_html: &str) -> Result<String, String> {
     Ok(html)
 }
 
-fn html_response(html: String) -> Response {
+fn html_response(html: String, state: &AppState) -> Response {
     (
-        [(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("text/html; charset=utf-8"),
-        )],
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/html; charset=utf-8"),
+            ),
+            (header::SET_COOKIE, browser_session_cookie(state)),
+        ],
         html,
     )
         .into_response()
+}
+
+fn browser_session_cookie(state: &AppState) -> HeaderValue {
+    HeaderValue::from_str(&state.browser_session_id.cookie_value()).unwrap()
 }
 
 fn web_ui_unavailable(message: String) -> Response {
@@ -1048,6 +1067,16 @@ mod tests {
         .unwrap()
     }
 
+    fn browser_session_cookie_for_state(state: &AppState) -> String {
+        state
+            .browser_session_id
+            .cookie_value()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
     async fn post_provider_auth(path: &str, body: &'static str) -> StatusCode {
         let identity = ProductIdentity::load().unwrap();
         let state = AppState::with_storage_paths(
@@ -1096,6 +1125,13 @@ mod tests {
         std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
 
         assert_eq!(response.status(), StatusCode::OK);
+        let set_cookie = response.headers().get(header::SET_COOKIE).unwrap();
+        let set_cookie = set_cookie.to_str().unwrap();
+        assert!(set_cookie.starts_with("yet_ai_loopback_session="));
+        assert!(set_cookie.contains("HttpOnly"));
+        assert!(set_cookie.contains("SameSite=Strict"));
+        assert!(set_cookie.contains("Path=/"));
+        assert!(!set_cookie.contains("test-token"));
         let html = response_text(response).await;
         let config_index = html.find("window.__yetAiInitialRuntimeConfig").unwrap();
         let module_index = html.find("<script type=\"module\"").unwrap();
@@ -1106,6 +1142,30 @@ mod tests {
         assert!(!html.contains("test-token"));
         assert!(!html.contains("Authorization"));
         let _ = std::fs::remove_dir_all(dist);
+    }
+
+    #[tokio::test]
+    async fn browser_session_endpoint_sets_cookie_without_body_or_token() {
+        let response = test_app()
+            .oneshot(
+                Request::builder()
+                    .uri("/_yet_ai/browser-session")
+                    .header(header::HOST, "127.0.0.1:8001")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let set_cookie = response.headers().get(header::SET_COOKIE).unwrap();
+        let set_cookie = set_cookie.to_str().unwrap();
+        assert!(set_cookie.starts_with("yet_ai_loopback_session="));
+        assert!(set_cookie.contains("HttpOnly"));
+        assert!(set_cookie.contains("SameSite=Strict"));
+        assert!(set_cookie.contains("Path=/"));
+        assert!(!set_cookie.contains("test-token"));
+        assert!(response_text(response).await.is_empty());
     }
 
     #[tokio::test]
@@ -1255,6 +1315,7 @@ mod tests {
         host: Option<&'static str>,
         caller: Option<&'static str>,
         fetch_site: Option<&'static str>,
+        cookie: Option<&'static str>,
     ) -> StatusCode {
         let identity = ProductIdentity::load().unwrap();
         let state = AppState::with_storage_paths(
@@ -1262,6 +1323,9 @@ mod tests {
             AuthToken::new("test-token").unwrap(),
             temp_storage_paths(),
         );
+        let cookie = cookie
+            .map(str::to_string)
+            .unwrap_or_else(|| browser_session_cookie_for_state(&state));
         let mut builder = Request::builder().method("GET").uri(path);
         if let Some(host) = host {
             builder = builder.header(header::HOST, host);
@@ -1271,6 +1335,9 @@ mod tests {
         }
         if let Some(fetch_site) = fetch_site {
             builder = builder.header("sec-fetch-site", fetch_site);
+        }
+        if !cookie.is_empty() {
+            builder = builder.header(header::COOKIE, cookie);
         }
         let response = super::router(state)
             .oneshot(builder.body(Body::empty()).unwrap())
@@ -1307,12 +1374,45 @@ mod tests {
                 Some("127.0.0.1:8001"),
                 Some("gui_runtime_client"),
                 Some("same-origin"),
+                None,
             )
             .await;
 
             assert_ne!(status, StatusCode::UNAUTHORIZED, "{path}");
         }
         assert!(auth_reject_lines().is_empty());
+    }
+
+    #[tokio::test]
+    async fn same_origin_web_ui_request_without_cookie_remains_401() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_with_same_origin_web_ui_headers(
+            "/v1/ping",
+            Some("127.0.0.1:8001"),
+            Some("gui_runtime_client"),
+            Some("same-origin"),
+            Some(""),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn same_origin_web_ui_request_with_invalid_cookie_remains_401() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_with_same_origin_web_ui_headers(
+            "/v1/ping",
+            Some("127.0.0.1:8001"),
+            Some("gui_runtime_client"),
+            Some("same-origin"),
+            Some("yet_ai_loopback_session=wrong-session"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -1323,6 +1423,7 @@ mod tests {
             "/v1/ping",
             Some("127.0.0.1:8001"),
             Some("gui_runtime_client"),
+            None,
             None,
         )
         .await;
@@ -1339,6 +1440,7 @@ mod tests {
             Some("example.com:8001"),
             Some("gui_runtime_client"),
             Some("same-origin"),
+            None,
         )
         .await;
 
@@ -1354,6 +1456,7 @@ mod tests {
             Some("127.0.0.1:8001"),
             Some("gui_runtime_client_evil"),
             Some("same-origin"),
+            None,
         )
         .await;
 

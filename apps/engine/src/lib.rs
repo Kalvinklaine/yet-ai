@@ -22,13 +22,14 @@ use crate::agent_progress::AgentProgressRuntime;
 use crate::chat::ChatRuntime;
 
 pub use identity::ProductIdentity;
-pub use security::AuthToken;
+pub use security::{AuthToken, BrowserSessionId};
 pub use storage::{resolve_default_storage_paths, StoragePaths};
 
 #[derive(Clone)]
 pub struct AppState {
     pub identity: ProductIdentity,
     pub auth_token: AuthToken,
+    pub browser_session_id: BrowserSessionId,
     pub storage_paths: StoragePaths,
     pub chat_runtime: ChatRuntime,
     pub agent_progress_runtime: AgentProgressRuntime,
@@ -41,6 +42,7 @@ impl AppState {
         Self {
             identity,
             auth_token,
+            browser_session_id: BrowserSessionId::random(),
             storage_paths,
             chat_runtime: ChatRuntime::new(),
             agent_progress_runtime: AgentProgressRuntime::new(),
@@ -55,6 +57,7 @@ impl AppState {
         Self {
             identity,
             auth_token,
+            browser_session_id: BrowserSessionId::random(),
             storage_paths,
             chat_runtime: ChatRuntime::new(),
             agent_progress_runtime: AgentProgressRuntime::new(),
