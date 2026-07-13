@@ -34,6 +34,7 @@ const identity = JSON.parse(await readFile(path.join(root, "product", "identity.
 const guiDistRoot = path.join(root, "apps", "gui", "dist");
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
 const bundledEngineResourcePath = `yet-ai-engine/${binaryFileName}`;
+const expectedEngineBinaryPath = path.join(root, "target", "debug", binaryFileName);
 
 checkForbiddenEvidenceTextRegressionGuards();
 
@@ -388,11 +389,37 @@ async function checkJetBrainsZip(zipPath, label) {
     }
     requireArchiveEntry(jarEntries, bundledEngineResourcePath, `${label} plugin JAR must contain bundled engine resource at ${bundledEngineResourcePath} (the local cargo-built ${identity.engine.binaryName} staged by npm run prepare:jetbrains-preview).`);
     const engineBytes = await extractArchiveEntryBytes(pluginJar, bundledEngineResourcePath, `${label} plugin JAR must allow extracting bundled engine resource at ${bundledEngineResourcePath}.`);
-    if (engineBytes !== undefined && engineBytes.length === 0) {
-      failures.push(`${label} plugin JAR bundled engine resource at ${bundledEngineResourcePath} must contain non-zero bytes; got 0.`);
+    if (engineBytes !== undefined) {
+      await checkBundledEngineFreshness(engineBytes, label);
     }
   } finally {
     await rm(path.dirname(pluginJar), { recursive: true, force: true });
+  }
+}
+
+async function checkBundledEngineFreshness(engineBytes, label) {
+  const expectedEngineRelativePath = relative(expectedEngineBinaryPath);
+  if (engineBytes.length === 0) {
+    failures.push(`${label} plugin JAR bundled engine resource at ${bundledEngineResourcePath} must contain non-zero bytes; got 0.`);
+    return;
+  }
+  const expectedEngineStat = await stat(expectedEngineBinaryPath).catch(() => undefined);
+  if (expectedEngineStat === undefined) {
+    failures.push(`${label} must compare bundled engine bytes against ${expectedEngineRelativePath}, but that file is missing. Run \`cargo build -p ${identity.engine.rustCrate}\` before this smoke.`);
+    return;
+  }
+  if (!expectedEngineStat.isFile()) {
+    failures.push(`${label} must compare bundled engine bytes against ${expectedEngineRelativePath}, but that path is not a file.`);
+    return;
+  }
+  const expectedEngineBytes = await readFile(expectedEngineBinaryPath);
+  const bundledEngineSha256 = createHash("sha256").update(engineBytes).digest("hex");
+  const expectedEngineSha256 = createHash("sha256").update(expectedEngineBytes).digest("hex");
+  if (bundledEngineSha256 !== expectedEngineSha256) {
+    failures.push(`${label} plugin JAR bundled engine resource at ${bundledEngineResourcePath} has SHA-256 ${bundledEngineSha256}, but current ${expectedEngineRelativePath} has SHA-256 ${expectedEngineSha256}. Rebuild with \`cargo build -p ${identity.engine.rustCrate}\` and \`npm run prepare:jetbrains-preview\`, then restage GitHub artifacts.`);
+  }
+  if (engineBytes.length !== expectedEngineBytes.length) {
+    failures.push(`${label} plugin JAR bundled engine resource at ${bundledEngineResourcePath} has size ${engineBytes.length} bytes, but current ${expectedEngineRelativePath} has size ${expectedEngineBytes.length} bytes. Rebuild with \`cargo build -p ${identity.engine.rustCrate}\` and \`npm run prepare:jetbrains-preview\`, then restage GitHub artifacts.`);
   }
 }
 
@@ -426,9 +453,13 @@ async function createZipFromDirectoryContents(directory, tempPrefix) {
   if (jarResult.status === 0) {
     return zipPath;
   }
-  failures.push(`Could not create a temporary GitHub-equivalent ZIP from ${relative(directory)} with zip or JDK jar. zip stderr: ${zipResult.stderr.trim() || "<empty>"}; jar stderr: ${jarResult.stderr.trim() || "<empty>"}.`);
+  failures.push(`Could not create a temporary GitHub-equivalent ZIP from ${relative(directory)} with zip or JDK jar. zip stderr: ${formatSpawnStderr(zipResult)}; jar stderr: ${formatSpawnStderr(jarResult)}.`);
   await rm(tempDir, { recursive: true, force: true });
   return undefined;
+}
+
+function formatSpawnStderr(result) {
+  return result.stderr?.trim() || result.error?.message || "<empty>";
 }
 
 async function requireDirectory(directory, label) {
