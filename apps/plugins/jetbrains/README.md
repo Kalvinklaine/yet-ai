@@ -18,6 +18,8 @@ The repository-level parity contract is `scripts/ide-surface-contract.mjs`; vali
 
 `npm run smoke:jetbrains-wrapper-browser` asserts this parity boundary directly: JetBrains chat/first-message, active context, read-only IDE action, and confirmed edit apply status must match the repository contract; snippet search and verification commands must remain preview-only, and native JetBrains LSP must remain deferred. The smoke also exercises the dev-preview apply lifecycle only through explicit GUI apply plus host result messages, while forbidden shell, git, task, provider, unsafe-path, and malformed edit messages stay non-executing.
 
+The browser smoke obtains the shipped wrapper HTML through `cd apps/plugins/jetbrains && gradle printSmokeWrapperHtml --quiet --console=plain --args "<panel-origin> <panel-id> <panel-base-path>"`; the Node smoke adds only smoke-only observability hooks around that production output.
+
 ## Production wrapper parity contract
 
 The JetBrains tool window uses a production Kotlin-owned JCEF wrapper around the packaged GUI, not a browser-only bridge shim. The wrapper loads the generated GUI resources in a loopback iframe and enforces the same invariants covered by `npm run smoke:jetbrains-wrapper-browser` and the Kotlin unit tests:

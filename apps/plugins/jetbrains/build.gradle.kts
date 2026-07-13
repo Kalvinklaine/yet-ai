@@ -110,6 +110,13 @@ tasks {
         useJUnitPlatform()
     }
 
+    register<JavaExec>("printSmokeWrapperHtml") {
+        group = "verification"
+        description = "Prints production JetBrains wrapper HTML for browser smoke inputs."
+        classpath = sourceSets["test"].runtimeClasspath
+        mainClass.set("ai.yet.plugin.ui.SmokeRenderWrapperHtmlKt")
+    }
+
     patchPluginXml {
         pluginId = "ai.yet.plugin"
         pluginName = "Yet AI"

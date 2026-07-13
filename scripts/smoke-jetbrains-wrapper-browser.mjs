@@ -1,12 +1,16 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { assertPackagedGuiFreshness } from "./gui-asset-freshness.mjs";
 import { ideSurfaceContract } from "./ide-surface-contract.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
@@ -338,6 +342,7 @@ try {
       type: "host.ready",
       requestId,
       payload: {
+        runtimeUrl: "http://127.0.0.1:8001",
         runtimeProxyBaseUrl: runtimeUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
@@ -546,6 +551,7 @@ try {
       type: "host.ready",
       requestId,
       payload: {
+        runtimeUrl: "http://127.0.0.1:8001",
         runtimeProxyBaseUrl: runtimeUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
@@ -576,6 +582,7 @@ try {
       type: "host.ready",
       requestId,
       payload: {
+        runtimeUrl: "http://127.0.0.1:8001",
         runtimeProxyBaseUrl: runtimeUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
@@ -2242,7 +2249,7 @@ function assertWrapperReadinessSemantics(wrapperHtml) {
     }
   }
   const requiredPatterns = [
-    /const\s+invalidateFrameAuthority\s*=\s*\([^)]*\)\s*=>\s*\{\s*clearReadinessFallbackTimer\(\);\s*frameReady\s*=\s*false;/,
+    /const\s+invalidateFrameAuthority\s*=\s*\([^)]*\)\s*=>\s*\{\s*clearReadinessFallbackTimer\(\);[\s\S]*?frameReady\s*=\s*false;/,
     /frameReady\s*=\s*true;\s*clearReadinessFallbackTimer\(\);[\s\S]*?hideShellAfterReady\(\);/,
   ];
   for (const pattern of requiredPatterns) {
@@ -2253,7 +2260,7 @@ function assertWrapperReadinessSemantics(wrapperHtml) {
 }
 
 async function startWrapperServer(panelGuiBaseUrl) {
-  const wrapperHtml = renderWrapperHtml(panelGuiBaseUrl);
+  const wrapperHtml = instrumentProductionWrapperHtml(await renderProductionWrapperHtml(panelGuiBaseUrl));
   assertWrapperReadinessSemantics(wrapperHtml);
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -2272,29 +2279,23 @@ async function startWrapperServer(panelGuiBaseUrl) {
   return listen(server);
 }
 
-function renderWrapperHtml(panelGuiBaseUrl) {
-  const indexUrl = `${panelGuiBaseUrl}/index.html`;
-  const frameTargetOrigin = new URL(panelGuiBaseUrl).origin;
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Yet AI</title>
-<style>
-body { margin: 0; font-family: sans-serif; }
-iframe { width: 100vw; height: 100vh; border: 0; }
-#yet-ai-shell-status, #yet-ai-shell-fallback { position: fixed; left: 12px; bottom: 12px; z-index: 1; max-width: 80vw; padding: 8px 10px; border-radius: 8px; background: #111827; color: #f9fafb; font-size: 12px; }
-#yet-ai-shell-fallback { top: 24px; bottom: auto; background: #7f1d1d; }
-#yet-ai-shell-fallback[hidden], #yet-ai-shell-status[hidden] { display: none; }
-</style>
-</head>
-<body>
-<div id="yet-ai-shell-status" role="status">Loading packaged Yet AI GUI from <code>${escapeHtml(indexUrl)}</code> with origin <code>${escapeHtml(frameTargetOrigin)}</code>.</div>
-<div id="yet-ai-shell-fallback" role="alert" hidden>Packaged Yet AI GUI did not finish loading from the local loopback server.</div>
-<iframe title="Yet AI GUI" src="${escapeHtml(indexUrl)}"></iframe>
-<script>
-window.__yetAiPendingHostMessages = [{
+async function renderProductionWrapperHtml(panelGuiBaseUrl) {
+  const pluginDir = path.join(root, "apps", "plugins", "jetbrains");
+  const gradle = process.platform === "win32" ? "gradle.bat" : "gradle";
+  const { stdout } = await execFileAsync(gradle, ["printSmokeWrapperHtml", "--quiet", "--console=plain", "--args", `${new URL(panelGuiBaseUrl).origin} ${panelId} ${panelBasePath}`], {
+    cwd: pluginDir,
+    maxBuffer: 1024 * 1024 * 4,
+    timeout: 120000,
+  });
+  if (!stdout.includes("window.__yetAiSendHostMessageToFrame = sendToFrame")) {
+    throw new Error("Production JetBrains wrapper helper did not print renderHtml output.");
+  }
+  return stdout;
+}
+
+function instrumentProductionWrapperHtml(wrapperHtml) {
+  let html = wrapperHtml;
+  html = html.replace("const pendingHostMessages = boundedArray(window.__yetAiPendingHostMessages, maxPendingHostMessages);", `window.__yetAiPendingHostMessages = [{
   version: "${bridgeVersion}",
   type: "host.ready",
   requestId: "gui-ready",
@@ -2310,396 +2311,81 @@ window.__yetAiPendingHostMessages = [{
   payload: {},
 }];
 window.__yetAiPendingDiagnostics = ["Queued diagnostic before wrapper init"];
-</script>
-<script defer>
-const bridgeVersion = "${bridgeVersion}";
-const maxIdeActionRequestBytes = 8192;
-const maxApplyWorkspaceEditRequestBytes = 16384;
-const maxPendingHostMessages = ${maxPendingHostMessages};
-const maxPendingDiagnostics = ${maxPendingDiagnostics};
-const frame = document.querySelector("iframe");
-const frameTargetOrigin = "${frameTargetOrigin}";
-const shellStatus = document.getElementById("yet-ai-shell-status");
-const shellFallback = document.getElementById("yet-ai-shell-fallback");
-window.__yetAiBridgeMessages = [];
-window.__yetAiFrameTargetOrigin = frameTargetOrigin;
-window.__yetAiIframeGuiReady = false;
-window.__yetAiHostMessagesPostedCount = 0;
-window.__yetAiHostMessagesPosted = [];
-window.__yetAiGuiReadySequence = 0;
-let frameLoaded = false;
-let frameReady = false;
-let frameGeneration = 0;
-let currentFrameWindow = frame?.contentWindow;
-let currentGuiReadyRequestId;
-let guiReadySequence = 0;
-let currentGuiReadySequence = 0;
-let acceptedHostReadyRequestId;
-let hostReadyAcceptedForCurrentFrame = false;
-let currentFrameNonce;
-let frameNonceChallengeAttempts = 0;
-let readinessFallbackTimerId;
-let readinessFallbackGeneration = 0;
-let flushingPending = false;
-const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];
-const pushBounded = (queue, message, maxSize) => {
-  queue.push(message);
-  while (queue.length > maxSize) queue.shift();
-};
-const pendingHostMessages = boundedArray(window.__yetAiPendingHostMessages, maxPendingHostMessages);
-const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics);
+const pendingHostMessages = boundedArray(window.__yetAiPendingHostMessages, maxPendingHostMessages);`);
+  html = html.replace("const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics);", `const pendingDiagnostics = boundedArray(window.__yetAiPendingDiagnostics, maxPendingDiagnostics);
 window.__yetAiAdoptedPreInitHost = pendingHostMessages.some((message) => message?.requestId === "gui-ready");
-window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued diagnostic before wrapper init");
-window.__yetAiPendingHostMessages = pendingHostMessages;
-window.__yetAiPendingDiagnostics = pendingDiagnostics;
-const showDiagnostic = (message) => {
-  if (shellStatus && typeof message === "string") {
-    if (message === "Queued diagnostic before wrapper init" && !flushingPending) window.__yetAiDiagnosticDisplayedBeforeFlush = true;
-    shellStatus.hidden = false;
-    shellStatus.textContent = "Runtime error: " + message;
-    if (message === "Queued diagnostic before wrapper init" && flushingPending) window.__yetAiPreInitDiagnosticFlushed = true;
-  }
-};
-window.__yetAiSetRuntimeDiagnostic = (message) => {
-  if (!frameReady) {
-    pushBounded(pendingDiagnostics, message, maxPendingDiagnostics);
-    return;
-  }
-  showDiagnostic(message);
-};
-window.__yetAiSmokeBoundPendingQueues = () => {
-  const initialHostMessages = pendingHostMessages.slice();
-  const initialDiagnostics = pendingDiagnostics.slice();
-  let hostLength = pendingHostMessages.length;
-  let diagnosticLength = pendingDiagnostics.length;
-  try {
-    for (let index = 0; index < maxPendingHostMessages + 8; index += 1) pushBounded(pendingHostMessages, { requestId: "pre-init-" + index }, maxPendingHostMessages);
-    for (let index = 0; index < maxPendingDiagnostics + 8; index += 1) pushBounded(pendingDiagnostics, "pre-init diagnostic " + index, maxPendingDiagnostics);
-    hostLength = pendingHostMessages.length;
-    diagnosticLength = pendingDiagnostics.length;
-  } finally {
-    pendingHostMessages.splice(0, pendingHostMessages.length, ...initialHostMessages);
-    pendingDiagnostics.splice(0, pendingDiagnostics.length, ...initialDiagnostics);
-  }
-  return {
-    initialHostLength: initialHostMessages.length,
-    initialDiagnosticLength: initialDiagnostics.length,
-    hostLength,
-    diagnosticLength,
-    restoredHostContents: pendingHostMessages.length === initialHostMessages.length && pendingHostMessages.every((message, index) => message === initialHostMessages[index]),
-    restoredDiagnosticContents: pendingDiagnostics.length === initialDiagnostics.length && pendingDiagnostics.every((message, index) => message === initialDiagnostics[index]),
-  };
-};
-const markFrameLoaded = () => {
-  frameLoaded = true;
-  console.log("Yet AI iframe loaded; waiting for validated gui.ready");
-};
-const showReadinessFallback = (message) => {
-  if (shellStatus) {
-    shellStatus.hidden = false;
-    shellStatus.textContent = message;
-  }
-  if (shellFallback) shellFallback.hidden = false;
-  console.log("Yet AI GUI readiness fallback shown");
-};
-const hideShellAfterReady = () => {
-  if (shellStatus) shellStatus.hidden = true;
-  if (shellFallback) shellFallback.hidden = true;
-};
-const clearReadinessFallbackTimer = () => {
-  if (readinessFallbackTimerId !== undefined) {
-    window.clearTimeout(readinessFallbackTimerId);
-    readinessFallbackTimerId = undefined;
-  }
-};
-const armReadinessFallbackTimer = (generation) => {
-  clearReadinessFallbackTimer();
-  if (!shellFallback || !frame) return;
-  readinessFallbackGeneration = generation;
-  readinessFallbackTimerId = window.setTimeout(() => {
-    readinessFallbackTimerId = undefined;
-    if (frameReady || readinessFallbackGeneration !== generation || frameGeneration !== generation) return;
-    const readinessMessage = frameLoaded
-      ? "Packaged Yet AI GUI loaded but did not send a validated ready signal. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview."
-      : "Packaged Yet AI GUI did not finish loading from the local loopback server. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview.";
-    showReadinessFallback(readinessMessage);
-  }, 8000);
-};
-if (shellFallback && frame) armReadinessFallbackTimer(frameGeneration);
-window.__yetAiSmokeTriggerLoadedButNotReadyFallback = () => {
-  markFrameLoaded();
-  showReadinessFallback("Packaged Yet AI GUI loaded but did not send a validated ready signal. Reinstall the latest ZIP or rebuild with npm run prepare:jetbrains-preview.");
-};
-window.postIntellijMessage = (message) => {
-  window.__yetAiBridgeMessages.push(message);
-};
-window.__yetAiSetNextAssistantResponseForSmoke = (content) => {
-  if (typeof content === "string" && content.length > 0 && content.length <= 50000) {
-    return fetch("/__smoke/next-assistant-response", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content }),
-    }).then((response) => response.ok).catch(() => false);
-  }
-  return false;
-};
-const currentReadyRequestId = () => currentGuiReadyRequestId;
-const randomToken = () => {
-  if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") return undefined;
-  const bytes = new Uint8Array(16);
-  globalThis.crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-};
-const wrapperReadyRequestId = (sequence) => {
-  const token = randomToken();
-  return token === undefined ? undefined : "gui-ready-" + frameGeneration + "-" + sequence + "-" + token;
-};
-const newFrameNonce = () => randomToken();
-const sendFrameNonceChallenge = () => {
-  if (frameReady || !frame || !currentFrameWindow || frame.contentWindow !== currentFrameWindow || !frameTargetOrigin || !isFrameNonce(currentFrameNonce)) return;
-  currentFrameWindow.postMessage({ version: bridgeVersion, type: "host.frameNonce", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);
-  window.__yetAiCurrentFrameNonce = currentFrameNonce;
-  frameNonceChallengeAttempts += 1;
-  if (!frameReady && frameNonceChallengeAttempts < 20) {
-    window.setTimeout(sendFrameNonceChallenge, 50);
-  }
-};
-const showRandomnessDiagnostic = () => {
-  showDiagnostic("Secure browser randomness is unavailable. Yet AI cannot authorize the embedded GUI bridge until the shell is reloaded in a secure context.");
-};
-const resetFrameNonceChallenge = () => {
-  currentFrameNonce = newFrameNonce();
-  frameNonceChallengeAttempts = 0;
-  if (currentFrameNonce === undefined) {
-    console.log("Yet AI cannot create frame nonce because secure wrapper randomness is unavailable");
-    showRandomnessDiagnostic();
-    return;
-  }
-  window.__yetAiLastFrameNonceForSmoke = currentFrameNonce;
-  sendFrameNonceChallenge();
-};
-const invalidateFrameAuthority = (reason) => {
-  clearReadinessFallbackTimer();
-  frameReady = false;
-  currentGuiReadySequence = 0;
-  currentGuiReadyRequestId = undefined;
-  window.__yetAiCurrentReadyRequestId = undefined;
-  acceptedHostReadyRequestId = undefined;
-  hostReadyAcceptedForCurrentFrame = false;
-  currentFrameNonce = undefined;
-  window.__yetAiCurrentFrameNonce = undefined;
-  pendingHostMessages.length = 0;
-};
-const isGuiUnloadedMessage = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "payload"]) && message.version === bridgeVersion && message.type === "gui.unloaded" && isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
-const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
-const canDeliverHostMessage = (message) => {
-  if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
-  if (message.type === "host.applyWorkspaceEditResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
-  if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
-  if (!messageMatchesCurrentReady(message)) return false;
-  if (message.type === "host.ready") return true;
-  return hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
-};
-const postToFrame = (message) => {
-  if (frame && currentFrameWindow && frame.contentWindow === currentFrameWindow && frameTargetOrigin && isHostMessage(message) && canDeliverHostMessage(message)) {
-    currentFrameWindow.postMessage(message, frameTargetOrigin);
-    window.__yetAiHostMessagesPostedCount += 1;
-    window.__yetAiHostMessagesPosted.push(message);
-    if (message.type === "host.ready") {
-      acceptedHostReadyRequestId = message.requestId;
-      hostReadyAcceptedForCurrentFrame = true;
-    }
-    if (message?.type === "host.ready" && message?.requestId === "gui-ready") window.__yetAiPreInitHostFlushed = true;
-    if (message?.type === "host.openedFromCommand" && message?.requestId === undefined) window.__yetAiPreInitOpenedFlushed = true;
-  }
-};
-const flushPending = () => {
-  flushingPending = true;
-  while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift());
-  pendingHostMessages.length = 0;
-  flushingPending = false;
-};
-const sendToFrame = (message) => {
-  if (!isHostMessage(message)) return;
-  if (!frameReady) return;
-  postToFrame(message);
-};
-const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
-const hasOnlyKeys = (record, keys) => Object.keys(record).every((key) => keys.includes(key));
-const isRequestId = (value) => value === undefined || (typeof value === "string" && value.length >= 1 && value.length <= 128 && value.split("").every((char) => {
-  const code = char.charCodeAt(0);
-  return code >= 0x20 && (code < 0x7f || code > 0x9f);
-}));
-const isFrameNonce = (value) => typeof value === "string" && /^[0-9a-f]{32}$/.test(value);
-const optionalString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length <= maxLength);
-const optionalNonEmptyString = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength);
-const allowedIdeActionNames = ["getContextSnapshot", "openWorkspaceFile", "revealWorkspaceRange", "getActiveFileExcerpt"];
-const hasUnsafeExcerptText = (text) => /(authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|\\/(?:Users|Home|Tmp|Var|Etc|Opt|Mnt|Volumes|Private)(?=\\/|$|[^A-Za-z0-9_])|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(text);
-const isActiveFileExcerptText = (text) => typeof text === "string" && text.length > 0 && text.length <= 8000 && !hasUnsafeExcerptText(text);
-const isActiveFileExcerptAttachment = (attachment) => isPlainObject(attachment) && hasOnlyKeys(attachment, ["kind", "source", "file", "range", "text", "truncated"]) && attachment.kind === "active_file_excerpt" && attachment.source === "jetbrains" && isPlainObject(attachment.file) && hasOnlyKeys(attachment.file, ["displayPath", "workspaceRelativePath", "languageId"]) && safePath(attachment.file.displayPath, 256) && safePath(attachment.file.workspaceRelativePath, 512) && (attachment.file.languageId === undefined || (typeof attachment.file.languageId === "string" && attachment.file.languageId.length > 0 && attachment.file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(attachment.file.languageId))) && isIdeActionRange(attachment.range) && isActiveFileExcerptText(attachment.text) && typeof attachment.truncated === "boolean";
-const requiredLoopbackRuntimeUrl = (value) => {
-  if (typeof value !== "string" || value.length === 0 || value.length > 2048) return false;
-  try {
-    const parsed = new URL(value);
-    const hostname = parsed.hostname.toLowerCase();
-    const isLoopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1" || hostname === "[::1]";
-    return (parsed.protocol === "http:" || parsed.protocol === "https:") && isLoopback && /^[1-9][0-9]{0,4}$/.test(parsed.port) && Number(parsed.port) <= 65535 && parsed.username === "" && parsed.password === "" && parsed.search === "" && parsed.hash === "" && (parsed.pathname === "" || parsed.pathname === "/");
-  } catch (_) {
-    return false;
-  }
-};
-const optionalNumber = (value) => value === undefined || (Number.isInteger(value) && value >= 0 && value <= 1000000);
-// This Node template literal emits browser JavaScript, so "\\\\" here becomes the browser-side single-backslash check used by the production wrapper.
-const isSecretLikePathSegment = (value) => /^(?:auth|authorization|bearer|cookie|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:\.|-|_|$)/i.test(value) || /(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)/i.test(value) || /^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
-const safePath = (value, maxLength) => value === undefined || (typeof value === "string" && value.length > 0 && value.length <= maxLength && !value.startsWith("/") && !value.startsWith("~") && !value.includes("%") && !value.includes("\\\\") && !value.includes(":") && !value.includes("?") && !value.includes("#") && value.split("").every((char) => char >= " " && (char < "\u007f" || char > "\u009f")) && value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && !isSecretLikePathSegment(part)));
-const isContextFile = (file) => file === undefined || (isPlainObject(file) && hasOnlyKeys(file, ["displayPath", "workspaceRelativePath", "languageId"]) && Object.keys(file).length > 0 && safePath(file.displayPath, 256) && safePath(file.workspaceRelativePath, 512) && (file.languageId === undefined || (typeof file.languageId === "string" && file.languageId.length > 0 && file.languageId.length <= 64 && /^[A-Za-z0-9_.+-]+$/.test(file.languageId))));
-const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
-const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
-const requiredPanelProxyBaseUrl = (value) => typeof value === "string" && /^\\/panel\\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(value);
-const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "runtimeProxyBaseUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && ((payload.runtimeUrl !== undefined && requiredLoopbackRuntimeUrl(payload.runtimeUrl)) || (payload.runtimeProxyBaseUrl !== undefined && requiredPanelProxyBaseUrl(payload.runtimeProxyBaseUrl))) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
-const isIdeActionPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
-const isIdeActionRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isIdeActionPosition(range.start) && isIdeActionPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
-const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
-const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
-const isHostIdeActionResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "action", "workspaceRelativePath", "range", "context", "contextAttachment"]) && ["succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512) && (payload.range === undefined || isIdeActionRange(payload.range)) && (payload.context === undefined || isHostIdeActionResultContext(payload.context)) && (payload.contextAttachment === undefined || (payload.status === "succeeded" && payload.action === "getActiveFileExcerpt" && isActiveFileExcerptAttachment(payload.contextAttachment))) && (payload.action !== "getActiveFileExcerpt" || (payload.workspaceRelativePath === undefined && payload.range === undefined && payload.context === undefined)) && (payload.status !== "succeeded" || payload.action !== "getActiveFileExcerpt" || isActiveFileExcerptAttachment(payload.contextAttachment));
-const isHostApplyWorkspaceEditResultPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["status", "message", "cloudRequired", "appliedEditCount", "affectedFiles"]) && ["applied", "denied", "rejected", "failed"].includes(payload.status) && typeof payload.message === "string" && payload.message.length > 0 && payload.message.length <= 1000 && payload.cloudRequired === false && (payload.appliedEditCount === undefined || (Number.isInteger(payload.appliedEditCount) && payload.appliedEditCount >= 0 && payload.appliedEditCount <= 64)) && (payload.affectedFiles === undefined || (Array.isArray(payload.affectedFiles) && payload.affectedFiles.length <= 16 && payload.affectedFiles.every((file) => safePath(file, 512))));
-const isHostMessage = (message) => {
-  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion) return false;
-  if (message.type === "host.openedFromCommand") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
-  if (!isRequestId(message.requestId)) return false;
-  if (message.type === "host.ready") return isHostReadyPayload(message.payload);
-  if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
-  if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
-  if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
-  if (message.type === "host.applyWorkspaceEditResult") return isHostApplyWorkspaceEditResultPayload(message.payload);
-  return false;
-};
-const requiredRequestId = (value) => typeof value === "string" && value.length > 0 && value.length <= 128 && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !/(authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value);
-const safeRequiredWorkspacePath = (value) => safePath(value, 512) && !value.includes("%") && !value.includes("?") && !value.includes("#") && !value.includes("//") && !value.endsWith("/") && value.split("/").every((part) => part.length > 0 && !/(?:^|[._-])(?:auth|credential|credentials|password|secret|token|access[_-]?token|api[_-]?key)(?:[._-]|$)|^sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(part));
-const isGuiIdeActionPayload = (payload) => {
-  if (!isPlainObject(payload) || typeof payload.action !== "string" || !allowedIdeActionNames.includes(payload.action)) return false;
-  if (payload.action === "getContextSnapshot") return hasOnlyKeys(payload, ["action"]);
-  if (payload.action === "getActiveFileExcerpt") return hasOnlyKeys(payload, ["action"]);
-  if (payload.action === "openWorkspaceFile") return hasOnlyKeys(payload, ["action", "workspaceRelativePath"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath);
-  if (payload.action === "revealWorkspaceRange") return hasOnlyKeys(payload, ["action", "workspaceRelativePath", "range"]) && safeRequiredWorkspacePath(payload.workspaceRelativePath) && isIdeActionRange(payload.range);
-  return false;
-};
-const isGuiIdeActionRequest = (message) => {
-  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ideActionRequest" || !requiredRequestId(message.requestId)) return false;
-  let serialized;
-  try { serialized = JSON.stringify(message); } catch (_) { return false; }
-  if (typeof serialized !== "string" || new Blob([serialized]).size > maxIdeActionRequestBytes) return false;
-  return isGuiIdeActionPayload(message.payload);
-};
-const isApplyPosition = (position) => isPlainObject(position) && hasOnlyKeys(position, ["line", "character"]) && Number.isInteger(position.line) && position.line >= 0 && position.line <= 1000000 && Number.isInteger(position.character) && position.character >= 0 && position.character <= 1000000;
-const isApplyRange = (range) => isPlainObject(range) && hasOnlyKeys(range, ["start", "end"]) && isApplyPosition(range.start) && isApplyPosition(range.end) && (range.end.line > range.start.line || (range.end.line === range.start.line && range.end.character >= range.start.character));
-const isApplyReplacement = (replacement) => isPlainObject(replacement) && hasOnlyKeys(replacement, ["range", "replacementText"]) && isApplyRange(replacement.range) && typeof replacement.replacementText === "string" && replacement.replacementText.length <= 8192;
-const isApplyFileEdit = (fileEdit) => isPlainObject(fileEdit) && hasOnlyKeys(fileEdit, ["workspaceRelativePath", "textReplacements"]) && safeRequiredWorkspacePath(fileEdit.workspaceRelativePath) && Array.isArray(fileEdit.textReplacements) && fileEdit.textReplacements.length >= 1 && fileEdit.textReplacements.length <= 8 && fileEdit.textReplacements.every(isApplyReplacement);
-const isGuiApplyWorkspaceEditPayload = (payload) => {
-  if (!isPlainObject(payload) || !hasOnlyKeys(payload, ["requiresUserConfirmation", "summary", "cloudRequired", "edits"])) return false;
-  if (payload.requiresUserConfirmation !== true || typeof payload.summary !== "string" || payload.summary.length < 1 || payload.summary.length > 1000 || (payload.cloudRequired !== undefined && payload.cloudRequired !== false)) return false;
-  if (!Array.isArray(payload.edits) || payload.edits.length < 1 || payload.edits.length > 4) return false;
-  const seen = new Set();
-  let totalReplacementText = 0;
-  for (const fileEdit of payload.edits) {
-    if (!isApplyFileEdit(fileEdit) || seen.has(fileEdit.workspaceRelativePath)) return false;
-    seen.add(fileEdit.workspaceRelativePath);
-    for (const replacement of fileEdit.textReplacements) {
-      totalReplacementText += replacement.replacementText.length;
-      if (totalReplacementText > 32768) return false;
-    }
-  }
-  return true;
-};
-const isGuiApplyWorkspaceEditRequest = (message) => {
-  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.applyWorkspaceEditRequest" || !requiredRequestId(message.requestId)) return false;
-  let serialized;
-  try { serialized = JSON.stringify(message); } catch (_) { return false; }
-  if (typeof serialized !== "string" || new Blob([serialized]).size > maxApplyWorkspaceEditRequestBytes) return false;
-  return isGuiApplyWorkspaceEditPayload(message.payload);
-};
-const isGuiRuntimeRefresh = (message) => {
-  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.runtimeRefresh" || !requiredRequestId(message.requestId)) return false;
-  return isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
-};
-const isGuiMessage = (message) => {
-  if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
-  return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce;
-};
-window.__yetAiSendHostMessageToFrame = sendToFrame;
-window.__yetAiWrapperInitialized = true;
-window.addEventListener("message", (event) => {
-  if (event.source === currentFrameWindow && event.source === frame?.contentWindow) {
-    if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
-      console.log("Yet AI rejected iframe message from unexpected origin");
-      return;
-    }
-    if (isGuiUnloadedMessage(event.data)) {
-      invalidateFrameAuthority("gui.unloaded");
-      armReadinessFallbackTimer(frameGeneration);
-      window.postIntellijMessage(event.data);
-    } else if (isGuiRuntimeRefresh(event.data)) {
-      if (!frameReady) {
-        console.log("Yet AI rejected runtime refresh before current GUI ready handshake");
-        return;
-      }
-      window.postIntellijMessage(event.data);
-    } else if (isGuiIdeActionRequest(event.data)) {
-      if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
-        console.log("Yet AI rejected IDE action request before GUI bridge readiness");
-        return;
-      }
-      window.postIntellijMessage(event.data);
-    } else if (isGuiApplyWorkspaceEditRequest(event.data)) {
-      if (!frameReady || !hostReadyAcceptedForCurrentFrame || acceptedHostReadyRequestId !== currentReadyRequestId()) {
-        console.log("Yet AI rejected apply workspace edit request before GUI bridge readiness");
-        return;
-      }
-      window.postIntellijMessage(event.data);
-    } else if (isGuiMessage(event.data)) {
-      if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;
-      const nextGuiReadySequence = guiReadySequence + 1;
-      const nextGuiReadyRequestId = wrapperReadyRequestId(nextGuiReadySequence);
-      if (nextGuiReadyRequestId === undefined) {
-        console.log("Yet AI rejected gui.ready because secure wrapper randomness is unavailable");
-        showRandomnessDiagnostic();
-        return;
-      }
-      frameReady = true;
-      clearReadinessFallbackTimer();
-      console.log("Yet AI received validated gui.ready from current iframe");
-      hideShellAfterReady();
-      guiReadySequence = nextGuiReadySequence;
-      currentGuiReadySequence = nextGuiReadySequence;
-      window.__yetAiGuiReadySequence = guiReadySequence;
-      currentGuiReadyRequestId = nextGuiReadyRequestId;
-      const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId, payload: { supportedBridgeVersion: event.data.payload?.supportedBridgeVersion } };
-      window.__yetAiCurrentReadyRequestId = currentGuiReadyRequestId;
-      acceptedHostReadyRequestId = undefined;
-      hostReadyAcceptedForCurrentFrame = false;
-      flushPending();
-      window.__yetAiIframeGuiReady = true;
-      window.postIntellijMessage(readyMessage);
-    } else {
-      console.log("Yet AI rejected invalid iframe GUI bridge message");
-    }
-    return;
-  }
-});
-if (frame) {
-  frame.addEventListener("load", () => {
-    invalidateFrameAuthority("frame.load");
-    frameGeneration += 1;
-    currentFrameWindow = frame.contentWindow;
-    window.postIntellijMessage({ version: bridgeVersion, type: "gui.unloaded", payload: {} });
-    markFrameLoaded();
-    armReadinessFallbackTimer(frameGeneration);
-    resetFrameNonceChallenge();
-  });
-}
-</script>
-</body>
-</html>`;
+window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued diagnostic before wrapper init");`);
+  html = html.replace("window.__yetAiSetRuntimeDiagnostic = (message) => {", `window.__yetAiSetRuntimeDiagnostic = (message) => {`);
+  html = html.replace("shellStatus.textContent = `Runtime error: ${message}`;", `if (message === "Queued diagnostic before wrapper init" && !window.__yetAiSmokeFlushingPending) window.__yetAiDiagnosticDisplayedBeforeFlush = true;
+            shellStatus.textContent = \`Runtime error: \${message}\`;
+            if (message === "Queued diagnostic before wrapper init" && window.__yetAiSmokeFlushingPending) window.__yetAiPreInitDiagnosticFlushed = true;`);
+  html = html.replace("const flushPending = () => {", `window.__yetAiSmokeBoundPendingQueues = () => {
+          const initialHostMessages = pendingHostMessages.slice();
+          const initialDiagnostics = pendingDiagnostics.slice();
+          let hostLength = pendingHostMessages.length;
+          let diagnosticLength = pendingDiagnostics.length;
+          try {
+            for (let index = 0; index < maxPendingHostMessages + 8; index += 1) pushBounded(pendingHostMessages, { requestId: "pre-init-" + index }, maxPendingHostMessages);
+            for (let index = 0; index < maxPendingDiagnostics + 8; index += 1) pushBounded(pendingDiagnostics, "pre-init diagnostic " + index, maxPendingDiagnostics);
+            hostLength = pendingHostMessages.length;
+            diagnosticLength = pendingDiagnostics.length;
+          } finally {
+            pendingHostMessages.splice(0, pendingHostMessages.length, ...initialHostMessages);
+            pendingDiagnostics.splice(0, pendingDiagnostics.length, ...initialDiagnostics);
+          }
+          return {
+            initialHostLength: initialHostMessages.length,
+            initialDiagnosticLength: initialDiagnostics.length,
+            hostLength,
+            diagnosticLength,
+            restoredHostContents: pendingHostMessages.length === initialHostMessages.length && pendingHostMessages.every((message, index) => message === initialHostMessages[index]),
+            restoredDiagnosticContents: pendingDiagnostics.length === initialDiagnostics.length && pendingDiagnostics.every((message, index) => message === initialDiagnostics[index]),
+          };
+        };
+        window.__yetAiSmokeTriggerLoadedButNotReadyFallback = () => {
+          markFrameLoaded();
+          showReadinessFallback("Packaged Yet AI GUI loaded but did not send a validated ready signal. See the fallback panel above for the engine-served Web UI URL and repair steps.");
+        };
+        window.__yetAiSetNextAssistantResponseForSmoke = (content) => {
+          if (typeof content === "string" && content.length > 0 && content.length <= 50000) {
+            return fetch("/__smoke/next-assistant-response", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ content }),
+            }).then((response) => response.ok).catch(() => false);
+          }
+          return false;
+        };
+        const flushPending = () => {`);
+  html = html.replace("while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())", `window.__yetAiSmokeFlushingPending = true;
+          while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())
+          window.__yetAiSmokeFlushingPending = false;`);
+  html = html.replace("currentFrameWindow.postMessage({ version: bridgeVersion, type: \"host.frameNonce\", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);", `currentFrameWindow.postMessage({ version: bridgeVersion, type: "host.frameNonce", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);
+          window.__yetAiCurrentFrameNonce = currentFrameNonce;`);
+  html = html.replace("currentGuiReadyRequestId = undefined;", `currentGuiReadyRequestId = undefined;
+          window.__yetAiCurrentReadyRequestId = undefined;`);
+  html = html.replace("currentFrameNonce = undefined;", `currentFrameNonce = undefined;
+          window.__yetAiCurrentFrameNonce = undefined;`);
+  html = html.replace("pendingHostMessages.length = 0;", `pendingHostMessages.length = 0;`);
+  html = html.replace("currentGuiReadyRequestId = nextGuiReadyRequestId;", `currentGuiReadyRequestId = nextGuiReadyRequestId;
+              window.__yetAiCurrentReadyRequestId = currentGuiReadyRequestId;
+              window.__yetAiGuiReadySequence = guiReadySequence;
+              window.__yetAiIframeGuiReady = true;`);
+  html = html.replace("window.__yetAiSendHostMessageToFrame = sendToFrame;", `window.__yetAiBridgeMessages = [];
+        window.__yetAiFrameTargetOrigin = frameTargetOrigin;
+        window.__yetAiIframeGuiReady = false;
+        window.__yetAiHostMessagesPostedCount = 0;
+        window.__yetAiHostMessagesPosted = [];
+        window.__yetAiGuiReadySequence = 0;
+        window.__yetAiSendHostMessageToFrame = sendToFrame;
+        window.__yetAiWrapperInitialized = true;`);
+  html = html.replace("window.postIntellijMessage = (message) => { window.__yetAiBridgeMessages.push(message); };", "window.postIntellijMessage = (message) => { window.__yetAiBridgeMessages.push(message); };");
+  html = html.replace("currentFrameWindow.postMessage(message, frameTargetOrigin);", `currentFrameWindow.postMessage(message, frameTargetOrigin);
+            window.__yetAiHostMessagesPostedCount += 1;
+            window.__yetAiHostMessagesPosted.push(message);`);
+  html = html.replace("if (!frameReady && frameNonceChallengeAttempts < 20) {", `window.__yetAiLastFrameNonceForSmoke = currentFrameNonce;
+          if (!frameReady && frameNonceChallengeAttempts < 20) {`);
+  return html;
 }
 
 async function startMockRuntimeServer() {
