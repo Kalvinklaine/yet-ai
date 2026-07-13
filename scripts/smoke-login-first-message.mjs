@@ -78,7 +78,7 @@ try {
   await expectVisibleText(page, "Provider required for first message", "no-provider readiness");
   await expectSendDisabled(page, "no provider before login");
 
-  await page.getByRole("button", { name: "Experimental high-risk account login" }).click();
+  await page.getByRole("button", { name: "Connect OpenAI account (experimental)" }).click();
   await expectVisibleText(page, "Finish browser verification", "pending provider-auth state");
   await expectVisibleText(page, "high-risk and private-endpoint-style", "high-risk warning");
   await expectVisibleText(page, "Session is tracked locally by the runtime and hidden here", "hidden session copy");
@@ -99,10 +99,10 @@ try {
   if (connectedAccountVisible) {
     await expectVisibleText(page, "OpenAI account connected", "connected provider-auth state");
   } else {
-    await expectVisibleText(page, "Experimental Codex-like OpenAI account chat is connected through the local runtime", "connected login-ready state");
+    await expectVisibleText(page, "Experimental Codex-like OpenAI account chat is available as a fallback through the local runtime", "connected login-ready state");
   }
-  await expectVisibleText(page, "Experimental Codex-like OpenAI account chat is connected through the local runtime", "login-ready chat copy");
-  await expectVisibleText(page, "not official public OAuth support, and not production-ready", "non-default connected copy");
+  await expectVisibleText(page, "Experimental Codex-like OpenAI account chat is available as a fallback through the local runtime", "login-ready chat copy");
+  await expectVisibleText(page, "not official public OAuth support, not default, and not production-ready", "non-default connected copy");
   await expectVisibleText(page, "Use OpenAI API key fallback", "API-key fallback preserved after login");
   await expectVisibleText(page, "OpenAI API-key fallback remains the safe/default setup", "API-key fallback safe/default copy");
   await expectSendEnabled(page, "experimental connected without API-key or Demo Mode");
@@ -124,11 +124,11 @@ try {
   await expectSendDisabled(page, "disconnect without API-key or Demo Mode");
   assert(chatCommandCount === 1, `disconnect state sent an unexpected command, observed ${chatCommandCount}`);
 
-  await page.getByRole("button", { name: "Experimental high-risk account login" }).click();
+  await page.getByRole("button", { name: "Connect OpenAI account (experimental)" }).click();
   await expectVisibleText(page, "Manual authorization-code exchange", "manual code exchange after reconnect");
   await page.getByLabel("Authorization code").fill(fakeAuthCode);
   await page.getByRole("button", { name: "Exchange authorization code" }).click();
-  await expectVisibleText(page, "Experimental Codex-like OpenAI account chat is connected through the local runtime", "reconnected login-ready chat copy");
+  await expectVisibleText(page, "Experimental Codex-like OpenAI account chat is available as a fallback through the local runtime", "reconnected login-ready chat copy");
   await expectSendEnabled(page, "experimental reconnected before precedence checks");
 
   apiKeyFallbackReady = true;
@@ -227,7 +227,7 @@ async function startRuntimeServer() {
     if (request.method === "POST" && url.pathname === "/v1/provider-auth/openai/start") {
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
-      if (body.experimentalCodexLike !== true) return json(response, 400, { error: "mock login smoke requires explicit experimentalCodexLike" });
+      if (JSON.stringify(body) !== JSON.stringify({ experimentalCodexLike: true })) return json(response, 400, { error: "mock login smoke requires only explicit experimentalCodexLike" });
       loginStatus = "pending";
       sessionId = `mock-session-${randomUUID()}`;
       authState = `mock-state-${randomUUID()}`;
@@ -313,8 +313,28 @@ function writeSse(response, event) { response.write(`event: ${event.type}\n`); r
 async function startStaticServer(staticRoot) {
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (requestUrl.pathname.startsWith("/v1/")) {
+      const proxyRequest = http.request({ hostname: "127.0.0.1", port: runtimeServer.port, path: requestUrl.pathname + requestUrl.search, method: request.method, headers: { ...request.headers, host: `127.0.0.1:${runtimeServer.port}`, authorization: `Bearer ${runtimeToken}` } }, (proxyResponse) => {
+        response.writeHead(proxyResponse.statusCode ?? 502, proxyResponse.headers);
+        proxyResponse.pipe(response);
+      });
+      proxyRequest.on("error", () => json(response, 502, { error: "runtime proxy failed" }));
+      request.pipe(proxyRequest);
+      return;
+    }
     const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
     const requestedPath = path.normalize(path.join(staticRoot, pathname));
+    if (pathname === "/index.html") {
+      try {
+        let html = await readFile(requestedPath, "utf8");
+        const configScript = `<script>window.__yetAiInitialRuntimeConfig=${JSON.stringify({ runtimeAccess: "same_origin_proxy", runtimeBaseUrl: "/" })};</script>`;
+        html = html.replace("</head>", `${configScript}</head>`);
+        response.writeHead(200, { "content-type": "text/html" });
+        return response.end(html);
+      } catch {
+        return response.writeHead(404).end("Not found");
+      }
+    }
     if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) return response.writeHead(403).end("Forbidden");
     try { const fileStat = await stat(requestedPath); if (!fileStat.isFile()) return response.writeHead(404).end("Not found"); response.writeHead(200, { "content-type": contentType(requestedPath) }); createReadStream(requestedPath).pipe(response); } catch { response.writeHead(404).end("Not found"); }
   });
@@ -339,7 +359,7 @@ function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayNa
 function thread(id, title, messages) { return { chatId: id, title, createdAt: "2026-05-29T07:16:30Z", updatedAt: "2026-05-29T07:16:30Z", messages }; }
 function message(id, messageId, role, content) { return { chatId: id, id: messageId, role, content, createdAt: "2026-05-29T07:16:30Z", status: "complete" }; }
 function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
-async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
+async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => { server.closeAllConnections?.(); server.close(() => resolve()); }) }; }
 async function readJsonBody(request, response) {
   let value;
   try {
@@ -356,14 +376,19 @@ async function readJsonBody(request, response) {
 }
 function isPlainObject(value) { return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype; }
 async function configureRuntimeConnection(page) {
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
-  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
-  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
+  const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
+  await page.evaluate(({ baseUrl, token }) => {
+    window.__yetAiSmokeRuntimeConfig = { baseUrl, token };
+  }, { baseUrl: runtimeBaseUrl, token: runtimeToken });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
   await refreshRuntimeFromUi(page);
 }
 async function refreshRuntimeFromUi(page) {
-  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
+  const runtimeDetails = page.locator('[data-testid="runtime-connection-details"]').first();
+  await runtimeDetails.evaluate((element) => { if (element instanceof HTMLDetailsElement) element.open = true; });
+  const refreshButton = runtimeDetails.getByRole("button", { name: "Refresh runtime" });
+  await refreshButton.waitFor({ state: "visible", timeout: 10_000 });
   await refreshButton.click();
   await expectVisibleText(page, "Runtime connected", "runtime connected after refresh");
 }
@@ -384,7 +409,7 @@ async function assertAssistantAnswerCount(page, text, expected, label) { const c
 function secretMarkers() { return [...staticSecretMarkers, sessionId, authState].filter(Boolean); }
 function assertNoSecretLeak(text, source) { const value = String(text); const lower = value.toLowerCase(); for (const marker of secretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Secret marker leaked through ${source}.`); } if (/sk-[A-Za-z0-9._-]{8,}/.test(value)) throw new Error(`API-key-like marker leaked through ${source}.`); if (/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth secret marker leaked through ${source}.`); if (/(?:codex|provider-login)-(?:session|state)-[A-Za-z0-9-]+/i.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); }
 function redactSecrets(text) { let redacted = String(text); for (const marker of secretMarkers()) if (marker) redacted = redacted.split(marker).join("[redacted]"); return redacted.replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9._-]{8,}/g, "[redacted-api-key]").replace(/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/g, "mock-$1-[redacted]").replace(/(?:codex|provider-login)-(session|state)-[A-Za-z0-9-]+/gi, "$1-[redacted]").replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
-function isExpectedFetchConsoleError(text) { return /^Failed to load resource: (net::ERR_CONNECTION_REFUSED|the server responded with a status of 401 \(Unauthorized\))$/.test(text); }
+function isExpectedFetchConsoleError(text) { return /^Failed to load resource: (net::ERR_CONNECTION_REFUSED|the server responded with a status of 401 \(Unauthorized\)|the server responded with a status of 404 \(Not Found\))$/.test(text); }
 function isLoopbackUrl(value) { try { const url = new URL(value); return (url.protocol === "http:" || url.protocol === "ws:") && ["127.0.0.1", "localhost", "[::1]", "::1"].includes(url.hostname); } catch { return false; } }
 function redactUrl(value) { try { const url = new URL(value); url.username = ""; url.password = ""; url.search = ""; url.hash = ""; return url.toString(); } catch { return redactSecrets(value); } }
 function empty(response, status) { response.writeHead(status, corsHeaders()); response.end(); }

@@ -2402,35 +2402,6 @@ export function App() {
     setProviderAuthError(null);
     setProviderAuthUrlWarning(null);
     setProviderAuthExchangeError(null);
-    try {
-      const result = await startProviderAuth(targetSettings, "openai");
-      if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
-        return;
-      }
-      if (!result.ok) {
-        setProviderAuthError(result.error);
-        return;
-      }
-      setProviderAuthStatus(result.data);
-      setProviderAuthDataRevision(targetRevision);
-      const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
-      if (authUrl) {
-        openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
-      }
-    } finally {
-      if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
-        setProviderAuthMutation(null);
-      }
-    }
-  };
-
-  const startExperimentalOpenAiLogin = async () => {
-    const targetSettings = settingsRef.current;
-    const targetRevision = settingsRevisionRef.current;
-    const attempt = beginProviderAuthMutation("start");
-    setProviderAuthError(null);
-    setProviderAuthUrlWarning(null);
-    setProviderAuthExchangeError(null);
     setProviderAuthExchangeCode("");
     try {
       const result = await startProviderAuth(targetSettings, "openai", { experimentalCodexLike: true });
@@ -3865,7 +3836,7 @@ export function App() {
             <strong>Experimental Codex-like account login risk</strong>
             <span>This OpenAI account path is high-risk and private-endpoint-style. It is not official public OpenAI OAuth support, not production-ready, and must not replace the OpenAI API-key fallback as the safe/default real-provider path.</span>
           </div>
-          {providerAuthError && <ErrorBox error={providerAuthError} />}
+          {providerAuthError && <ProviderAuthStartErrorRecovery error={providerAuthError} onRefresh={() => void refreshProviderAuthStatus()} onLogin={() => void startOpenAiLogin()} onApiKeyFallback={applyOpenAiApiPreset} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
           {runtimeAuthMismatchError && !activeProviderAuthStatus && <BlockedProviderAuthJourney host={bridgeHost} hostedRuntimeConnection={hostedRuntimeConnection} onRefresh={() => void connect()} onApiKeyFallback={applyOpenAiApiPreset} />}
           {activeProviderAuthStatus ? (
@@ -3880,7 +3851,6 @@ export function App() {
               onExchange={(event) => void exchangeOpenAiLoginCode(event)}
               onRefresh={() => void refreshProviderAuthStatus()}
               onLogin={() => void startOpenAiLogin()}
-              onExperimentalLogin={() => void startExperimentalOpenAiLogin()}
               onDisconnect={() => void disconnectOpenAiLogin()}
               onApiKeyFallback={applyOpenAiApiPreset}
             />
@@ -6132,6 +6102,22 @@ function RuntimeAuthMismatchRecovery({ host, hostedRuntimeConnection }: { host: 
   );
 }
 
+function ProviderAuthStartErrorRecovery({ error, onRefresh, onLogin, onApiKeyFallback }: { error: RuntimeError; onRefresh: () => void; onLogin: () => void; onApiKeyFallback: () => void }) {
+  return (
+    <div className="recovery-card" role="alert">
+      <strong>Account login start needs attention</strong>
+      <span>OpenAI account login could not start. The runtime returned a sanitized error ({error.status}: {sanitizeDisplayText(error.message)}).</span>
+      <span>Use Refresh login status, retry the experimental account login once, or switch to the OpenAI API-key fallback. This remains a private-endpoint-style experimental path, not official public OpenAI OAuth.</span>
+      <span className="subtle">Do not paste raw session ids, auth codes, tokens, cookies, provider files, or private paths into the GUI.</span>
+      <div className="row">
+        <button type="button" onClick={onRefresh}>Refresh login status</button>
+        <button type="button" onClick={onLogin}>Retry experimental account login</button>
+        <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
+      </div>
+    </div>
+  );
+}
+
 function BlockedProviderAuthJourney({ host, hostedRuntimeConnection, onRefresh, onApiKeyFallback }: { host: BridgeHost; hostedRuntimeConnection: boolean; onRefresh: () => void; onApiKeyFallback: () => void }) {
   const hostAction = host === "browser"
     ? "Prerequisite: enter the matching loopback runtime URL and Session token from your running local runtime. Browser standalone cannot launch or restart it."
@@ -6154,8 +6140,7 @@ function BlockedProviderAuthJourney({ host, hostedRuntimeConnection, onRefresh, 
       </div>
       <div className="row">
         <button type="button" onClick={onRefresh}>Refresh runtime</button>
-        <button type="button" disabled>Start experimental OpenAI login</button>
-        <button type="button" className="danger-button" disabled>Experimental high-risk account login</button>
+        <button type="button" disabled>Connect OpenAI account (experimental)</button>
         <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
       </div>
     </div>
@@ -6173,15 +6158,14 @@ type ProviderAuthJourneyProps = {
   onExchange: (event: FormEvent<HTMLFormElement>) => void;
   onRefresh: () => void;
   onLogin: () => void;
-  onExperimentalLogin: () => void;
   onDisconnect: () => void;
   onApiKeyFallback: () => void;
 };
 
-function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError, exchangeWorking, runtimeConnected, onExchangeCodeChange, onExchange, onRefresh, onLogin, onExperimentalLogin, onDisconnect, onApiKeyFallback }: ProviderAuthJourneyProps) {
+function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError, exchangeWorking, runtimeConnected, onExchangeCodeChange, onExchange, onRefresh, onLogin, onDisconnect, onApiKeyFallback }: ProviderAuthJourneyProps) {
   const canLogin = status.supportsLogin !== false;
   const canDisconnect = status.configured && status.authSource !== "api_key";
-  const reconnectLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : "Reconnect OpenAI account";
+  const loginLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : status.status === "connected" ? "Reconnect experimental account" : status.status === "expired" || status.status === "revoked" ? "Reconnect OpenAI account" : "Connect OpenAI account (experimental)";
   return (
     <div className={`login-state-panel stack ${status.status}`}>
       <div className="stack">
@@ -6218,11 +6202,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       )}
       <div className="row">
         <button type="button" onClick={onRefresh}>Refresh login status</button>
-        {(status.status === "login_available" || status.status === "not_configured") && <button type="button" onClick={onLogin} disabled={!canLogin}>Start experimental OpenAI login</button>}
-        {status.status === "login_unavailable" && <button type="button" onClick={onLogin} disabled>Experimental login unavailable</button>}
-        {(status.status === "pending" || status.status === "expired" || status.status === "revoked" || status.status === "error") && <button type="button" onClick={onLogin} disabled={!canLogin}>{reconnectLabel}</button>}
-        {status.status !== "connected" && <button type="button" className="danger-button" onClick={onExperimentalLogin}>Experimental high-risk account login</button>}
-        {status.status === "connected" && <button type="button" className="danger-button" onClick={onExperimentalLogin}>Reconnect experimental account</button>}
+        {status.status === "login_unavailable" ? <button type="button" onClick={onLogin} disabled>Experimental login unavailable</button> : <button type="button" onClick={onLogin} disabled={!canLogin}>{loginLabel}</button>}
         <button type="button" onClick={onDisconnect} disabled={!canDisconnect}>{status.status === "pending" ? "Cancel or disconnect login" : "Disconnect login"}</button>
         <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
       </div>

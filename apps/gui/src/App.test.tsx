@@ -1650,7 +1650,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Start experimental OpenAI login").click();
+      findButton("Connect OpenAI account (experimental)").click();
     });
 
     expect(openMock).not.toHaveBeenCalled();
@@ -1669,7 +1669,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Experimental high-risk account login").click();
+      findButton("Connect OpenAI account (experimental)").click();
     });
 
     const startCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
@@ -1714,7 +1714,7 @@ describe("provider secret boundary", () => {
     });
 
     await act(async () => {
-      findButton("Start experimental OpenAI login").click();
+      findButton("Connect OpenAI account (experimental)").click();
       await Promise.resolve();
     });
     await act(async () => {
@@ -2006,8 +2006,7 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("Experimental GPT/OpenAI login is blocked by runtime auth");
     expect(container?.textContent).toContain("Blocked prerequisite");
     expect(container?.textContent).toContain("Fix the local GUI-to-runtime Session token mismatch first");
-    expect(findButton("Start experimental OpenAI login").disabled).toBe(true);
-    expect(findButton("Experimental high-risk account login").disabled).toBe(true);
+    expect(findButton("Connect OpenAI account (experimental)").disabled).toBe(true);
     expect(container?.textContent).not.toContain("authorizationUrl");
     expect(container?.textContent).not.toContain("access_token");
   });
@@ -2046,15 +2045,16 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).toContain("Experimental Codex-like account login risk");
     expect(container?.textContent).toContain("not official public OpenAI OAuth support");
-    expect(container?.textContent).toContain("Start experimental OpenAI login");
-    expect(container?.textContent).toContain("Experimental high-risk account login");
+    expect(container?.textContent).toContain("Connect OpenAI account (experimental)");
+    expect(buttonsNamed("Experimental high-risk account login")).toHaveLength(0);
+    expect(buttonsNamed("Start experimental OpenAI login")).toHaveLength(0);
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
     expect(container?.textContent).toContain("Login/chat only. No workspace execution.");
     expect(container?.textContent).not.toContain("secret-state-query");
     expect(container?.textContent).not.toContain("secret-challenge");
 
     await act(async () => {
-      findButton("Experimental high-risk account login").click();
+      findButton("Connect OpenAI account (experimental)").click();
     });
 
     expect(openMock).toHaveBeenCalledWith(authUrl, "_blank", "noopener,noreferrer");
@@ -2190,7 +2190,7 @@ describe("provider secret boundary", () => {
     expect(findButton("Exchange authorization code").disabled).toBe(true);
   });
 
-  it("default OpenAI login does not start the experimental path", async () => {
+  it("primary OpenAI account login starts the experimental Codex-like path", async () => {
     vi.spyOn(window, "open").mockImplementation(() => null);
     mockRuntimeResponses({ authSupportsLogin: true });
     renderApp();
@@ -2198,11 +2198,33 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Start experimental OpenAI login").click();
+      findButton("Connect OpenAI account (experimental)").click();
     });
 
-    const startCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
-    expect(startCall?.[1]?.body).toBe(JSON.stringify({}));
+    const startCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
+    expect(startCalls).toHaveLength(1);
+    expect(startCalls[0]?.[1]?.body).toBe(JSON.stringify({ experimentalCodexLike: true }));
+    expect(buttonsNamed("Experimental high-risk account login")).toHaveLength(0);
+    expect(buttonsNamed("Start experimental OpenAI login")).toHaveLength(0);
+  });
+
+  it("renders sanitized recovery when account login start fails", async () => {
+    mockRuntimeResponses({ authSupportsLogin: true, startAuthStatus: 400, startAuthError: "invalid provider auth request access_token=" + "x".repeat(64) });
+    renderApp();
+
+    await flushAsync();
+
+    await act(async () => {
+      findButton("Connect OpenAI account (experimental)").click();
+    });
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Account login start needs attention");
+    expect(text).toContain("OpenAI account login could not start. The runtime returned a sanitized error");
+    expect(text).toContain("Retry experimental account login");
+    expect(text).toContain("Use OpenAI API key fallback");
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("x".repeat(64));
   });
 
   it("surfaces unauthorized provider auth errors safely", async () => {
@@ -12388,6 +12410,8 @@ type MockRuntimeOptions = {
   authResponse?: ProviderAuthResponse;
   startAuthUrl?: string;
   startAuthMessage?: string;
+  startAuthStatus?: number;
+  startAuthError?: string;
   exchangeResponse?: ProviderAuthResponse & { success: boolean };
   sseEvents?: unknown[];
   commandResponse?: Promise<Response>;
@@ -12919,6 +12943,9 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
     }));
   }
   if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/start")) {
+    if (options.startAuthStatus) {
+      return Promise.resolve(jsonResponse({ error: options.startAuthError ?? "invalid provider auth request" }, options.startAuthStatus));
+    }
     return Promise.resolve(jsonResponse({
       provider: "openai",
       configured: false,
