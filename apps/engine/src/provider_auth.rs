@@ -353,7 +353,9 @@ pub async fn start(
     }
     if request.experimental_codex_like && provider == "openai" {
         reject_codex_mock_coexistence(config_dir, provider).await?;
-        reject_existing_codex_auth_state(config_dir, provider).await?;
+        if let Some(response) = prepare_codex_start(config_dir, provider).await? {
+            return Ok(response);
+        }
         let session = new_codex_session(
             request.ttl_seconds.unwrap_or(CODEX_TTL_SECONDS),
             request.token_endpoint_url.as_deref(),
@@ -1870,15 +1872,31 @@ async fn reject_codex_mock_coexistence(
     Ok(())
 }
 
-async fn reject_existing_codex_auth_state(
+async fn prepare_codex_start(
     config_dir: &Path,
     provider: &str,
-) -> Result<(), ProviderAuthError> {
+) -> Result<Option<ProviderAuthResponse>, ProviderAuthError> {
     let codex = read_codex_state(config_dir, provider).await?;
-    if codex.pending.is_some() || codex_has_readable_secrets(config_dir, provider).await? {
-        return Err(ProviderAuthError::InvalidRequest);
+    if let Some(session) = codex.pending {
+        if parse_time(&session.expires_at)? > Utc::now() {
+            return Ok(Some(codex_pending_response(provider, &session, Some(true))));
+        }
+        write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
     }
-    Ok(())
+    if let Some(response) = codex_connected_status(config_dir, provider).await? {
+        if response.status == "expired" {
+            delete_codex_secrets(config_dir, provider).await?;
+            return Ok(None);
+        }
+        return Ok(Some(ProviderAuthResponse {
+            success: Some(true),
+            ..response
+        }));
+    }
+    if codex_has_readable_secrets(config_dir, provider).await? {
+        delete_codex_secrets(config_dir, provider).await?;
+    }
+    Ok(None)
 }
 
 async fn codex_has_readable_secrets(
@@ -3380,12 +3398,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn codex_start_rejects_existing_connected_secrets_without_mutation() {
+    async fn codex_start_returns_existing_connected_status_without_mutation() {
         let dir = temp_dir();
         create_codex_oauth_connection(&dir).await;
         let before = codex_secret_values(&dir).await;
 
-        let error = super::start(
+        let response = super::start(
             &dir,
             "openai",
             super::ProviderAuthStartRequest {
@@ -3394,27 +3412,30 @@ mod tests {
             },
         )
         .await
-        .unwrap_err();
+        .unwrap();
 
-        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        assert_eq!(response.status, "connected");
+        assert_eq!(response.success, Some(true));
+        assert_eq!(response.account_label.as_deref(), Some("Codex Test Account"));
+        assert!(response.session_id.is_none());
         assert!(super::read_codex_state(&dir, "openai")
             .await
             .unwrap()
             .pending
             .is_none());
         assert_eq!(codex_secret_values(&dir).await, before);
-        let status = super::status(&dir, "openai").await.unwrap();
-        assert_eq!(status.status, "connected");
-        assert_eq!(status.account_label.as_deref(), Some("Codex Test Account"));
+        assert_response_sanitized(
+            &response,
+            &["codex-access-token-secret", "codex-refresh-token-secret"],
+        );
     }
 
     #[tokio::test]
-    async fn codex_start_rejects_existing_expired_secrets_without_mutation() {
+    async fn codex_start_replaces_expired_connected_secrets_with_new_pending() {
         let dir = temp_dir();
         create_expired_codex_oauth_connection(&dir).await;
-        let before = codex_secret_values(&dir).await;
 
-        let error = super::start(
+        let response = super::start(
             &dir,
             "openai",
             super::ProviderAuthStartRequest {
@@ -3423,18 +3444,22 @@ mod tests {
             },
         )
         .await
-        .unwrap_err();
+        .unwrap();
 
-        assert!(matches!(error, ProviderAuthError::InvalidRequest));
-        assert!(super::read_codex_state(&dir, "openai")
+        assert_eq!(response.status, "pending");
+        assert_eq!(response.success, Some(true));
+        assert!(response.session_id.is_some());
+        assert_eq!(codex_secret_values(&dir).await, (None, None, None));
+        let pending = super::read_codex_state(&dir, "openai")
             .await
             .unwrap()
             .pending
-            .is_none());
-        assert_eq!(codex_secret_values(&dir).await, before);
-        let status = super::status(&dir, "openai").await.unwrap();
-        assert_eq!(status.status, "expired");
-        assert_eq!(status.account_label.as_deref(), Some("Codex Test Account"));
+            .unwrap();
+        assert_eq!(response.session_id.as_deref(), Some(pending.session_id.as_str()));
+        assert_response_sanitized(
+            &response,
+            &["codex-access-token-secret", "codex-refresh-token-secret"],
+        );
     }
 
     #[cfg(unix)]
@@ -3470,7 +3495,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn codex_start_rejects_existing_pending_even_with_secrets_and_status_is_pending() {
+    async fn codex_start_returns_existing_pending_even_with_secrets_and_status_is_pending() {
         let dir = temp_dir();
         let codex = create_codex_pending_state(&dir).await;
         create_codex_oauth_connection(&dir).await;
@@ -3483,7 +3508,7 @@ mod tests {
             Some(codex.session_id.as_str())
         );
 
-        let error = super::start(
+        let response = super::start(
             &dir,
             "openai",
             super::ProviderAuthStartRequest {
@@ -3492,9 +3517,14 @@ mod tests {
             },
         )
         .await
-        .unwrap_err();
+        .unwrap();
 
-        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        assert_eq!(response.status, "pending");
+        assert_eq!(response.success, Some(true));
+        assert_eq!(
+            response.session_id.as_deref(),
+            Some(codex.session_id.as_str())
+        );
         let pending = super::read_codex_state(&dir, "openai")
             .await
             .unwrap()
@@ -3508,6 +3538,35 @@ mod tests {
             status.session_id.as_deref(),
             Some(codex.session_id.as_str())
         );
+    }
+
+    #[tokio::test]
+    async fn codex_start_replaces_expired_pending_with_new_pending() {
+        let dir = temp_dir();
+        let expired = create_expired_codex_pending_state(&dir).await;
+
+        let response = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status, "pending");
+        assert_eq!(response.success, Some(true));
+        assert!(response.session_id.is_some());
+        assert_ne!(response.session_id.as_deref(), Some(expired.session_id.as_str()));
+        let pending = super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .unwrap();
+        assert_eq!(response.session_id.as_deref(), Some(pending.session_id.as_str()));
+        assert!(super::parse_time(&pending.expires_at).unwrap() > chrono::Utc::now());
     }
 
     #[tokio::test]
