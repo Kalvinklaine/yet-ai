@@ -153,7 +153,10 @@ fn web_ui_request_uses_loopback_host(headers: &HeaderMap) -> bool {
     } else {
         host
     };
-    matches!(hostname.to_ascii_lowercase().as_str(), "127.0.0.1" | "localhost" | "::1")
+    matches!(
+        hostname.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
 }
 
 fn valid_port(port: &str) -> bool {
@@ -174,7 +177,10 @@ fn inject_web_ui_bootstrap(index_html: &str) -> Result<String, String> {
 
 fn html_response(html: String) -> Response {
     (
-        [(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/html; charset=utf-8"),
+        )],
         html,
     )
         .into_response()
@@ -183,7 +189,10 @@ fn html_response(html: String) -> Response {
 fn web_ui_unavailable(message: String) -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        [(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"))],
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; charset=utf-8"),
+        )],
         message,
     )
         .into_response()
@@ -191,7 +200,10 @@ fn web_ui_unavailable(message: String) -> Response {
 
 fn safe_web_ui_asset_path(asset_path: &str) -> Option<PathBuf> {
     let path = PathBuf::from(asset_path.trim_start_matches('/'));
-    if path.components().all(|component| matches!(component, Component::Normal(_))) {
+    if path
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
         Some(path)
     } else {
         None
@@ -1024,8 +1036,16 @@ mod tests {
     }
 
     async fn response_text(response: Response) -> String {
-        String::from_utf8(response.into_body().collect().await.unwrap().to_bytes().to_vec())
-            .unwrap()
+        String::from_utf8(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap()
     }
 
     async fn post_provider_auth(path: &str, body: &'static str) -> StatusCode {
@@ -1183,7 +1203,12 @@ mod tests {
         std::env::set_var(super::WEB_UI_DIST_DIR_ENV, &dist);
 
         let response = test_app()
-            .oneshot(Request::builder().uri("/v1/ping").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
@@ -1225,6 +1250,37 @@ mod tests {
         status
     }
 
+    async fn get_with_same_origin_web_ui_headers(
+        path: &'static str,
+        host: Option<&'static str>,
+        caller: Option<&'static str>,
+        fetch_site: Option<&'static str>,
+    ) -> StatusCode {
+        let identity = ProductIdentity::load().unwrap();
+        let state = AppState::with_storage_paths(
+            identity,
+            AuthToken::new("test-token").unwrap(),
+            temp_storage_paths(),
+        );
+        let mut builder = Request::builder().method("GET").uri(path);
+        if let Some(host) = host {
+            builder = builder.header(header::HOST, host);
+        }
+        if let Some(caller) = caller {
+            builder = builder.header(crate::security::CALLER_HEADER_NAME, caller);
+        }
+        if let Some(fetch_site) = fetch_site {
+            builder = builder.header("sec-fetch-site", fetch_site);
+        }
+        let response = super::router(state)
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let _ = response.into_body().collect().await.unwrap();
+        status
+    }
+
     fn auth_reject_lines() -> Vec<String> {
         crate::logging::test_log_lines()
             .into_iter()
@@ -1239,6 +1295,69 @@ mod tests {
                 line.contains("http.request.summary") && line.contains("endpoint=/v1/models")
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn same_origin_web_ui_requests_without_authorization_return_non_401() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        for path in ["/v1/ping", "/v1/models", "/v1/caps", "/v1/demo-mode"] {
+            let status = get_with_same_origin_web_ui_headers(
+                path,
+                Some("127.0.0.1:8001"),
+                Some("gui_runtime_client"),
+                Some("same-origin"),
+            )
+            .await;
+
+            assert_ne!(status, StatusCode::UNAUTHORIZED, "{path}");
+        }
+        assert!(auth_reject_lines().is_empty());
+    }
+
+    #[tokio::test]
+    async fn same_origin_web_ui_request_missing_fetch_site_remains_401() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_with_same_origin_web_ui_headers(
+            "/v1/ping",
+            Some("127.0.0.1:8001"),
+            Some("gui_runtime_client"),
+            None,
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn same_origin_web_ui_request_non_loopback_host_remains_401() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_with_same_origin_web_ui_headers(
+            "/v1/ping",
+            Some("example.com:8001"),
+            Some("gui_runtime_client"),
+            Some("same-origin"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn same_origin_web_ui_request_malicious_caller_remains_401() {
+        let _guard = http_log_test_lock().lock().await;
+        crate::logging::clear_test_log_lines();
+        let status = get_with_same_origin_web_ui_headers(
+            "/v1/ping",
+            Some("127.0.0.1:8001"),
+            Some("gui_runtime_client_evil"),
+            Some("same-origin"),
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

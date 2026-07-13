@@ -9,6 +9,7 @@ use crate::logging::{log_event, EngineLogLevel};
 use crate::AppState;
 
 pub const CALLER_HEADER_NAME: &str = "x-yet-ai-caller";
+const SEC_FETCH_SITE_HEADER_NAME: &str = "sec-fetch-site";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthToken(String);
@@ -157,6 +158,55 @@ fn reject(parts: &Parts, reason: AuthRejectReason) -> Response<Body> {
     AuthRejectLogFields::from_request_parts(parts, reason).log();
     StatusCode::UNAUTHORIZED.into_response()
 }
+
+fn is_same_origin_web_ui_request(headers: &HeaderMap) -> bool {
+    RuntimeCaller::from_headers(headers) == RuntimeCaller::GuiRuntimeClient
+        && header_value_eq(headers, SEC_FETCH_SITE_HEADER_NAME, "same-origin")
+        && request_uses_loopback_host_with_port(headers)
+}
+
+fn header_value_eq(headers: &HeaderMap, name: &'static str, expected: &str) -> bool {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case(expected))
+}
+
+fn request_uses_loopback_host_with_port(headers: &HeaderMap) -> bool {
+    let Some(host) = headers.get(header::HOST) else {
+        return false;
+    };
+    let Ok(host) = host.to_str() else {
+        return false;
+    };
+    let host = host.trim();
+    if host.contains('@') || host.contains('/') || host.contains('?') || host.contains('#') {
+        return false;
+    }
+    let (hostname, port) = if let Some(rest) = host.strip_prefix('[') {
+        let Some((hostname, port)) = rest.split_once(']') else {
+            return false;
+        };
+        let Some(port) = port.strip_prefix(':') else {
+            return false;
+        };
+        (hostname, port)
+    } else {
+        let Some((hostname, port)) = host.rsplit_once(':') else {
+            return false;
+        };
+        (hostname, port)
+    };
+    valid_port(port)
+        && matches!(
+            hostname.to_ascii_lowercase().as_str(),
+            "127.0.0.1" | "localhost" | "::1"
+        )
+}
+
+fn valid_port(port: &str) -> bool {
+    !port.is_empty() && port.chars().all(|value| value.is_ascii_digit())
+}
 #[cfg(test)]
 mod tests {
     use axum::http::Request;
@@ -197,6 +247,63 @@ mod tests {
         assert!(!fields.auth_header_present);
         assert_eq!(fields.reason.as_str(), "missing_header");
     }
+
+    #[test]
+    fn same_origin_web_ui_auth_requires_caller_fetch_site_and_loopback_host() {
+        let request = Request::builder()
+            .uri("/v1/ping")
+            .header(header::HOST, "127.0.0.1:8001")
+            .header(CALLER_HEADER_NAME, "gui_runtime_client")
+            .header(SEC_FETCH_SITE_HEADER_NAME, "same-origin")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+
+        assert!(is_same_origin_web_ui_request(&parts.headers));
+    }
+
+    #[test]
+    fn same_origin_web_ui_auth_rejects_missing_fetch_site() {
+        let request = Request::builder()
+            .uri("/v1/ping")
+            .header(header::HOST, "127.0.0.1:8001")
+            .header(CALLER_HEADER_NAME, "gui_runtime_client")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+
+        assert!(!is_same_origin_web_ui_request(&parts.headers));
+    }
+
+    #[test]
+    fn same_origin_web_ui_auth_rejects_non_loopback_host() {
+        let request = Request::builder()
+            .uri("/v1/ping")
+            .header(header::HOST, "example.com:8001")
+            .header(CALLER_HEADER_NAME, "gui_runtime_client")
+            .header(SEC_FETCH_SITE_HEADER_NAME, "same-origin")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+
+        assert!(!is_same_origin_web_ui_request(&parts.headers));
+    }
+
+    #[test]
+    fn same_origin_web_ui_auth_accepts_loopback_host_variants_with_port() {
+        for host in ["localhost:8001", "127.0.0.1:8001", "[::1]:8001"] {
+            let request = Request::builder()
+                .uri("/v1/ping")
+                .header(header::HOST, host)
+                .header(CALLER_HEADER_NAME, "gui_runtime_client")
+                .header(SEC_FETCH_SITE_HEADER_NAME, "same-origin")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+
+            assert!(is_same_origin_web_ui_request(&parts.headers), "{host}");
+        }
+    }
 }
 
 #[axum::async_trait]
@@ -208,6 +315,9 @@ impl FromRequestParts<AppState> for Authenticated {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let Some(value) = parts.headers.get(header::AUTHORIZATION) else {
+            if is_same_origin_web_ui_request(&parts.headers) {
+                return Ok(Self);
+            }
             return Err(reject(parts, AuthRejectReason::MissingHeader));
         };
         let Ok(value) = value.to_str() else {
