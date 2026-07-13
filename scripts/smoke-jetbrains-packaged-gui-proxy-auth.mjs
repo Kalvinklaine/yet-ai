@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +9,10 @@ import { assertPackagedGuiFreshnessInArchive } from "./gui-asset-freshness.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const token = `proxy-smoke-${randomUUID().replaceAll("-", "")}`;
+const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
+const engineBinaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
+const bundledEngineResourcePath = `yet-ai-engine/${engineBinaryFileName}`;
+const expectedEngineBinaryPath = path.join(root, "target", "debug", engineBinaryFileName);
 const panelId = "panel_smoke_001";
 const endpoints = ["/v1/demo-mode", "/v1/ping", "/v1/models", "/v1/caps"];
 const upstreamRequests = [];
@@ -44,6 +48,14 @@ try {
   record(`Endpoints: ${endpoints.join(", ")}`);
   record(`Artifact: ${artifact.relativePath}`);
   record(`Artifact SHA-256: ${artifact.sha256}`);
+  record(`Artifact size: ${artifact.size} bytes`);
+  record(`Bundled engine resource: ${artifact.engineResourceEntry}`);
+  record(`Bundled engine SHA-256: ${artifact.engineSha256}`);
+  record(`Bundled engine size: ${artifact.engineSize} bytes`);
+  record(`Expected engine: ${artifact.expectedEngineRelativePath}`);
+  record(`Expected engine SHA-256: ${artifact.expectedEngineSha256}`);
+  record(`Expected engine size: ${artifact.expectedEngineSize} bytes`);
+  record("Bundled engine execution is covered by smoke:jetbrains-bundled-runtime; this packaging smoke uses byte comparison for deterministic ZIP/JAR provenance.");
   record(`Packaged GUI entries checked: ${artifact.checkedFiles}`);
   record(`Packaged proxy bootstrap: ${artifact.proxyBootstrapEntry}`);
 
@@ -59,7 +71,8 @@ try {
 async function inspectJetBrainsArtifact() {
   const artifactPath = await findJetBrainsZip();
   const artifactBytes = await readFile(artifactPath);
-  const sha256 = createHash("sha256").update(artifactBytes).digest("hex");
+  const sha256 = digest(artifactBytes);
+  const size = artifactBytes.length;
   const relativePath = path.relative(root, artifactPath);
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "yet-ai-jetbrains-artifact-smoke-"));
   try {
@@ -71,6 +84,7 @@ async function inspectJetBrainsArtifact() {
     const proxyBootstrapEntry = "ai/yet/plugin/ui/PackagedGuiServer.class";
     assert(jarEntries.includes(proxyBootstrapEntry), `JetBrains artifact ${relativePath} is missing packaged GUI proxy bootstrap ${proxyBootstrapEntry}. Re-run gradle buildPlugin after current proxy changes.`);
 
+    const engineFreshness = await assertBundledEngineFreshness({ relativePath, jarEntries, pluginJarPath });
     const result = await assertPackagedGuiFreshnessInArchive({
       sourceRoot: path.join(root, "apps", "gui", "dist"),
       entries: jarEntries,
@@ -79,7 +93,7 @@ async function inspectJetBrainsArtifact() {
       guidance: "Run `npm --prefix apps/gui run build` and then `cd apps/plugins/jetbrains && gradle buildPlugin --no-daemon`.",
       readEntryBytes: async (entry) => readZipEntry(pluginJarPath, entry),
     });
-    return { relativePath, sha256, checkedFiles: result.checkedFiles, proxyBootstrapEntry };
+    return { relativePath, sha256, size, checkedFiles: result.checkedFiles, proxyBootstrapEntry, ...engineFreshness };
   } finally {
     await rm(tempRoot, { recursive: true, force: true });
   }
@@ -100,6 +114,43 @@ function findPluginJarEntry(entries) {
   assert(matches.length === 1, `Expected exactly one JetBrains plugin JAR inside artifact, found ${matches.length}. Rebuild the artifact with gradle buildPlugin.`);
   return matches[0];
 }
+async function assertBundledEngineFreshness({ relativePath, jarEntries, pluginJarPath }) {
+  assert(jarEntries.includes(bundledEngineResourcePath), `JetBrains artifact ${relativePath} is missing bundled engine resource ${bundledEngineResourcePath}. Re-run cd apps/plugins/jetbrains && gradle buildPlugin --no-daemon after cargo build -p ${identity.engine.rustCrate}.`);
+  const engineBytes = readZipEntry(pluginJarPath, bundledEngineResourcePath);
+  const engineSha256 = digest(engineBytes);
+  const engineSize = engineBytes.length;
+  assert(engineSize > 0, `Bundled engine resource ${bundledEngineResourcePath} in ${relativePath} is empty.`);
+
+  let expectedStat;
+  try {
+    expectedStat = await stat(expectedEngineBinaryPath);
+  } catch {
+    throw new Error(`Expected engine binary is missing at ${path.relative(root, expectedEngineBinaryPath)}. Run cargo build -p ${identity.engine.rustCrate} before this smoke.`);
+  }
+  assert(expectedStat.isFile(), `Expected engine binary is not a file: ${path.relative(root, expectedEngineBinaryPath)}.`);
+  const expectedEngineBytes = await readFile(expectedEngineBinaryPath);
+  const expectedEngineSha256 = digest(expectedEngineBytes);
+  const expectedEngineSize = expectedEngineBytes.length;
+  assert(engineSha256 === expectedEngineSha256, `Bundled engine resource SHA ${engineSha256} does not match current ${path.relative(root, expectedEngineBinaryPath)} SHA ${expectedEngineSha256}. Rebuild with cd apps/plugins/jetbrains && gradle buildPlugin --no-daemon.`);
+  assert(engineSize === expectedEngineSize, `Bundled engine resource size ${engineSize} does not match current ${path.relative(root, expectedEngineBinaryPath)} size ${expectedEngineSize}.`);
+
+  const metadataEntry = "yet-ai-artifact/build.properties";
+  if (jarEntries.includes(metadataEntry)) {
+    const metadata = readZipEntry(pluginJarPath, metadataEntry).toString("utf8");
+    const metadataSha = new RegExp("^engine\\.sha256=([a-f0-9]{64})$", "m").exec(metadata)?.[1];
+    assert(metadataSha === expectedEngineSha256, `JetBrains artifact ${relativePath} metadata engine.sha256 ${metadataSha ?? "<missing>"} does not match expected engine SHA ${expectedEngineSha256}.`);
+  }
+
+  return {
+    engineResourceEntry: bundledEngineResourcePath,
+    engineSha256,
+    engineSize,
+    expectedEngineRelativePath: path.relative(root, expectedEngineBinaryPath),
+    expectedEngineSha256,
+    expectedEngineSize,
+  };
+}
+
 
 function listDirectory(directory) {
   try {
@@ -118,6 +169,10 @@ function listZipEntries(zipPath) {
 function readZipEntry(zipPath, entry) {
   return execFileSync("unzip", ["-p", zipPath, entry], { maxBuffer: 64 * 1024 * 1024 });
 }
+function digest(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 
 async function startRuntimeServer() {
   const server = http.createServer(async (request, response) => {
