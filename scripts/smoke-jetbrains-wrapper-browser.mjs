@@ -23,6 +23,7 @@ const bridgeVersion = "2026-05-15";
 const pluginLikeViewport = { width: 800, height: 800 };
 const headed = process.argv.includes("--headed");
 const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
+const gradleCommandSelfCheck = process.argv.includes("--self-check-gradle-command");
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
 const panelId = `panel-${randomUUID().replaceAll("-", "")}`;
@@ -151,6 +152,12 @@ const centerInNearestScrollContainer = async (locator) => {
 };
 
 class RequestBodyTooLargeError extends Error {}
+
+if (gradleCommandSelfCheck) {
+  assertGradleWrapperHtmlCommandSelfCheck();
+  console.log("Gradle wrapper HTML command self-check passed.");
+  process.exit(0);
+}
 
 assertJetBrainsParityContract();
 await requireFreshPackagedGui();
@@ -2281,8 +2288,13 @@ async function startWrapperServer(panelGuiBaseUrl) {
 
 async function renderProductionWrapperHtml(panelGuiBaseUrl) {
   const pluginDir = path.join(root, "apps", "plugins", "jetbrains");
-  const gradle = process.platform === "win32" ? "gradle.bat" : "gradle";
-  const { stdout } = await execFileAsync(gradle, ["printSmokeWrapperHtml", "--quiet", "--console=plain", "--args", `${new URL(panelGuiBaseUrl).origin} ${panelId} ${panelBasePath}`], {
+  const command = buildGradleWrapperHtmlCommand({
+    platform: process.platform,
+    panelOrigin: new URL(panelGuiBaseUrl).origin,
+    panelId,
+    panelBasePath,
+  });
+  const { stdout } = await execFileAsync(command.file, command.args, {
     cwd: pluginDir,
     maxBuffer: 1024 * 1024 * 4,
     timeout: 120000,
@@ -2291,6 +2303,31 @@ async function renderProductionWrapperHtml(panelGuiBaseUrl) {
     throw new Error("Production JetBrains wrapper helper did not print renderHtml output.");
   }
   return stdout;
+}
+
+function buildGradleWrapperHtmlCommand({ platform, panelOrigin, panelId, panelBasePath }) {
+  const gradleArgs = ["printSmokeWrapperHtml", "--quiet", "--console=plain", "--args", `${panelOrigin} ${panelId} ${panelBasePath}`];
+  if (platform === "win32") {
+    return { file: "cmd.exe", args: ["/d", "/s", "/c", "gradle.bat", ...gradleArgs] };
+  }
+  return { file: "gradle", args: gradleArgs };
+}
+
+function assertGradleWrapperHtmlCommandSelfCheck() {
+  const panelOrigin = "http://127.0.0.1:4567";
+  const panelId = "panel-self-check";
+  const panelBasePath = "/panel/panel-self-check";
+  const windows = buildGradleWrapperHtmlCommand({ platform: "win32", panelOrigin, panelId, panelBasePath });
+  const posix = buildGradleWrapperHtmlCommand({ platform: "darwin", panelOrigin, panelId, panelBasePath });
+  const expectedGradleArgs = ["printSmokeWrapperHtml", "--quiet", "--console=plain", "--args", `${panelOrigin} ${panelId} ${panelBasePath}`];
+  assertDeepEqual(windows, { file: "cmd.exe", args: ["/d", "/s", "/c", "gradle.bat", ...expectedGradleArgs] }, "Windows Gradle helper command shape");
+  assertDeepEqual(posix, { file: "gradle", args: expectedGradleArgs }, "POSIX Gradle helper command shape");
+}
+
+function assertDeepEqual(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label} mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
 }
 
 function instrumentProductionWrapperHtml(wrapperHtml) {
