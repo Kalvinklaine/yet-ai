@@ -1111,6 +1111,53 @@ pre,
   min-height: 0;
 }
 
+.composer-context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.composer-chip {
+  border: 1px solid #d8e1f6;
+  border-radius: 999px;
+  background: #f8faff;
+  color: #34405a;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+}
+
+.composer-chip.ok {
+  border-color: #bce8cc;
+  background: #e8f8ef;
+  color: #167347;
+}
+
+.composer-chip.warn {
+  border-color: #ffe2a3;
+  background: #fff4d7;
+  color: #8a5a00;
+}
+
+.composer-tool-drawer {
+  border: 1px solid #d8e1f6;
+  border-radius: 14px;
+  background: #fbfcff;
+  padding: 8px 10px;
+}
+
+.composer-tool-drawer summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.composer-drawer-body {
+  margin-top: 10px;
+}
+
 .composer-input-area textarea {
   min-height: 76px;
   max-height: 120px;
@@ -1286,7 +1333,7 @@ pre,
 .host-jetbrains .chat-composer {
   flex: 0 0 auto;
   height: auto;
-  max-height: 210px !important;
+  max-height: 228px !important;
   padding: 10px;
   gap: 8px;
   box-shadow: 0 -6px 18px rgba(28, 40, 72, 0.06);
@@ -1868,7 +1915,7 @@ pre,
 
 .host-vscode .chat-composer,
 .host-jetbrains .chat-composer {
-  max-height: 210px !important;
+  max-height: 228px !important;
 }
 
 .host-vscode .composer-tools,

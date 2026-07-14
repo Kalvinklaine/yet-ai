@@ -578,6 +578,7 @@ try {
     });
     return requestId;
   }, { version: bridgeVersion, runtimeUrl: panelBasePath, payload: jetbrainsContextSnapshot });
+  await openComposerDrawer(frameLocator, "ide-actions-drawer");
   await frameLocator.getByText("Active editor context", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show attached context preview for JetBrains context."));
   await frameLocator.getByText("jetbrains", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context source label."));
   await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
@@ -830,8 +831,16 @@ function assertJetBrainsParityContract() {
   }
 }
 
+async function openComposerDrawer(frameLocator, testId) {
+  const drawer = frameLocator.locator(`[data-testid='${testId}']`).first();
+  if (!await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
+    await drawer.locator(":scope > summary").click();
+  }
+}
+
 async function assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator) {
   const beforeMessages = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
+  await openComposerDrawer(frameLocator, "task-agent-tools-drawer");
   await frameLocator.getByText("Agent Run · dev-preview, not autonomy", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains GUI did not render the Agent Run manual shell."));
   await frameLocator.getByText("manual only", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
@@ -1633,7 +1642,7 @@ function assertJetBrainsHostedLayout(metrics, label) {
   if (!metrics.sendHitTestAfterInnerScroll?.ok) failures.push(`${label}: Send center is covered or not hit-testable after inner scroll (${JSON.stringify(metrics.sendHitTestAfterInnerScroll)}).`);
   if (metrics.outerOverflow && !metrics.hasUsablePanelScrollOwner) failures.push(`${label}: hosted iframe overflows without a usable panel scroll owner (document ${metrics.documentScrollHeight} > ${metrics.documentClientHeight}, outer moved: ${metrics.outerScrollMoves}, chat moved: ${metrics.chatScrollMoves}).`);
   if (metrics.chatScrollHeight < 280) failures.push(`${label}: chat message region is too small for compact hosted chat (${metrics.chatScrollHeight}).`);
-  if (metrics.composerHeight > 230) failures.push(`${label}: composer is too tall for compact hosted chat (${metrics.composerHeight}).`);
+  if (metrics.composerHeight > 248) failures.push(`${label}: composer is too tall for compact hosted chat (${metrics.composerHeight}).`);
   if (metrics.composerToolsHeight > 100) failures.push(`${label}: composer tools area is too tall for compact hosted chat (${metrics.composerToolsHeight}).`);
   if (metrics.composerToolsOverflow && !metrics.composerToolsScrollMoves) failures.push(`${label}: composer status/context cards overflow but their tool region did not scroll.`);
   if (metrics.chatScrollComposerOverlapAfterInnerScroll) failures.push(`${label}: chat scroll region overlaps the composer after inner scrolling (${JSON.stringify(metrics.chatScrollRectAfterInnerScroll)} vs ${JSON.stringify(metrics.composerRectAfterInnerScroll)}).`);
@@ -1910,6 +1919,7 @@ async function assertJetBrainsActiveFileExcerptRoundtrip(page, frameLocator) {
 async function assertJetBrainsIdeActionRoundtrip(page, frameLocator) {
   await frameLocator.getByText("JetBrains controlled actions", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Iframe GUI did not expose JetBrains controlled action controls."));
+  await openComposerDrawer(frameLocator, "ide-actions-drawer");
   await frameLocator.locator("section[aria-label='Agent activity IDE actions'] details").first().evaluate((element) => {
     if (element instanceof HTMLDetailsElement) element.open = true;
   }).catch(() => undefined);
