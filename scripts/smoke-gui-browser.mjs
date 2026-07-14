@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const indexPath = path.join(distRoot, "index.html");
-const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Bridge debug"];
+const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI"];
 const failures = [];
 
 await requireBuiltGui();
@@ -62,6 +62,39 @@ try {
     const visible = await page.getByText(text, { exact: true }).first().isVisible().catch(() => false);
     if (!visible) {
       failures.push(`Missing visible GUI text: ${text}`);
+    }
+  }
+
+  const bridgeDebugChromeVisible = await page.getByText("Bridge debug", { exact: true }).first().isVisible().catch(() => false);
+  if (bridgeDebugChromeVisible) {
+    failures.push("Bridge debug should not be visible as default page chrome.");
+  }
+
+  const bridgeDebugDetails = page.getByTestId("bridge-debug-details");
+  const bridgeDebugState = await bridgeDebugDetails.evaluate((details) => ({ open: details.open, text: details.textContent ?? "" })).catch(() => null);
+  if (!bridgeDebugState) {
+    failures.push("Missing diagnostics bridge debug disclosure.");
+  } else {
+    if (bridgeDebugState.open) {
+      failures.push("Bridge diagnostics disclosure should be collapsed by default.");
+    }
+    if (!/Diagnostics\s*\/\s*bridge debug/i.test(bridgeDebugState.text)) {
+      failures.push("Bridge diagnostics disclosure summary is missing.");
+    }
+    if (/token|secret|authorization|cookie|raw prompt|provider response/i.test(bridgeDebugState.text)) {
+      failures.push("Bridge diagnostics disclosure contains sensitive wording while collapsed.");
+    }
+    await bridgeDebugDetails.locator("summary").first().click();
+    const openedBridgeDebugState = await bridgeDebugDetails.evaluate((details) => ({ open: details.open, text: details.textContent ?? "" })).catch(() => null);
+    if (!openedBridgeDebugState?.open) {
+      failures.push("Bridge diagnostics disclosure did not open.");
+    } else {
+      if (!openedBridgeDebugState.text.includes("Inspect bridge message log") || !/No bridge messages logged|bridge messages/i.test(openedBridgeDebugState.text)) {
+        failures.push("Bridge diagnostics disclosure does not expose bridge diagnostic evidence.");
+      }
+      if (/token|secret|authorization|cookie|raw prompt|provider response/i.test(openedBridgeDebugState.text)) {
+        failures.push("Bridge diagnostics disclosure contains sensitive wording while open.");
+      }
     }
   }
 
