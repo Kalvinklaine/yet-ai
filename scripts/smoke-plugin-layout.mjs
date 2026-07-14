@@ -107,7 +107,10 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   assert(metrics.composerBottom <= height + 1, `${name} composer extends below viewport: ${metrics.composerBottom} > ${height}`);
   assert(metrics.contextDetailsOpen === false || metrics.contextDetailsOpen === null, `${name} active editor context details should be collapsed`);
   assert(metrics.contextHeight <= 96, `${name} active editor context dominates composer: ${metrics.contextHeight}`);
-  assert(metrics.composerBottom > metrics.composerTop, `${name} composer has invalid vertical bounds: ${metrics.composerTop}-${metrics.composerBottom}`);
+  assert(metrics.composerAfterScroll, `${name} composer does not follow chat scroll region in DOM order`);
+  assert(metrics.composerLowerThanScrollTop, `${name} composer is not placed in the lower chat area: scrollTop=${metrics.scrollTop}, scrollHeight=${metrics.chatScrollHeight}, composerTop=${metrics.composerTop}`);
+  assert(metrics.composerScrollGap >= -1 || metrics.composerStickyOverlap <= 32, `${name} composer overlaps chat scroll region too deeply: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, gap=${metrics.composerScrollGap}, stickyOverlap=${metrics.composerStickyOverlap}`);
+  assert(metrics.composerScrollGap <= 32 || metrics.composerStickyOverlap <= 32, `${name} composer detached from chat scroll region: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, gap=${metrics.composerScrollGap}, stickyOverlap=${metrics.composerStickyOverlap}`);
 
   return saveEvidence(page, name, metrics);
 }
@@ -377,6 +380,8 @@ async function collectLayoutMetrics(page, scenario) {
     const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
     const textarea = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
     const details = document.querySelector("[data-testid='attached-context-active-details']");
+    const scrollElement = document.querySelector(".chat-scroll-region");
+    const composerElement = document.querySelector(".chat-composer");
     const scroll = rect(".chat-scroll-region");
     const composer = rect(".chat-composer");
     const context = rect(".attached-context-card");
@@ -396,10 +401,15 @@ async function collectLayoutMetrics(page, scenario) {
       textareaWithinViewport: withinViewport(textareaRect),
       textareaRect,
       chatScrollHeight: scroll?.height ?? 0,
+      scrollTop: scroll?.top ?? 0,
       scrollBottom: scroll?.bottom ?? 0,
       composerHeight: composer?.height ?? 0,
       composerTop: composer?.top ?? 0,
       composerBottom: composer?.bottom ?? 0,
+      composerScrollGap: scroll && composer ? composer.top - scroll.bottom : 0,
+      composerStickyOverlap: scroll && composer ? Math.max(0, scroll.bottom - composer.bottom) : 0,
+      composerLowerThanScrollTop: scroll && composer ? composer.top > scroll.top : false,
+      composerAfterScroll: scrollElement instanceof HTMLElement && composerElement instanceof HTMLElement && Boolean(scrollElement.compareDocumentPosition(composerElement) & Node.DOCUMENT_POSITION_FOLLOWING),
       contextHeight: context?.height ?? 0,
       contextDetailsOpen: details instanceof HTMLDetailsElement ? details.open : null,
       localStorageKeys: Object.keys(localStorage),
