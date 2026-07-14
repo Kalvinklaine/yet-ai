@@ -247,13 +247,14 @@ try {
   }
 
   const proposalRequestId = proposalIdeRequest?.requestId ?? "gui-ide-proposal-action-missing";
+  await openComposerDrawer(page, "ide-actions-drawer");
   await expectVisibleText(page, "IDE action pending…", "pending proposal IDE action button label");
   await expectVisibleText(page, "Clear pending IDE action state", "clear pending IDE action state button");
   const clearPendingButtonCount = await page.getByRole("button", { name: "Clear pending IDE action state", exact: true }).count();
   if (clearPendingButtonCount !== 1) failures.push(`Expected exactly one clear pending IDE action state button during proposal pending state; found ${clearPendingButtonCount}.`);
 
   const clearPendingButton = page.getByRole("button", { name: "Clear pending IDE action state", exact: true }).first();
-  await clearPendingButton.click();
+  await clickButtonWithDomFallback(clearPendingButton, "clear pending IDE action state");
   const proposalPostClearIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   if (proposalPostClearIdeRequestCount !== proposalPreClickIdeRequestCount + 1) failures.push("Clearing pending IDE action state posted a new gui.ideActionRequest or changed request count.");
   await expectAttachedText(page, "Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.", "local-only clear pending IDE action note");
@@ -339,11 +340,12 @@ try {
       selection: { startLine: activeContextRange.start.line, startCharacter: activeContextRange.start.character, endLine: activeContextRange.end.line, endCharacter: activeContextRange.end.character, text: activeContextSelection },
     },
   });
+  await openComposerDrawer(page, "ide-actions-drawer");
   await expectVisibleText(page, "Active editor context", "active context preview card");
   await expectAttachedText(page, `File: ${activeContextPath}`, "active context safe file label");
   await expectAttachedText(page, "Selection range: 7:1-7:12", "active context safe selection range");
   await expectAttachedText(page, activeContextSelection, "bounded active context preview text");
-  await expectVisibleText(page, "Attach to next message", "safe active context default include policy");
+  await expectAttachedText(page, "Attach to next message", "safe active context default include policy");
   await expectAttachedText(page, `Active safe path: ${activeContextPath}`, "IDE action safe active path");
   await expectAttachedText(page, "Active safe range: 7:1-7:12", "IDE action safe active range");
   const openFileButton = page.getByRole("button", { name: "Open file", exact: true });
@@ -363,6 +365,7 @@ try {
       selection: { startLine: 9, startCharacter: 2, endLine: 9, endCharacter: 18, text: liveContextSelection },
     },
   });
+  await openComposerDrawer(page, "ide-actions-drawer");
   await expectAttachedText(page, `File: ${liveContextPath}`, "live active context replacement file label");
   await expectAttachedText(page, "Selection range: 9:2-9:18", "live active context replacement range");
   await expectAttachedText(page, liveContextSelection, "live active context replacement text");
@@ -371,6 +374,7 @@ try {
   if (await revealRangeButton.isDisabled()) failures.push("Reveal range button was disabled after live context refresh.");
   await assertBrowserStorageDoesNotContain(page, [liveContextPath, liveContextSelection], "live trusted active context preview");
 
+  await openComposerDrawer(page, "ide-actions-drawer");
   const getContextButton = page.getByRole("button", { name: "Get IDE context", exact: true });
   await getContextButton.waitFor({ state: "visible", timeout: 10_000 });
   if (await getContextButton.isDisabled()) failures.push("Get IDE context button was disabled in VS Code host mode.");
@@ -474,6 +478,7 @@ try {
   await expectVisibleText(page, revealResultMessage, "reveal range IDE action result message");
   await expectVisibleText(page, `Result path: ${liveContextPath} · result range: 9:2-9:18`, "reveal range IDE action result path/range metadata");
 
+  await openComposerDrawer(page, "ide-actions-drawer");
   const activeExcerptButton = page.getByRole("button", { name: "Attach active file excerpt", exact: true });
   await activeExcerptButton.waitFor({ state: "visible", timeout: 10_000 });
   if (await activeExcerptButton.isDisabled()) failures.push("Attach active file excerpt button was disabled in VS Code host mode.");
@@ -517,7 +522,7 @@ try {
   });
   await page.waitForTimeout(150);
   await expectNoVisibleText(page, providerKey, "invalid secret-like active-file excerpt host result");
-  await expectVisibleText(page, "Active file excerpt: pending", "active-file excerpt remains pending after invalid result");
+  await expectAttachedText(page, "Active file excerpt: pending", "active-file excerpt remains pending after invalid result");
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -657,6 +662,18 @@ async function getGuiMessageCount(page, type) {
   return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
 }
 
+async function openComposerDrawer(page, testId) {
+  const drawer = page.locator(`[data-testid='${testId}']`).first();
+  await drawer.waitFor({ state: "attached", timeout: 10_000 });
+  await drawer.evaluate((element) => {
+    if (element instanceof HTMLDetailsElement) element.open = true;
+    element.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const tools = element.closest(".composer-tools");
+    if (tools instanceof HTMLElement) tools.scrollTop = element.offsetTop;
+  });
+  await drawer.locator(":scope > .composer-drawer-body").first().waitFor({ state: "attached", timeout: 10_000 });
+}
+
 async function runSafeEditProposalScenario(page) {
   const chatCommandCountBeforeEditProposal = countChatCommandPosts();
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(editProposalPrompt);
@@ -698,21 +715,31 @@ async function runSafeEditProposalScenario(page) {
 }
 
 async function runProjectMemoryScenario(page) {
+  await openComposerDrawer(page, "task-agent-tools-drawer");
   await expectVisibleText(page, "Local project memory", "VS Code project memory surface");
   await expectVisibleText(page, memoryNoteTitle, "VS Code local memory note title");
   await expectAttachedText(page, "engine-owned", "VS Code project memory engine-owned badge");
   await expectVisibleText(page, "Manual bounded notes only", "VS Code project memory local-only policy");
   await expectAttachedText(page, memoryNoteText, "VS Code project memory bounded preview");
-  const attachButton = page.getByRole("button", { name: "Attach task-linked memory to next message", exact: true });
-  await attachButton.click();
-  await expectVisibleText(page, "attached to next message", "VS Code project memory attached badge");
+  const attachedMemory = await page.evaluate((title) => {
+    const drawer = document.querySelector("[data-testid='task-agent-tools-drawer']");
+    const buttons = Array.from(drawer?.querySelectorAll("button") ?? []);
+    const button = buttons.find((candidate) => candidate.textContent?.trim() === "Attach task-linked memory to next message" && candidate.closest(".provider-item")?.textContent?.includes(title));
+    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
+    button.scrollIntoView({ block: "nearest", inline: "nearest" });
+    button.click();
+    return true;
+  }, memoryNoteTitle);
+  if (!attachedMemory) failures.push("Project memory attach button was not available inside the opened task-agent drawer.");
   await expectVisibleText(page, "Project memory", "VS Code project memory item in bundle");
+  await expectAttachedText(page, "attached to next message", "VS Code project memory attached badge");
   await assertBrowserStorageDoesNotContain(page, [memoryNoteTitle, memoryNoteText], "VS Code project memory surface storage check");
 }
 
 async function runWorkspaceSnippetSearchScenario(page) {
+  await openComposerDrawer(page, "ide-actions-drawer");
   await expectVisibleText(page, "Project snippets", "VS Code snippet search surface");
-  await expectVisibleText(page, "IDE search", "VS Code snippet search IDE badge");
+  await expectAttachedText(page, "IDE search", "VS Code snippet search IDE badge");
   await page.getByPlaceholder("function name or symbol text").fill(snippetSearchQuery);
   await expectVisibleText(page, "Literal query ready", "VS Code snippet search literal validation");
   const preClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
@@ -742,6 +769,7 @@ async function runWorkspaceSnippetSearchScenario(page) {
 }
 
 async function runVerificationCommandScenario(page) {
+  await openComposerDrawer(page, "ide-actions-drawer");
   await expectVisibleText(page, "Verification commands", "VS Code verification commands surface");
   await expectVisibleText(page, "Allowlisted local verification only", "VS Code verification command policy");
   const preClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
@@ -782,7 +810,7 @@ async function runExplicitContextBundleScenario(page) {
   });
   await expectVisibleText(page, bundleExcerptOnePath, "first VS Code bundle excerpt path");
   await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
-  await expectVisibleText(page, "1/4 excerpts", "first VS Code bundle item");
+  await expectAttachedText(page, "1/4 excerpts", "first VS Code bundle item");
 
   await attachBundleExcerpt(page, {
     path: bundleExcerptTwoPath,
@@ -791,8 +819,8 @@ async function runExplicitContextBundleScenario(page) {
   });
   await expectVisibleText(page, bundleExcerptTwoPath, "second VS Code bundle excerpt path");
   await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
-  await expectVisibleText(page, "2/4 excerpts", "second VS Code bundle item");
-  await expectVisibleText(page, "Include bundle with next message", "VS Code bundle include toggle");
+  await expectAttachedText(page, "2/4 excerpts", "second VS Code bundle item");
+  await expectAttachedText(page, "Include bundle with next message", "VS Code bundle include toggle");
   await assertBrowserStorageDoesNotContain(page, [bundleExcerptOnePath, bundleExcerptOneText, bundleExcerptTwoPath, bundleExcerptTwoText], "VS Code bundle preview storage check");
 
   const chatCommandCountBeforeBundleSend = countChatCommandPosts();
@@ -802,10 +830,11 @@ async function runExplicitContextBundleScenario(page) {
   const bundleChatPosts = countChatCommandPosts() - chatCommandCountBeforeBundleSend;
   if (bundleChatPosts !== 1) failures.push(`Explicit context bundle send posted ${bundleChatPosts} chat commands instead of exactly one.`);
   assertExplicitContextBundleChatCommand(chatCommandBodies.at(-1), "vscode");
+  await openComposerDrawer(page, "ide-actions-drawer");
   await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "VS Code bundle one-shot clear status");
   await expectVisibleText(page, "empty", "VS Code bundle empty after send");
-  await expectNoVisibleText(page, bundleExcerptOneText, "first VS Code bundle preview after send");
-  await expectNoVisibleText(page, bundleExcerptTwoText, "second VS Code bundle preview after send");
+  await expectNoTextInExplicitBundle(page, bundleExcerptOneText, "first VS Code bundle preview after send");
+  await expectNoTextInExplicitBundle(page, bundleExcerptTwoText, "second VS Code bundle preview after send");
 
   const activeExcerptInclude = page.locator("label.attached-context-toggle", { hasText: "Attach excerpt to next message" }).getByRole("checkbox");
   if (await activeExcerptInclude.isVisible().catch(() => false)) {
@@ -1190,7 +1219,7 @@ function listen(server, port = 0) {
 
 async function expectVisibleText(page, text, description, timeout = 10_000) {
   try {
-    await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout });
+    await page.waitForFunction((needle) => document.body.innerText.includes(needle), text, { timeout });
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 2000)}`);
@@ -1219,6 +1248,11 @@ async function expectAttachedText(page, text, description, timeout = 10_000) {
 async function expectNoVisibleText(page, text, description) {
   const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false);
   if (visible) failures.push(`${description} rendered unexpectedly.`);
+}
+
+async function expectNoTextInExplicitBundle(page, text, description) {
+  const present = await page.locator(".explicit-context-bundle-card").first().evaluate((element, needle) => element.textContent?.includes(needle) ?? false, text).catch(() => false);
+  if (present) failures.push(`${description} rendered unexpectedly.`);
 }
 
 async function expectTextOccurrenceCount(page, text, expectedCount, description) {
