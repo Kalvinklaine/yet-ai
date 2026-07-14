@@ -1083,16 +1083,6 @@ pre,
   padding: 14px;
 }
 
-.host-vscode .chat-composer,
-.host-jetbrains .chat-composer {
-  max-height: min(42vh, 340px);
-}
-
-.host-vscode .composer-tools,
-.host-jetbrains .composer-tools {
-  max-height: clamp(72px, calc(42vh - 170px), 170px);
-}
-
 .composer-tools {
   display: grid;
   gap: 8px;
@@ -1933,27 +1923,6 @@ pre,
   .app-shell:not(.single-conversation) .conversation-drawer-backdrop {
     display: none !important;
   }
-}
-
-.host-vscode .chat-scroll-region,
-.host-jetbrains .chat-scroll-region {
-  min-height: 300px;
-}
-
-.host-vscode .chat-composer,
-.host-jetbrains .chat-composer {
-  max-height: 228px !important;
-}
-
-.host-vscode .composer-tools,
-.host-jetbrains .composer-tools {
-  max-height: 86px !important;
-}
-
-.host-vscode .composer-input-area textarea,
-.host-jetbrains .composer-input-area textarea {
-  min-height: 58px;
-  max-height: 76px !important;
 }
 
 summary {
