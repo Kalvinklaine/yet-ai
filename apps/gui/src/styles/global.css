@@ -1323,10 +1323,18 @@ pre,
 .host-jetbrains .chat-composer {
   flex: 0 0 auto;
   height: auto;
-  max-height: 228px !important;
-  padding: 10px;
+  max-height: 232px !important;
+  margin-top: 4px;
+  margin-bottom: 6px;
+  padding: 12px;
   gap: 8px;
   box-shadow: 0 -6px 18px rgba(28, 40, 72, 0.06);
+}
+
+.host-jetbrains .chat-composer {
+  position: sticky;
+  bottom: 8px;
+  z-index: 2;
 }
 
 .host-vscode .composer-tools,

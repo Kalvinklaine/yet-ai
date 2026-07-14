@@ -1697,6 +1697,7 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
     const chatScrollTopBefore = scroll instanceof HTMLElement ? scroll.scrollTop : 0;
     if (scroll instanceof HTMLElement) scroll.scrollTo(0, scroll.scrollHeight);
     const chatScrollTopAfter = scroll instanceof HTMLElement ? scroll.scrollTop : 0;
+    if (composer instanceof HTMLElement) composer.scrollIntoView({ block: "end", inline: "nearest" });
     const composerToolsTopBefore = composerTools instanceof HTMLElement ? composerTools.scrollTop : 0;
     if (composerTools instanceof HTMLElement) composerTools.scrollTo(0, composerTools.scrollHeight);
     const composerToolsTopAfter = composerTools instanceof HTMLElement ? composerTools.scrollTop : 0;
@@ -1705,6 +1706,19 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
     const chatScrollRectAfterInnerScroll = rectFor(scroll);
     const inputAreaRectAfterInnerScroll = rectFor(inputArea);
     const composerToolsRectAfterInnerScroll = rectFor(composerTools);
+    const composerStyle = composer instanceof HTMLElement ? getComputedStyle(composer) : undefined;
+    const composerPadding = composerStyle ? {
+      top: Number.parseFloat(composerStyle.paddingTop) || 0,
+      bottom: Number.parseFloat(composerStyle.paddingBottom) || 0,
+    } : { top: 0, bottom: 0 };
+    const composerViewportGapsAfterInnerScroll = composerRectAfterInnerScroll ? {
+      top: composerRectAfterInnerScroll.top,
+      bottom: viewport.height - composerRectAfterInnerScroll.bottom,
+    } : { top: 0, bottom: 0 };
+    const inputComposerGapsAfterInnerScroll = inputAreaRectAfterInnerScroll && composerRectAfterInnerScroll ? {
+      top: inputAreaRectAfterInnerScroll.top - composerRectAfterInnerScroll.top,
+      bottom: composerRectAfterInnerScroll.bottom - inputAreaRectAfterInnerScroll.bottom,
+    } : { top: 0, bottom: 0 };
     const hitCenter = (element) => {
       if (!(element instanceof HTMLElement)) return null;
       const rect = element.getBoundingClientRect();
@@ -1759,6 +1773,9 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
       chatScrollRectAfterInnerScroll,
       inputAreaRectAfterInnerScroll,
       composerToolsRectAfterInnerScroll,
+      composerPadding,
+      composerViewportGapsAfterInnerScroll,
+      inputComposerGapsAfterInnerScroll,
       chatScrollComposerOverlapAfterInnerScroll: Boolean(chatScrollRectAfterInnerScroll && composerRectAfterInnerScroll && chatScrollRectAfterInnerScroll.bottom > composerRectAfterInnerScroll.top + 1 && chatScrollRectAfterInnerScroll.top < composerRectAfterInnerScroll.bottom - 1),
       composerToolsInputOverlapAfterInnerScroll: Boolean(composerToolsRectAfterInnerScroll && inputAreaRectAfterInnerScroll && composerToolsRectAfterInnerScroll.bottom > inputAreaRectAfterInnerScroll.top + 1 && composerToolsRectAfterInnerScroll.top < inputAreaRectAfterInnerScroll.bottom - 1),
       bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 700),
@@ -1785,6 +1802,9 @@ function assertJetBrainsHostedLayout(metrics, label) {
   if (metrics.chatScrollHeight < 280) failures.push(`${label}: chat message region is too small for compact hosted chat (${metrics.chatScrollHeight}).`);
   if (metrics.composerHeight > 248) failures.push(`${label}: composer is too tall for compact hosted chat (${metrics.composerHeight}).`);
   if (metrics.composerToolsHeight > 100) failures.push(`${label}: composer tools area is too tall for compact hosted chat (${metrics.composerToolsHeight}).`);
+  if (metrics.composerPadding.top < 10 || metrics.composerPadding.bottom < 10) failures.push(`${label}: composer internal padding is too tight after tool-region scrolling (${JSON.stringify(metrics.composerPadding)}).`);
+  if (metrics.composerViewportGapsAfterInnerScroll.top < 0 || metrics.composerViewportGapsAfterInnerScroll.bottom < 6) failures.push(`${label}: composer is not fully visible with bottom breathing room after tool-region scrolling (${JSON.stringify(metrics.composerViewportGapsAfterInnerScroll)}).`);
+  if (metrics.inputComposerGapsAfterInnerScroll.top < 10 || metrics.inputComposerGapsAfterInnerScroll.bottom < 10) failures.push(`${label}: composer input/action area is not padded inside the composer after tool-region scrolling (${JSON.stringify(metrics.inputComposerGapsAfterInnerScroll)}).`);
   if (metrics.composerToolsOverflow && !metrics.composerToolsScrollMoves) failures.push(`${label}: composer status/context cards overflow but their tool region did not scroll.`);
   if (metrics.chatScrollComposerOverlapAfterInnerScroll) failures.push(`${label}: chat scroll region overlaps the composer after inner scrolling (${JSON.stringify(metrics.chatScrollRectAfterInnerScroll)} vs ${JSON.stringify(metrics.composerRectAfterInnerScroll)}).`);
   if (metrics.composerToolsInputOverlapAfterInnerScroll) failures.push(`${label}: composer status/context cards overlap the input controls after inner scrolling (${JSON.stringify(metrics.composerToolsRectAfterInnerScroll)} vs ${JSON.stringify(metrics.inputAreaRectAfterInnerScroll)}).`);

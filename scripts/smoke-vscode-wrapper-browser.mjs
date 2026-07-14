@@ -1272,10 +1272,19 @@ async function collectVisualLayoutMetrics(page) {
     const textarea = document.querySelector("textarea");
     const scroll = document.querySelector(".chat-scroll-region");
     const composer = document.querySelector(".chat-composer");
+    const composerTools = document.querySelector(".composer-tools");
     if (textarea instanceof HTMLElement) textarea.scrollIntoView({ block: "center" });
+    const composerToolsTopBefore = composerTools instanceof HTMLElement ? composerTools.scrollTop : 0;
+    if (composerTools instanceof HTMLElement) composerTools.scrollTo(0, composerTools.scrollHeight);
+    const composerToolsTopAfter = composerTools instanceof HTMLElement ? composerTools.scrollTop : 0;
     const sendRect = rectFor(send);
     const textareaRect = rectFor(textarea);
     const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const composerRect = rectFor(composer);
+    const composerStyle = composer instanceof HTMLElement ? getComputedStyle(composer) : undefined;
+    const composerPadding = composerStyle ? { top: Number.parseFloat(composerStyle.paddingTop) || 0, bottom: Number.parseFloat(composerStyle.paddingBottom) || 0 } : { top: 0, bottom: 0 };
+    const composerViewportGaps = composerRect ? { top: composerRect.top, bottom: viewport.height - composerRect.bottom } : { top: 0, bottom: 0 };
+    const textareaComposerGaps = textareaRect && composerRect ? { top: textareaRect.top - composerRect.top, bottom: composerRect.bottom - textareaRect.bottom } : { top: 0, bottom: 0 };
     const withinViewport = (box) => Boolean(box && box.top >= 0 && box.left >= 0 && box.bottom <= viewport.height && box.right <= viewport.width);
     const hitCenter = (element) => {
       if (!(element instanceof HTMLElement)) return null;
@@ -1307,6 +1316,12 @@ async function collectVisualLayoutMetrics(page) {
       textareaRect,
       chatScrollHeight: rectFor(scroll)?.height ?? 0,
       composerHeight: rectFor(composer)?.height ?? 0,
+      composerToolsHeight: rectFor(composerTools)?.height ?? 0,
+      composerToolsOverflow: composerTools instanceof HTMLElement && composerTools.scrollHeight > composerTools.clientHeight + 1,
+      composerToolsScrollMoves: composerToolsTopAfter > composerToolsTopBefore,
+      composerPadding,
+      composerViewportGaps,
+      textareaComposerGaps,
       localStorageKeys: Object.keys(localStorage),
       sessionStorageKeys: Object.keys(sessionStorage),
     };
@@ -1322,6 +1337,10 @@ function assertVsCodeVisualLayout(metrics) {
   if (!metrics.textareaVisible || !metrics.textareaWithinViewport) failures.push(`VS Code visual evidence: composer textarea is not visible in viewport (${JSON.stringify(metrics.textareaRect)}).`);
   if (metrics.chatScrollHeight < 240) failures.push(`VS Code visual evidence: chat area is too small (${metrics.chatScrollHeight}).`);
   if (metrics.composerHeight > 260) failures.push(`VS Code visual evidence: composer is too tall (${metrics.composerHeight}).`);
+  if (metrics.composerPadding.top < 10 || metrics.composerPadding.bottom < 10) failures.push(`VS Code visual evidence: composer internal padding is too tight after tool-region scrolling (${JSON.stringify(metrics.composerPadding)}).`);
+  if (metrics.composerViewportGaps.top < 0 || metrics.composerViewportGaps.bottom < 6) failures.push(`VS Code visual evidence: composer is not fully visible with bottom breathing room after tool-region scrolling (${JSON.stringify(metrics.composerViewportGaps)}).`);
+  if (metrics.textareaComposerGaps.top < 10 || metrics.textareaComposerGaps.bottom < 10) failures.push(`VS Code visual evidence: textarea/action area is not comfortably padded inside the composer (${JSON.stringify(metrics.textareaComposerGaps)}).`);
+  if (metrics.composerToolsOverflow && !metrics.composerToolsScrollMoves) failures.push("VS Code visual evidence: composer tool region overflowed but did not scroll internally.");
 }
 
 async function saveVsCodeWrapperEvidence(page, metrics) {

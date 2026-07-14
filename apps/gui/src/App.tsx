@@ -3702,7 +3702,7 @@ export function App() {
               {proposalHistory.entries.length > 0 && pendingApplyRequestId === null && <ProposalHistoryPanel history={proposalHistory} />}
               <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             </div>
-            <form className="chat-composer" onSubmit={(event) => void submitChat(event)}>
+            <form className="chat-composer" data-testid="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-input-area">
                 <div className="composer-context-chips" aria-label="Next-send context chips">
                   <span className={`composer-chip ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? "Send ready" : "Setup needed"}</span>
