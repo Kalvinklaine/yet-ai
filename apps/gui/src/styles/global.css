@@ -555,6 +555,17 @@ pre,
   }
 }
 
+@media (max-width: 760px) {
+  .first-run-checklist.compact,
+  .readiness-compact-main {
+    grid-template-columns: 1fr;
+  }
+
+  .readiness-primary-action {
+    justify-content: flex-start;
+  }
+}
+
 .readiness-card.warn {
   border-color: #ffe2a3;
   background: #fffaf0;
@@ -629,6 +640,41 @@ pre,
 .first-message-wizard.blocked {
   border-color: #ffe2a3;
   background: #fffaf0;
+}
+
+.first-run-checklist.compact {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+}
+
+.first-message-wizard.compact {
+  gap: 10px;
+  padding: 12px;
+}
+
+.readiness-compact-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.readiness-primary-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.readiness-primary-action button {
+  white-space: nowrap;
+}
+
+.first-message-wizard.compact .first-message-notes {
+  border-top: 1px solid rgba(36, 65, 161, 0.12);
+  padding-top: 8px;
+}
+
+.first-message-wizard.compact .first-message-notes summary {
+  cursor: pointer;
 }
 
 .readiness-action-row {
@@ -1559,6 +1605,103 @@ pre,
   background: #fff6f6;
 }
 
+@media (max-width: 1100px) {
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .chat-workbench,
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .conversations-layout,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .chat-workbench,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversations-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .conversations-rail,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversations-rail {
+    display: none;
+  }
+
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .chats-toggle,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .chats-toggle {
+    display: inline-flex;
+  }
+
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .chat-compact-header,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .chat-compact-header {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .chat-id-badge,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .chat-id-badge {
+    display: none;
+  }
+
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .conversation-drawer-backdrop,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversation-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    display: block;
+    border-radius: 0;
+    background: rgba(23, 32, 51, 0.28);
+    padding: 0;
+  }
+
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .conversations-drawer,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversations-drawer {
+    position: fixed;
+    inset: 12px auto 12px 12px;
+    z-index: 20;
+    display: grid;
+    width: min(360px, calc(100vw - 24px));
+    box-shadow: 0 24px 80px rgba(28, 40, 72, 0.28);
+    transform: translateX(calc(-100% - 24px));
+    transition: transform 160ms ease;
+  }
+
+  .app-shell:not(.host-vscode):not(.host-jetbrains) .conversations-drawer.open,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversations-drawer.open {
+    transform: translateX(0);
+  }
+}
+
+@media (min-width: 1101px) {
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .chat-workbench,
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversations-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversations-rail {
+    display: none;
+  }
+
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .chats-toggle {
+    display: inline-flex;
+  }
+
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversation-drawer-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    display: block;
+    border-radius: 0;
+    background: rgba(23, 32, 51, 0.28);
+    padding: 0;
+  }
+
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversations-drawer {
+    position: fixed;
+    inset: 12px auto 12px 12px;
+    z-index: 20;
+    display: grid;
+    width: min(360px, calc(100vw - 24px));
+    box-shadow: 0 24px 80px rgba(28, 40, 72, 0.28);
+    transform: translateX(calc(-100% - 24px));
+    transition: transform 160ms ease;
+  }
+
+  .app-shell.single-conversation:not(.host-vscode):not(.host-jetbrains) .conversations-drawer.open {
+    transform: translateX(0);
+  }
+}
+
 @media (max-width: 960px) {
   .chat-workbench,
   .conversations-layout {
@@ -1708,12 +1851,12 @@ pre,
 }
 
 @media (min-width: 961px) {
-  .conversations-rail {
+  .app-shell:not(.single-conversation) .conversations-rail {
     display: grid;
   }
 
-  .conversations-drawer,
-  .conversation-drawer-backdrop {
+  .app-shell:not(.single-conversation) .conversations-drawer,
+  .app-shell:not(.single-conversation) .conversation-drawer-backdrop {
     display: none !important;
   }
 }

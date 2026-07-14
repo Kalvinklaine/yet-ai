@@ -3530,7 +3530,7 @@ export function App() {
   const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, controlledHostCapabilityDisplayHost(controlledHostCapabilities, bridgeHost)), [bridgeHost, controlledHostCapabilities]);
 
   return (
-    <main className={`app-shell host-${bridgeHost}`}>
+    <main className={`app-shell host-${bridgeHost} ${activeChatSummaries.length <= 1 ? "single-conversation" : "multi-conversation"}`}>
       <section className="hero">
         <div>
           <span className="badge ok">local-first</span>
@@ -4911,28 +4911,20 @@ function readinessStateLabel(state: ProviderReadinessState, canSendChat: boolean
 }
 
 function FirstRunChecklist({ runtimeConnected, demoModeReady, apiKeyReady, experimentalAccountReady, canSendChat, readinessState }: { runtimeConnected: boolean; demoModeReady: boolean; apiKeyReady: boolean; experimentalAccountReady: boolean; canSendChat: boolean; readinessState: ProviderReadinessState }) {
+  const modelReady = demoModeReady || apiKeyReady || experimentalAccountReady;
   const steps = [
     { label: "Runtime", detail: runtimeConnected ? "connected" : "refresh local runtime", ok: runtimeConnected },
-    { label: "Demo Mode", detail: demoModeReady ? "local canned trial ready" : "no-key local canned trial", ok: demoModeReady },
-    { label: "Real provider", detail: apiKeyReady ? readinessState === "local_provider_ready" ? "local provider ready" : "BYOK API-key ready" : "local Ollama or API-key fallback", ok: apiKeyReady },
-    { label: "First message", detail: canSendChat ? "Send available" : "choose Demo Mode or BYOK provider", ok: canSendChat },
+    { label: "Model path", detail: demoModeReady ? "Demo Mode ready" : apiKeyReady ? readinessState === "local_provider_ready" ? "local provider ready" : "BYOK provider ready" : experimentalAccountReady ? "experimental fallback ready" : "choose Demo Mode or BYOK", ok: modelReady },
+    { label: "First message", detail: canSendChat ? "Send available" : "Send disabled", ok: canSendChat },
   ];
   return (
-    <div className="first-run-checklist" role="list" aria-label="First-run setup checklist">
+    <div className="first-run-checklist compact" role="list" aria-label="First-run setup checklist">
       {steps.map((step) => (
         <span className={`first-run-step ${step.ok ? "ok" : "todo"}`} role="listitem" key={step.label}>
           <strong>{step.label}</strong>
           <span>{step.detail}</span>
         </span>
       ))}
-      <span className={`first-run-step ${experimentalAccountReady ? "warn" : "todo"}`} role="listitem">
-        <strong>Account login</strong>
-        <span>{experimentalAccountReady ? "experimental high-risk connected" : "experimental non-default"}</span>
-      </span>
-      <span className={`first-run-step ${canSendChat ? "ok" : readinessState === "runtime_unavailable" ? "todo" : "warn"}`} role="listitem">
-        <strong>Readiness state</strong>
-        <span>{readinessStateLabel(readinessState, canSendChat)}</span>
-      </span>
     </div>
   );
 }
@@ -4950,24 +4942,31 @@ function FirstMessageReadinessWizard({ readiness, canSendChat, runtimeRefreshInF
   onTestProvider: (providerId: string) => void;
   onFocusPrompt: () => void;
 }) {
+  const primaryAction = readiness.actions[0];
+  const secondaryActions = readiness.actions.slice(1);
   return (
-    <div className={`first-message-wizard ${canSendChat ? "ready" : "blocked"}`} role="status" aria-label="First message readiness guide">
-      <div className="stack">
-        <div className="row">
-          <strong>{readiness.title}</strong>
-          <span className={`badge ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? "Send available" : "Send disabled"}</span>
+    <div className={`first-message-wizard compact ${canSendChat ? "ready" : "blocked"}`} role="status" aria-label="First message readiness guide">
+      <div className="readiness-compact-main">
+        <div className="stack">
+          <div className="row">
+            <strong>{readiness.title}</strong>
+            <span className={`badge ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? "Send available" : "Send disabled"}</span>
+          </div>
+          <span>Next: {readiness.nextAction}</span>
         </div>
-        <span>Why: {readiness.reason}</span>
-        <span>Next safest action: {readiness.nextAction}</span>
-      </div>
-      <div className="readiness-action-row">
-        {readiness.actions.map((action) => <FirstMessageActionButton key={`${action.kind}:${"providerId" in action ? action.providerId : action.label}`} action={action} runtimeRefreshInFlight={runtimeRefreshInFlight} providerTestState={providerTestState} demoModeEnabled={demoModeEnabled} demoModeWorking={demoModeWorking} onRefreshRuntime={onRefreshRuntime} onToggleDemoMode={onToggleDemoMode} onApiKeyFallback={onApiKeyFallback} onTestProvider={onTestProvider} onFocusPrompt={onFocusPrompt} />)}
+        {primaryAction && <div className="readiness-primary-action"><FirstMessageActionButton action={primaryAction} runtimeRefreshInFlight={runtimeRefreshInFlight} providerTestState={providerTestState} demoModeEnabled={demoModeEnabled} demoModeWorking={demoModeWorking} onRefreshRuntime={onRefreshRuntime} onToggleDemoMode={onToggleDemoMode} onApiKeyFallback={onApiKeyFallback} onTestProvider={onTestProvider} onFocusPrompt={onFocusPrompt} /></div>}
       </div>
       <details className="first-message-notes" data-testid="first-message-local-first-notes">
-        <summary>Local-first notes</summary>
-        <ol className="first-message-steps">
-          {readiness.notes.map((note) => <li key={note}>{note}</li>)}
-        </ol>
+        <summary>Why this is safe</summary>
+        <div className="stack">
+          <span>Why: {readiness.reason}</span>
+          {secondaryActions.length > 0 && <div className="readiness-action-row" aria-label="Additional readiness actions">
+            {secondaryActions.map((action) => <FirstMessageActionButton key={`${action.kind}:${"providerId" in action ? action.providerId : action.label}`} action={action} runtimeRefreshInFlight={runtimeRefreshInFlight} providerTestState={providerTestState} demoModeEnabled={demoModeEnabled} demoModeWorking={demoModeWorking} onRefreshRuntime={onRefreshRuntime} onToggleDemoMode={onToggleDemoMode} onApiKeyFallback={onApiKeyFallback} onTestProvider={onTestProvider} onFocusPrompt={onFocusPrompt} />)}
+          </div>}
+          <ol className="first-message-steps">
+            {readiness.notes.map((note) => <li key={note}>{note}</li>)}
+          </ol>
+        </div>
       </details>
     </div>
   );
