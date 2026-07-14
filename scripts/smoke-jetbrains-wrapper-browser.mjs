@@ -143,6 +143,10 @@ const scrollIntoViewIfNeeded = async (locator) => {
 const centerInNearestScrollContainer = async (locator) => {
   await locator.evaluate((element) => {
     if (!(element instanceof HTMLElement)) return;
+    const isWithinViewport = () => {
+      const rect = element.getBoundingClientRect();
+      return rect.top >= 0 && rect.left >= 0 && rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
+    };
     let parent = element.parentElement;
     while (parent) {
       const style = getComputedStyle(parent);
@@ -151,7 +155,7 @@ const centerInNearestScrollContainer = async (locator) => {
         const parentRect = parent.getBoundingClientRect();
         const elementRect = element.getBoundingClientRect();
         parent.scrollTop += elementRect.top - parentRect.top - Math.max(0, (parent.clientHeight - elementRect.height) / 2);
-        return;
+        if (isWithinViewport()) return;
       }
       parent = parent.parentElement;
     }
@@ -850,6 +854,32 @@ async function openComposerDrawer(frameLocator, testId) {
   }
 }
 
+async function openProviderDetailsForAuthControl(providerDetails, providerSummary, authControl) {
+  if (!await providerDetails.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
+    await providerSummary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+    await providerSummary.click({ timeout: 5000 });
+  }
+  await authControl.waitFor({ state: "visible", timeout: 5000 });
+  await authControl.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return;
+    const candidates = [
+      element.closest(".host-jetbrains"),
+      ...Array.from(element.ownerDocument.querySelectorAll(".chat-scroll-region, .app-shell")),
+      element.ownerDocument.scrollingElement,
+    ];
+    for (const candidate of candidates) {
+      if (!(candidate instanceof HTMLElement)) continue;
+      if (candidate.scrollHeight <= candidate.clientHeight + 1) continue;
+      const containerRect = candidate.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      candidate.scrollTop += elementRect.top - containerRect.top - Math.max(0, (candidate.clientHeight - elementRect.height) / 2);
+      const updatedRect = element.getBoundingClientRect();
+      if (updatedRect.top >= 0 && updatedRect.bottom <= window.innerHeight) return;
+    }
+    element.scrollIntoView({ block: "center", inline: "nearest" });
+  }).catch(() => undefined);
+}
+
 async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
   const compactSetup = frameLocator.locator("[data-testid='compact-host-setup']").first();
   if (await compactSetup.isVisible().catch(() => false)) {
@@ -857,30 +887,14 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
   }
   const providerDetails = frameLocator.locator("[data-testid='provider-setup-details']").first();
   const providerSummary = providerDetails.locator(":scope > summary").first();
-  if (!await frameLocator.locator("[data-testid='provider-auth-login']").first().isVisible().catch(() => false)) {
-    await providerSummary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
-    if (!await providerDetails.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
-      await providerSummary.click({ timeout: 5000 });
-    }
-  }
+  const loginButton = frameLocator.locator("[data-testid='provider-auth-login']").first();
+  await openProviderDetailsForAuthControl(providerDetails, providerSummary, loginButton);
   const authState = frameLocator.locator("[data-testid='provider-auth-state']").first();
   await authState.waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Hosted compact OpenAI login state panel was not mounted."));
   const initialStatus = await authState.getAttribute("data-provider-auth-status").catch(() => "");
   if (initialStatus !== "login_available") {
     failures.push(`Hosted compact OpenAI login smoke expected login_available before click, got ${String(initialStatus)}.`);
   }
-  const loginButton = frameLocator.locator("[data-testid='provider-auth-login']").first();
-  await loginButton.evaluate((element) => {
-    if (!(element instanceof HTMLElement)) return;
-    const shell = document.querySelector(".host-jetbrains");
-    if (shell instanceof HTMLElement) {
-      const shellRect = shell.getBoundingClientRect();
-      const elementRect = element.getBoundingClientRect();
-      shell.scrollTop += elementRect.top - shellRect.top - Math.max(0, (shell.clientHeight - elementRect.height) / 2);
-      return;
-    }
-    element.scrollIntoView({ block: "center", inline: "nearest" });
-  }).catch(() => undefined);
   await clickControlWithActionability(loginButton, "Connect OpenAI account (experimental)", { assertHitTest: true });
   await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='pending']").first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe pending state after start."));
@@ -910,6 +924,7 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
     failures.push(`Hosted compact OpenAI login smoke expected one provider-auth disconnect request, observed ${providerAuthDisconnectCount}.`);
   }
   providerAuthCompletionReady = true;
+  await openProviderDetailsForAuthControl(providerDetails, providerSummary, loginButton);
   await clickControlWithActionability(loginButton, "Reconnect OpenAI account (experimental)", { assertHitTest: true });
   await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='pending']").first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe pending state after relogin."));
