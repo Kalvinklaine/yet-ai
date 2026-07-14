@@ -87,8 +87,13 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
 
   await clickActionableButton(page, explainSelectionButton, `${name} Explain selection button`, { viewportName: name, controlLabel: "Explain selection" });
   await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
+  const sendButton = page.getByRole("button", { name: "Send", exact: true });
+  await requireActionableButton(page, sendButton, `${name} Send button with expanded Coding Actions drawer`, name);
+  const expandedDrawerMetrics = await collectLayoutMetrics(page, { width, height, name: `${name}-expanded-drawer`, host });
+  assert(expandedDrawerMetrics.ideActionsDrawerOpen, `${name} ide-actions-drawer is not open for expanded drawer layout assertions`);
+  assertLayoutMetrics(expandedDrawerMetrics, `${name} expanded ide-actions drawer`, height, host);
   await closeComposerDrawer(page, "ide-actions-drawer", name);
-  await clickActionableButton(page, page.getByRole("button", { name: "Send", exact: true }), `${name} Send button after Coding Actions prompt`, { viewportName: name, controlLabel: "Send" });
+  await clickActionableButton(page, sendButton, `${name} Send button after Coding Actions prompt`, { viewportName: name, controlLabel: "Send" });
   await expectVisibleText(page, "Explain the selected code", `${name} sent coding-action prompt`);
 
   const textarea = page.getByPlaceholder("Ask about the current file, selection, or project...");
@@ -97,25 +102,29 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await expectVisibleText(page, `Follow-up from ${name}`, `${name} user follow-up`);
 
   const metrics = await collectLayoutMetrics(page, { width, height, name, host });
-  assert(metrics.heroHidden, `${name} hosted hero is visible`);
-  assert(host !== "jetbrains" || metrics.hostJetbrainsClass, `${name} did not render main.app-shell.host-jetbrains`);
-  assert(host !== "jetbrains" || !metrics.hostBrowserClass, `${name} incorrectly kept host-browser class in JetBrains scenario`);
-  assert(metrics.sendVisible && metrics.sendWithinViewport && metrics.sendEnabled, `${name} Send is not visible/enabled within viewport: ${JSON.stringify(metrics.sendRect)}`);
-  assert(metrics.textareaVisible && metrics.textareaWithinViewport, `${name} textarea is not visible within viewport: ${JSON.stringify(metrics.textareaRect)}`);
-  assert(metrics.chatScrollHeight >= 160, `${name} chat-scroll-region too short: ${metrics.chatScrollHeight}`);
-  assert(metrics.composerHeight <= 240, `${name} composer too tall: ${metrics.composerHeight}`);
-  assert(metrics.composerBottom <= height + 1, `${name} composer extends below viewport: ${metrics.composerBottom} > ${height}`);
-  assert(metrics.contextDetailsOpen === false || metrics.contextDetailsOpen === null, `${name} active editor context details should be collapsed`);
-  assert(metrics.contextHeight <= 96, `${name} active editor context dominates composer: ${metrics.contextHeight}`);
-  assert(metrics.composerAfterScroll, `${name} composer does not follow chat scroll region in DOM order`);
-  assert(metrics.composerLowerThanScrollTop, `${name} composer is not placed in the lower chat area: scrollTop=${metrics.scrollTop}, scrollHeight=${metrics.chatScrollHeight}, composerTop=${metrics.composerTop}`);
+  assertLayoutMetrics(metrics, name, height, host);
+
+  return saveEvidence(page, name, metrics);
+}
+
+function assertLayoutMetrics(metrics, label, height, host) {
+  assert(metrics.heroHidden, `${label} hosted hero is visible`);
+  assert(host !== "jetbrains" || metrics.hostJetbrainsClass, `${label} did not render main.app-shell.host-jetbrains`);
+  assert(host !== "jetbrains" || !metrics.hostBrowserClass, `${label} incorrectly kept host-browser class in JetBrains scenario`);
+  assert(metrics.sendVisible && metrics.sendWithinViewport && metrics.sendEnabled, `${label} Send is not visible/enabled within viewport: ${JSON.stringify(metrics.sendRect)}`);
+  assert(metrics.textareaVisible && metrics.textareaWithinViewport, `${label} textarea is not visible within viewport: ${JSON.stringify(metrics.textareaRect)}`);
+  assert(metrics.chatScrollHeight >= 160, `${label} chat-scroll-region too short: ${metrics.chatScrollHeight}`);
+  assert(metrics.composerHeight <= 240, `${label} composer too tall: ${metrics.composerHeight}`);
+  assert(metrics.composerBottom <= height + 1, `${label} composer extends below viewport: ${metrics.composerBottom} > ${height}`);
+  assert(metrics.contextDetailsOpen === false || metrics.contextDetailsOpen === null, `${label} active editor context details should be collapsed`);
+  assert(metrics.contextHeight <= 96, `${label} active editor context dominates composer: ${metrics.contextHeight}`);
+  assert(metrics.composerAfterScroll, `${label} composer does not follow chat scroll region in DOM order`);
+  assert(metrics.composerLowerThanScrollTop, `${label} composer is not placed in the lower chat area: scrollTop=${metrics.scrollTop}, scrollHeight=${metrics.chatScrollHeight}, composerTop=${metrics.composerTop}`);
   const maxComposerScrollGap = 32;
   // JetBrains keeps the composer sticky over the scroll region; current measured top-edge overlap is 259px.
   const maxComposerScrollOverlap = host === "jetbrains" ? 264 : 1;
-  assert(metrics.composerScrollGap <= maxComposerScrollGap, `${name} composer detached from chat scroll region: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollGap=${metrics.composerScrollGap}, maxComposerScrollGap=${maxComposerScrollGap}`);
-  assert(metrics.composerScrollOverlap <= maxComposerScrollOverlap, `${name} composer overlaps chat scroll region too deeply: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollOverlap=${metrics.composerScrollOverlap}, maxComposerScrollOverlap=${maxComposerScrollOverlap}`);
-
-  return saveEvidence(page, name, metrics);
+  assert(metrics.composerScrollGap <= maxComposerScrollGap, `${label} composer detached from chat scroll region: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollGap=${metrics.composerScrollGap}, maxComposerScrollGap=${maxComposerScrollGap}`);
+  assert(metrics.composerScrollOverlap <= maxComposerScrollOverlap, `${label} composer overlaps chat scroll region too deeply: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollOverlap=${metrics.composerScrollOverlap}, maxComposerScrollOverlap=${maxComposerScrollOverlap}`);
 }
 
 async function waitForActiveSelectedContext(page) {
@@ -385,6 +394,7 @@ async function collectLayoutMetrics(page, scenario) {
     const details = document.querySelector("[data-testid='attached-context-active-details']");
     const scrollElement = document.querySelector(".chat-scroll-region");
     const composerElement = document.querySelector(".chat-composer");
+    const ideActionsDrawer = document.querySelector("[data-testid='ide-actions-drawer']");
     const scroll = rect(".chat-scroll-region");
     const composer = rect(".chat-composer");
     const context = rect(".attached-context-card");
@@ -396,6 +406,7 @@ async function collectLayoutMetrics(page, scenario) {
       heroHidden: document.querySelector(".hero") instanceof HTMLElement && getComputedStyle(document.querySelector(".hero")).display === "none",
       hostJetbrainsClass: document.querySelector("main.app-shell.host-jetbrains") instanceof HTMLElement,
       hostBrowserClass: document.querySelector("main.app-shell.host-browser") instanceof HTMLElement,
+      ideActionsDrawerOpen: ideActionsDrawer instanceof HTMLDetailsElement ? ideActionsDrawer.open : null,
       sendVisible: send instanceof HTMLElement && getComputedStyle(send).visibility !== "hidden" && getComputedStyle(send).display !== "none" && sendRect !== null && sendRect.width > 0 && sendRect.height > 0,
       sendWithinViewport: withinViewport(sendRect),
       sendEnabled: send instanceof HTMLButtonElement && !send.disabled,
