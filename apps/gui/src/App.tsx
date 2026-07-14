@@ -3714,7 +3714,7 @@ export function App() {
                 <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">
                   <button type="submit" disabled={!canSendChat}>Send</button>
-                  <button type="button" className="secondary-button" onClick={stopSse}>Stop response</button>
+                  <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>
                 </div>
               </div>
               <div className="composer-tools">
@@ -3852,7 +3852,7 @@ export function App() {
         <p className="subtle">For local Ollama, the engine calls your Ollama server directly at http://127.0.0.1:11434. No API key, hosted Yet AI service, account, managed model gateway, cloud workspace, or product credit balance is required.</p>
         {providerSetupStatus && <div className="provider-setup-status" role="status"><strong>OpenAI API-key setup opened</strong><span>{providerSetupStatus}</span></div>}
         {providerError && <ErrorBox error={providerError} />}
-        <div className="provider-item account-login-card stack">
+        <div className="provider-item account-login-card stack" data-testid="provider-auth-card">
           <div className="row">
             <h3>Experimental account login (non-default)</h3>
             <span className="badge warn">experimental</span>
@@ -6193,7 +6193,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
   const canDisconnect = status.configured && status.authSource !== "api_key";
   const loginLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : status.status === "connected" ? "Reconnect experimental account" : status.status === "expired" || status.status === "revoked" ? "Reconnect OpenAI account" : "Connect OpenAI account (experimental)";
   return (
-    <div className={`login-state-panel stack ${status.status}`}>
+    <div className={`login-state-panel stack ${status.status}`} data-testid="provider-auth-state" data-provider-auth-status={status.status}>
       <div className="stack">
         <strong>{providerAuthStateTitle(status.status)}</strong>
         <span>{providerAuthStatusCopy[status.status]}</span>
@@ -6228,7 +6228,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       )}
       <div className="row">
         <button type="button" onClick={onRefresh}>Refresh login status</button>
-        {status.status === "login_unavailable" ? <button type="button" onClick={onLogin} disabled>Experimental login unavailable</button> : <button type="button" onClick={onLogin} disabled={!canLogin}>{loginLabel}</button>}
+        {status.status === "login_unavailable" ? <button type="button" onClick={onLogin} disabled>Experimental login unavailable</button> : <button type="button" data-testid="provider-auth-login" onClick={onLogin} disabled={!canLogin}>{loginLabel}</button>}
         <button type="button" onClick={onDisconnect} disabled={!canDisconnect}>{status.status === "pending" ? "Cancel or disconnect login" : "Disconnect login"}</button>
         <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
       </div>

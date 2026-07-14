@@ -117,10 +117,14 @@ const runtimeRequestLog = [];
 let observedRuntimeAuthorization = false;
 let chatCommandRequest;
 let chatCommandRequestCount = 0;
+let chatAbortRequestCount = 0;
 let chatSubscriptionCount = 0;
 let chatCommandRequestCountBeforeEditSmoke = 0;
 let demoModeEnabled = false;
 let mockAssistantMessageCounter = 0;
+let providerAuthSmokeState = "available";
+let providerAuthStartCount = 0;
+let pendingSlowAssistantResponse = false;
 const chatSseSubscribers = new Map();
 const pendingAssistantResponsesByChat = new Map();
 let nextAssistantResponseContent;
@@ -541,6 +545,8 @@ try {
   }
   assertPanelProxyRuntimeCoverage();
 
+  await assertHostedCompactOpenAiLoginFlow(page, frameLocator);
+  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Hosted compact OpenAI login smoke did not leave provider auth connected."));
   await frameLocator.getByText("Ready to send.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show compact ready-to-send status for the experimental account path."));
   await assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator);
   if (failures.length > 0) {
@@ -686,6 +692,7 @@ try {
   assertJetBrainsContext(chatCommandRequest?.payload?.context);
 
   await assertJetBrainsConfirmedEditLifecycle(page, frameLocator);
+  await assertStopResponseUsability(page, frameLocator);
 
   const finalLayoutMetrics = await collectJetBrainsIframeLayoutMetrics(frameLocator);
   assertJetBrainsHostedLayout(finalLayoutMetrics, "post-chat JetBrains wrapper iframe");
@@ -837,6 +844,73 @@ async function openComposerDrawer(frameLocator, testId) {
   if (!await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
     await drawer.locator(":scope > summary").click();
   }
+}
+
+async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
+  const compactSetup = frameLocator.locator("[data-testid='compact-host-setup']").first();
+  if (await compactSetup.isVisible().catch(() => false)) {
+    await compactSetup.locator(":scope > summary").click().catch(() => undefined);
+  }
+  const providerDetails = frameLocator.locator("[data-testid='provider-setup-details']").first();
+  const providerSummary = providerDetails.locator(":scope > summary").first();
+  if (!await frameLocator.locator("[data-testid='provider-auth-login']").first().isVisible().catch(() => false)) {
+    await providerSummary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+    if (!await providerDetails.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
+      await providerSummary.click({ timeout: 5000 });
+    }
+  }
+  const authState = frameLocator.locator("[data-testid='provider-auth-state']").first();
+  await authState.waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Hosted compact OpenAI login state panel was not mounted."));
+  const initialStatus = await authState.getAttribute("data-provider-auth-status").catch(() => "");
+  if (initialStatus !== "login_available") {
+    failures.push(`Hosted compact OpenAI login smoke expected login_available before click, got ${String(initialStatus)}.`);
+  }
+  const loginButton = frameLocator.locator("[data-testid='provider-auth-login']").first();
+  await loginButton.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return;
+    const shell = document.querySelector(".host-jetbrains");
+    if (shell instanceof HTMLElement) {
+      const shellRect = shell.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      shell.scrollTop += elementRect.top - shellRect.top - Math.max(0, (shell.clientHeight - elementRect.height) / 2);
+      return;
+    }
+    element.scrollIntoView({ block: "center", inline: "nearest" });
+  }).catch(() => undefined);
+  await clickControlWithActionability(loginButton, "Connect OpenAI account (experimental)", { assertHitTest: true });
+  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='pending']").first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe pending state after start."));
+  if (providerAuthStartCount !== 1) {
+    failures.push(`Hosted compact OpenAI login smoke expected one provider-auth start request, observed ${providerAuthStartCount}.`);
+  }
+  await frameLocator.getByRole("button", { name: "Refresh login status", exact: true }).first().click({ timeout: 5000 });
+  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe connected state after refresh."));
+}
+
+async function assertStopResponseUsability(page, frameLocator) {
+  pendingSlowAssistantResponse = true;
+  const beforeAbortCount = chatAbortRequestCount;
+  const beforeCommandCount = chatCommandRequestCount;
+  await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Start slow JetBrains streaming smoke.");
+  await clickSendButtonWithActionability(frameLocator, "slow streaming send before Stop smoke");
+  await frameLocator.locator(".chat-lifecycle-state.streaming").first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Stop smoke did not observe active streaming state before clicking Stop."));
+  const stop = frameLocator.locator("[data-testid='chat-stop-response']").first();
+  await clickControlWithActionability(stop, "Stop response during active streaming", { assertHitTest: true });
+  await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).length >= count, 0, { timeout: 100 }).catch(() => undefined);
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && chatAbortRequestCount <= beforeAbortCount) {
+    await page.waitForTimeout(100);
+  }
+  if (chatCommandRequestCount !== beforeCommandCount + 2) {
+    failures.push(`Stop smoke expected one user_message command and one abort command, observed ${chatCommandRequestCount - beforeCommandCount} command(s).`);
+  }
+  if (chatAbortRequestCount <= beforeAbortCount) {
+    failures.push("Stop smoke did not observe an abort chat command after clicking Stop response.");
+  }
+  await frameLocator.locator(".chat-lifecycle-state.stopped").first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Stop smoke did not show stopped lifecycle after clicking Stop response."));
 }
 
 async function assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator) {
@@ -2551,8 +2625,43 @@ async function startMockRuntimeServer() {
       json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
-      json(response, 200, demoModeFirstMessage ? unavailableProviderAuthStatus() : connectedProviderAuthStatus());
+    if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {      if (demoModeFirstMessage) {
+        json(response, 200, unavailableProviderAuthStatus());
+      } else if (providerAuthSmokeState === "connected" || providerAuthSmokeState === "pending") {
+        providerAuthSmokeState = "connected";
+        json(response, 200, connectedProviderAuthStatus());
+      } else {
+        json(response, 200, availableProviderAuthStatus());
+      }
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/v1/provider-auth/openai/start") {
+      let body;
+      try {
+        body = await readRequestBody(request);
+      } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+          json(response, 413, { error: "Request body too large" });
+          return;
+        }
+        json(response, 400, { error: "Invalid provider auth request body" });
+        return;
+      }
+      let parsedBody;
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {
+        json(response, 400, { error: "Invalid provider auth JSON" });
+        return;
+      }
+      runtimeLogEntry.body = parsedBody;
+      if (parsedBody?.experimentalCodexLike !== true) {
+        json(response, 400, { error: "Experimental login start requires explicit opt-in" });
+        return;
+      }
+      providerAuthStartCount += 1;
+      providerAuthSmokeState = "pending";
+      json(response, 200, pendingProviderAuthStatus());
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
@@ -2582,6 +2691,9 @@ async function startMockRuntimeServer() {
       runtimeLogEntry.body = parsedBody;
       chatCommandRequestCount += 1;
       chatCommandRequest = parsedBody;
+      if (chatCommandRequest?.type === "abort") {
+        chatAbortRequestCount += 1;
+      }
       const chatId = decodeURIComponent(commandMatch[1]);
       json(response, 200, {
         accepted: true,
@@ -2671,6 +2783,39 @@ function emitAssistantResponse(chatId) {
 function emitAssistantResponseToSubscriber(chatId, subscriber) {
   const customAssistantContent = nextAssistantResponseContent;
   nextAssistantResponseContent = undefined;
+  if (pendingSlowAssistantResponse) {
+    pendingSlowAssistantResponse = false;
+    mockAssistantMessageCounter += 1;
+    try {
+      writeSseToSubscriber(subscriber, { type: "stream_started", chatId, payload: { role: "assistant" } });
+      writeSseToSubscriber(subscriber, { type: "stream_delta", chatId, payload: { delta: { content: "JetBrains slow" } } });
+      setTimeout(() => {
+        if (!isWritableSseResponse(subscriber.response)) return;
+        try {
+          writeSseToSubscriber(subscriber, {
+            type: "message_added",
+            chatId,
+            payload: {
+              message: {
+                id: `${chatId}-assistant-slow-smoke-${mockAssistantMessageCounter}`,
+                chatId,
+                role: "assistant",
+                content: "JetBrains slow Stop smoke",
+                createdAt: new Date(0).toISOString(),
+                status: "complete",
+              },
+            },
+          });
+          writeSseToSubscriber(subscriber, { type: "stream_finished", chatId, payload: { finishReason: "stop" } });
+        } catch {
+          undefined;
+        }
+      }, 3000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   const assistantChunks = customAssistantContent === undefined
     ? (demoModeFirstMessage ? ["JetBrains", " Demo Mode smoke"] : ["JetBrains", " login smoke"])
     : [customAssistantContent];
@@ -2720,6 +2865,37 @@ function isWritableSseResponse(response) {
 
 function writeSse(response, event) {
   response.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+function availableProviderAuthStatus() {
+  return {
+    provider: "openai",
+    configured: false,
+    status: "login_available",
+    authSource: "none",
+    supportsLogin: true,
+    supportsApiKey: true,
+    cloudRequired: false,
+    message: "Experimental OpenAI account login is available in the local mock runtime.",
+  };
+}
+
+function pendingProviderAuthStatus() {
+  return {
+    provider: "openai",
+    configured: false,
+    status: "pending",
+    authSource: "oauth",
+    supportsLogin: true,
+    supportsApiKey: true,
+    cloudRequired: false,
+    sessionId: "smoke-openai-login-session",
+    expiresAt: "2030-01-01T00:00:00Z",
+    scopes: ["openid", "profile", "email"],
+    pollIntervalSeconds: 1,
+    message: "Experimental OpenAI account login is pending in the local mock runtime.",
+    success: true,
+  };
 }
 
 function connectedProviderAuthStatus() {
