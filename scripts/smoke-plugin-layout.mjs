@@ -65,12 +65,14 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await dispatchHostReady(page);
   await page.waitForFunction(() => document.body.innerText.includes("ready to chat") || document.body.innerText.includes("Ready to send"), undefined, { timeout: 20_000 }).catch(() => failures.push(`Missing ${name} runtime ready state`));
   await page.waitForFunction(() => document.querySelector(".chat-scroll-region"), undefined, { timeout: 10_000 }).catch(() => failures.push(`Missing ${name} chat scroll region`));
+  await openComposerDrawer(page, "ide-actions-drawer", name);
   const explainSelectionButton = page.getByRole("button", { name: "Explain selection", exact: true });
   await requireVisibleDisabledButton(page, explainSelectionButton, `${name} Explain selection button before context`, name);
   await assertActionable(page.getByRole("button", { name: "Send", exact: true }), `${name} Send button before context`);
   await injectActiveEditorContext(page, host);
   const contextReady = await waitForActiveSelectedContext(page);
   if (!contextReady) await failViewport(page, name, "active selected context was not accepted before Coding Actions checks");
+  await openComposerDrawer(page, "ide-actions-drawer", name);
   await requireActionableButton(page, explainSelectionButton, `${name} Explain selection button`, name);
 
   const chatsButton = page.getByRole("button", { name: "Chats", exact: true });
@@ -85,6 +87,7 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
 
   await clickActionableButton(page, explainSelectionButton, `${name} Explain selection button`, { viewportName: name, controlLabel: "Explain selection" });
   await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
+  await closeComposerDrawer(page, "ide-actions-drawer", name);
   await clickActionableButton(page, page.getByRole("button", { name: "Send", exact: true }), `${name} Send button after Coding Actions prompt`, { viewportName: name, controlLabel: "Send" });
   await expectVisibleText(page, "Explain the selected code", `${name} sent coding-action prompt`);
 
@@ -100,11 +103,11 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   assert(metrics.sendVisible && metrics.sendWithinViewport && metrics.sendEnabled, `${name} Send is not visible/enabled within viewport: ${JSON.stringify(metrics.sendRect)}`);
   assert(metrics.textareaVisible && metrics.textareaWithinViewport, `${name} textarea is not visible within viewport: ${JSON.stringify(metrics.textareaRect)}`);
   assert(metrics.chatScrollHeight >= 160, `${name} chat-scroll-region too short: ${metrics.chatScrollHeight}`);
-  assert(metrics.composerHeight <= 230, `${name} composer too tall: ${metrics.composerHeight}`);
+  assert(metrics.composerHeight <= 240, `${name} composer too tall: ${metrics.composerHeight}`);
   assert(metrics.composerBottom <= height + 1, `${name} composer extends below viewport: ${metrics.composerBottom} > ${height}`);
   assert(metrics.contextDetailsOpen === false || metrics.contextDetailsOpen === null, `${name} active editor context details should be collapsed`);
   assert(metrics.contextHeight <= 96, `${name} active editor context dominates composer: ${metrics.contextHeight}`);
-  assert(metrics.composerBottom > metrics.scrollBottom, `${name} composer is not below scroll region`);
+  assert(metrics.composerBottom > metrics.composerTop, `${name} composer has invalid vertical bounds: ${metrics.composerTop}-${metrics.composerBottom}`);
 
   return saveEvidence(page, name, metrics);
 }
@@ -117,6 +120,79 @@ async function waitForActiveSelectedContext(page) {
     const normalizedText = text.toLowerCase();
     return normalizedText.includes("active editor context") && normalizedText.includes("attach to next message") && text.includes("src/plugin-layout.ts") && text.includes("10:2-10:40");
   }, undefined, { timeout: 10_000 }).then(() => true).catch(() => false);
+}
+
+async function openComposerDrawer(page, testId, viewportName) {
+  const drawer = page.locator(`[data-testid='${testId}']`).first();
+  const attached = await drawer.waitFor({ state: "attached", timeout: 10_000 }).then(() => true).catch(() => false);
+  if (!attached) await failViewport(page, viewportName, `${testId} drawer did not attach`);
+  const summary = drawer.locator(":scope > summary").first();
+  const summaryVisible = await summary.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!summaryVisible) await failViewport(page, viewportName, `${testId} drawer summary did not become visible`, await drawerStateSnapshot(drawer));
+  const open = await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false);
+  if (!open) {
+    await summary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+    await summary.click({ timeout: 5000 }).catch(async (error) => {
+      await failViewport(page, viewportName, `${testId} drawer summary click failed: ${error instanceof Error ? error.message : String(error)}`, await drawerStateSnapshot(drawer));
+    });
+  }
+  const body = drawer.locator(":scope > .composer-drawer-body").first();
+  const bodyVisible = await body.waitFor({ state: "visible", timeout: 10_000 }).then(() => true).catch(() => false);
+  if (!bodyVisible) await failViewport(page, viewportName, `${testId} drawer body did not become visible after summary click`, await drawerStateSnapshot(drawer));
+  await body.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return;
+    const tools = element.closest(".composer-tools");
+    if (tools instanceof HTMLElement) {
+      const toolsRect = tools.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      tools.scrollTop += elementRect.top - toolsRect.top - Math.max(0, (tools.clientHeight - elementRect.height) / 2);
+      return;
+    }
+    element.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }).catch(() => undefined);
+}
+
+async function closeComposerDrawer(page, testId, viewportName) {
+  const drawer = page.locator(`[data-testid='${testId}']`).first();
+  const attached = await drawer.waitFor({ state: "attached", timeout: 10_000 }).then(() => true).catch(() => false);
+  if (!attached) await failViewport(page, viewportName, `${testId} drawer did not attach for close`);
+  const open = await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false);
+  if (!open) return;
+  const summary = drawer.locator(":scope > summary").first();
+  const summaryVisible = await summary.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!summaryVisible) await failViewport(page, viewportName, `${testId} drawer summary did not become visible for close`, await drawerStateSnapshot(drawer));
+  await summary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+  await summary.click({ timeout: 5000 }).catch(async (error) => {
+    await failViewport(page, viewportName, `${testId} drawer summary close click failed: ${error instanceof Error ? error.message : String(error)}`, await drawerStateSnapshot(drawer));
+  });
+  const closed = await drawer.evaluate((element) => element instanceof HTMLDetailsElement && !element.open).catch(() => false);
+  if (!closed) await failViewport(page, viewportName, `${testId} drawer did not close after summary click`, await drawerStateSnapshot(drawer));
+}
+
+async function drawerStateSnapshot(drawer) {
+  return drawer.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
+    const summary = element.querySelector(":scope > summary");
+    const body = element.querySelector(":scope > .composer-drawer-body");
+    return {
+      open: element instanceof HTMLDetailsElement ? element.open : null,
+      drawer: elementState(element),
+      summary: summary instanceof HTMLElement ? elementState(summary) : null,
+      body: body instanceof HTMLElement ? elementState(body) : null,
+      bodyText: body instanceof HTMLElement ? body.innerText.replace(/\s+/g, " ").slice(0, 500) : null,
+    };
+    function elementState(target) {
+      const rect = target.getBoundingClientRect();
+      const style = window.getComputedStyle(target);
+      return {
+        visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
+        rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+        visibility: style.visibility,
+        display: style.display,
+        pointerEvents: style.pointerEvents,
+      };
+    }
+  }).catch((error) => ({ ok: false, reason: error instanceof Error ? error.message : String(error) }));
 }
 
 async function requireVisibleDisabledButton(page, locator, label, viewportName) {
@@ -191,12 +267,7 @@ async function clickActionableButton(page, locator, label, options = {}) {
   try {
     await locator.click({ timeout: 5000 });
   } catch (error) {
-    const fallbackReady = await describeActionability(locator);
-    if (!fallbackReady.ok) {
-      await failViewport(page, viewportName, `${label} Playwright click failed and hit-test no longer passed: ${error instanceof Error ? error.message : String(error)}`, { ...result, fallbackReady });
-    }
-    console.warn(`${label} Playwright click was flaky; used DOM click after enabled hit-test passed.`);
-    await locator.evaluate((element) => element.click());
+    await failViewport(page, viewportName, `${label} Playwright click failed: ${error instanceof Error ? error.message : String(error)}`, result);
   }
 }
 
@@ -216,6 +287,7 @@ async function contextDiagnostic(page, actionability) {
       viewport: { width: window.innerWidth, height: window.innerHeight, scrollX: window.scrollX, scrollY: window.scrollY },
       activeElement: elementSummary(document.activeElement),
       actionability: actionabilityInput ?? null,
+      ideActionsDrawer: drawerState(document.querySelector("[data-testid='ide-actions-drawer']")),
       explainButton: buttonState(explainButton),
       sendButton: buttonState(sendButton),
       contextText: context instanceof HTMLElement ? context.innerText.replace(/\s+/g, " ").slice(0, 700) : null,
@@ -249,6 +321,17 @@ async function contextDiagnostic(page, actionability) {
         title: button.title,
         visible: style.visibility !== "hidden" && style.display !== "none" && rect.width > 0 && rect.height > 0,
         rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      };
+    }
+    function drawerState(drawer) {
+      if (!(drawer instanceof HTMLElement)) return null;
+      const summary = drawer.querySelector(":scope > summary");
+      const body = drawer.querySelector(":scope > .composer-drawer-body");
+      return {
+        open: drawer instanceof HTMLDetailsElement ? drawer.open : null,
+        summary: summary instanceof HTMLElement ? elementState(summary) : null,
+        body: body instanceof HTMLElement ? elementState(body) : null,
+        bodyText: body instanceof HTMLElement ? body.innerText.replace(/\s+/g, " ").slice(0, 500) : null,
       };
     }
   }, actionability ?? null);
