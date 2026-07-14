@@ -157,7 +157,7 @@ try {
 
   await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
   await expectHiddenHeroTitle(page, "VS Code hosted packaged GUI hero title");
-  await expectVisibleText(page, "Chat readiness", "hosted chat readiness card");
+  await expectBodyVisibleText(page, "Chat readiness", "hosted chat readiness card");
   await expectAttachedText(page, "Conversations", "hosted conversations workbench");
   await expectAttachedText(page, "Coding Actions", "hosted coding actions workbench");
   const bodyText = (await page.locator("body").innerText()).trim();
@@ -196,7 +196,7 @@ try {
   await expectAttachedText(page, "bridge vscode", "VS Code bridge mode badge");
   await expectAttachedText(page, "VS Code controlled actions", "controlled action availability");
   await expectAttachedText(page, "Provider setup", "VS Code provider setup surface");
-  await expectVisibleText(page, "Demo Mode", "VS Code demo-mode setup surface");
+  await expectBodyVisibleText(page, "Demo Mode", "VS Code demo-mode setup surface");
   await expectAttachedText(page, "Runtime connected", "VS Code runtime readiness surface");
 
   await assertBlockedAuthorityHostPayloadsIgnored(page);
@@ -216,12 +216,12 @@ try {
   if (initialChatText.includes(activeFileExcerptAssistantProposal) || initialChatText.includes("Assistant must not request active file excerpts.")) {
     failures.push("Assistant getActiveFileExcerpt proposal rendered or became actionable.");
   }
-  await expectVisibleText(page, "Read-only IDE action proposal", "compact assistant proposal chat copy");
-  await expectVisibleText(page, "Read-only IDE action proposal", "assistant read-only IDE action proposal card");
-  await expectVisibleText(page, proposalSummary, "assistant proposal summary");
-  await expectVisibleText(page, "Reveal workspace range", "assistant proposal action label");
-  await expectVisibleText(page, `Path: ${proposalPath}`, "assistant proposal workspace-relative path");
-  await expectVisibleText(page, "Range: 4:2-4:8", "assistant proposal range");
+  await expectBodyVisibleText(page, "Read-only IDE action proposal", "compact assistant proposal chat copy");
+  await expectBodyVisibleText(page, "Read-only IDE action proposal", "assistant read-only IDE action proposal card");
+  await expectBodyVisibleText(page, proposalSummary, "assistant proposal summary");
+  await expectBodyVisibleText(page, "Reveal workspace range", "assistant proposal action label");
+  await expectBodyVisibleText(page, `Path: ${proposalPath}`, "assistant proposal workspace-relative path");
+  await expectBodyVisibleText(page, "Range: 4:2-4:8", "assistant proposal range");
   await assertProposalSecretsOnlyInVisibleUi(page, "initial compact proposal render");
 
   const proposalPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
@@ -230,7 +230,7 @@ try {
   const runProposalButton = page.getByRole("button", { name: "Run read-only IDE action", exact: true });
   await runProposalButton.waitFor({ state: "visible", timeout: 10_000 });
   if (await runProposalButton.isDisabled()) failures.push("Run read-only IDE action button was disabled before any proposal request was pending.");
-  await clickButtonWithDomFallback(runProposalButton, "initial read-only IDE action proposal");
+  await clickControlWithActionability(page, runProposalButton, "initial read-only IDE action proposal");
 
   const proposalIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", proposalPreClickIdeRequestCount);
   if (!proposalIdeRequest) {
@@ -248,13 +248,13 @@ try {
 
   const proposalRequestId = proposalIdeRequest?.requestId ?? "gui-ide-proposal-action-missing";
   await openComposerDrawer(page, "ide-actions-drawer");
-  await expectVisibleText(page, "IDE action pending…", "pending proposal IDE action button label");
-  await expectVisibleText(page, "Clear pending IDE action state", "clear pending IDE action state button");
+  await expectBodyVisibleText(page, "IDE action pending…", "pending proposal IDE action button label");
+  await expectBodyVisibleText(page, "Clear pending IDE action state", "clear pending IDE action state button");
   const clearPendingButtonCount = await page.getByRole("button", { name: "Clear pending IDE action state", exact: true }).count();
   if (clearPendingButtonCount !== 1) failures.push(`Expected exactly one clear pending IDE action state button during proposal pending state; found ${clearPendingButtonCount}.`);
 
   const clearPendingButton = page.getByRole("button", { name: "Clear pending IDE action state", exact: true }).first();
-  await clickButtonWithDomFallback(clearPendingButton, "clear pending IDE action state");
+  await clickControlWithActionability(page, clearPendingButton, "clear pending IDE action state", { assertHitTest: true });
   const proposalPostClearIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   if (proposalPostClearIdeRequestCount !== proposalPreClickIdeRequestCount + 1) failures.push("Clearing pending IDE action state posted a new gui.ideActionRequest or changed request count.");
   await expectAttachedText(page, "Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.", "local-only clear pending IDE action note");
@@ -280,7 +280,7 @@ try {
   await expectNoVisibleText(page, staleResultMessage, "stale proposal IDE action result after clear");
 
   const retryPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
-  await clickButtonWithDomFallback(runProposalButton, "retry read-only IDE action proposal");
+  await clickControlWithActionability(page, runProposalButton, "retry read-only IDE action proposal");
   const retryProposalIdeRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", retryPreClickIdeRequestCount);
   if (!retryProposalIdeRequest) {
     failures.push("Retrying Run read-only IDE action did not send a fresh gui.ideActionRequest.");
@@ -299,8 +299,8 @@ try {
     requestId: retryProposalRequestId,
     payload: { phase: "running", status: "inProgress", summary: proposalProgressSummary, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: proposalPath },
   });
-  await expectVisibleText(page, "Reveal range: inProgress", "correlated proposal IDE action progress");
-  await expectVisibleText(page, proposalProgressSummary, "proposal IDE action progress summary");
+  await expectBodyVisibleText(page, "Reveal range: inProgress", "correlated proposal IDE action progress");
+  await expectBodyVisibleText(page, proposalProgressSummary, "proposal IDE action progress summary");
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -308,10 +308,10 @@ try {
     requestId: retryProposalRequestId,
     payload: { status: "succeeded", message: proposalResultMessage, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: proposalPath, range: proposalRange },
   });
-  await expectVisibleText(page, "Reveal range: succeeded", "correlated proposal IDE action result");
-  await expectVisibleText(page, proposalResultMessage, "proposal IDE action result message");
-  await expectVisibleText(page, `Path: ${proposalPath}`, "proposal IDE action result path");
-  await expectVisibleText(page, "Range: 4:2-4:8", "proposal IDE action result range");
+  await expectBodyVisibleText(page, "Reveal range: succeeded", "correlated proposal IDE action result");
+  await expectBodyVisibleText(page, proposalResultMessage, "proposal IDE action result message");
+  await expectBodyVisibleText(page, `Path: ${proposalPath}`, "proposal IDE action result path");
+  await expectBodyVisibleText(page, "Range: 4:2-4:8", "proposal IDE action result range");
   await assertProposalSecretsOnlyInVisibleUi(page, "matched retry proposal result render");
 
   await runSafeEditProposalScenario(page);
@@ -325,8 +325,8 @@ try {
     const firstMessageTextarea = page.getByPlaceholder("Ask about the current file, selection, or project...");
     await firstMessageTextarea.fill("VS Code packaged wrapper visual first message.");
     await clickSendButtonWithActionability(page, "VS Code first-message visual smoke");
-    await expectVisibleText(page, "VS Code packaged wrapper visual first message.", "VS Code first-message user bubble");
-    await expectVisibleText(page, "VS Code wrapper canned chat response.", "VS Code first-message assistant bubble");
+    await expectBodyVisibleText(page, "VS Code packaged wrapper visual first message.", "VS Code first-message user bubble");
+    await expectBodyVisibleText(page, "VS Code wrapper canned chat response.", "VS Code first-message assistant bubble");
   }
 
   await dispatchHostMessage(page, {
@@ -341,7 +341,7 @@ try {
     },
   });
   await openComposerDrawer(page, "ide-actions-drawer");
-  await expectVisibleText(page, "Active editor context", "active context preview card");
+  await expectBodyVisibleText(page, "Active editor context", "active context preview card");
   await expectAttachedText(page, `File: ${activeContextPath}`, "active context safe file label");
   await expectAttachedText(page, "Selection range: 7:1-7:12", "active context safe selection range");
   await expectAttachedText(page, activeContextSelection, "bounded active context preview text");
@@ -394,7 +394,7 @@ try {
   }
 
   const requestId = ideRequest?.requestId ?? "gui-ide-action-missing";
-  await expectVisibleText(page, "IDE action pending…", "manual getContext pending button label");
+  await expectBodyVisibleText(page, "IDE action pending…", "manual getContext pending button label");
   const duplicateManualClickCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   await getContextButton.click({ force: true }).catch(() => undefined);
   await page.waitForTimeout(100);
@@ -406,8 +406,8 @@ try {
     requestId,
     payload: { phase: "checkingPolicy", status: "inProgress", summary: progressSummary, cloudRequired: false, action: "getContextSnapshot" },
   });
-  await expectVisibleText(page, "Get IDE context: inProgress", "correlated IDE action progress");
-  await expectVisibleText(page, progressSummary, "IDE action progress summary");
+  await expectBodyVisibleText(page, "Get IDE context: inProgress", "correlated IDE action progress");
+  await expectBodyVisibleText(page, progressSummary, "IDE action progress summary");
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -415,9 +415,9 @@ try {
     requestId,
     payload: { status: "succeeded", message: resultMessage, cloudRequired: false, action: "getContextSnapshot", context: { source: "vscode", hasActiveEditor: true, workspaceFolderCount: 1 } },
   });
-  await expectVisibleText(page, "Get IDE context: succeeded", "correlated IDE action result");
-  await expectVisibleText(page, resultMessage, "IDE action result message");
-  await expectVisibleText(page, "Result context: source vscode · active editor present yes · workspace folders 1", "IDE action result context metadata");
+  await expectBodyVisibleText(page, "Get IDE context: succeeded", "correlated IDE action result");
+  await expectBodyVisibleText(page, resultMessage, "IDE action result message");
+  await expectBodyVisibleText(page, "Result context: source vscode · active editor present yes · workspace folders 1", "IDE action result context metadata");
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -428,7 +428,7 @@ try {
   await page.waitForTimeout(150);
   const rejectedVisible = await page.getByText(rejectedSecretMessage, { exact: false }).first().isVisible().catch(() => false);
   if (rejectedVisible) failures.push("Schema-invalid/free-form host.ideActionResult with a secret-like message rendered in the DOM.");
-  await expectVisibleText(page, "Get IDE context: succeeded", "valid IDE action result remains visible after invalid result");
+  await expectBodyVisibleText(page, "Get IDE context: succeeded", "valid IDE action result remains visible after invalid result");
 
   const openPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   await openFileButton.click();
@@ -446,9 +446,9 @@ try {
     requestId: openRequestId,
     payload: { status: "succeeded", message: openResultMessage, cloudRequired: false, action: "openWorkspaceFile", workspaceRelativePath: liveContextPath },
   });
-  await expectVisibleText(page, "Open file: succeeded", "correlated open file IDE action result");
-  await expectVisibleText(page, openResultMessage, "open file IDE action result message");
-  await expectVisibleText(page, `Result path: ${liveContextPath}`, "open file IDE action result path metadata");
+  await expectBodyVisibleText(page, "Open file: succeeded", "correlated open file IDE action result");
+  await expectBodyVisibleText(page, openResultMessage, "open file IDE action result message");
+  await expectBodyVisibleText(page, `Result path: ${liveContextPath}`, "open file IDE action result path metadata");
 
   const revealPreClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   await revealRangeButton.click();
@@ -466,17 +466,17 @@ try {
     requestId: revealRequestId,
     payload: { phase: "checkingPolicy", status: "inProgress", summary: revealProgressSummary, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: liveContextPath, range: { start: { line: 9, character: 2 }, end: { line: 9, character: 18 } } },
   });
-  await expectVisibleText(page, "Reveal range: inProgress", "correlated reveal range IDE action progress");
-  await expectVisibleText(page, revealProgressSummary, "reveal range IDE action progress summary");
+  await expectBodyVisibleText(page, "Reveal range: inProgress", "correlated reveal range IDE action progress");
+  await expectBodyVisibleText(page, revealProgressSummary, "reveal range IDE action progress summary");
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionResult",
     requestId: revealRequestId,
     payload: { status: "succeeded", message: revealResultMessage, cloudRequired: false, action: "revealWorkspaceRange", workspaceRelativePath: liveContextPath, range: { start: { line: 9, character: 2 }, end: { line: 9, character: 18 } } },
   });
-  await expectVisibleText(page, "Reveal range: succeeded", "correlated reveal range IDE action result");
-  await expectVisibleText(page, revealResultMessage, "reveal range IDE action result message");
-  await expectVisibleText(page, `Result path: ${liveContextPath} · result range: 9:2-9:18`, "reveal range IDE action result path/range metadata");
+  await expectBodyVisibleText(page, "Reveal range: succeeded", "correlated reveal range IDE action result");
+  await expectBodyVisibleText(page, revealResultMessage, "reveal range IDE action result message");
+  await expectBodyVisibleText(page, `Result path: ${liveContextPath} · result range: 9:2-9:18`, "reveal range IDE action result path/range metadata");
 
   await openComposerDrawer(page, "ide-actions-drawer");
   const activeExcerptButton = page.getByRole("button", { name: "Attach active file excerpt", exact: true });
@@ -496,7 +496,7 @@ try {
     if (hasForbiddenPrivilegedKeys(activeExcerptIdeRequest.payload)) failures.push("Active file excerpt IDE action request payload contained privileged fields.");
   }
   const activeExcerptRequestId = activeExcerptIdeRequest?.requestId ?? "gui-active-file-excerpt-missing";
-  await expectVisibleText(page, "Active file excerpt pending…", "active file excerpt pending button label");
+  await expectBodyVisibleText(page, "Active file excerpt pending…", "active file excerpt pending button label");
   const duplicateActiveExcerptCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   await activeExcerptButton.click({ force: true }).catch(() => undefined);
   await page.waitForTimeout(100);
@@ -530,19 +530,19 @@ try {
     requestId: activeExcerptRequestId,
     payload: { phase: "running", status: "inProgress", summary: "Reading active visible editor excerpt.", cloudRequired: false, action: "getActiveFileExcerpt" },
   });
-  await expectVisibleText(page, "Attach active file excerpt: inProgress", "correlated active-file excerpt progress");
+  await expectBodyVisibleText(page, "Attach active file excerpt: inProgress", "correlated active-file excerpt progress");
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionResult",
     requestId: activeExcerptRequestId,
     payload: activeFileExcerptResultPayload({ source: "vscode", text: activeFileExcerptText, workspaceRelativePath: activeFileExcerptPath }),
   });
-  await expectVisibleText(page, "Attach active file excerpt: succeeded", "correlated active-file excerpt result");
-  await expectVisibleText(page, "Active file excerpt", "active-file excerpt preview card");
+  await expectBodyVisibleText(page, "Attach active file excerpt: succeeded", "correlated active-file excerpt result");
+  await expectBodyVisibleText(page, "Active file excerpt", "active-file excerpt preview card");
   await expectAttachedText(page, `File: ${activeFileExcerptPath}`, "active-file excerpt file label");
   await expectAttachedText(page, "Excerpt range: 3:0-5:1", "active-file excerpt range label");
   await expectAttachedText(page, activeFileExcerptText, "active-file excerpt bounded preview text");
-  await expectVisibleText(page, "Attach excerpt to next message", "active-file excerpt default include toggle");
+  await expectBodyVisibleText(page, "Attach excerpt to next message", "active-file excerpt default include toggle");
   await assertBrowserStorageDoesNotContain(page, [activeFileExcerptPath, activeFileExcerptText], "active-file excerpt preview storage check");
 
   await runExplicitContextBundleScenario(page);
@@ -550,7 +550,7 @@ try {
   const chatCommandCountBeforeActiveExcerptSend = countChatCommandPosts();
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(activeFileExcerptPrompt);
   await clickSendButtonWithActionability(page, "VS Code active-file excerpt send");
-  await expectVisibleText(page, activeFileExcerptPrompt, "VS Code active-file excerpt user bubble");
+  await expectBodyVisibleText(page, activeFileExcerptPrompt, "VS Code active-file excerpt user bubble");
   const activeExcerptChatPosts = countChatCommandPosts() - chatCommandCountBeforeActiveExcerptSend;
   if (activeExcerptChatPosts !== 1) failures.push(`Active-file excerpt send posted ${activeExcerptChatPosts} chat commands instead of exactly one.`);
   assertActiveFileExcerptChatCommand(chatCommandBodies.at(-1), "vscode");
@@ -665,26 +665,38 @@ async function getGuiMessageCount(page, type) {
 async function openComposerDrawer(page, testId) {
   const drawer = page.locator(`[data-testid='${testId}']`).first();
   await drawer.waitFor({ state: "attached", timeout: 10_000 });
-  await drawer.evaluate((element) => {
-    if (element instanceof HTMLDetailsElement) element.open = true;
-    element.scrollIntoView({ block: "nearest", inline: "nearest" });
+  const summary = drawer.locator(":scope > summary").first();
+  if (!await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
+    await summary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+    await summary.click({ timeout: 5000 });
+  }
+  const body = drawer.locator(":scope > .composer-drawer-body").first();
+  await body.waitFor({ state: "visible", timeout: 10_000 });
+  await body.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return;
     const tools = element.closest(".composer-tools");
-    if (tools instanceof HTMLElement) tools.scrollTop = element.offsetTop;
-  });
-  await drawer.locator(":scope > .composer-drawer-body").first().waitFor({ state: "attached", timeout: 10_000 });
+    if (tools instanceof HTMLElement) {
+      const toolsRect = tools.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      tools.scrollTop += elementRect.top - toolsRect.top - Math.max(0, (tools.clientHeight - elementRect.height) / 2);
+      return;
+    }
+    element.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }).catch(() => undefined);
+  await body.waitFor({ state: "visible", timeout: 10_000 });
 }
 
 async function runSafeEditProposalScenario(page) {
   const chatCommandCountBeforeEditProposal = countChatCommandPosts();
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(editProposalPrompt);
   await clickSendButtonWithActionability(page, "VS Code safe edit proposal trigger");
-  await expectVisibleText(page, editProposalPrompt, "VS Code safe edit proposal trigger prompt");
+  await expectBodyVisibleText(page, editProposalPrompt, "VS Code safe edit proposal trigger prompt");
   const editProposalChatPosts = countChatCommandPosts() - chatCommandCountBeforeEditProposal;
   if (editProposalChatPosts !== 1) failures.push(`Safe edit proposal trigger posted ${editProposalChatPosts} chat commands instead of exactly one.`);
-  await expectVisibleText(page, "Propose safe edit", "VS Code safe edit proposal surface");
-  await expectVisibleText(page, editProposalSummary, "VS Code safe edit proposal summary");
-  await expectVisibleText(page, editProposalPath, "VS Code safe edit proposal path");
-  await expectVisibleText(page, "Apply in VS Code after review", "VS Code safe edit apply button");
+  await expectBodyVisibleText(page, "Propose safe edit", "VS Code safe edit proposal surface");
+  await expectBodyVisibleText(page, editProposalSummary, "VS Code safe edit proposal summary");
+  await expectBodyVisibleText(page, editProposalPath, "VS Code safe edit proposal path");
+  await expectBodyVisibleText(page, "Apply in VS Code after review", "VS Code safe edit apply button");
   const preClickApplyRequestCount = await getGuiMessageCount(page, "gui.applyWorkspaceEditRequest");
   await page.getByRole("button", { name: "Apply in VS Code after review", exact: true }).click();
   const applyRequest = await waitForGuiMessageAfter(page, "gui.applyWorkspaceEditRequest", preClickApplyRequestCount);
@@ -697,7 +709,7 @@ async function runSafeEditProposalScenario(page) {
     if (hasForbiddenPrivilegedKeys(applyRequest.payload, { allowEditProposalShape: true })) failures.push("Safe edit apply request payload contained forbidden privileged fields outside the bounded edit proposal shape.");
   }
   const applyRequestId = applyRequest?.requestId ?? "gui-edit-proposal-apply-missing";
-  await expectVisibleText(page, "VS Code apply request pending…", "VS Code pending safe edit apply label");
+  await expectBodyVisibleText(page, "VS Code apply request pending…", "VS Code pending safe edit apply label");
   const duplicateApplyRequestCount = await getGuiMessageCount(page, "gui.applyWorkspaceEditRequest");
   await page.getByRole("button", { name: "VS Code apply request pending…", exact: true }).click({ force: true }).catch(() => undefined);
   await page.waitForTimeout(100);
@@ -709,39 +721,33 @@ async function runSafeEditProposalScenario(page) {
     requestId: applyRequestId,
     payload: { status: "applied", message: "Edits were applied by the host after confirmation.", cloudRequired: false, appliedEditCount: 1, affectedFiles: [editProposalPath] },
   });
-  await expectVisibleText(page, "Host apply result: applied", "VS Code safe edit apply result");
-  await expectVisibleText(page, "Affected files: src/parity-edit.ts", "VS Code safe edit affected files");
-  await expectVisibleText(page, "Next safe step: run verification.", "VS Code post-apply verification cue");
+  await expectBodyVisibleText(page, "Host apply result: applied", "VS Code safe edit apply result");
+  await expectBodyVisibleText(page, "Affected files: src/parity-edit.ts", "VS Code safe edit affected files");
+  await expectBodyVisibleText(page, "Next safe step: run verification.", "VS Code post-apply verification cue");
 }
 
 async function runProjectMemoryScenario(page) {
   await openComposerDrawer(page, "task-agent-tools-drawer");
-  await expectVisibleText(page, "Local project memory", "VS Code project memory surface");
-  await expectVisibleText(page, memoryNoteTitle, "VS Code local memory note title");
+  await expectBodyVisibleText(page, "Local project memory", "VS Code project memory surface");
+  await expectBodyVisibleText(page, memoryNoteTitle, "VS Code local memory note title");
   await expectAttachedText(page, "engine-owned", "VS Code project memory engine-owned badge");
-  await expectVisibleText(page, "Manual bounded notes only", "VS Code project memory local-only policy");
+  await expectBodyVisibleText(page, "Manual bounded notes only", "VS Code project memory local-only policy");
   await expectAttachedText(page, memoryNoteText, "VS Code project memory bounded preview");
-  const attachedMemory = await page.evaluate((title) => {
-    const drawer = document.querySelector("[data-testid='task-agent-tools-drawer']");
-    const buttons = Array.from(drawer?.querySelectorAll("button") ?? []);
-    const button = buttons.find((candidate) => candidate.textContent?.trim() === "Attach task-linked memory to next message" && candidate.closest(".provider-item")?.textContent?.includes(title));
-    if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
-    button.scrollIntoView({ block: "nearest", inline: "nearest" });
-    button.click();
-    return true;
-  }, memoryNoteTitle);
-  if (!attachedMemory) failures.push("Project memory attach button was not available inside the opened task-agent drawer.");
-  await expectVisibleText(page, "Project memory", "VS Code project memory item in bundle");
+  const taskAgentDrawer = page.locator("[data-testid='task-agent-tools-drawer']").first();
+  const memoryNote = taskAgentDrawer.locator(".provider-item", { hasText: memoryNoteTitle }).filter({ hasText: memoryNoteText }).first();
+  const attachMemoryButton = memoryNote.getByRole("button", { name: "Attach task-linked memory to next message", exact: true });
+  await clickControlWithActionability(page, attachMemoryButton, "Attach task-linked memory to next message", { assertHitTest: true });
+  await expectBodyVisibleText(page, "Project memory", "VS Code project memory item in bundle");
   await expectAttachedText(page, "attached to next message", "VS Code project memory attached badge");
   await assertBrowserStorageDoesNotContain(page, [memoryNoteTitle, memoryNoteText], "VS Code project memory surface storage check");
 }
 
 async function runWorkspaceSnippetSearchScenario(page) {
   await openComposerDrawer(page, "ide-actions-drawer");
-  await expectVisibleText(page, "Project snippets", "VS Code snippet search surface");
+  await expectBodyVisibleText(page, "Project snippets", "VS Code snippet search surface");
   await expectAttachedText(page, "IDE search", "VS Code snippet search IDE badge");
   await page.getByPlaceholder("function name or symbol text").fill(snippetSearchQuery);
-  await expectVisibleText(page, "Literal query ready", "VS Code snippet search literal validation");
+  await expectBodyVisibleText(page, "Literal query ready", "VS Code snippet search literal validation");
   const preClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   await page.getByRole("button", { name: "Search project snippets", exact: true }).click();
   const searchRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", preClickIdeRequestCount);
@@ -752,26 +758,26 @@ async function runWorkspaceSnippetSearchScenario(page) {
     if (hasForbiddenPrivilegedKeys(searchRequest.payload)) failures.push("Snippet search IDE action request payload contained privileged fields.");
   }
   const searchRequestId = searchRequest?.requestId ?? "gui-workspace-snippet-search-missing";
-  await expectVisibleText(page, "Project snippet search pending…", "VS Code snippet search pending label");
+  await expectBodyVisibleText(page, "Project snippet search pending…", "VS Code snippet search pending label");
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionResult",
     requestId: searchRequestId,
     payload: { status: "succeeded", message: "Workspace snippets ready.", cloudRequired: false, action: "searchWorkspaceSnippets", queryLabel: snippetSearchQuery, resultCount: 1, snippets: [{ workspaceRelativePath: snippetSearchPath, languageId: "typescript", range: { start: { line: 2, character: 0 }, end: { line: 2, character: 33 } }, text: snippetSearchText }], truncated: false },
   });
-  await expectVisibleText(page, "1 sanitized snippet returned", "VS Code snippet search result status");
-  await expectVisibleText(page, snippetSearchPath, "VS Code snippet search result path");
+  await expectBodyVisibleText(page, "1 sanitized snippet returned", "VS Code snippet search result status");
+  await expectBodyVisibleText(page, snippetSearchPath, "VS Code snippet search result path");
   await expectAttachedText(page, snippetSearchText, "VS Code snippet search bounded preview");
   await page.locator("label.provider-item", { hasText: snippetSearchPath }).getByRole("checkbox").check();
   await page.getByRole("button", { name: "Attach selected snippets (1)", exact: true }).click();
-  await expectVisibleText(page, "Added 1 project snippet to the one-shot bundle.", "VS Code snippet search bundle attach status");
+  await expectBodyVisibleText(page, "Added 1 project snippet to the one-shot bundle.", "VS Code snippet search bundle attach status");
   await assertBrowserStorageDoesNotContain(page, [snippetSearchPath, snippetSearchText], "VS Code snippet search storage check");
 }
 
 async function runVerificationCommandScenario(page) {
   await openComposerDrawer(page, "ide-actions-drawer");
-  await expectVisibleText(page, "Verification commands", "VS Code verification commands surface");
-  await expectVisibleText(page, "Allowlisted local verification only", "VS Code verification command policy");
+  await expectBodyVisibleText(page, "Verification commands", "VS Code verification commands surface");
+  await expectBodyVisibleText(page, "Allowlisted local verification only", "VS Code verification command policy");
   const preClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
   await page.getByRole("button", { name: "Repository check", exact: true }).click();
   const verificationRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", preClickIdeRequestCount);
@@ -782,23 +788,23 @@ async function runVerificationCommandScenario(page) {
     if (hasForbiddenPrivilegedKeys(verificationRequest.payload)) failures.push("Verification IDE action request payload contained privileged fields.");
   }
   const verificationRequestId = verificationRequest?.requestId ?? "gui-verification-command-missing";
-  await expectVisibleText(page, "Run verification command: pending", "VS Code verification pending preview");
+  await expectBodyVisibleText(page, "Run verification command: pending", "VS Code verification pending preview");
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionProgress",
     requestId: verificationRequestId,
     payload: { phase: "running", status: "inProgress", summary: "Running repository check.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check" },
   });
-  await expectVisibleText(page, "Run verification command: inProgress", "VS Code verification progress preview");
+  await expectBodyVisibleText(page, "Run verification command: inProgress", "VS Code verification progress preview");
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ideActionResult",
     requestId: verificationRequestId,
     payload: { status: "succeeded", message: "Repository check passed.", cloudRequired: false, action: "runVerificationCommand", commandId: "repository-check", exitCode: 0, durationMs: 12, outputTail: verificationOutputTail, truncated: false },
   });
-  await expectVisibleText(page, "Run verification command: succeeded", "VS Code verification result preview");
-  await expectVisibleText(page, verificationOutputTail, "VS Code verification sanitized output tail");
-  await expectVisibleText(page, "Attach verification result to next message", "VS Code verification explicit attach action");
+  await expectBodyVisibleText(page, "Run verification command: succeeded", "VS Code verification result preview");
+  await expectBodyVisibleText(page, verificationOutputTail, "VS Code verification sanitized output tail");
+  await expectBodyVisibleText(page, "Attach verification result to next message", "VS Code verification explicit attach action");
   await assertBrowserStorageDoesNotContain(page, [verificationOutputTail], "VS Code verification output storage check");
 }
 
@@ -808,7 +814,7 @@ async function runExplicitContextBundleScenario(page) {
     text: bundleExcerptOneText,
     range: { start: { line: 11, character: 0 }, end: { line: 11, character: 34 } },
   });
-  await expectVisibleText(page, bundleExcerptOnePath, "first VS Code bundle excerpt path");
+  await expectBodyVisibleText(page, bundleExcerptOnePath, "first VS Code bundle excerpt path");
   await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
   await expectAttachedText(page, "1/4 excerpts", "first VS Code bundle item");
 
@@ -817,7 +823,7 @@ async function runExplicitContextBundleScenario(page) {
     text: bundleExcerptTwoText,
     range: { start: { line: 12, character: 0 }, end: { line: 12, character: 34 } },
   });
-  await expectVisibleText(page, bundleExcerptTwoPath, "second VS Code bundle excerpt path");
+  await expectBodyVisibleText(page, bundleExcerptTwoPath, "second VS Code bundle excerpt path");
   await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
   await expectAttachedText(page, "2/4 excerpts", "second VS Code bundle item");
   await expectAttachedText(page, "Include bundle with next message", "VS Code bundle include toggle");
@@ -826,13 +832,13 @@ async function runExplicitContextBundleScenario(page) {
   const chatCommandCountBeforeBundleSend = countChatCommandPosts();
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(bundlePrompt);
   await clickSendButtonWithActionability(page, "VS Code explicit context bundle send");
-  await expectVisibleText(page, bundlePrompt, "VS Code bundle user bubble");
+  await expectBodyVisibleText(page, bundlePrompt, "VS Code bundle user bubble");
   const bundleChatPosts = countChatCommandPosts() - chatCommandCountBeforeBundleSend;
   if (bundleChatPosts !== 1) failures.push(`Explicit context bundle send posted ${bundleChatPosts} chat commands instead of exactly one.`);
   assertExplicitContextBundleChatCommand(chatCommandBodies.at(-1), "vscode");
   await openComposerDrawer(page, "ide-actions-drawer");
-  await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "VS Code bundle one-shot clear status");
-  await expectVisibleText(page, "empty", "VS Code bundle empty after send");
+  await expectBodyVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "VS Code bundle one-shot clear status");
+  await expectBodyVisibleText(page, "empty", "VS Code bundle empty after send");
   await expectNoTextInExplicitBundle(page, bundleExcerptOneText, "first VS Code bundle preview after send");
   await expectNoTextInExplicitBundle(page, bundleExcerptTwoText, "second VS Code bundle preview after send");
 
@@ -843,7 +849,7 @@ async function runExplicitContextBundleScenario(page) {
   const chatCommandCountBeforeAfterBundleSend = countChatCommandPosts();
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(afterBundlePrompt);
   await clickSendButtonWithActionability(page, "VS Code post-bundle send");
-  await expectVisibleText(page, afterBundlePrompt, "VS Code post-bundle user bubble");
+  await expectBodyVisibleText(page, afterBundlePrompt, "VS Code post-bundle user bubble");
   const afterBundleChatPosts = countChatCommandPosts() - chatCommandCountBeforeAfterBundleSend;
   if (afterBundleChatPosts !== 1) failures.push(`Post-bundle send posted ${afterBundleChatPosts} chat commands instead of exactly one.`);
   assertNoChatCommandContext(chatCommandBodies.at(-1), "post-bundle send");
@@ -852,7 +858,7 @@ async function runExplicitContextBundleScenario(page) {
     text: activeFileExcerptText,
     range: activeFileExcerptRange,
   });
-  await expectVisibleText(page, activeFileExcerptPath, "restored active-file excerpt path after bundle scenario");
+  await expectBodyVisibleText(page, activeFileExcerptPath, "restored active-file excerpt path after bundle scenario");
   await assertBrowserStorageDoesNotContain(page, [bundleExcerptOnePath, bundleExcerptOneText, bundleExcerptTwoPath, bundleExcerptTwoText], "VS Code bundle final storage check");
 }
 
@@ -872,19 +878,19 @@ async function attachBundleExcerpt(page, excerpt) {
     requestId: request.requestId,
     payload: activeFileExcerptResultPayload({ source: "vscode", text: excerpt.text, workspaceRelativePath: excerpt.path, range: excerpt.range }),
   });
-  await expectVisibleText(page, "Attach active file excerpt: succeeded", "bundle active-file excerpt result");
+  await expectBodyVisibleText(page, "Attach active file excerpt: succeeded", "bundle active-file excerpt result");
 }
 
 async function runDemoModeFirstMessageScenario(page) {
-  await expectVisibleText(page, "Try Demo Mode", "initial no-key Demo Mode action");
+  await expectBodyVisibleText(page, "Try Demo Mode", "initial no-key Demo Mode action");
   const initialSendButton = page.getByRole("button", { name: "Send", exact: true }).last();
   if (!(await initialSendButton.isDisabled().catch(() => false))) failures.push("Demo Mode focused smoke: Send was enabled before enabling Demo Mode in no-key initial state.");
 
   const initialDemoModePostCount = countRuntimeRequests("POST", "/v1/demo-mode");
   const initialChatPostCount = countChatCommandPosts();
   await page.getByRole("button", { name: "Try Demo Mode", exact: true }).first().click();
-  await expectVisibleText(page, "Demo Mode is ready", "Demo Mode ready first-message copy");
-  await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "Demo Mode ready lifecycle copy");
+  await expectBodyVisibleText(page, "Demo Mode is ready", "Demo Mode ready first-message copy");
+  await expectBodyVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "Demo Mode ready lifecycle copy");
 
   const demoModePostCount = countRuntimeRequests("POST", "/v1/demo-mode") - initialDemoModePostCount;
   if (demoModePostCount !== 1) failures.push(`Demo Mode focused smoke expected exactly one POST /v1/demo-mode; observed ${demoModePostCount}.`);
@@ -896,8 +902,8 @@ async function runDemoModeFirstMessageScenario(page) {
   const firstMessageTextarea = page.getByPlaceholder("Ask about the current file, selection, or project...");
   await firstMessageTextarea.fill(prompt);
   await clickSendButtonWithActionability(page, "VS Code Demo Mode first-message visual smoke");
-  await expectVisibleText(page, prompt, "VS Code Demo Mode first-message user bubble");
-  await expectVisibleText(page, "VS Code wrapper canned chat response.", "VS Code Demo Mode first-message assistant bubble");
+  await expectBodyVisibleText(page, prompt, "VS Code Demo Mode first-message user bubble");
+  await expectBodyVisibleText(page, "VS Code wrapper canned chat response.", "VS Code Demo Mode first-message assistant bubble");
 
   const chatPostCount = countChatCommandPosts() - initialChatPostCount;
   if (chatPostCount !== 1) failures.push(`Demo Mode focused smoke expected exactly one chat command POST; observed ${chatPostCount}.`);
@@ -905,17 +911,41 @@ async function runDemoModeFirstMessageScenario(page) {
   await expectTextOccurrenceCount(page, "VS Code wrapper canned chat response.", 1, "Demo Mode canned assistant response");
 }
 
-async function clickButtonWithDomFallback(locator, label) {
-  await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
-  await locator.click({ timeout: 5000 }).catch(async (error) => {
-    const clicked = await locator.evaluate((button) => {
-      if (!(button instanceof HTMLButtonElement) || button.disabled) return false;
-      button.click();
-      return true;
-    }).catch(() => false);
-    if (!clicked) throw error;
-    console.log(`${label}: Playwright click was intercepted; DOM button.click() reached the same explicit user-action handler.`);
+async function centerInNearestScrollContainer(locator) {
+  await locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return;
+    const isWithinViewport = () => {
+      const rect = element.getBoundingClientRect();
+      return rect.top >= 0 && rect.left >= 0 && rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
+    };
+    let parent = element.parentElement;
+    while (parent) {
+      const style = getComputedStyle(parent);
+      const canScroll = /(auto|scroll)/.test(style.overflowY) && parent.scrollHeight > parent.clientHeight + 1;
+      if (canScroll) {
+        const parentRect = parent.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        parent.scrollTop += elementRect.top - parentRect.top - Math.max(0, (parent.clientHeight - elementRect.height) / 2);
+        if (isWithinViewport()) return;
+      }
+      parent = parent.parentElement;
+    }
+    element.scrollIntoView({ block: "center", inline: "nearest" });
+  }).catch(() => undefined);
+}
+
+async function clickControlWithActionability(page, locator, label, { assertHitTest = false } = {}) {
+  await locator.waitFor({ state: "visible", timeout: 5000 }).catch(async (error) => {
+    throw new Error(`${label}: control did not become visible. ${await controlDiagnostic(page, { waitError: messageOf(error) })}`);
   });
+  await centerInNearestScrollContainer(locator);
+  const before = await describeControl(locator);
+  if (!before.ok || before.disabled) {
+    const diagnostic = await controlDiagnostic(page, { before });
+    if (assertHitTest) throw new Error(`${label}: control failed required hit-test before click. ${diagnostic}`);
+    throw new Error(`${label}: control is not hit-testable/enabled before click. ${diagnostic}`);
+  }
+  await page.mouse.click((before.rect.left + before.rect.right) / 2, (before.rect.top + before.rect.bottom) / 2);
 }
 
 async function clickSendButtonWithActionability(page, label) {
@@ -1217,7 +1247,7 @@ function listen(server, port = 0) {
   });
 }
 
-async function expectVisibleText(page, text, description, timeout = 10_000) {
+async function expectBodyVisibleText(page, text, description, timeout = 10_000) {
   try {
     await page.waitForFunction((needle) => document.body.innerText.includes(needle), text, { timeout });
   } catch (error) {
