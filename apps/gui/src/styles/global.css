@@ -1382,10 +1382,33 @@ pre,
 .host-jetbrains .coding-actions-card .subtle,
 .host-vscode .manual-runner-card .subtle,
 .host-jetbrains .manual-runner-card .subtle,
-.host-jetbrains .ide-actions-card .subtle,
+.host-vscode .ide-actions-card .subtle,
+.host-jetbrains .ide-actions-card .subtle {
+  display: block;
+  max-height: 3.2em;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .host-vscode .attached-context-preview,
 .host-jetbrains .attached-context-preview {
-  display: none;
+  display: block;
+  max-height: 96px;
+  overflow: auto;
+  border: 1px solid #d8e1f6;
+  border-radius: 10px;
+  background: #f8faff;
+  padding: 6px 8px;
+}
+
+.host-vscode .attached-context-preview pre,
+.host-jetbrains .attached-context-preview pre {
+  max-height: 72px;
+  margin: 4px 0 0;
+  padding: 8px;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .host-vscode .manual-runner-plan textarea,
@@ -1815,7 +1838,11 @@ pre,
   .host-jetbrains .coding-actions-card .subtle,
   .host-vscode .ide-actions-card .subtle,
   .host-jetbrains .ide-actions-card .subtle {
-    display: none;
+    display: block;
+    max-height: 3.2em;
+    overflow: auto;
+    font-size: 12px;
+    line-height: 1.35;
   }
 
   .coding-actions-row button,

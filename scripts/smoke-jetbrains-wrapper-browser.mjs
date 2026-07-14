@@ -580,10 +580,11 @@ try {
   }, { version: bridgeVersion, runtimeUrl: panelBasePath, payload: jetbrainsContextSnapshot });
   await openComposerDrawer(frameLocator, "ide-actions-drawer");
   await frameLocator.getByText("Active editor context", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show attached context preview for JetBrains context."));
+  await frameLocator.locator("details.attached-context-card").evaluate((details) => { if (details instanceof HTMLDetailsElement) details.open = true; }).catch(() => failures.push("JetBrains attached context disclosure could not be opened for visible preview assertion."));
   await frameLocator.getByText("jetbrains", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context source label."));
   await frameLocator.getByText("File: src/main/kotlin/ContextSmoke.kt", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show safe JetBrains context file label."));
   await frameLocator.getByText("Language: kotlin", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context language id."));
-  await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show JetBrains context selected text preview."));
+  await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show visible JetBrains context selected text preview."));
   await page.evaluate(({ version, runtimeUrl, payload, requestId }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
@@ -606,7 +607,7 @@ try {
   }, { version: bridgeVersion, payload: liveJetbrainsContextSnapshot, requestId: contextRequestId });
   await frameLocator.getByText("File: src/main/kotlin/LiveContextSmoke.kt", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not replace JetBrains context file label on live refresh."));
   await frameLocator.getByText("Selection range: 16:2-16:34", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not replace JetBrains context selection range on live refresh."));
-  await frameLocator.getByText(liveContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not show live JetBrains context selected text preview."));
+  await frameLocator.getByText(liveContextSelectionMarker, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show visible live JetBrains context selected text preview."));
   if (await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().isVisible().catch(() => false)) {
     failures.push("GUI kept stale JetBrains selected text after live context refresh.");
   }
@@ -618,7 +619,7 @@ try {
       payload,
     });
   }, { version: bridgeVersion, payload: jetbrainsContextSnapshot, requestId: contextRequestId });
-  await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("GUI did not restore JetBrains context after live refresh smoke."));
+  await frameLocator.getByText(activeContextSelectionMarker, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not restore visible JetBrains context preview after live refresh smoke."));
   await assertJetBrainsIdeActionRoundtrip(page, frameLocator);
   await frameLocator.locator("details.attached-context-card").evaluate((details) => { details.open = true; }).catch(() => failures.push("JetBrains attached context details could not be opened for include toggle."));
   const includeContextToggle = frameLocator.locator("label.attached-context-toggle", { hasText: /Attach to next message|Do not attach/ }).getByRole("checkbox");
@@ -1902,8 +1903,8 @@ async function assertJetBrainsActiveFileExcerptRoundtrip(page, frameLocator) {
     .catch(() => failures.push("Iframe GUI did not render active-file excerpt success."));
   await frameLocator.getByText(`File: ${activeFileExcerptPath}`, { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Iframe GUI did not show active-file excerpt file label."));
-  await frameLocator.getByText(activeFileExcerptMarker, { exact: false }).first().waitFor({ state: "attached", timeout: 5000 })
-    .catch(() => failures.push("Iframe GUI did not show active-file excerpt preview text."));
+  await frameLocator.getByText(activeFileExcerptMarker, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Iframe GUI did not show visible active-file excerpt preview text."));
 
   const beforeSend = chatCommandRequestCount;
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill(activeFileExcerptPrompt);
