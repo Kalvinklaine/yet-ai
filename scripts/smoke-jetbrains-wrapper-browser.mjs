@@ -1026,7 +1026,7 @@ async function assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocato
 
 async function waitForAssistantAnswerCount(frameLocator, text, expected, description) {
   await frameLocator.locator(".chat-bubble.assistant", { hasText: text }).nth(expected - 1).waitFor({ state: "visible", timeout: 5000 })
-    .catch(() => failures.push(`Expected ${description} to appear at least ${expected} time(s) in assistant bubbles before assertion: ${text}`));
+    .catch(() => failures.push(`Expected  to appear at least  time(s) in assistant bubbles before assertion: `));
 }
 
 async function assertAssistantAnswerCount(frameLocator, text, expected, description) {
@@ -1035,7 +1035,7 @@ async function assertAssistantAnswerCount(frameLocator, text, expected, descript
     text,
   );
   if (count !== expected) {
-    failures.push(`Expected ${description} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
+    failures.push(`Expected  to appear exactly  time(s) in assistant bubbles, observed : `);
   }
 }
 

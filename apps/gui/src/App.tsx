@@ -3994,11 +3994,14 @@ export function App() {
 
       <section className="card stack secondary-card debug-card">
         <details className="debug-details" data-testid="bridge-debug-details">
-          <summary>Bridge debug</summary>
-          <p className="subtle">Browser mock mode is non-privileged. It only logs bridge messages.</p>
-          <div className="timeline">
-            {bridgeLog.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
-          </div>
+          <summary>Diagnostics / bridge debug</summary>
+          <p className="subtle">Compact UI keeps bridge internals collapsed. Browser mock mode is non-privileged and logs sanitized bridge messages only.</p>
+          <details className="inspect-details">
+            <summary>Inspect bridge message log</summary>
+            <div className="timeline">
+              {bridgeLog.length === 0 ? <div className="timeline-entry">No bridge messages logged.</div> : bridgeLog.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
+            </div>
+          </details>
         </details>
       </section>
     </main>
@@ -4848,8 +4851,6 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDe
 }
 
 function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMessageId, activeIdeActionProposal, rejectedIdeActionProposalSourceMessageId }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; rejectedEditProposalSourceMessageId: string | null; activeIdeActionProposal: IdeActionProposalState | null; rejectedIdeActionProposalSourceMessageId: string | null }) {
-  const [inspectedProposalPayloadKey, setInspectedProposalPayloadKey] = useState<string | null>(null);
-  const [inspectedEditProposalKey, setInspectedEditProposalKey] = useState<string | null>(null);
   const editProposal = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? parseEditProposalContent(message.content) : null;
   const editProposalAnalysis = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? analyzeEditProposalContent(message.content) : { state: "none" as const };
   const editProposalJson = editProposal ? JSON.stringify(editProposal, null, 2) : null;
@@ -4863,35 +4864,55 @@ function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMes
   const isActiveProposal = Boolean(proposalPayloadKey && activeIdeActionProposal?.sourceMessageId === message.id && activeIdeActionProposal.payloadKey === proposalPayloadKey);
   const proposalAnalysis = message.role === "assistant" && isCompleteAssistantIdeActionProposalStatus(message.status) ? analyzeAssistantIdeActionProposalContent(message.content) : { state: "none" as const };
   const isRejectedIdeActionProposal = proposalAnalysis.state === "rejected" && rejectedIdeActionProposalSourceMessageId === message.id;
-  // Key-based inspect state: the JSON is only visible when the user has explicitly
-  // clicked the toggle AND the inspected key still matches the current proposal.
-  // This makes the inspect state a per-(proposal-key) gate instead of a boolean
-  // that can leak the previous proposal's JSON when the payload changes.
-  const editProposalJsonVisible = editProposalKey !== null && inspectedEditProposalKey === editProposalKey;
-  const proposalJsonVisible = proposalPayloadKey !== null && inspectedProposalPayloadKey === proposalPayloadKey;
 
   return (
     <div className={`chat-bubble ${message.role}`}>
       <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
       {editProposal && editProposalJson && editProposalKey ? (
         <div className="assistant-proposal-compact stack">
-          <span>{isActiveEditProposal ? "Proposed a safe edit. Review the proposal card below. It will not apply automatically." : "Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
-          <button type="button" className="link-button" onClick={() => setInspectedEditProposalKey(editProposalJsonVisible ? null : editProposalKey)}>{editProposalJsonVisible ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
-          {editProposalJsonVisible && <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>}
+          <span>{isActiveEditProposal ? "Safe edit proposal ready for review. Nothing applies automatically." : "Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
+          <div className="proposal-summary-grid" aria-label="Edit proposal summary">
+            <span>Files: {editProposal.edits.length}</span>
+            <span>Edits: {editProposal.edits.reduce((count, edit) => count + edit.textReplacements.length, 0)}</span>
+            <span>Confirmation: {editProposal.requiresUserConfirmation ? "required" : "missing"}</span>
+          </div>
+          <details className="inspect-details">
+            <summary>Inspect sanitized proposal JSON</summary>
+            <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>
+          </details>
         </div>
-      ) : isRejectedEditProposal ? (
-        <div className="assistant-proposal-compact stack">
-          <span>Edit proposal detected but rejected. Review the rejection card below; no apply action is available.</span>
+      ) : isRejectedEditProposal && editProposalAnalysis.state === "rejected" ? (
+        <div className="assistant-proposal-compact stack rejection-summary-card" role="status">
+          <strong>Edit proposal blocked</strong>
+          <span>{sanitizeDisplayText(editProposalAnalysis.diagnostic.message)}</span>
+          <span className="subtle">No apply action is available. Security-relevant rejection summary is shown here first.</span>
+          <details className="inspect-details">
+            <summary>Inspect rejection policy details</summary>
+            <pre aria-label="Edit proposal rejection details">{JSON.stringify(sanitizeDisplayValue(editProposalAnalysis.diagnostic), null, 2)}</pre>
+          </details>
         </div>
-      ) : isRejectedIdeActionProposal ? (
-        <div className="assistant-proposal-compact stack">
-          <span>Read-only IDE action proposal detected but rejected. No IDE action is available.</span>
+      ) : isRejectedIdeActionProposal && proposalAnalysis.state === "rejected" ? (
+        <div className="assistant-proposal-compact stack rejection-summary-card" role="status">
+          <strong>IDE action proposal blocked</strong>
+          <span>{sanitizeDisplayText(proposalAnalysis.diagnostic.message)}</span>
+          <span className="subtle">No IDE action is available. Security-relevant rejection summary is shown here first.</span>
+          <details className="inspect-details">
+            <summary>Inspect rejection policy details</summary>
+            <pre aria-label="IDE action proposal rejection details">{JSON.stringify(sanitizeDisplayValue(proposalAnalysis.diagnostic), null, 2)}</pre>
+          </details>
         </div>
       ) : proposal && proposalJson && proposalLabel ? (
         <div className="assistant-proposal-compact stack">
-          <span>{isActiveProposal ? `Proposed a read-only IDE action: ${proposalLabel}. Review the proposal card below. It will not run automatically.` : `Earlier read-only IDE action proposal: ${proposalLabel}. Only the latest valid proposal can be run from the proposal card.`}</span>
-          <button type="button" className="link-button" onClick={() => setInspectedProposalPayloadKey(proposalJsonVisible ? null : proposalPayloadKey)}>{proposalJsonVisible ? "Hide proposal JSON" : "Inspect proposal JSON"}</button>
-          {proposalJsonVisible && <pre aria-label="Assistant proposal JSON">{proposalJson}</pre>}
+          <span>{isActiveProposal ? `Read-only IDE action proposal ready: . It will not run automatically.` : `Earlier read-only IDE action proposal: . Only the latest valid proposal can be run from the proposal card.`}</span>
+          <div className="proposal-summary-grid" aria-label="IDE action proposal summary">
+            <span>Action: {sanitizeDisplayText(proposal.action)}</span>
+            <span>Confirmation: {proposal.requiresUserConfirmation ? "required" : "missing"}</span>
+            <span>Cloud required: {String(proposal.cloudRequired)}</span>
+          </div>
+          <details className="inspect-details">
+            <summary>Inspect sanitized proposal JSON</summary>
+            <pre aria-label="Assistant proposal JSON">{proposalJson}</pre>
+          </details>
         </div>
       ) : (
         <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
@@ -6201,7 +6222,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       </div>
       {status.status !== "login_unavailable" && (
         <div className="recovery-card" role="status">
-          <strong>{providerAuthRecoveryTitle(status.status)}</strong>
+          <strong>{"Recovery guidance"}</strong>
           <span>{providerAuthRecoveryCopy(status)}</span>
           {!runtimeConnected && <span>Runtime unavailable or restarted: click Refresh runtime, then Refresh login status. If the pending browser session is stale, reconnect or use the API-key fallback.</span>}
           <span className="subtle">Login/chat only. No workspace execution.</span>
@@ -6244,9 +6265,12 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
     return (
       <div className="stack">
         <span>Browser or device verification is pending.</span>
-        {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
-        {status.pollIntervalSeconds && <span>Suggested refresh interval: {status.pollIntervalSeconds} seconds</span>}
-        {status.scopes && status.scopes.length > 0 && <span>Requested scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
+        <details className="inspect-details">
+          <summary>Inspect sanitized login metadata</summary>
+          {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
+          {status.pollIntervalSeconds && <span>Suggested refresh interval: {status.pollIntervalSeconds} seconds</span>}
+          {status.scopes && status.scopes.length > 0 && <span>Requested scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
+        </details>
       </div>
     );
   }
@@ -6255,9 +6279,12 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
       <div className="stack">
         <span>Ready for chat through the local runtime when the experimental account path is selected and no API-key provider is configured.</span>
         {status.accountLabel && <span>Account: {sanitizeDisplayText(status.accountLabel)}</span>}
-        {status.scopes && status.scopes.length > 0 && <span>Scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
-        {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
-        {status.redacted && <span>Token hint: {sanitizeDisplayText(status.redacted)}</span>}
+        <details className="inspect-details">
+          <summary>Inspect sanitized login metadata</summary>
+          {status.scopes && status.scopes.length > 0 && <span>Scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
+          {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
+          {status.redacted && <span>Token hint: {sanitizeDisplayText(status.redacted)}</span>}
+        </details>
         <span className="subtle">Raw provider tokens, cookies, auth codes, provider API keys, and runtime Session token values are not shown here. Runtime Session token and provider credentials are separate secrets.</span>
       </div>
     );
@@ -6277,28 +6304,7 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
   if (status.status === "api_key_configured") {
     return <span className="subtle">The safe API-key fallback is already configured locally. You can keep using it or set up account login later.</span>;
   }
-  return <span className="subtle">Start account login when supported, or use the API-key fallback now.</span>;
-}
-
-function providerAuthRecoveryTitle(status: ProviderAuthStatus): string {
-  switch (status) {
-    case "pending":
-      return "Pending recovery";
-    case "connected":
-      return "Connected handoff";
-    case "expired":
-      return "Expired recovery";
-    case "revoked":
-      return "Revoked or disconnected recovery";
-    case "error":
-      return "Sanitized error recovery";
-    case "api_key_configured":
-      return "API-key fallback active";
-    case "login_unavailable":
-      return "Unavailable fallback";
-    default:
-      return "Safe next step";
-  }
+  return <span className="subtle">Account login is not configured. Use the API-key fallback for the safe/default hosted provider path, or start experimental login explicitly.</span>;
 }
 
 function providerAuthRecoveryCopy(status: ProviderAuthResponse): string {
@@ -6481,10 +6487,36 @@ function ErrorBox({ error }: { error: RuntimeError }) {
 
 function StatusBlock({ title, value }: { title: string; value: unknown }) {
   const safeValue = sanitizeDisplayValue(value);
+  const summary = runtimeStatusSummary(title, safeValue);
   return (
-    <div className="stack">
-      <h3>{title}</h3>
-      <pre>{value ? JSON.stringify(safeValue, null, 2) : "No data"}</pre>
+    <div className="runtime-status-card stack">
+      <div className="row">
+        <h3>{title}</h3>
+        <span className={`badge ${value ? "ok" : "warn"}`}>{value ? "available" : "no data"}</span>
+      </div>
+      <span>{summary}</span>
+      <details className="inspect-details">
+        <summary>Inspect sanitized runtime JSON</summary>
+        <pre>{value ? JSON.stringify(safeValue, null, 2) : "No data"}</pre>
+      </details>
     </div>
   );
+}
+
+function runtimeStatusSummary(title: string, value: unknown): string {
+  if (!value) {
+    return "Runtime evidence has not been loaded for the current settings.";
+  }
+  const record = isRecord(value) ? value : {};
+  if (title === "/v1/ping") {
+    const ready = record.ready === true ? "reports ready" : "did not report ready";
+    const version = typeof record.version === "string" ? ` · version ${sanitizeDisplayText(record.version)}` : "";
+    return `Runtime ${ready}${version}.`;
+  }
+  if (title === "/v1/caps") {
+    const providerCount = typeof record.providers === "number" ? record.providers : 0;
+    const capabilities = Array.isArray(record.capabilities) ? record.capabilities.length : 0;
+    return `Protocol ${sanitizeDisplayText(String(record.protocolVersion ?? "unknown"))} · ${capabilities} capability label${capabilities === 1 ? "" : "s"} · ${providerCount} provider entr${providerCount === 1 ? "y" : "ies"}.`;
+  }
+  return "Sanitized runtime evidence is available for diagnostics.";
 }

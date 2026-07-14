@@ -1561,6 +1561,44 @@ pre,
   white-space: normal;
 }
 
+.proposal-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.proposal-summary-grid span,
+.runtime-status-card {
+  border: 1px solid #dfe6f3;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 8px 10px;
+}
+
+.rejection-summary-card {
+  border: 1px solid #ffe2a3;
+  border-radius: 14px;
+  background: #fffaf0;
+  color: #6f4d00;
+  padding: 12px;
+}
+
+.inspect-details {
+  border: 1px solid #dfe6f3;
+  border-radius: 12px;
+  background: #fbfcff;
+  padding: 8px 10px;
+}
+
+.inspect-details summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.inspect-details pre {
+  margin: 8px 0 0;
+}
+
 .assistant-proposal-compact pre {
   max-height: 220px;
   overflow: auto;
