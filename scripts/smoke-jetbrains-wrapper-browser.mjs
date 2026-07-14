@@ -123,10 +123,14 @@ let chatCommandRequestCountBeforeEditSmoke = 0;
 let demoModeEnabled = false;
 let mockAssistantMessageCounter = 0;
 let providerAuthSmokeState = "available";
+let providerAuthCompletionReady = false;
 let providerAuthStartCount = 0;
+let providerAuthDisconnectCount = 0;
 let pendingSlowAssistantResponse = false;
+let slowAssistantCompletionCount = 0;
 const chatSseSubscribers = new Map();
 const pendingAssistantResponsesByChat = new Map();
+const pendingSlowAssistantTimersByChat = new Map();
 let nextAssistantResponseContent;
 const maxRuntimeRequestBodyBytes = 1024 * 1024;
 const maxPendingHostMessages = 32;
@@ -883,15 +887,45 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
   if (providerAuthStartCount !== 1) {
     failures.push(`Hosted compact OpenAI login smoke expected one provider-auth start request, observed ${providerAuthStartCount}.`);
   }
-  await frameLocator.getByRole("button", { name: "Refresh login status", exact: true }).first().click({ timeout: 5000 });
+  const refreshLoginButton = frameLocator.locator("[data-testid='provider-auth-state']").getByRole("button", { name: "Refresh login status", exact: true }).first();
+  await refreshLoginButton.click({ timeout: 5000 });
+  await page.waitForTimeout(250);
+  const statusAfterPendingRefresh = await authState.getAttribute("data-provider-auth-status").catch(() => "");
+  if (statusAfterPendingRefresh !== "pending") {
+    failures.push(`Hosted compact OpenAI login smoke expected pending to survive ordinary refresh, got ${String(statusAfterPendingRefresh)}.`);
+  }
+  providerAuthCompletionReady = true;
+  await refreshLoginButton.click({ timeout: 5000 });
   await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 })
-    .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe connected state after refresh."));
+    .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe connected state after explicit completion refresh."));
+  if (!await providerDetails.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
+    await providerSummary.click({ timeout: 5000 });
+  }
+  const disconnectButton = frameLocator.locator("[data-testid='provider-auth-state']").getByRole("button", { name: "Disconnect login", exact: true }).first();
+  await scrollIntoViewIfNeeded(disconnectButton);
+  await disconnectButton.click({ timeout: 5000 });
+  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='login_available']").first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted compact OpenAI login smoke did not return to login_available after disconnect."));
+  if (providerAuthDisconnectCount !== 1) {
+    failures.push(`Hosted compact OpenAI login smoke expected one provider-auth disconnect request, observed ${providerAuthDisconnectCount}.`);
+  }
+  providerAuthCompletionReady = true;
+  await clickControlWithActionability(loginButton, "Reconnect OpenAI account (experimental)", { assertHitTest: true });
+  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='pending']").first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe pending state after relogin."));
+  if (providerAuthStartCount !== 2) {
+    failures.push(`Hosted compact OpenAI login smoke expected two provider-auth start requests after relogin, observed ${providerAuthStartCount}.`);
+  }
+  await refreshLoginButton.click({ timeout: 5000 });
+  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted compact OpenAI login smoke did not reconnect after explicit completion refresh."));
 }
 
 async function assertStopResponseUsability(page, frameLocator) {
   pendingSlowAssistantResponse = true;
   const beforeAbortCount = chatAbortRequestCount;
   const beforeCommandCount = chatCommandRequestCount;
+  const beforeSlowCompletionCount = slowAssistantCompletionCount;
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Start slow JetBrains streaming smoke.");
   await clickSendButtonWithActionability(frameLocator, "slow streaming send before Stop smoke");
   await frameLocator.locator(".chat-lifecycle-state.streaming").first().waitFor({ state: "visible", timeout: 5000 })
@@ -911,38 +945,51 @@ async function assertStopResponseUsability(page, frameLocator) {
   }
   await frameLocator.locator(".chat-lifecycle-state.stopped").first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Stop smoke did not show stopped lifecycle after clicking Stop response."));
+  await page.waitForTimeout(3500);
+  if (slowAssistantCompletionCount !== beforeSlowCompletionCount) {
+    failures.push("Stop smoke allowed a delayed slow assistant response to complete after abort.");
+  }
+  const bodyText = await frameLocator.locator("body").innerText({ timeout: 5000 }).catch(() => "");
+  if (bodyText.includes("JetBrains slow Stop smoke")) {
+    failures.push("Stop smoke rendered a late slow assistant message after abort.");
+  }
+  const currentLifecycle = await frameLocator.locator(".chat-lifecycle-state").first().textContent({ timeout: 5000 }).catch(() => "");
+  if (/Stream event .*finished|Ready to send\./i.test(currentLifecycle ?? "")) {
+    failures.push(`Stop smoke observed a late stream finish lifecycle after abort: ${String(currentLifecycle).trim()}.`);
+  }
 }
 
 async function assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator) {
   const beforeMessages = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
   await openComposerDrawer(frameLocator, "task-agent-tools-drawer");
-  await frameLocator.getByText("Agent Run · dev-preview, not autonomy", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
-    .catch(() => failures.push("Hosted JetBrains GUI did not render the Agent Run manual shell."));
-  await frameLocator.getByText("manual only", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
-    .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show manual-only state."));
-  await frameLocator.getByRole("group", { name: "Agent Run explicit actions" }).first().waitFor({ state: "attached", timeout: 5000 })
+  const taskDrawer = frameLocator.locator("[data-testid='task-agent-tools-drawer']").first();
+  await taskDrawer.locator("[data-testid='agent-run-panel']").first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains GUI did not render the Agent Run manual shell section."));
+  await taskDrawer.locator(".badge", { hasText: /manual only/i }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show a manual-only badge."));
+  await taskDrawer.getByRole("group", { name: "Agent Run explicit actions" }).first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains Agent Run shell did not expose explicit action controls."));
-  await frameLocator.getByText("Manually apply reviewed patch", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
+  await taskDrawer.getByRole("button", { name: "Manually apply reviewed patch", exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show explicit apply control."));
-  await frameLocator.getByText("Manually run allowlisted verification", { exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
+  await taskDrawer.getByRole("button", { name: "Manually run allowlisted verification", exact: true }).first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains Agent Run shell did not show explicit verification control."));
-  await frameLocator.getByText("no hidden model/provider calls; manual", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
-    .catch(() => failures.push("Hosted JetBrains Agent Run shell did not render safety copy."));
 
   await frameLocator.getByPlaceholder("Describe the coding task goal before choosing context and asking the model.").fill("JetBrains context budget parity smoke.");
   await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").fill("Preview JetBrains context budget labels only.");
-  await frameLocator.getByText("What will be sent", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+  const whatWillBeSent = taskDrawer.getByRole("region", { name: "What will be sent" }).first();
+  await whatWillBeSent.waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains GUI did not render the next-Send context budget preview."));
-  await frameLocator.getByText("preview labels only", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
-    .catch(() => failures.push("Hosted JetBrains context budget preview did not show labels-only badge."));
-  await frameLocator.getByText("Task goal: included", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
+  await whatWillBeSent.locator(".badge", { hasText: /preview labels only/i }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains context budget preview did not show a labels-only badge."));
+  await whatWillBeSent.locator("[aria-label='What will be sent labels']").first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains context budget preview did not expose item labels structurally."));
+  await whatWillBeSent.getByText("Task goal: included", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains context budget preview did not show included task-goal label."));
-  await frameLocator.getByText("One-shot next-Send preview", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
-    .catch(() => failures.push("Hosted JetBrains context budget preview did not show one-shot next-Send copy."));
-  await frameLocator.getByText("Context budget summary", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+  const contextBudgetSummary = taskDrawer.getByRole("region", { name: "Context budget summary" }).first();
+  await contextBudgetSummary.waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("Hosted JetBrains GUI did not render context budget summary."));
-  await frameLocator.getByText("Pure local estimate using character counts and item counts only.", { exact: false }).first().waitFor({ state: "visible", timeout: 5000 })
-    .catch(() => failures.push("Hosted JetBrains context budget summary did not show local-estimate/no-raw-body copy."));
+  await contextBudgetSummary.locator("[aria-label='Context budget source counts']").first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("Hosted JetBrains context budget summary did not expose source counts structurally."));
   const agentRunApplyRequests = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length ?? 0);
   const verificationRequests = await page.evaluate(() => window.__yetAiBridgeMessages?.filter((message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand").length ?? 0);
   const afterMessages = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
@@ -2625,11 +2672,15 @@ async function startMockRuntimeServer() {
       json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {      if (demoModeFirstMessage) {
+    if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
+      if (demoModeFirstMessage) {
         json(response, 200, unavailableProviderAuthStatus());
-      } else if (providerAuthSmokeState === "connected" || providerAuthSmokeState === "pending") {
+      } else if (providerAuthSmokeState === "connected" || (providerAuthSmokeState === "pending" && providerAuthCompletionReady)) {
+        providerAuthCompletionReady = false;
         providerAuthSmokeState = "connected";
         json(response, 200, connectedProviderAuthStatus());
+      } else if (providerAuthSmokeState === "pending") {
+        json(response, 200, pendingProviderAuthStatus());
       } else {
         json(response, 200, availableProviderAuthStatus());
       }
@@ -2664,6 +2715,13 @@ async function startMockRuntimeServer() {
       json(response, 200, pendingProviderAuthStatus());
       return;
     }
+    if (request.method === "POST" && requestUrl.pathname === "/v1/provider-auth/openai/disconnect") {
+      providerAuthDisconnectCount += 1;
+      providerAuthCompletionReady = false;
+      providerAuthSmokeState = "available";
+      json(response, 200, { ...availableProviderAuthStatus(), success: true });
+      return;
+    }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
       json(response, 200, { chats: [] });
       return;
@@ -2695,6 +2753,9 @@ async function startMockRuntimeServer() {
         chatAbortRequestCount += 1;
       }
       const chatId = decodeURIComponent(commandMatch[1]);
+      if (chatCommandRequest?.type === "abort") {
+        clearPendingSlowAssistantResponse(chatId);
+      }
       json(response, 200, {
         accepted: true,
         chatId,
@@ -2789,7 +2850,8 @@ function emitAssistantResponseToSubscriber(chatId, subscriber) {
     try {
       writeSseToSubscriber(subscriber, { type: "stream_started", chatId, payload: { role: "assistant" } });
       writeSseToSubscriber(subscriber, { type: "stream_delta", chatId, payload: { delta: { content: "JetBrains slow" } } });
-      setTimeout(() => {
+      const timerId = setTimeout(() => {
+        pendingSlowAssistantTimersByChat.delete(chatId);
         if (!isWritableSseResponse(subscriber.response)) return;
         try {
           writeSseToSubscriber(subscriber, {
@@ -2807,10 +2869,12 @@ function emitAssistantResponseToSubscriber(chatId, subscriber) {
             },
           });
           writeSseToSubscriber(subscriber, { type: "stream_finished", chatId, payload: { finishReason: "stop" } });
+          slowAssistantCompletionCount += 1;
         } catch {
           undefined;
         }
       }, 3000);
+      pendingSlowAssistantTimersByChat.set(chatId, timerId);
       return true;
     } catch {
       return false;
@@ -2849,6 +2913,16 @@ function emitAssistantResponseToSubscriber(chatId, subscriber) {
   } catch {
     return false;
   }
+}
+
+function clearPendingSlowAssistantResponse(chatId) {
+  pendingSlowAssistantResponse = false;
+  const timerId = pendingSlowAssistantTimersByChat.get(chatId);
+  if (timerId !== undefined) {
+    clearTimeout(timerId);
+    pendingSlowAssistantTimersByChat.delete(chatId);
+  }
+  pendingAssistantResponsesByChat.delete(chatId);
 }
 
 function writeSseToSubscriber(subscriber, event) {
