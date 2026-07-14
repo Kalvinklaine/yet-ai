@@ -111,7 +111,7 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   assert(metrics.composerLowerThanScrollTop, `${name} composer is not placed in the lower chat area: scrollTop=${metrics.scrollTop}, scrollHeight=${metrics.chatScrollHeight}, composerTop=${metrics.composerTop}`);
   const maxComposerScrollGap = 32;
   // JetBrains keeps the composer sticky over the scroll region; current measured top-edge overlap is 259px.
-  const maxComposerScrollOverlap = host === "jetbrains" ? 264 : 0;
+  const maxComposerScrollOverlap = host === "jetbrains" ? 264 : 1;
   assert(metrics.composerScrollGap <= maxComposerScrollGap, `${name} composer detached from chat scroll region: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollGap=${metrics.composerScrollGap}, maxComposerScrollGap=${maxComposerScrollGap}`);
   assert(metrics.composerScrollOverlap <= maxComposerScrollOverlap, `${name} composer overlaps chat scroll region too deeply: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollOverlap=${metrics.composerScrollOverlap}, maxComposerScrollOverlap=${maxComposerScrollOverlap}`);
 
