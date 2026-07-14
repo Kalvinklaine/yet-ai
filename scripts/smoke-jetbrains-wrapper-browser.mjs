@@ -902,22 +902,21 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
     failures.push(`Hosted compact OpenAI login smoke expected one provider-auth start request, observed ${providerAuthStartCount}.`);
   }
   const refreshLoginButton = frameLocator.locator("[data-testid='provider-auth-state']").getByRole("button", { name: "Refresh login status", exact: true }).first();
-  await refreshLoginButton.click({ timeout: 5000 });
+  await openProviderDetailsForAuthControl(providerDetails, providerSummary, refreshLoginButton);
+  await clickControlWithActionability(refreshLoginButton, "Refresh OpenAI login status while pending", { assertHitTest: true });
   await page.waitForTimeout(250);
   const statusAfterPendingRefresh = await authState.getAttribute("data-provider-auth-status").catch(() => "");
   if (statusAfterPendingRefresh !== "pending") {
     failures.push(`Hosted compact OpenAI login smoke expected pending to survive ordinary refresh, got ${String(statusAfterPendingRefresh)}.`);
   }
   providerAuthCompletionReady = true;
-  await refreshLoginButton.click({ timeout: 5000 });
+  await openProviderDetailsForAuthControl(providerDetails, providerSummary, refreshLoginButton);
+  await clickControlWithActionability(refreshLoginButton, "Refresh OpenAI login status for completion", { assertHitTest: true });
   await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe connected state after explicit completion refresh."));
-  if (!await providerDetails.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
-    await providerSummary.click({ timeout: 5000 });
-  }
   const disconnectButton = frameLocator.locator("[data-testid='provider-auth-state']").getByRole("button", { name: "Disconnect login", exact: true }).first();
-  await scrollIntoViewIfNeeded(disconnectButton);
-  await disconnectButton.click({ timeout: 5000 });
+  await openProviderDetailsForAuthControl(providerDetails, providerSummary, disconnectButton);
+  await clickControlWithActionability(disconnectButton, "Disconnect OpenAI login", { assertHitTest: true });
   await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='login_available']").first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted compact OpenAI login smoke did not return to login_available after disconnect."));
   if (providerAuthDisconnectCount !== 1) {
@@ -931,7 +930,8 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
   if (providerAuthStartCount !== 2) {
     failures.push(`Hosted compact OpenAI login smoke expected two provider-auth start requests after relogin, observed ${providerAuthStartCount}.`);
   }
-  await refreshLoginButton.click({ timeout: 5000 });
+  await openProviderDetailsForAuthControl(providerDetails, providerSummary, refreshLoginButton);
+  await clickControlWithActionability(refreshLoginButton, "Refresh OpenAI login status after reconnect", { assertHitTest: true });
   await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 })
     .catch(() => failures.push("Hosted compact OpenAI login smoke did not reconnect after explicit completion refresh."));
 }
@@ -947,11 +947,7 @@ async function assertStopResponseUsability(page, frameLocator) {
     .catch(() => failures.push("Stop smoke did not observe active streaming state before clicking Stop."));
   const stop = frameLocator.locator("[data-testid='chat-stop-response']").first();
   await clickControlWithActionability(stop, "Stop response during active streaming", { assertHitTest: true });
-  await page.waitForFunction((count) => (window.__yetAiBridgeMessages ?? []).length >= count, 0, { timeout: 100 }).catch(() => undefined);
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline && chatAbortRequestCount <= beforeAbortCount) {
-    await page.waitForTimeout(100);
-  }
+  await waitForMockRuntimeAbortAfterStop(page, beforeAbortCount);
   if (chatCommandRequestCount !== beforeCommandCount + 2) {
     failures.push(`Stop smoke expected one user_message command and one abort command, observed ${chatCommandRequestCount - beforeCommandCount} command(s).`);
   }
@@ -971,6 +967,14 @@ async function assertStopResponseUsability(page, frameLocator) {
   const currentLifecycle = await frameLocator.locator(".chat-lifecycle-state").first().textContent({ timeout: 5000 }).catch(() => "");
   if (/Stream event .*finished|Ready to send\./i.test(currentLifecycle ?? "")) {
     failures.push(`Stop smoke observed a late stream finish lifecycle after abort: ${String(currentLifecycle).trim()}.`);
+  }
+}
+
+async function waitForMockRuntimeAbortAfterStop(page, beforeAbortCount) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    if (chatAbortRequestCount > beforeAbortCount) return;
+    await page.waitForTimeout(100);
   }
 }
 
@@ -2731,6 +2735,29 @@ async function startMockRuntimeServer() {
       return;
     }
     if (request.method === "POST" && requestUrl.pathname === "/v1/provider-auth/openai/disconnect") {
+      let body;
+      try {
+        body = await readRequestBody(request);
+      } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+          json(response, 413, { error: "Request body too large" });
+          return;
+        }
+        json(response, 400, { error: "Invalid provider auth disconnect request body" });
+        return;
+      }
+      let parsedBody;
+      try {
+        parsedBody = JSON.parse(body);
+      } catch {
+        json(response, 400, { error: "Invalid provider auth disconnect JSON" });
+        return;
+      }
+      runtimeLogEntry.body = parsedBody;
+      if (!isExactEmptyObject(parsedBody)) {
+        json(response, 400, { error: "Provider auth disconnect requires exact empty object body" });
+        return;
+      }
       providerAuthDisconnectCount += 1;
       providerAuthCompletionReady = false;
       providerAuthSmokeState = "available";
@@ -3046,6 +3073,10 @@ function readyDemoModel() {
 
 function isAuthorizedRuntimeRequest(request) {
   return request.headers.authorization === `Bearer ${runtimeToken}`;
+}
+
+function isExactEmptyObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length === 0 && Object.getPrototypeOf(value) === Object.prototype;
 }
 
 function json(response, status, body) {
