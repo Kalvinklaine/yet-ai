@@ -9427,7 +9427,7 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
-  it("S96 one-step Start sequences read edit and controlled verification, while Stop ignores stale read", async () => {
+  it("controlled task execution VS Code Start enters context-ready state without host commands", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     mockRuntimeResponses({
@@ -9441,50 +9441,31 @@ describe("edit proposal preview", () => {
     postMessage.mockClear();
 
     const panel = agentRunPanel();
-    expect(panel.textContent).toContain("S96 useful one-step Agent Run");
+    expect(panel.textContent).toContain("Controlled task execution Start");
+    expect(panel.textContent).toContain("Controlled phase: idle");
     expect(buttonWithin(panel, "Start one-step Agent Run").disabled).toBe(false);
     await act(async () => {
       buttonWithin(panel, "Start one-step Agent Run").click();
     });
 
-    const readRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
-    expect(readRequest).toBeDefined();
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
+    const startedPanel = agentRunPanel();
+    expect(startedPanel.textContent).toContain("Controlled phase: context ready");
+    expect(startedPanel.textContent).toContain("Active run: yes");
+    expect(startedPanel.textContent).toContain("Workspace lineage: present");
+    expect(startedPanel.textContent).toContain("Runtime lineage: present");
+    expect(startedPanel.textContent).toContain("VS Code Start recorded; planning/context is ready in controlled task execution state.");
+    expect(startedPanel.textContent).toContain("It does not post read, apply, verification, shell, git, provider, network, or workspace mutation commands.");
+    expect(buttonWithin(startedPanel, "Start one-step Agent Run").disabled).toBe(true);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
 
-    const readResult = controlledReadHostMessage(readRequest.requestId, readRequest.payload);
-    await dispatchHostControlledFileReadResult(readResult.requestId, readResult.payload);
-    const editRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentEditRequest")?.[0] as { requestId: string; payload: Record<string, any> };
-    expect(editRequest).toBeDefined();
-
-    const editResult = controlledEditHostMessage(editRequest.requestId, editRequest.payload);
-    await dispatchHostControlledEditResult(editResult.requestId, editResult.payload);
-    const commandRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentCommandRunRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
-    expect(commandRequest).toBeDefined();
-    expect(commandRequest.payload).toMatchObject({ commandId: "repository-check", userConfirmed: true, requestIdMintedBy: "gui" });
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand")).toHaveLength(0);
-
-    const commandResult = controlledCommandRunHostMessage(commandRequest.requestId, commandRequest.payload);
-    await dispatchHostControlledCommandRunResult(commandResult.requestId, commandResult.payload);
-    expect(agentRunPanel().textContent).toContain("Phase: completed");
-
-    postMessage.mockClear();
     await act(async () => {
       buttonWithin(agentRunPanel(), "Start one-step Agent Run").click();
     });
-    const stoppedReadRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
-    await act(async () => {
-      buttonWithin(agentRunPanel(), "Stop one-step Agent Run").click();
-    });
-    const staleRead = controlledReadHostMessage(stoppedReadRequest.requestId, stoppedReadRequest.payload);
-    await dispatchHostControlledFileReadResult(staleRead.requestId, staleRead.payload);
-
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest")).toHaveLength(1);
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
-    expect(agentRunPanel().textContent).toContain("Phase: stopped");
+    expect(agentRunPanel().textContent).toContain("Controlled phase: context ready");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
-  it("S96 one-step Start stays visible but fail-closed for unsupported hosts", async () => {
+  it("controlled task execution Start stays visible but fail-closed for unsupported hosts", async () => {
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
       capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }),
@@ -9494,9 +9475,9 @@ describe("edit proposal preview", () => {
     await flushAsync();
     await flushAsync();
 
-    expect(agentRunPanel().textContent).toContain("S96 useful one-step Agent Run");
+    expect(agentRunPanel().textContent).toContain("Controlled task execution Start");
     expect(agentRunPanel().textContent).toContain("browser preview only");
-    expect(agentRunPanel().textContent).toContain("One-step controlled run Start is disabled outside VS Code and posts no bridge request.");
+    expect(agentRunPanel().textContent).toContain("Controlled task execution Start is disabled outside VS Code and posts no bridge request.");
     expect(buttonWithin(agentRunPanel(), "Start one-step Agent Run").disabled).toBe(true);
 
     act(() => root?.unmount());
@@ -9515,7 +9496,7 @@ describe("edit proposal preview", () => {
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
     await flushAsync();
 
-    expect(agentRunPanel().textContent).toContain("S96 useful one-step Agent Run");
+    expect(agentRunPanel().textContent).toContain("Controlled task execution Start");
     expect(agentRunPanel().textContent).toContain("JetBrains partial/fail-closed");
     expect(buttonWithin(agentRunPanel(), "Start one-step Agent Run").disabled).toBe(true);
     expect(postIntellijMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);

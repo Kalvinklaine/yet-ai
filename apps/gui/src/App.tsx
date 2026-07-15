@@ -61,6 +61,7 @@ import { buildControlledLocalAgentMvp } from "./services/controlledLocalAgentMvp
 import { evaluateControlledAgentRuntimeSession } from "./services/controlledAgentRuntimeSession";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "./services/controlledAgentRunState";
 import { createControlledOneStepAgentLoopState, reduceControlledOneStepAgentLoopState, type ControlledOneStepAgentLoopState } from "./services/controlledOneStepAgentLoop";
+import { canStartControlledTaskExecution, createInitialControlledTaskExecutionState, reduceControlledTaskExecution, summarizeControlledTaskExecution, type ControlledTaskExecutionState } from "./services/controlledTaskExecution";
 import { createControlledAgentTwoStepRunState, evaluateControlledAgentTwoStepRun } from "./services/controlledAgentTwoStepRun";
 import { addControlledRunContextItem, buildControlledRunContextReport, createControlledRunContextBundle, validateControlledRunContextItem, type ControlledRunContextBlockedReason, type ControlledRunContextInput } from "./services/controlledRunContext";
 import { appendControlledRunHistoryItem, createControlledRunHistoryItem, type ControlledRunHistoryHostLabel, type ControlledRunHistoryItem, type ControlledRunHistoryPhaseLabel, type ControlledRunHistoryResultLabel } from "./services/controlledRunHistory";
@@ -573,6 +574,7 @@ export function App() {
   const [controlledLexicalSearchResultId, setControlledLexicalSearchResultId] = useState<string | undefined>(undefined);
   const [selectedControlledSearchResultIds, setSelectedControlledSearchResultIds] = useState<string[]>([]);
   const [oneStepLoopState, setOneStepLoopState] = useState<ControlledOneStepAgentLoopState>(() => createControlledOneStepAgentLoopState());
+  const [controlledTaskExecutionState, setControlledTaskExecutionState] = useState<ControlledTaskExecutionState>(() => createInitialControlledTaskExecutionState());
   const [controlledRunHistory, setControlledRunHistory] = useState<ControlledRunHistoryItem[]>([]);
 
   const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token, runtimeAccess }), [baseUrl, runtimeAccess, token]);
@@ -956,6 +958,7 @@ export function App() {
   const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || effectiveControlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledAgentTwoStepRunMetadata !== undefined;
   const hasOneStepControlledMetadata = controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined;
   const showOneStepAgentRunPanel = oneStepLoopState.phase !== "idle" || (bridgeHost === "vscode" && oneStepControlledAgentFileReadRequest.state === "ready" && oneStepControlledAgentEditRequest.state === "ready" && oneStepControlledAgentCommandRunRequest.state === "ready") || (hasOneStepControlledMetadata && (oneStepControlledAgentFileReadRequest.state === "unsupported" || oneStepControlledAgentEditRequest.state === "unsupported" || oneStepControlledAgentCommandRunRequest.state === "unsupported"));
+  const controlledTaskExecutionSummary = useMemo(() => summarizeControlledTaskExecution(controlledTaskExecutionState), [controlledTaskExecutionState]);
   const controlledAgentProgressReport = useMemo(() => buildControlledAgentProgressReport({
     runState: controlledAgentRunState,
     controlledAgentFileRead: effectiveControlledAgentFileReadMetadata,
@@ -2843,30 +2846,33 @@ export function App() {
     const readRequest = oneStepFileReadRequestRef.current;
     const editRequest = oneStepEditRequestRef.current;
     const commandRequest = oneStepCommandRunRequestRef.current;
-    if (bridgeHost !== "vscode" || !readRequest || !editRequest || !commandRequest || readRequest.state !== "ready" || editRequest.state !== "ready" || commandRequest.state !== "ready" || !readRequest.bridgeRequest || !readRequest.correlation || controlledFileReadCorrelationRef.current || controlledEditCorrelationRef.current || controlledCommandRunCorrelationRef.current || pendingControlledFileReadRequestId || pendingControlledEditRequestId || pendingControlledCommandRunRequestId) {
-      setControlledFileReadNote("S86 one-step Start requires VS Code and ready controlled read, edit, and verification metadata.");
+    if (bridgeHost !== "vscode" || !readRequest || !editRequest || !commandRequest || readRequest.state !== "ready" || editRequest.state !== "ready" || commandRequest.state !== "ready") {
+      setControlledFileReadNote("Controlled task execution Start requires VS Code and ready controlled read, edit, and verification metadata. No bridge request was posted.");
       return;
     }
-    oneStepLoopRunCounterRef.current += 1;
-    oneStepFileReadRequestIdRef.current = readRequest.bridgeRequest.requestId;
-    oneStepEditRequestIdRef.current = null;
-    oneStepCommandRunRequestIdRef.current = null;
-    controlledFileReadCorrelationRef.current = readRequest.correlation;
-    controlledFileReadCompletedRequestIdRef.current = null;
-    setPendingControlledFileReadRequestId(readRequest.bridgeRequest.requestId);
-    setControlledFileReadResultMetadata(null);
-    setControlledEditResultMetadata(null);
-    setControlledCommandRunResultMetadata(null);
-    setControlledFileReadNote("S86 one-step controlled read request posted after explicit Start.");
+    setControlledTaskExecutionState((current) => {
+      if (!canStartControlledTaskExecution(current)) {
+        return current;
+      }
+      oneStepLoopRunCounterRef.current += 1;
+      const runId = `controlled-task-${oneStepLoopRunCounterRef.current}`;
+      const workspaceReadinessId = readRequest.correlation?.controlledWorkspaceId;
+      const runtimeSessionId = readRequest.correlation?.runtimeSessionId;
+      const planning = reduceControlledTaskExecution(current, { type: "startPlanning", runId });
+      return reduceControlledTaskExecution(planning, {
+        type: "contextReady",
+        runId,
+        workspaceReadinessId,
+        runtimeSessionId,
+        frozenContextSummary: "VS Code Start recorded; controlled context is ready for planning preview. No host apply, verification, provider, shell, git, or network command was sent.",
+      });
+    });
+    setControlledFileReadNote("Controlled task execution Start recorded in the GUI reducer only. No controlled read, apply, verification, shell, git, provider, or network command was posted.");
     setControlledEditNote(null);
     setControlledCommandRunNote(null);
-    let next = createControlledOneStepAgentLoopState();
-    next = reduceControlledOneStepAgentLoopState(next, { type: "start", metadata: { source: "gui", confirmedBy: "user", assistantMinted: false, explicitUserStart: true, requestId: `s86-one-step-${oneStepLoopRunCounterRef.current}`, summary: "Explicit S86 one-step Agent Run start recorded." } });
-    setOneStepLoopState(next);
-    bridgeAdapterRef.current?.post(readRequest.bridgeRequest);
-    addTimeline(`S86 one-step controlled read requested ${readRequest.bridgeRequest.requestId}`);
-    appendTrace({ family: "controlledAgent.fileReadPlanned", title: `S86 one-step controlled read requested ${oneStepLoopRunCounterRef.current}`, status: "pending", summary: "User clicked Start one-step Agent Run; one bounded read was posted.", requestId: readRequest.bridgeRequest.requestId, details: readRequest.details });
-  }, [addTimeline, appendTrace, bridgeHost, pendingControlledCommandRunRequestId, pendingControlledEditRequestId, pendingControlledFileReadRequestId]);
+    addTimeline("Controlled task execution Start recorded without host command emission");
+    appendTrace({ family: "controlledAgent.taskExecution", title: "Controlled task execution Start recorded", status: "pending", summary: "User clicked VS Code Start; reducer advanced to context-ready without posting host apply or verification commands.", details: { host: bridgeHost, phase: "context_ready" } });
+  }, [addTimeline, appendTrace, bridgeHost]);
 
   const stopOneStepAgentRun = useCallback(() => {
     controlledFileReadCorrelationRef.current = null;
@@ -2883,6 +2889,7 @@ export function App() {
     setControlledFileReadNote("S86 one-step run stopped in the GUI. Stale read results will be ignored.");
     setControlledEditNote("S86 one-step run stopped in the GUI. Stale edit results will be ignored.");
     setControlledCommandRunNote("S86 one-step run stopped in the GUI. Stale verification results will be ignored.");
+    setControlledTaskExecutionState((current) => current.lineage.runId ? reduceControlledTaskExecution(current, { type: "stopped", runId: current.lineage.runId, stoppedReason: "Stopped by explicit user click." }) : current);
     setOneStepLoopState((current) => reduceControlledOneStepAgentLoopState(current, { type: "stop", summary: "One-step run stopped in the GUI. Stale host results will be ignored." }));
   }, []);
 
@@ -3734,7 +3741,7 @@ export function App() {
                     <span className="badge">Memory</span>
                   </summary>
                   <div className="composer-drawer-body stack">
-                    <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} controlledLexicalSearch={controlledLexicalSearchResult} controlledMultifilePatchPlan={controlledAgentMultifilePatchPlanPreview} controlledMultifileApplyRequest={controlledAgentMultifileApplyRequest} controlledMultifileApplyResult={controlledMultifileApplyResult} controlledMultifileApplyNote={controlledMultifileApplyNote} pendingControlledMultifileApply={pendingControlledMultifileApplyRequestId !== null} controlledMultifileApplyConfirmed={controlledMultifileApplyConfirmed} onConfirmControlledMultifileApply={confirmControlledMultifileApplyReview} onRequestControlledMultifileApply={requestControlledMultifileApply} onClearControlledMultifileApply={clearControlledMultifileApplyState} controlledVerificationBundle={effectiveControlledVerificationBundle} controlledVerificationBundleRequest={controlledAgentVerificationBundleMetadata !== undefined || controlledVerificationBundleRequest !== undefined ? controlledVerificationBundleRequest ?? controlledAgentVerificationBundleRequest : undefined} controlledVerificationBundleNote={controlledVerificationBundleNote} pendingControlledVerificationBundle={pendingControlledVerificationBundleRequestId !== null} controlledVerificationFollowupDraft={controlledVerificationFollowupDraft ?? undefined} onRequestControlledVerificationBundle={requestControlledVerificationBundle} onDraftControlledVerificationFollowup={() => draftControlledVerificationFollowup(controlledVerificationFollowupDraftAction)} onDraftControlledVerificationFix={() => draftControlledVerificationFollowup(controlledVerificationFixDraftAction)} controlledSearchResultId={controlledLexicalSearchResultId} selectedControlledSearchResultIds={selectedControlledSearchResultIds} controlledSearchSelection={controlledSearchSelection} controlledSearchRequestState={controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledLexicalSearchResult !== undefined ? controlledAgentLexicalSearchRequest.state : undefined} pendingControlledSearch={controlledLexicalSearchCorrelationRef.current !== null} onRequestControlledSearch={requestControlledLexicalSearch} onControlledSearchResultSelectionChange={updateControlledSearchSelection} controlledTwoStepRunState={controlledAgentTwoStepRunMetadata !== undefined ? controlledAgentTwoStepRunState : undefined} controlledTaskHarness={controlledAgentTaskHarness} />
+                    <AgentRunPanel input={agentRunInput} host={bridgeHost} pendingApply={pendingApplyRequestId !== null} pendingVerification={pendingControlledCommandRunRequestId !== null || verificationAttempt?.status === "pending" || verificationAttempt?.status === "inProgress" || (agentRunInput?.applyResult !== undefined && controlledAgentCommandRunRequest.state !== "ready")} onApplyReviewedPatch={submitAgentRunApply} onRunAllowlistedVerification={submitAgentRunVerification} onReviewRollback={() => setApplyNote("Rollback review is display-only in this experimental shell. Use existing checkpoint/rollback surfaces when available; no bridge request was posted.")} onDraftVerificationFollowup={() => useAgentRunVerificationFollowupDraft("followup")} onDraftVerificationFix={() => useAgentRunVerificationFollowupDraft("fix")} proposalHistory={proposalHistory} verificationFixDraft={agentRunVerificationFixDraft ?? undefined} oneStepLoopState={showOneStepAgentRunPanel ? oneStepLoopState : undefined} controlledTaskExecutionState={showOneStepAgentRunPanel ? controlledTaskExecutionState : undefined} controlledTaskExecutionSummary={showOneStepAgentRunPanel ? controlledTaskExecutionSummary : undefined} oneStepReadRequest={showOneStepAgentRunPanel ? oneStepControlledAgentFileReadRequest : undefined} oneStepEditRequest={showOneStepAgentRunPanel ? oneStepControlledAgentEditRequest : undefined} oneStepCommandRunRequest={showOneStepAgentRunPanel ? oneStepControlledAgentCommandRunRequest : undefined} onStartOneStepRun={startOneStepAgentRun} onStopOneStepRun={stopOneStepAgentRun} controlledHostCapabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} controlledRunContextBundle={showControlledRunContextSelector ? controlledRunContextSelection.bundle : undefined} controlledRunContextReport={showControlledRunContextSelector ? controlledRunContextSelection.report : undefined} includeControlledRunContext={includeControlledRunContext} onIncludeControlledRunContextChange={setIncludeControlledRunContext} controlledRunHistory={controlledRunHistory} controlledLexicalSearch={controlledLexicalSearchResult} controlledMultifilePatchPlan={controlledAgentMultifilePatchPlanPreview} controlledMultifileApplyRequest={controlledAgentMultifileApplyRequest} controlledMultifileApplyResult={controlledMultifileApplyResult} controlledMultifileApplyNote={controlledMultifileApplyNote} pendingControlledMultifileApply={pendingControlledMultifileApplyRequestId !== null} controlledMultifileApplyConfirmed={controlledMultifileApplyConfirmed} onConfirmControlledMultifileApply={confirmControlledMultifileApplyReview} onRequestControlledMultifileApply={requestControlledMultifileApply} onClearControlledMultifileApply={clearControlledMultifileApplyState} controlledVerificationBundle={effectiveControlledVerificationBundle} controlledVerificationBundleRequest={controlledAgentVerificationBundleMetadata !== undefined || controlledVerificationBundleRequest !== undefined ? controlledVerificationBundleRequest ?? controlledAgentVerificationBundleRequest : undefined} controlledVerificationBundleNote={controlledVerificationBundleNote} pendingControlledVerificationBundle={pendingControlledVerificationBundleRequestId !== null} controlledVerificationFollowupDraft={controlledVerificationFollowupDraft ?? undefined} onRequestControlledVerificationBundle={requestControlledVerificationBundle} onDraftControlledVerificationFollowup={() => draftControlledVerificationFollowup(controlledVerificationFollowupDraftAction)} onDraftControlledVerificationFix={() => draftControlledVerificationFollowup(controlledVerificationFixDraftAction)} controlledSearchResultId={controlledLexicalSearchResultId} selectedControlledSearchResultIds={selectedControlledSearchResultIds} controlledSearchSelection={controlledSearchSelection} controlledSearchRequestState={controlledWorkspaceReadinessMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledLexicalSearchResult !== undefined ? controlledAgentLexicalSearchRequest.state : undefined} pendingControlledSearch={controlledLexicalSearchCorrelationRef.current !== null} onRequestControlledSearch={requestControlledLexicalSearch} onControlledSearchResultSelectionChange={updateControlledSearchSelection} controlledTwoStepRunState={controlledAgentTwoStepRunMetadata !== undefined ? controlledAgentTwoStepRunState : undefined} controlledTaskHarness={controlledAgentTaskHarness} />
                     {controlledAgentWorkflowTranscriptMetadata !== undefined && <ControlledAgentWorkflowTranscriptPanel metadata={controlledAgentWorkflowTranscriptMetadata} />}
                     {showControlledAgentRunPanel && <ControlledAgentRunPanel state={controlledAgentRunState} progressReport={controlledAgentProgressReport} mvpReport={controlledLocalAgentMvpReport} host={bridgeHost} capabilityMatrix={controlledHostCapabilities ? controlledHostCapabilityMatrix : undefined} twoStepRunState={controlledAgentTwoStepRunMetadata !== undefined ? controlledAgentTwoStepRunState : undefined} onStop={stopControlledAgentRun} />}
                     {controlledWorkspaceReadinessMetadata !== undefined && <ControlledAgentWorkspaceReadinessPanel metadata={controlledWorkspaceReadinessMetadata} />}

@@ -9,6 +9,7 @@ import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledA
 import type { ControlledAgentEditRequestResult } from "../services/controlledAgentEditRequest";
 import type { ControlledAgentFileReadRequestResult } from "../services/controlledAgentFileReadRequest";
 import type { ControlledOneStepAgentLoopState } from "../services/controlledOneStepAgentLoop";
+import type { ControlledTaskExecutionState, ControlledTaskExecutionSummary } from "../services/controlledTaskExecution";
 import type { ControlledAgentRepairLoopEvaluation } from "../services/controlledAgentRepairLoop";
 import type { ControlledRunHistoryItem } from "../services/controlledRunHistory";
 import type { ControlledRunContextBundle, ControlledRunContextReport } from "../services/controlledRunContext";
@@ -40,6 +41,8 @@ export type AgentRunPanelProps = {
   proposalHistory?: ProposalHistory;
   verificationFixDraft?: GuidedFixLoopDraftState;
   oneStepLoopState?: ControlledOneStepAgentLoopState;
+  controlledTaskExecutionState?: ControlledTaskExecutionState;
+  controlledTaskExecutionSummary?: ControlledTaskExecutionSummary;
   oneStepReadRequest?: ControlledAgentFileReadRequestResult;
   oneStepEditRequest?: ControlledAgentEditRequestResult;
   oneStepCommandRunRequest?: ControlledAgentCommandRunRequestResult;
@@ -85,7 +88,7 @@ export type AgentRunPanelProps = {
   controlledTaskHarness?: ControlledAgentTaskHarnessSummary;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, controlledVerificationFollowupDraft, onRequestControlledVerificationBundle, onDraftControlledVerificationFollowup, onDraftControlledVerificationFix, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState, controlledTaskHarness }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, controlledTaskExecutionState, controlledTaskExecutionSummary, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, controlledVerificationFollowupDraft, onRequestControlledVerificationBundle, onDraftControlledVerificationFollowup, onDraftControlledVerificationFix, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState, controlledTaskHarness }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -139,7 +142,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const oneStepReadReady = oneStepReadRequest?.state === "ready";
   const oneStepEditReady = oneStepEditRequest?.state === "ready";
   const oneStepCommandReady = oneStepCommandRunRequest?.state === "ready";
-  const oneStepActive = Boolean(oneStepLoopState && oneStepLoopState.phase !== "idle" && oneStepLoopState.phase !== "completed" && oneStepLoopState.phase !== "failed" && oneStepLoopState.phase !== "stopped");
+  const oneStepActive = Boolean(controlledTaskExecutionState && !["idle", "completed", "blocked", "stopped"].includes(controlledTaskExecutionState.phase));
   const canStartOneStep = host === "vscode" && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
   const canStopOneStep = Boolean(onStopOneStepRun) && oneStepActive;
   const showRepairLoop = Boolean(repairLoop && repairLoop.state !== "disabled");
@@ -624,29 +627,30 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         </div>
       )}
       {showOneStepLoop && oneStepLoopState && (
-        <div className={`readiness-card ${canStartOneStep || oneStepLoopState.phase === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="S96 useful one-step Agent Run">
+        <div className={`readiness-card ${canStartOneStep || controlledTaskExecutionState?.phase === "context_ready" || controlledTaskExecutionState?.phase === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled task execution Start">
           <div className="row">
-            <strong>S96 useful one-step Agent Run</strong>
-            <span className={host === "vscode" ? "badge ok" : "badge warn"}>VS Code-only</span>
-            <span className="badge">explicit Start/Stop</span>
-            <span className="badge">sanitized metadata</span>
+            <strong>Controlled task execution Start</strong>
+            <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code-only" : host === "jetbrains" ? "JetBrains fail-closed" : "browser unsupported"}</span>
+            <span className="badge">single explicit gate</span>
+            <span className="badge">reducer only</span>
+            <span className="badge">no host commands</span>
           </div>
-          <span>{sanitizeDisplayText(oneStepLoopState.summary)}</span>
-          <div className="agent-progress-grid" aria-label="S96 useful one-step readiness fields">
-            <span>Phase: {oneStepLoopState.phase.replace(/_/g, " ")}</span>
+          <span>{controlledTaskExecutionState?.phase === "context_ready" ? "VS Code Start recorded; planning/context is ready in controlled task execution state." : sanitizeDisplayText(oneStepLoopState.summary)}</span>
+          <div className="agent-progress-grid" aria-label="Controlled task execution readiness fields">
+            <span>Controlled phase: {(controlledTaskExecutionSummary?.phase ?? controlledTaskExecutionState?.phase ?? "idle").replace(/_/g, " ")}</span>
+            <span>Active run: {controlledTaskExecutionSummary?.hasRunId ? "yes" : "no"}</span>
+            <span>Workspace lineage: {controlledTaskExecutionSummary?.lineage.hasWorkspaceReadinessId ? "present" : "not recorded"}</span>
+            <span>Runtime lineage: {controlledTaskExecutionSummary?.lineage.hasRuntimeSessionId ? "present" : "not recorded"}</span>
             <span>Read request: {oneStepReadReady ? "ready" : oneStepReadRequest?.state ?? "missing"}</span>
             <span>Edit request: {oneStepEditReady ? "ready" : oneStepEditRequest?.state ?? "missing"}</span>
             <span>Verification request: {oneStepCommandReady ? "ready" : oneStepCommandRunRequest?.state ?? "missing"}</span>
-            <span>Loop steps used: {oneStepLoopState.counters.loopSteps}/{oneStepLoopState.budgets.maxLoopSteps}</span>
-            <span>Reads used: {oneStepLoopState.counters.fileReads}/{oneStepLoopState.budgets.maxFileReads}</span>
-            <span>Verification runs: {oneStepLoopState.counters.verificationRuns}/{oneStepLoopState.budgets.maxVerificationRuns}</span>
-            <span>Repair attempts: {oneStepLoopState.counters.repairAttempts}/{oneStepLoopState.budgets.maxRepairAttempts}</span>
           </div>
-          {oneStepLoopState.stop && <span>Stop reason: {sanitizeDisplayText(oneStepLoopState.stop.reason.replace(/_/g, " "))}</span>}
-          {host !== "vscode" && <span className="subtle">One-step controlled run Start is disabled outside VS Code and posts no bridge request.</span>}
-          {host === "vscode" && !canStartOneStep && !oneStepActive && <span className="subtle">Start needs ready VS Code host, runtime, workspace, controlled read, controlled edit, and allowlisted verification request metadata.</span>}
-          <span className="subtle">Start sequences exactly one bounded read, one sanitized model-step metadata transition, one bounded edit request, and one allowlisted controlled verification request after the explicit click. Stop clears GUI-local pending correlations only so stale host results are ignored.</span>
-          <div className="row" role="group" aria-label="S96 useful one-step Agent Run actions">
+          {controlledTaskExecutionState?.frozenContextSummary && <span>{sanitizeDisplayText(controlledTaskExecutionState.frozenContextSummary)}</span>}
+          {host !== "vscode" && <span className="subtle">Controlled task execution Start is disabled outside VS Code and posts no bridge request.</span>}
+          {host === "vscode" && !canStartOneStep && !oneStepActive && <span className="subtle">Start needs visible ready VS Code runtime, workspace, controlled read, controlled edit, and verification metadata.</span>}
+          {oneStepActive && <span className="subtle" role="status">Controlled task execution is already active. Duplicate Start clicks stay disabled and do not mint another run.</span>}
+          <span className="subtle">Start advances only the GUI controlled task execution reducer into planning/context-ready state. It does not post read, apply, verification, shell, git, provider, network, or workspace mutation commands. Cozy leash, no sprinting into traffic.</span>
+          <div className="row" role="group" aria-label="Controlled task execution actions">
             <button type="button" onClick={onStartOneStepRun} disabled={!canStartOneStep}>Start one-step Agent Run</button>
             <button type="button" className="secondary-button" onClick={onStopOneStepRun} disabled={!canStopOneStep}>Stop one-step Agent Run</button>
           </div>
