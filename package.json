@@ -49,6 +49,7 @@
     "smoke:controlled-agent-workflow-transcript": "node scripts/smoke-controlled-agent-workflow-transcript.mjs",
     "smoke:controlled-agent-hardening-bundle": "node scripts/smoke-controlled-agent-hardening-bundle.mjs",
     "smoke:controlled-agent-vscode-task-e2e": "node scripts/smoke-controlled-agent-vscode-task-e2e.mjs",
+    "smoke:vscode-controlled-agent-task": "node scripts/smoke-vscode-controlled-agent-task.mjs",
     "smoke:controlled-autonomy-readiness": "node scripts/smoke-controlled-autonomy-readiness.mjs",
     "smoke:controlled-agent-dev-preview": "node scripts/smoke-controlled-agent-dev-preview.mjs",
     "smoke:controlled-agent-s96-useful-run": "node scripts/smoke-controlled-agent-s96-useful-run.mjs",
