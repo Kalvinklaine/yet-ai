@@ -109,6 +109,8 @@ function detectInitialBridgeHost(): BridgeHost {
 }
 const agentProgressSnapshotDisplayLimit = 18;
 const agentProgressRecentEventDisplayLimit = 11;
+const agentProgressOutputTailDisplayLimit = 1800;
+const agentProgressSummaryDisplayLimit = 120;
 const manualRunnerPlanProposalStepLimit = 6;
 export const completedIdeActionRequestChatsLimit = 64;
 export const completedApplyRequestChatsLimit = 64;
@@ -185,6 +187,11 @@ type AgentProgressState = {
   state: "not_checked" | "loading" | "ready" | "error";
   response: AgentProgressListResponse | null;
   error: RuntimeError | null;
+};
+
+type NormalizedAgentProgressSnapshot = AgentProgressSnapshot & {
+  hasHeartbeatFreshness: boolean;
+  hasToolOutputFreshness: boolean;
 };
 
 type FirstMessageAction =
@@ -5779,7 +5786,7 @@ function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
   );
 }
 
-function normalizeAgentProgressResponse(response: AgentProgressListResponse | null): { generatedAt: string | null; snapshots: AgentProgressSnapshot[] } {
+function normalizeAgentProgressResponse(response: AgentProgressListResponse | null): { generatedAt: string | null; snapshots: NormalizedAgentProgressSnapshot[] } {
   const source = asRecord(response);
   const generatedAt = stringOrNull(source?.generatedAt);
   const rawSnapshots = Array.isArray(source?.snapshots) ? source.snapshots : [];
@@ -5789,12 +5796,15 @@ function normalizeAgentProgressResponse(response: AgentProgressListResponse | nu
   };
 }
 
-function normalizeAgentProgressSnapshot(value: unknown, index: number): AgentProgressSnapshot {
+function normalizeAgentProgressSnapshot(value: unknown, index: number): NormalizedAgentProgressSnapshot {
   const source = asRecord(value);
   const cardId = stringOrNull(source?.cardId) ?? `unknown-card-${index + 1}`;
   const runId = stringOrNull(source?.runId) ?? `unknown-run-${index + 1}`;
   const phase = agentProgressPhaseOrDefault(source?.phase);
   const status = agentProgressStatusOrDefault(source?.status);
+  const hasFallbackIdentity = cardId.startsWith("unknown-card-") || runId.startsWith("unknown-run-");
+  const hasHeartbeatFreshness = source?.lastHeartbeatAt !== undefined || source?.heartbeatAgeMs !== undefined || hasFallbackIdentity;
+  const hasToolOutputFreshness = source?.lastToolOutputAt !== undefined || source?.toolOutputAgeMs !== undefined || hasFallbackIdentity;
   const currentTool = normalizeAgentProgressTool(source?.currentTool);
   const recentEvents = Array.isArray(source?.recentEvents) ? source.recentEvents.map((event, eventIndex) => normalizeAgentProgressEvent(event, eventIndex)) : [];
   const overflowRecovery = normalizeAgentOverflowRecovery(source?.overflowRecovery);
@@ -5815,6 +5825,8 @@ function normalizeAgentProgressSnapshot(value: unknown, index: number): AgentPro
     heartbeatAgeMs: numberOrUndefined(source?.heartbeatAgeMs),
     lastToolOutputAt: stringOrNull(source?.lastToolOutputAt) ?? undefined,
     toolOutputAgeMs: numberOrUndefined(source?.toolOutputAgeMs),
+    hasHeartbeatFreshness,
+    hasToolOutputFreshness,
     currentTool,
     outputTail: stringOrNull(source?.outputTail) ?? undefined,
     overflowRecovery,
@@ -5941,6 +5953,16 @@ function agentOverflowRecoveryKindOrNull(value: unknown): AgentOverflowRecoveryK
   return typeof value === "string" && ["context_length_exceeded", "tool_output_too_large", "task_board_output_too_large"].includes(value) ? value as AgentOverflowRecoveryKind : null;
 }
 
+function sanitizeAgentProgressOutputTail(value: string): string {
+  const sanitized = sanitizeTimelineText(value);
+  return sanitized.length > agentProgressOutputTailDisplayLimit ? `${sanitized.slice(0, agentProgressOutputTailDisplayLimit)}…` : sanitized;
+}
+
+function sanitizeAgentProgressSummary(value: string): string {
+  const sanitized = sanitizeDisplayText(value);
+  return sanitized.length > agentProgressSummaryDisplayLimit ? `${sanitized.slice(0, agentProgressSummaryDisplayLimit)}…` : sanitized;
+}
+
 function AgentProgressStatusCard({ tone, title, detail, generatedAt }: { tone: "idle" | "loading" | "empty" | "ready" | "error"; title: string; detail: string; generatedAt?: string | null }) {
   return (
     <div className={`agent-progress-status ${tone}`} role="status">
@@ -5955,7 +5977,7 @@ function AgentProgressStatusCard({ tone, title, detail, generatedAt }: { tone: "
   );
 }
 
-function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapshot }) {
+function AgentProgressSnapshotCard({ snapshot }: { snapshot: NormalizedAgentProgressSnapshot }) {
   const state = agentProgressStateLabel(snapshot);
   const overflowRecovery = agentOverflowRecovery(snapshot);
   const visibleEvents = snapshot.recentEvents.slice(0, agentProgressRecentEventDisplayLimit);
@@ -5971,23 +5993,23 @@ function AgentProgressSnapshotCard({ snapshot }: { snapshot: AgentProgressSnapsh
         <span>Status: {sanitizeDisplayText(snapshot.status)}</span>
         <span>Elapsed: {formatDuration(snapshot.elapsedMs)}</span>
         <span>Snapshot age: {formatDuration(snapshot.ageMs)}</span>
-        <span>Last heartbeat: {formatFreshnessTimestamp(snapshot.lastHeartbeatAt)}</span>
-        <span>Heartbeat age: {formatOptionalDuration(snapshot.heartbeatAgeMs)}</span>
-        <span>Last tool output: {formatFreshnessTimestamp(snapshot.lastToolOutputAt)}</span>
-        <span>Tool output age: {formatOptionalDuration(snapshot.toolOutputAgeMs)}</span>
+        {snapshot.hasHeartbeatFreshness && <span>Last heartbeat: {formatFreshnessTimestamp(snapshot.lastHeartbeatAt)}</span>}
+        {snapshot.hasHeartbeatFreshness && <span>Heartbeat age: {formatOptionalDuration(snapshot.heartbeatAgeMs)}</span>}
+        {snapshot.hasToolOutputFreshness && <span>Last tool output: {formatFreshnessTimestamp(snapshot.lastToolOutputAt)}</span>}
+        {snapshot.hasToolOutputFreshness && <span>Tool output age: {formatOptionalDuration(snapshot.toolOutputAgeMs)}</span>}
         {snapshot.completedAt && <span>Completed: {sanitizeDisplayText(snapshot.completedAt)}</span>}
         {snapshot.currentTool && <span>Tool: {sanitizeDisplayText(snapshot.currentTool.kind)} · {sanitizeDisplayText(snapshot.currentTool.label)}{snapshot.currentTool.elapsedMs !== undefined ? ` · ${formatDuration(snapshot.currentTool.elapsedMs)}` : ""}</span>}
         {snapshot.stuckReason && snapshot.stuckReason !== "none" && <span>Stuck reason: {sanitizeDisplayText(snapshot.stuckReason)}</span>}
       </div>
       <span>{sanitizeDisplayText(snapshot.message)}</span>
       {overflowRecovery && <AgentOverflowRecoveryCard recovery={overflowRecovery} />}
-      {snapshot.outputTail && <pre className="agent-progress-output">{sanitizeTimelineText(snapshot.outputTail)}</pre>}
+      {snapshot.outputTail && <pre className="agent-progress-output">{sanitizeAgentProgressOutputTail(snapshot.outputTail)}</pre>}
       <div className="stack">
         <strong>Recent summaries</strong>
         {snapshot.recentEvents.length === 0 ? <span className="subtle">No recent summaries.</span> : visibleEvents.map((event) => (
           <div className="agent-progress-event" key={event.eventId}>
             <span>{sanitizeDisplayText(event.timestamp)} · {sanitizeDisplayText(event.phase)} · {sanitizeDisplayText(event.status)}</span>
-            <span>{sanitizeDisplayText(event.message)}</span>
+            <span>{sanitizeAgentProgressSummary(event.message)}</span>
           </div>
         ))}
         {hiddenEventCount > 0 && <span className="subtle">{hiddenEventCount} more summaries hidden.</span>}
@@ -6002,7 +6024,6 @@ function AgentOverflowRecoveryCard({ recovery }: { recovery: AgentOverflowRecove
       <div className="stack">
         <strong>{agentOverflowRecoveryTitle(recovery.kind)}</strong>
         <span>{agentOverflowRecoveryAction(recovery.kind)}</span>
-        <span className="subtle">{sanitizeDisplayText(recovery.message)}</span>
       </div>
     </div>
   );
