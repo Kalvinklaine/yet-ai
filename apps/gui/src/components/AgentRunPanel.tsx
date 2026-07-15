@@ -432,14 +432,14 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       {showControlledVerificationBundle && <div className={`readiness-card ${canRequestControlledVerificationBundle || controlledVerificationBundle?.status === "succeeded" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled verification bundle review and run">
         <div className="row">
           <strong>Controlled verification bundle</strong>
-          <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code explicit run" : host === "jetbrains" ? "JetBrains fail-closed" : "browser unsupported"}</span>
+          <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code explicit manual run" : host === "jetbrains" ? "JetBrains fail-closed" : "browser unsupported"}</span>
           <span className="badge">fixed command ids only</span>
           <span className="badge">sequence-aware</span>
           <span className="badge">sanitized summaries</span>
           {pendingControlledVerificationBundle && <span className="badge warn">pending</span>}
         </div>
-        <span>{host === "vscode" ? "Review the bounded fixed command ids below, then run the bundle only with the explicit button." : host === "jetbrains" ? "JetBrains verification bundle execution remains fail-closed and posts no bridge request until parity is verified." : "Browser preview cannot request verification bundle execution and posts no bridge request."}</span>
-        <span className="subtle">No verification bundle starts on render, provider proposal, apply result, search selection, or history load. No command strings, args, cwd, env, shell, git, package, network, provider, tool, file read, file write, raw output, private path, or secret authority is exposed.</span>
+        <span>{host === "vscode" ? "Outside an already started controlled task run, review the bounded fixed command ids below and run this manual bundle only with the explicit button." : host === "jetbrains" ? "JetBrains verification bundle execution remains fail-closed and posts no bridge request until parity is verified." : "Browser preview cannot request verification bundle execution and posts no bridge request."}</span>
+        <span className="subtle">This manual bundle control is separate from the Start-gated controlled task run. No verification bundle starts on render, provider proposal, apply result, search selection, or history load. No command strings, args, cwd, env, shell, git, package, network, provider, tool, file read, file write, raw output, private path, or secret authority is exposed.</span>
         <div className="agent-progress-grid" aria-label="Controlled verification bundle status">
           <span>Bundle id: {controlledVerificationBundle?.bundleId ? sanitizeDisplayText(controlledVerificationBundle.bundleId) : "not accepted"}</span>
           <span>Run id: {controlledVerificationBundle?.runId ? sanitizeDisplayText(controlledVerificationBundle.runId) : "not accepted"}</span>
@@ -636,8 +636,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
             <strong>Controlled task execution Start</strong>
             <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code-only" : host === "jetbrains" ? "JetBrains fail-closed" : "browser unsupported"}</span>
             <span className="badge">single explicit gate</span>
-            <span className="badge">reducer only</span>
-            <span className="badge">no host commands</span>
+            <span className="badge">bounded read/edit/apply</span>
+            <span className="badge">allowlisted verification</span>
           </div>
           <span>{controlledTaskExecutionState?.phase === "context_ready" ? "VS Code Start recorded; planning/context is ready in controlled task execution state." : sanitizeDisplayText(oneStepLoopState.summary)}</span>
           <div className="agent-progress-grid" aria-label="Controlled task execution readiness fields">
@@ -653,7 +653,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           {host !== "vscode" && <span className="subtle">Controlled task execution Start is disabled outside VS Code and posts no bridge request.</span>}
           {host === "vscode" && !canStartOneStep && !oneStepActive && <span className="subtle">Start needs visible ready VS Code runtime, workspace, controlled read, controlled edit, and verification metadata.</span>}
           {oneStepActive && <span className="subtle" role="status">Controlled task execution is already active. Duplicate Start clicks stay disabled and do not mint another run.</span>}
-          <span className="subtle">Start advances only the GUI controlled task execution reducer into planning/context-ready state. It does not post read, apply, verification, shell, git, provider, network, or workspace mutation commands. Cozy leash, no sprinting into traffic.</span>
+          <span className="subtle">Start is the single explicit VS Code-only gate for a bounded controlled task run. Inside that started run, the GUI may request bounded read, edit, apply, and fixed allowlisted verification bundle actions; free-form shell, cwd, env, provider, network, git, package, and tool authority remain unavailable.</span>
           <div className="row" role="group" aria-label="Controlled task execution actions">
             <button type="button" onClick={onStartOneStepRun} disabled={!canStartOneStep}>Start one-step Agent Run</button>
             <button type="button" className="secondary-button" onClick={onStopOneStepRun} disabled={!canStopOneStep}>Stop one-step Agent Run</button>

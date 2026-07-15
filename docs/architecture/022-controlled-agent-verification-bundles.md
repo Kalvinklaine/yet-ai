@@ -1,10 +1,10 @@
 # 022 Controlled Agent Verification Bundles
 
-This document defines the S117 verification bundle v1 contract. It is contract, documentation, and fixture work only. It does not implement execution, bridge wiring, GUI controls, host runners, runtime behavior, provider calls, storage, command expansion, or workspace mutation.
+This document defines the S117 verification bundle v1 contract and the bounded VS Code started-run integration. It does not grant free-form command, cwd, env, provider, network, git, package, or tool authority.
 
 ## Goal
 
-A verification bundle records an explicit user-approved bounded sequence of fixed allowlisted verification command ids. It lets later UI/runtime work discuss a small set of local checks as one reviewed metadata object without granting free-form command authority.
+A verification bundle records an explicit bounded sequence of fixed allowlisted verification command ids. It lets UI/runtime work discuss a small set of local checks as one reviewed object without granting free-form command authority.
 
 The schema is `packages/contracts/schemas/engine/controlled-agent-verification-bundle.schema.json`.
 
@@ -33,9 +33,21 @@ A valid bundle records:
 
 The bundle may describe planned, running, succeeded, failed, timed out, killed, or blocked evidence. A planned bundle must not claim a result. A completed bundle may include only bounded, sanitized tail evidence and hashes.
 
+## VS Code started-run integration
+
+Controlled task Start is the single explicit VS Code-only gate for a bounded run. After the user clicks Start in VS Code, the GUI may progress inside that already-started run through bounded read, edit, apply, and fixed allowlisted verification bundle requests. Those requests remain lineage-bound to the active run/workspace ids and fixed command ids.
+
+Start does not grant free-form shell, command text, cwd, env, provider, network, git, package install, arbitrary tool, hidden search/indexing, or unbounded workspace authority. Browser and JetBrains surfaces remain fail-closed/non-executing for the started-run path until separate parity work proves otherwise.
+
+The manual verification bundle UI is separate: outside an already started controlled task run, the user must still click the explicit manual bundle button before any bundle request is posted.
+
+## Stale and mismatched results
+
+Host verification bundle results must correlate to the active request lineage, including request id, run id, controlled workspace id, workspace readiness id when present, bundle id, and fixed command ids. Stale, duplicate, mismatched, unsafe, or malformed results fail closed and cannot complete the run.
+
 ## Boundary
 
-Verification bundle v1 is a metadata lane, not an executor. It is independent of the S116 multi-file apply UI lane. A bundle cannot be reconstructed into shell text, arguments, cwd, env, package commands, network calls, provider tools, git operations, file reads, file writes, hidden indexing, or automatic repair behavior.
+Verification bundle v1 is a bounded fixed-command-id lane, not free-form execution authority. It is independent of the S116 multi-file apply UI lane. A bundle cannot be reconstructed into shell text, arguments, cwd, env, package commands, network calls, provider tools, git operations, file reads, file writes, hidden indexing, or automatic repair behavior.
 
 The schema intentionally rejects:
 
@@ -46,11 +58,11 @@ The schema intentionally rejects:
 - timeout or output budgets above the fixed maximums;
 - raw output dumps and oversized output-tail metadata;
 - private paths, secrets, raw payload wording, and unsafe markers;
-- auto-run or automatic verification claims;
+- auto-run claims outside the VS Code user-started bounded run;
 - production, release, or marketplace overclaims.
 
 ## Deterministic evidence
 
-The fixtures are local/mock deterministic evidence. They prove schema shape and rejection behavior only. They do not prove real command execution, real provider behavior, real IDE host integration, CI readiness, production autonomy, release readiness, or marketplace publication safety.
+The fixtures are local/mock deterministic evidence. They prove schema shape, request/result correlation, and rejection behavior only. They do not prove real command execution, real provider behavior, full IDE host parity, CI readiness, production autonomy, release readiness, or marketplace publication safety.
 
-Future implementation work must keep the same boundary: user confirmation first, fixed command ids only, bounded sequence/output/time budgets, sanitized aggregate summaries only, and no free-form shell authority. Tiny leash, fewer bite marks.
+Future implementation work must keep the same boundary: Start or manual confirmation first, fixed command ids only, bounded sequence/output/time budgets, sanitized aggregate summaries only, lineage-correlation fail-closed behavior, and no free-form shell authority. Tiny leash, fewer bite marks.

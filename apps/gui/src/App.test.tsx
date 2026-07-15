@@ -9444,6 +9444,12 @@ describe("edit proposal preview", () => {
       buttonWithin(agentRunPanel(), "Start one-step Agent Run").click();
     });
 
+    const startCopy = agentRunPanel().textContent ?? "";
+    expect(startCopy).toContain("Start is the single explicit VS Code-only gate for a bounded controlled task run.");
+    expect(startCopy).toContain("fixed allowlisted verification bundle actions");
+    expect(startCopy).not.toContain("reducer only");
+    expect(startCopy).not.toContain("no host commands");
+
     const readRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
     expect(readRequest).toBeDefined();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")).toHaveLength(0);

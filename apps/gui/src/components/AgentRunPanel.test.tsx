@@ -781,6 +781,12 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("Controlled task execution Start");
     expect(panelText()).toContain("VS Code-only");
     expect(panelText()).toContain("single explicit gate");
+    expect(panelText()).toContain("bounded read/edit/apply");
+    expect(panelText()).toContain("allowlisted verification");
+    expect(panelText()).toContain("Start is the single explicit VS Code-only gate for a bounded controlled task run.");
+    expect(panelText()).toContain("Inside that started run, the GUI may request bounded read, edit, apply, and fixed allowlisted verification bundle actions");
+    expect(panelText()).not.toContain("reducer only");
+    expect(panelText()).not.toContain("no host commands");
     expect(panelText()).toContain("Read request: ready");
     expect(panelText()).toContain("Edit request: ready");
     expect(panelText()).toContain("Verification request: ready");
@@ -821,7 +827,7 @@ describe("AgentRunPanel", () => {
       oneStepCommandRunRequest: readyOneStepRequest,
     });
 
-    expect(panelText()).toContain("One-step controlled run Start is disabled outside VS Code and posts no bridge request.");
+    expect(panelText()).toContain("Controlled task execution Start is disabled outside VS Code and posts no bridge request.");
     expect(panelText()).toContain("JetBrains partial/fail-closed");
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
 
@@ -833,7 +839,7 @@ describe("AgentRunPanel", () => {
       oneStepCommandRunRequest: readyOneStepRequest,
     });
 
-    expect(panelText()).toContain("Start needs ready VS Code host, runtime, workspace, controlled read, controlled edit, and allowlisted verification request metadata.");
+    expect(panelText()).toContain("Start needs visible ready VS Code runtime, workspace, controlled read, controlled edit, and verification metadata.");
     expect(panelText()).toContain("Edit request: blocked");
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
   });
