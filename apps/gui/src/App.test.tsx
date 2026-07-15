@@ -9454,6 +9454,8 @@ describe("edit proposal preview", () => {
       buttonWithin(panel, "Start one-step Agent Run").click();
     });
 
+    expect(postMessage).not.toHaveBeenCalled();
+
     const startedPanel = agentRunPanel();
     expect(startedPanel.textContent).toContain("Controlled phase: context ready");
     expect(startedPanel.textContent).toContain("Active run: yes");
@@ -9469,6 +9471,11 @@ describe("edit proposal preview", () => {
     await dispatchHostIdeActionResult("gui-workspace-snippet-search-2", workspaceSnippetSearchResultPayload({ snippets: [{ workspaceRelativePath: "apps/gui/src/AfterStart.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 1 } }, text: "function AfterStart() { return true; }" }] }));
     await act(async () => { Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? [])[0]?.click(); });
     await act(async () => { findButton("Attach selected snippets (1)").click(); });
+    const messagesAfterStart = postMessage.mock.calls.map(([message]) => message);
+    expect(messagesAfterStart).toEqual([
+      { version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-workspace-snippet-search-2", payload: { action: "searchWorkspaceSnippets", query: "chat composer" } },
+    ]);
+
     const runHistoryPanel = container?.querySelector('[data-testid="controlled-run-history-panel"]');
     expect(runHistoryPanel?.textContent).toContain("apps/gui/src/BeforeStart.tsx");
     expect(runHistoryPanel?.textContent).not.toContain("apps/gui/src/AfterStart.tsx");

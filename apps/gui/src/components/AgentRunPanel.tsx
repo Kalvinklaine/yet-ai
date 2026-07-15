@@ -142,6 +142,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const oneStepReadReady = oneStepReadRequest?.state === "ready";
   const oneStepEditReady = oneStepEditRequest?.state === "ready";
   const oneStepCommandReady = oneStepCommandRunRequest?.state === "ready";
+  const controlledTaskLineage = controlledTaskExecutionState?.lineage;
+  const controlledTaskHasRunId = controlledTaskExecutionSummary?.hasRunId ?? (controlledTaskLineage?.runId !== undefined);
+  const controlledTaskHasWorkspaceLineage = controlledTaskExecutionSummary?.lineage.hasWorkspaceReadinessId ?? (controlledTaskLineage?.workspaceReadinessId !== undefined);
+  const controlledTaskHasRuntimeLineage = controlledTaskExecutionSummary?.lineage.hasRuntimeSessionId ?? (controlledTaskLineage?.runtimeSessionId !== undefined);
   const oneStepActive = Boolean(controlledTaskExecutionState && !["idle", "completed", "blocked", "stopped"].includes(controlledTaskExecutionState.phase));
   const canStartOneStep = host === "vscode" && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
   const canStopOneStep = Boolean(onStopOneStepRun) && oneStepActive;
@@ -638,9 +642,9 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <span>{controlledTaskExecutionState?.phase === "context_ready" ? "VS Code Start recorded; planning/context is ready in controlled task execution state." : sanitizeDisplayText(oneStepLoopState.summary)}</span>
           <div className="agent-progress-grid" aria-label="Controlled task execution readiness fields">
             <span>Controlled phase: {(controlledTaskExecutionSummary?.phase ?? controlledTaskExecutionState?.phase ?? "idle").replace(/_/g, " ")}</span>
-            <span>Active run: {controlledTaskExecutionSummary?.hasRunId ? "yes" : "no"}</span>
-            <span>Workspace lineage: {controlledTaskExecutionSummary?.lineage.hasWorkspaceReadinessId ? "present" : "not recorded"}</span>
-            <span>Runtime lineage: {controlledTaskExecutionSummary?.lineage.hasRuntimeSessionId ? "present" : "not recorded"}</span>
+            <span>Active run: {controlledTaskHasRunId ? "yes" : "no"}</span>
+            <span>Workspace lineage: {controlledTaskHasWorkspaceLineage ? "present" : "not recorded"}</span>
+            <span>Runtime lineage: {controlledTaskHasRuntimeLineage ? "present" : "not recorded"}</span>
             <span>Read request: {oneStepReadReady ? "ready" : oneStepReadRequest?.state ?? "missing"}</span>
             <span>Edit request: {oneStepEditReady ? "ready" : oneStepEditRequest?.state ?? "missing"}</span>
             <span>Verification request: {oneStepCommandReady ? "ready" : oneStepCommandRunRequest?.state ?? "missing"}</span>

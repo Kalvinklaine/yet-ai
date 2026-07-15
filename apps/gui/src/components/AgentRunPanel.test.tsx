@@ -735,7 +735,29 @@ describe("AgentRunPanel", () => {
     expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
   });
 
-  it("renders explicit S86 one-step Start and Stop controls", () => {
+  it("renders controlled task execution fallback and explicit S86 one-step Agent Run Start and Stop controls", () => {
+    renderPanel(undefined, {
+      host: "vscode",
+      oneStepLoopState: idleOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+      controlledTaskExecutionState: {
+        phase: "context_ready",
+        lineage: {
+          runId: "run-state-only",
+          workspaceReadinessId: "workspace-state-only",
+          runtimeSessionId: "runtime-state-only",
+        },
+      },
+      onStartOneStepRun: vi.fn(),
+    });
+
+    expect(panelText()).toContain("Controlled phase: context ready");
+    expect(panelText()).toContain("Active run: yes");
+    expect(panelText()).toContain("Workspace lineage: present");
+    expect(panelText()).toContain("Runtime lineage: present");
+
     const onStartOneStepRun = vi.fn();
     const onStopOneStepRun = vi.fn();
     renderPanel(undefined, {
@@ -756,9 +778,9 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("One repair attempt: blocked");
     expect(panelText()).toContain("no production autonomy");
 
-    expect(panelText()).toContain("S96 useful one-step Agent Run");
+    expect(panelText()).toContain("Controlled task execution Start");
     expect(panelText()).toContain("VS Code-only");
-    expect(panelText()).toContain("explicit Start/Stop");
+    expect(panelText()).toContain("single explicit gate");
     expect(panelText()).toContain("Read request: ready");
     expect(panelText()).toContain("Edit request: ready");
     expect(panelText()).toContain("Verification request: ready");
@@ -779,6 +801,7 @@ describe("AgentRunPanel", () => {
       oneStepCommandRunRequest: readyOneStepRequest,
       onStartOneStepRun,
       onStopOneStepRun,
+      controlledTaskExecutionState: { phase: "planning", lineage: { runId: "run-active" } },
     });
 
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
@@ -1735,6 +1758,8 @@ type PanelTestProps = {
   onDraftVerificationFollowup?: () => void;
   onDraftVerificationFix?: () => void;
   proposalHistory?: ProposalHistory;
+  controlledTaskExecutionState?: any;
+  controlledTaskExecutionSummary?: any;
   oneStepLoopState?: any;
   oneStepReadRequest?: any;
   oneStepEditRequest?: any;
@@ -1804,6 +1829,8 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onDraftVerificationFollowup={props.onDraftVerificationFollowup ?? vi.fn()}
         onDraftVerificationFix={props.onDraftVerificationFix ?? vi.fn()}
         proposalHistory={props.proposalHistory ?? proposalHistory}
+        controlledTaskExecutionState={props.controlledTaskExecutionState}
+        controlledTaskExecutionSummary={props.controlledTaskExecutionSummary}
         oneStepLoopState={props.oneStepLoopState}
         oneStepReadRequest={props.oneStepReadRequest}
         oneStepEditRequest={props.oneStepEditRequest}
