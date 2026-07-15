@@ -109,8 +109,9 @@ function detectInitialBridgeHost(): BridgeHost {
 }
 const agentProgressSnapshotDisplayLimit = 18;
 const agentProgressRecentEventDisplayLimit = 11;
-const agentProgressOutputTailDisplayLimit = 1800;
+const agentProgressOutputTailDisplayLimit = 1200;
 const agentProgressSummaryDisplayLimit = 120;
+const agentProgressRecoveryMessageDisplayLimit = 180;
 const manualRunnerPlanProposalStepLimit = 6;
 export const completedIdeActionRequestChatsLimit = 64;
 export const completedApplyRequestChatsLimit = 64;
@@ -5963,6 +5964,11 @@ function sanitizeAgentProgressSummary(value: string): string {
   return sanitized.length > agentProgressSummaryDisplayLimit ? `${sanitized.slice(0, agentProgressSummaryDisplayLimit)}…` : sanitized;
 }
 
+function sanitizeAgentProgressRecoveryMessage(value: string): string {
+  const sanitized = sanitizeDisplayText(value);
+  return sanitized.length > agentProgressRecoveryMessageDisplayLimit ? `${sanitized.slice(0, agentProgressRecoveryMessageDisplayLimit)}…` : sanitized;
+}
+
 function AgentProgressStatusCard({ tone, title, detail, generatedAt }: { tone: "idle" | "loading" | "empty" | "ready" | "error"; title: string; detail: string; generatedAt?: string | null }) {
   return (
     <div className={`agent-progress-status ${tone}`} role="status">
@@ -5982,6 +5988,7 @@ function AgentProgressSnapshotCard({ snapshot }: { snapshot: NormalizedAgentProg
   const overflowRecovery = agentOverflowRecovery(snapshot);
   const visibleEvents = snapshot.recentEvents.slice(0, agentProgressRecentEventDisplayLimit);
   const hiddenEventCount = Math.max(0, snapshot.recentEvents.length - visibleEvents.length);
+  const showFreshnessDetails = snapshot.status !== "failed" && snapshot.phase !== "failed";
   return (
     <article className={`agent-progress-run ${snapshot.status}`}>
       <div className="row">
@@ -5993,10 +6000,10 @@ function AgentProgressSnapshotCard({ snapshot }: { snapshot: NormalizedAgentProg
         <span>Status: {sanitizeDisplayText(snapshot.status)}</span>
         <span>Elapsed: {formatDuration(snapshot.elapsedMs)}</span>
         <span>Snapshot age: {formatDuration(snapshot.ageMs)}</span>
-        {snapshot.hasHeartbeatFreshness && <span>Last heartbeat: {formatFreshnessTimestamp(snapshot.lastHeartbeatAt)}</span>}
-        {snapshot.hasHeartbeatFreshness && <span>Heartbeat age: {formatOptionalDuration(snapshot.heartbeatAgeMs)}</span>}
-        {snapshot.hasToolOutputFreshness && <span>Last tool output: {formatFreshnessTimestamp(snapshot.lastToolOutputAt)}</span>}
-        {snapshot.hasToolOutputFreshness && <span>Tool output age: {formatOptionalDuration(snapshot.toolOutputAgeMs)}</span>}
+        {showFreshnessDetails && snapshot.hasHeartbeatFreshness && <span>Last heartbeat: {formatFreshnessTimestamp(snapshot.lastHeartbeatAt)}</span>}
+        {showFreshnessDetails && snapshot.hasHeartbeatFreshness && <span>Heartbeat age: {formatOptionalDuration(snapshot.heartbeatAgeMs)}</span>}
+        {showFreshnessDetails && snapshot.hasToolOutputFreshness && <span>Last tool output: {formatFreshnessTimestamp(snapshot.lastToolOutputAt)}</span>}
+        {showFreshnessDetails && snapshot.hasToolOutputFreshness && <span>Tool output age: {formatOptionalDuration(snapshot.toolOutputAgeMs)}</span>}
         {snapshot.completedAt && <span>Completed: {sanitizeDisplayText(snapshot.completedAt)}</span>}
         {snapshot.currentTool && <span>Tool: {sanitizeDisplayText(snapshot.currentTool.kind)} · {sanitizeDisplayText(snapshot.currentTool.label)}{snapshot.currentTool.elapsedMs !== undefined ? ` · ${formatDuration(snapshot.currentTool.elapsedMs)}` : ""}</span>}
         {snapshot.stuckReason && snapshot.stuckReason !== "none" && <span>Stuck reason: {sanitizeDisplayText(snapshot.stuckReason)}</span>}
@@ -6024,6 +6031,7 @@ function AgentOverflowRecoveryCard({ recovery }: { recovery: AgentOverflowRecove
       <div className="stack">
         <strong>{agentOverflowRecoveryTitle(recovery.kind)}</strong>
         <span>{agentOverflowRecoveryAction(recovery.kind)}</span>
+        <span className="subtle">{sanitizeAgentProgressRecoveryMessage(recovery.message)}</span>
       </div>
     </div>
   );

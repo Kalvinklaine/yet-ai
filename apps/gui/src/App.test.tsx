@@ -3499,7 +3499,7 @@ describe("agent progress panel", () => {
     expect(text).not.toContain("SECRET_WORKSPACE_BODY");
     expect(text).not.toContain("SECRET_THOUGHT_BODY");
     expect((text.match(/SAFE_NOISY_AGENT_OUTPUT_/g) ?? []).length).toBeLessThan(220);
-    expect(text.length).toBeLessThan(18100);
+    expect(text.length).toBeLessThan(18500);
   });
 
   it("detects fallback overflow before raw-content redaction", async () => {
