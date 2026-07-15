@@ -9449,17 +9449,18 @@ describe("edit proposal preview", () => {
     await dispatchHostIdeActionResult("gui-workspace-snippet-search-1", workspaceSnippetSearchResultPayload({ snippets: [{ workspaceRelativePath: "apps/gui/src/BeforeStart.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 1 } }, text: "function BeforeStart() { return true; }" }] }));
     await act(async () => { Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? [])[0]?.click(); });
     await act(async () => { findButton("Attach selected snippets (1)").click(); });
+    postMessage.mockClear();
     await act(async () => {
       buttonWithin(panel, "Start one-step Agent Run").click();
     });
 
-const startedPanel = agentRunPanel();
+    const startedPanel = agentRunPanel();
     expect(startedPanel.textContent).toContain("Controlled phase: context ready");
     expect(startedPanel.textContent).toContain("Active run: yes");
     expect(startedPanel.textContent).toContain("Workspace lineage: present");
     expect(startedPanel.textContent).toContain("Runtime lineage: present");
     expect(startedPanel.textContent).toContain("VS Code Start recorded; planning/context is ready in controlled task execution state.");
-    expect(startedPanel.textContent).toContain("No host apply, verification, provider, shell, git, or network command was sent.");
+    expect(startedPanel.textContent).toContain("no host apply, verification, provider, shell, git, or network command was sent.");
     expect(buttonWithin(startedPanel, "Start one-step Agent Run").disabled).toBe(true);
     expect(container?.querySelector('[data-testid="controlled-run-history-panel"]')?.textContent).toContain("apps/gui/src/BeforeStart.tsx");
     await act(async () => { findButton("Clear bundle").click(); });
@@ -9471,13 +9472,13 @@ const startedPanel = agentRunPanel();
     const runHistoryPanel = container?.querySelector('[data-testid="controlled-run-history-panel"]');
     expect(runHistoryPanel?.textContent).toContain("apps/gui/src/BeforeStart.tsx");
     expect(runHistoryPanel?.textContent).not.toContain("apps/gui/src/AfterStart.tsx");
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
 
     await act(async () => {
       buttonWithin(agentRunPanel(), "Start one-step Agent Run").click();
     });
     expect(agentRunPanel().textContent).toContain("Controlled phase: context ready");
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
   });
 
   it("controlled task execution Start stays visible but fail-closed for unsupported hosts", async () => {

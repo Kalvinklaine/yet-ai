@@ -2852,7 +2852,7 @@ export function App() {
       setControlledFileReadNote("Controlled task execution Start requires VS Code and ready controlled read, edit, and verification metadata. No bridge request was posted.");
       return;
     }
-const frozenContext = createControlledExecutionContextBundleSnapshot({
+    const frozenContext = createControlledExecutionContextBundleSnapshot({
       activeFileExcerpt: currentActiveFileExcerpt,
       includeActiveFileExcerpt: includeAttachedContext,
       explicitContextItems: explicitContextBundleItems,
@@ -2881,6 +2881,7 @@ const frozenContext = createControlledExecutionContextBundleSnapshot({
     setControlledCommandRunNote(null);
     addTimeline("Controlled task execution Start recorded with frozen explicit context");
     appendTrace({ family: "controlledAgent.taskExecution", title: "Controlled task execution Start recorded", status: "pending", summary: "User clicked VS Code Start; reducer advanced to context-ready with a frozen explicit context snapshot and without posting host apply or verification commands.", details: { host: bridgeHost, phase: "context_ready", contextSummary: frozenContext.summary } });
+  }, [addTimeline, appendTrace, bridgeHost, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle]);
 
   const stopOneStepAgentRun = useCallback(() => {
     controlledFileReadCorrelationRef.current = null;
