@@ -1428,20 +1428,21 @@ export function App() {
         }
         const correlation = correlateControlledAgentVerificationBundleResult({ current, bundleResult: message.payload, existingResult: controlledVerificationBundleResult });
         if (correlation.state === "accepted" && correlation.bundle) {
+          const acceptedBundle = correlation.bundle;
           const oneStepPendingBundle = oneStepVerificationBundleRequestIdRef.current === requestId;
           controlledVerificationBundleCompletedRequestIdRef.current = requestId;
           controlledVerificationBundleCorrelationRef.current = null;
                 oneStepVerificationBundleRequestIdRef.current = null;
           setPendingControlledVerificationBundleRequestId(null);
-          setControlledVerificationBundleResult(correlation.bundle);
+          setControlledVerificationBundleResult(acceptedBundle);
           setControlledVerificationBundleSourceResult(message.payload);
           setControlledVerificationBundleAcceptedCorrelation(current);
           setControlledVerificationFollowupDraft(null);
-          setControlledVerificationBundleNote(`Verification bundle result accepted: ${correlation.bundle.status ?? "accepted"}.`);
-          appendTrace({ family: "controlledAgent.verificationBundleResult", title: "Controlled verification bundle result received", status: correlation.bundle.status === "succeeded" ? "succeeded" : correlation.bundle.status === "running" ? "in_progress" : "failed", summary: "Sanitized sequence-aware verification bundle metadata accepted.", requestId, details: correlation.details });
+          setControlledVerificationBundleNote(`Verification bundle result accepted: ${acceptedBundle.status ?? "accepted"}.`);
+          appendTrace({ family: "controlledAgent.verificationBundleResult", title: "Controlled verification bundle result received", status: acceptedBundle.status === "succeeded" ? "succeeded" : acceptedBundle.status === "running" ? "in_progress" : "failed", summary: "Sanitized sequence-aware verification bundle metadata accepted.", requestId, details: correlation.details });
           if (oneStepPendingBundle) {
-            setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: verificationBundleToOneStepMetadata(current, correlation.bundle) }));
-            setControlledTaskExecutionState((currentState) => correlation.bundle?.status === "succeeded" ? reduceControlledTaskExecution(currentState, { type: "completed", runId: current.runId, verificationBundleId: current.bundleId }) : reduceControlledTaskExecution(currentState, { type: "blocked", runId: current.runId, proposalId: currentState.lineage.proposalId, verificationBundleId: current.bundleId, lastError: "Verification bundle result accepted." }));
+            setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: verificationBundleToOneStepMetadata(current, acceptedBundle) }));
+            setControlledTaskExecutionState((currentState) => acceptedBundle.status === "succeeded" ? reduceControlledTaskExecution(currentState, { type: "completed", runId: current.runId, verificationBundleId: current.bundleId }) : reduceControlledTaskExecution(currentState, { type: "blocked", runId: current.runId, proposalId: currentState.lineage.proposalId, verificationBundleId: current.bundleId, lastError: "Verification bundle result accepted." }));
           }
           return;
         }
@@ -2868,7 +2869,8 @@ export function App() {
       setOneStepLoopState((current) => reduceControlledOneStepAgentLoopState(current, { type: "verification", metadata: undefined }));
       return;
     }
-    controlledVerificationBundleCorrelationRef.current = request.correlation;
+    const correlation = request.correlation;
+    controlledVerificationBundleCorrelationRef.current = correlation;
     controlledVerificationBundleCompletedRequestIdRef.current = null;
     oneStepVerificationBundleRequestIdRef.current = request.bridgeRequest.requestId;
     setPendingControlledVerificationBundleRequestId(request.bridgeRequest.requestId);
@@ -2882,7 +2884,7 @@ export function App() {
       const proposalId = current.lineage.proposalId ?? "one-step-proposal";
       const proposalReady = current.phase === "context_ready" ? reduceControlledTaskExecution(current, { type: "proposalReady", runId: current.lineage.runId, proposalId }) : current;
       const applying = proposalReady.phase === "proposal_ready" ? reduceControlledTaskExecution(proposalReady, { type: "applying", runId: current.lineage.runId, proposalId }) : proposalReady;
-      return reduceControlledTaskExecution(applying, { type: "verifying", runId: current.lineage.runId, proposalId, verificationBundleId: request.correlation.bundleId });
+      return reduceControlledTaskExecution(applying, { type: "verifying", runId: current.lineage.runId, proposalId, verificationBundleId: correlation.bundleId });
     });
     bridgeAdapterRef.current?.post(request.bridgeRequest);
     addTimeline(`S96 one-step controlled verification bundle requested `);
