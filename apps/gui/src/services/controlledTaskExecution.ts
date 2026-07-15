@@ -16,6 +16,17 @@ export interface ControlledTaskExecutionState {
   stoppedReason?: string;
 }
 
+export interface ControlledTaskExecutionSummary {
+  phase: ControlledTaskExecutionPhase;
+  hasRunId: boolean;
+  lineage: {
+    hasWorkspaceReadinessId: boolean;
+    hasRuntimeSessionId: boolean;
+    hasProposalId: boolean;
+    hasVerificationBundleId: boolean;
+  };
+}
+
 export type ControlledTaskExecutionEvent =
   | { type: "startPlanning"; runId: string }
   | { type: "contextReady"; runId: string; workspaceReadinessId?: string; runtimeSessionId?: string; frozenContextSummary?: string }
@@ -32,6 +43,31 @@ export function createInitialControlledTaskExecutionState(): ControlledTaskExecu
   return {
     phase: "idle",
     lineage: {},
+  };
+}
+
+export function isControlledTaskExecutionActive(state: ControlledTaskExecutionState): boolean {
+  return isActivePhase(state.phase);
+}
+
+export function canStartControlledTaskExecution(state: ControlledTaskExecutionState): boolean {
+  return ["idle", "completed", "blocked", "stopped"].includes(state.phase);
+}
+
+export function canStopControlledTaskExecution(state: ControlledTaskExecutionState): boolean {
+  return isControlledTaskExecutionActive(state);
+}
+
+export function summarizeControlledTaskExecution(state: ControlledTaskExecutionState): ControlledTaskExecutionSummary {
+  return {
+    phase: state.phase,
+    hasRunId: state.lineage.runId !== undefined,
+    lineage: {
+      hasWorkspaceReadinessId: state.lineage.workspaceReadinessId !== undefined,
+      hasRuntimeSessionId: state.lineage.runtimeSessionId !== undefined,
+      hasProposalId: state.lineage.proposalId !== undefined,
+      hasVerificationBundleId: state.lineage.verificationBundleId !== undefined,
+    },
   };
 }
 
