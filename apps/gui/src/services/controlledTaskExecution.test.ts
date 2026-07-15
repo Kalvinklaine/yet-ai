@@ -4,6 +4,7 @@ import {
   canStopControlledTaskExecution,
   createInitialControlledTaskExecutionState,
   isControlledTaskExecutionActive,
+  reduceControlledTaskExecution,
   summarizeControlledTaskExecution,
   type ControlledTaskExecutionPhase,
   type ControlledTaskExecutionState,
@@ -90,6 +91,77 @@ describe("controlledTaskExecution", () => {
         hasVerificationBundleId: false,
       },
     });
+  });
+
+  it("moves idle to planning and records the run id", () => {
+    const state = createInitialControlledTaskExecutionState();
+
+    expect(reduceControlledTaskExecution(state, { type: "startPlanning", runId: "run-1" })).toEqual({
+      phase: "planning",
+      lineage: { runId: "run-1" },
+    });
+  });
+
+  it("records matching context readiness lineage and frozen context summary", () => {
+    const planning = reduceControlledTaskExecution(createInitialControlledTaskExecutionState(), { type: "startPlanning", runId: "run-1" });
+
+    expect(
+      reduceControlledTaskExecution(planning, {
+        type: "contextReady",
+        runId: "run-1",
+        workspaceReadinessId: "workspace-1",
+        runtimeSessionId: "runtime-1",
+        frozenContextSummary: "frozen summary",
+      }),
+    ).toEqual({
+      phase: "context_ready",
+      lineage: {
+        runId: "run-1",
+        workspaceReadinessId: "workspace-1",
+        runtimeSessionId: "runtime-1",
+      },
+      frozenContextSummary: "frozen summary",
+    });
+  });
+
+  it("ignores stale events with the wrong run id", () => {
+    const planning = reduceControlledTaskExecution(createInitialControlledTaskExecutionState(), { type: "startPlanning", runId: "run-1" });
+    const contextReady = reduceControlledTaskExecution(planning, {
+      type: "contextReady",
+      runId: "run-1",
+      workspaceReadinessId: "workspace-1",
+      runtimeSessionId: "runtime-1",
+      frozenContextSummary: "frozen summary",
+    });
+
+    expect(reduceControlledTaskExecution(planning, { type: "contextReady", runId: "stale-run", workspaceReadinessId: "stale-workspace" })).toBe(planning);
+    expect(reduceControlledTaskExecution(contextReady, { type: "proposalReady", runId: "stale-run", proposalId: "stale-proposal" })).toBe(contextReady);
+    expect(reduceControlledTaskExecution(contextReady, { type: "stopped", runId: "stale-run", stoppedReason: "stale stop" })).toBe(contextReady);
+  });
+
+  it("moves an active run to stopped and stores the stop reason", () => {
+    const planning = reduceControlledTaskExecution(createInitialControlledTaskExecutionState(), { type: "startPlanning", runId: "run-1" });
+
+    expect(reduceControlledTaskExecution(planning, { type: "stopped", runId: "run-1", stoppedReason: "user stopped" })).toEqual({
+      phase: "stopped",
+      lineage: { runId: "run-1" },
+      stoppedReason: "user stopped",
+    });
+  });
+
+  it("restarts terminal states only through start planning and ignores duplicate active starts", () => {
+    const terminalPhases: ControlledTaskExecutionPhase[] = ["stopped", "completed", "blocked"];
+
+    for (const phase of terminalPhases) {
+      expect(reduceControlledTaskExecution(stateForPhase(phase), { type: "startPlanning", runId: `restart-${phase}` })).toEqual({
+        phase: "planning",
+        lineage: { runId: `restart-${phase}` },
+      });
+    }
+
+    const active = stateForPhase("planning");
+
+    expect(reduceControlledTaskExecution(active, { type: "startPlanning", runId: "duplicate-run" })).toBe(active);
   });
 });
 
