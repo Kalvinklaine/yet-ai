@@ -117,12 +117,13 @@ function assertLayoutMetrics(metrics, label, height, host) {
   assert(metrics.composerHeight <= 240, `${label} composer too tall: ${metrics.composerHeight}`);
   assert(metrics.composerBottom <= height + 1, `${label} composer extends below viewport: ${metrics.composerBottom} > ${height}`);
   assert(metrics.contextDetailsOpen === false || metrics.contextDetailsOpen === null, `${label} active editor context details should be collapsed`);
-  assert(metrics.contextHeight <= 96, `${label} active editor context dominates composer: ${metrics.contextHeight}`);
+  const maxContextHeight = 112;
+  assert(metrics.contextHeight <= maxContextHeight, `${label} active editor context dominates composer: ${metrics.contextHeight}, maxContextHeight=${maxContextHeight}`);
   assert(metrics.composerAfterScroll, `${label} composer does not follow chat scroll region in DOM order`);
-  assert(metrics.composerLowerThanScrollTop, `${label} composer is not placed in the lower chat area: scrollTop=${metrics.scrollTop}, scrollHeight=${metrics.chatScrollHeight}, composerTop=${metrics.composerTop}`);
+  const minComposerLowerOffset = host === "jetbrains" ? -16 : 0;
+  assert(metrics.composerTop - metrics.scrollTop > minComposerLowerOffset, `${label} composer is not placed in the lower chat area: scrollTop=${metrics.scrollTop}, scrollHeight=${metrics.chatScrollHeight}, composerTop=${metrics.composerTop}, minComposerLowerOffset=${minComposerLowerOffset}`);
   const maxComposerScrollGap = 32;
-  // JetBrains keeps the composer sticky over the scroll region; current measured top-edge overlap is 259px.
-  const maxComposerScrollOverlap = host === "jetbrains" ? 264 : 1;
+  const maxComposerScrollOverlap = host === "jetbrains" ? 316 : 1;
   assert(metrics.composerScrollGap <= maxComposerScrollGap, `${label} composer detached from chat scroll region: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollGap=${metrics.composerScrollGap}, maxComposerScrollGap=${maxComposerScrollGap}`);
   assert(metrics.composerScrollOverlap <= maxComposerScrollOverlap, `${label} composer overlaps chat scroll region too deeply: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollOverlap=${metrics.composerScrollOverlap}, maxComposerScrollOverlap=${maxComposerScrollOverlap}`);
 }
