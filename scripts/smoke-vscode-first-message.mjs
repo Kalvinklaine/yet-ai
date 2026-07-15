@@ -179,7 +179,7 @@ try {
       },
     }));
   }, { version: bridgeVersion, text: contextText });
-  await expectVisibleText(page, "Active editor context", "VS Code active context bridge delivery");
+  await expectVisibleActiveContext(page);
 
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageText);
   await sendButton(page).click();
@@ -253,12 +253,41 @@ async function refreshRuntime(page) {
 async function openDetailsBySummary(page, summaryText, visibleLocator) {
   if (await visibleLocator.isVisible().catch(() => false)) return;
   const summary = page.locator("summary", { hasText: summaryText }).first();
-  await summary.click({ timeout: 5000 }).catch(async () => {
-    await page.locator("details", { hasText: summaryText }).first().evaluate((element) => {
-      if (element instanceof HTMLDetailsElement) element.open = true;
-    });
-  });
+  await summary.waitFor({ state: "visible", timeout: 5000 });
+  await summary.click({ timeout: 5000 });
   await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
+}
+
+async function expectVisibleActiveContext(page) {
+  await openComposerDrawer(page, "ide-actions-drawer", "VS Code active context bridge delivery");
+  const contextDetails = page.locator("[data-testid='attached-context-active-details']").first();
+  await contextDetails.waitFor({ state: "visible", timeout: 10_000 });
+  const contextSummary = contextDetails.locator(":scope > summary").first();
+  await contextSummary.waitFor({ state: "visible", timeout: 5000 });
+  await expectVisibleTextWithin(contextDetails, "Active editor context", "VS Code active context summary");
+  await expectVisibleTextWithin(contextDetails, "Attach to next message", "VS Code active context attach state");
+  await expectVisibleTextWithin(contextDetails, "src/vscode-smoke.ts", "VS Code active context file");
+  if (!await contextDetails.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
+    await contextSummary.click({ timeout: 5000 });
+  }
+  await expectVisibleTextWithin(contextDetails, "Selection range", "VS Code active context selection range");
+  await expectVisibleTextWithin(contextDetails, contextText, "VS Code active context bounded preview");
+}
+
+async function openComposerDrawer(page, testId, description) {
+  const drawer = page.locator(`[data-testid='${testId}']`).first();
+  await drawer.waitFor({ state: "attached", timeout: 10_000 });
+  const summary = drawer.locator(":scope > summary").first();
+  await summary.waitFor({ state: "visible", timeout: 5000 });
+  if (!await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
+    await summary.scrollIntoViewIfNeeded({ timeout: 5000 });
+    await summary.click({ timeout: 5000 });
+  }
+  const body = drawer.locator(":scope > .composer-drawer-body").first();
+  await body.waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
+    const bodyText = await page.locator("body").innerText().catch(() => "");
+    throw new Error(`Timed out opening ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(bodyText).slice(0, 4000)}`);
+  });
 }
 
 function sendButton(page) {
@@ -428,6 +457,15 @@ async function expectVisibleText(page, text, description, timeout = 10_000) {
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 4000)}`);
+  }
+}
+
+async function expectVisibleTextWithin(locator, text, description, timeout = 10_000) {
+  try {
+    await locator.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout });
+  } catch (error) {
+    const textContent = await locator.innerText().catch(() => "");
+    throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nScoped text excerpt: ${redactSecrets(textContent).slice(0, 4000)}`);
   }
 }
 
