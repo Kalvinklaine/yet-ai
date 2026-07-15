@@ -538,9 +538,11 @@ export function App() {
   const oneStepFileReadRequestIdRef = useRef<string | null>(null);
   const oneStepEditRequestIdRef = useRef<string | null>(null);
   const oneStepCommandRunRequestIdRef = useRef<string | null>(null);
+  const oneStepVerificationBundleRequestIdRef = useRef<string | null>(null);
   const oneStepFileReadRequestRef = useRef<ReturnType<typeof buildControlledAgentFileReadRequest> | null>(null);
   const oneStepEditRequestRef = useRef<ReturnType<typeof buildControlledAgentEditRequest> | null>(null);
   const oneStepCommandRunRequestRef = useRef<ReturnType<typeof buildControlledAgentCommandRunRequest> | null>(null);
+  const oneStepVerificationBundleRequestRef = useRef<ControlledAgentVerificationBundleRequestResult | null>(null);
   const oneStepLoopRunCounterRef = useRef(0);
   const completedIdeActionRequestChatsRef = useRef<Map<string, string>>(new Map());
   const completedApplyRequestChatsRef = useRef<Map<string, string>>(new Map());
@@ -952,9 +954,16 @@ export function App() {
     userConfirmed: true,
     requestSeed: "s86-one-step",
   }), [bridgeHost, controlledAgentRuntimeSessionMetadata, controlledWorkspaceReadinessMetadata, oneStepControlledAgentEditRequest.correlation?.runId, oneStepControlledAgentEditRequest.correlation?.workspaceReadinessId]);
+  const oneStepControlledAgentVerificationBundleRequest = useMemo(() => buildControlledAgentVerificationBundleRequest({
+    host: bridgeHost,
+    bundleMetadata: controlledAgentVerificationBundleMetadata,
+    userConfirmed: true,
+    requestSeed: "s96-one-step-verification-bundle",
+  }), [bridgeHost, controlledAgentVerificationBundleMetadata]);
   oneStepFileReadRequestRef.current = oneStepControlledAgentFileReadRequest;
   oneStepEditRequestRef.current = oneStepControlledAgentEditRequest;
   oneStepCommandRunRequestRef.current = oneStepControlledAgentCommandRunRequest;
+  oneStepVerificationBundleRequestRef.current = oneStepControlledAgentVerificationBundleRequest;
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
   const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || effectiveControlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledAgentTwoStepRunMetadata !== undefined;
@@ -1139,6 +1148,7 @@ export function App() {
     controlledCommandRunCorrelationRef.current = null;
     controlledCommandRunCompletedRequestIdRef.current = null;
     oneStepCommandRunRequestIdRef.current = null;
+          oneStepVerificationBundleRequestIdRef.current = null;
     agentRunVerificationCorrelationRef.current = null;
     agentRunVerificationChatIdRef.current = null;
     setPendingControlledCommandRunRequestId(null);
@@ -1150,6 +1160,7 @@ export function App() {
     controlledCommandRunCorrelationRef.current = null;
     controlledCommandRunCompletedRequestIdRef.current = null;
     oneStepCommandRunRequestIdRef.current = null;
+          oneStepVerificationBundleRequestIdRef.current = null;
     agentRunVerificationCorrelationRef.current = null;
     agentRunVerificationChatIdRef.current = null;
     setPendingControlledCommandRunRequestId(null);
@@ -1203,6 +1214,7 @@ export function App() {
     }
     controlledCommandRunCorrelationRef.current = null;
     oneStepCommandRunRequestIdRef.current = null;
+          oneStepVerificationBundleRequestIdRef.current = null;
     agentRunVerificationCorrelationRef.current = null;
     agentRunVerificationChatIdRef.current = null;
     setPendingControlledCommandRunRequestId(null);
@@ -1407,12 +1419,19 @@ export function App() {
         }
         if (!current) {
           setControlledVerificationBundleNote("Ignored stale verification bundle result.");
+          if (oneStepVerificationBundleRequestIdRef.current === requestId) {
+                  oneStepVerificationBundleRequestIdRef.current = null;
+            setPendingControlledVerificationBundleRequestId(null);
+            setControlledTaskExecutionState((currentState) => currentState.lineage.runId ? reduceControlledTaskExecution(currentState, { type: "blocked", runId: currentState.lineage.runId, proposalId: currentState.lineage.proposalId, verificationBundleId: currentState.lineage.verificationBundleId, lastError: "Ignored stale verification bundle result." }) : currentState);
+          }
           return;
         }
         const correlation = correlateControlledAgentVerificationBundleResult({ current, bundleResult: message.payload, existingResult: controlledVerificationBundleResult });
         if (correlation.state === "accepted" && correlation.bundle) {
+          const oneStepPendingBundle = oneStepVerificationBundleRequestIdRef.current === requestId;
           controlledVerificationBundleCompletedRequestIdRef.current = requestId;
           controlledVerificationBundleCorrelationRef.current = null;
+                oneStepVerificationBundleRequestIdRef.current = null;
           setPendingControlledVerificationBundleRequestId(null);
           setControlledVerificationBundleResult(correlation.bundle);
           setControlledVerificationBundleSourceResult(message.payload);
@@ -1420,19 +1439,30 @@ export function App() {
           setControlledVerificationFollowupDraft(null);
           setControlledVerificationBundleNote(`Verification bundle result accepted: ${correlation.bundle.status ?? "accepted"}.`);
           appendTrace({ family: "controlledAgent.verificationBundleResult", title: "Controlled verification bundle result received", status: correlation.bundle.status === "succeeded" ? "succeeded" : correlation.bundle.status === "running" ? "in_progress" : "failed", summary: "Sanitized sequence-aware verification bundle metadata accepted.", requestId, details: correlation.details });
+          if (oneStepPendingBundle) {
+            setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: verificationBundleToOneStepMetadata(current, correlation.bundle) }));
+            setControlledTaskExecutionState((currentState) => correlation.bundle?.status === "succeeded" ? reduceControlledTaskExecution(currentState, { type: "completed", runId: current.runId, verificationBundleId: current.bundleId }) : reduceControlledTaskExecution(currentState, { type: "blocked", runId: current.runId, proposalId: currentState.lineage.proposalId, verificationBundleId: current.bundleId, lastError: "Verification bundle result accepted." }));
+          }
           return;
         }
         if (correlation.state === "duplicate") {
           controlledVerificationBundleCorrelationRef.current = null;
+                oneStepVerificationBundleRequestIdRef.current = null;
           setPendingControlledVerificationBundleRequestId(null);
           setControlledVerificationBundleNote("Ignored duplicate verification bundle result.");
           return;
         }
         if (correlation.state === "ignored") {
           setControlledVerificationBundleNote("Ignored stale verification bundle result.");
+          if (oneStepVerificationBundleRequestIdRef.current === requestId) {
+                  oneStepVerificationBundleRequestIdRef.current = null;
+            setPendingControlledVerificationBundleRequestId(null);
+            setControlledTaskExecutionState((currentState) => currentState.lineage.runId ? reduceControlledTaskExecution(currentState, { type: "blocked", runId: currentState.lineage.runId, proposalId: currentState.lineage.proposalId, verificationBundleId: currentState.lineage.verificationBundleId, lastError: "Ignored stale verification bundle result." }) : currentState);
+          }
           return;
         }
         controlledVerificationBundleCorrelationRef.current = null;
+              oneStepVerificationBundleRequestIdRef.current = null;
         setPendingControlledVerificationBundleRequestId(null);
         setControlledVerificationBundleNote(correlation.diagnostics[0]?.message ?? "Verification bundle result was blocked.");
       } else if (message.type === "host.controlledAgentMultifileApplyResult") {
@@ -1538,7 +1568,7 @@ export function App() {
           if (oneStepPendingEdit) {
             setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "edit", metadata: controlledEditResultToOneStepMetadata(message.payload) }));
             if (correlation.edit.state === "applied") {
-              postOneStepCommandRunRequest();
+              postOneStepVerificationBundleRequest();
             }
           }
           return;
@@ -1590,6 +1620,7 @@ export function App() {
           controlledCommandRunCompletedRequestIdRef.current = requestId;
           controlledCommandRunCorrelationRef.current = null;
           oneStepCommandRunRequestIdRef.current = null;
+          oneStepVerificationBundleRequestIdRef.current = null;
           agentRunVerificationCorrelationRef.current = null;
           agentRunVerificationChatIdRef.current = null;
           setPendingControlledCommandRunRequestId(null);
@@ -1613,6 +1644,7 @@ export function App() {
         if (correlation.state === "duplicate") {
           controlledCommandRunCorrelationRef.current = null;
           oneStepCommandRunRequestIdRef.current = null;
+          oneStepVerificationBundleRequestIdRef.current = null;
           agentRunVerificationCorrelationRef.current = null;
           agentRunVerificationChatIdRef.current = null;
           setPendingControlledCommandRunRequestId(null);
@@ -1625,6 +1657,7 @@ export function App() {
         }
         controlledCommandRunCorrelationRef.current = null;
         oneStepCommandRunRequestIdRef.current = null;
+          oneStepVerificationBundleRequestIdRef.current = null;
         agentRunVerificationCorrelationRef.current = null;
         agentRunVerificationChatIdRef.current = null;
         setPendingControlledCommandRunRequestId(null);
@@ -2826,29 +2859,41 @@ export function App() {
     appendTrace({ family: "controlledAgent.editPending", title: "S86 one-step controlled edit requested", status: "pending", summary: "One-step run posted one bounded controlled edit request.", requestId: request.bridgeRequest.requestId, details: request.details });
   }, [addTimeline, appendTrace, pendingControlledEditRequestId]);
 
-  const postOneStepCommandRunRequest = useCallback(() => {
-    const request = oneStepCommandRunRequestRef.current;
-    if (!request || request.state !== "ready" || !request.bridgeRequest || !request.correlation || controlledCommandRunCorrelationRef.current || pendingControlledCommandRunRequestId) {
-      setControlledCommandRunNote(request?.diagnostics[0]?.message ?? "One-step controlled verification request is not ready.");
+  const postOneStepVerificationBundleRequest = useCallback(() => {
+    const request = oneStepVerificationBundleRequestRef.current;
+    setControlledVerificationBundleRequest(request ?? undefined);
+    if (!request || request.state !== "ready" || !request.bridgeRequest || !request.correlation || controlledVerificationBundleCorrelationRef.current || pendingControlledVerificationBundleRequestId) {
+      setControlledVerificationBundleNote(request?.diagnostics[0]?.message ?? "One-step controlled verification bundle request is not ready.");
+      setControlledTaskExecutionState((current) => current.lineage.runId ? reduceControlledTaskExecution(current, { type: "blocked", runId: current.lineage.runId, proposalId: current.lineage.proposalId, verificationBundleId: current.lineage.verificationBundleId, lastError: request?.diagnostics[0]?.message ?? "One-step controlled verification bundle request is not ready." }) : current);
       setOneStepLoopState((current) => reduceControlledOneStepAgentLoopState(current, { type: "verification", metadata: undefined }));
       return;
     }
-    controlledCommandRunCorrelationRef.current = request.correlation;
-    controlledCommandRunCompletedRequestIdRef.current = null;
-    oneStepCommandRunRequestIdRef.current = request.bridgeRequest.requestId;
-    setPendingControlledCommandRunRequestId(request.bridgeRequest.requestId);
-    setControlledCommandRunResultMetadata(null);
-    setControlledCommandRunNote("One-step controlled verification request posted after bounded edit success.");
+    controlledVerificationBundleCorrelationRef.current = request.correlation;
+    controlledVerificationBundleCompletedRequestIdRef.current = null;
+    oneStepVerificationBundleRequestIdRef.current = request.bridgeRequest.requestId;
+    setPendingControlledVerificationBundleRequestId(request.bridgeRequest.requestId);
+    setControlledVerificationBundleResult(undefined);
+    setControlledVerificationBundleSourceResult(undefined);
+    setControlledVerificationBundleAcceptedCorrelation(null);
+    setControlledVerificationFollowupDraft(null);
+    setControlledVerificationBundleNote("One-step controlled verification bundle request posted after bounded edit success.");
+    setControlledTaskExecutionState((current) => {
+      if (!current.lineage.runId) return current;
+      const proposalId = current.lineage.proposalId ?? "one-step-proposal";
+      const proposalReady = current.phase === "context_ready" ? reduceControlledTaskExecution(current, { type: "proposalReady", runId: current.lineage.runId, proposalId }) : current;
+      const applying = proposalReady.phase === "proposal_ready" ? reduceControlledTaskExecution(proposalReady, { type: "applying", runId: current.lineage.runId, proposalId }) : proposalReady;
+      return reduceControlledTaskExecution(applying, { type: "verifying", runId: current.lineage.runId, proposalId, verificationBundleId: request.correlation.bundleId });
+    });
     bridgeAdapterRef.current?.post(request.bridgeRequest);
-    addTimeline(`S86 one-step controlled verification requested ${request.bridgeRequest.requestId}`);
-    appendTrace({ family: "controlledAgent.commandPlanned", title: "S86 one-step controlled verification requested", status: "pending", summary: "One-step run posted one allowlisted controlled verification request.", requestId: request.bridgeRequest.requestId, details: request.details });
-  }, [addTimeline, appendTrace, pendingControlledCommandRunRequestId]);
+    addTimeline(`S96 one-step controlled verification bundle requested `);
+    appendTrace({ family: "controlledAgent.verificationBundleRequested", title: "S96 one-step controlled verification bundle requested", status: "pending", summary: "Started VS Code one-step run posted an allowlisted verification bundle request with run and bundle lineage.", requestId: request.bridgeRequest.requestId, details: request.details });
+  }, [addTimeline, appendTrace, pendingControlledVerificationBundleRequestId]);
 
   const startOneStepAgentRun = useCallback(() => {
     const readRequest = oneStepFileReadRequestRef.current;
     const editRequest = oneStepEditRequestRef.current;
-    const commandRequest = oneStepCommandRunRequestRef.current;
-    if (bridgeHost !== "vscode" || !readRequest || !editRequest || !commandRequest || readRequest.state !== "ready" || editRequest.state !== "ready" || commandRequest.state !== "ready") {
+    const verificationBundleRequest = oneStepVerificationBundleRequestRef.current;
+    if (bridgeHost !== "vscode" || !readRequest || !editRequest || !verificationBundleRequest || readRequest.state !== "ready" || editRequest.state !== "ready" || verificationBundleRequest.state !== "ready") {
       setControlledFileReadNote("Controlled task execution Start requires VS Code and ready controlled read, edit, and verification metadata. No bridge request was posted.");
       return;
     }
@@ -2873,23 +2918,36 @@ export function App() {
         runId,
         workspaceReadinessId,
         runtimeSessionId,
-        frozenContextSummary: `${frozenContext.summary} Start recorded; no host apply, verification, provider, shell, git, or network command was sent.`,
+        frozenContextSummary: ` Start recorded; autonomous verification may request only the allowlisted verification bundle after bounded edit success; no free-form shell, git, provider, network command, or arbitrary verification is available.`,
       });
     });
-    setControlledFileReadNote("Controlled task execution Start recorded in the GUI reducer only with a frozen explicit context snapshot. No controlled read, apply, verification, shell, git, provider, or network command was posted.");
+    setControlledFileReadNote("Controlled task execution Start recorded with a frozen explicit context snapshot. The bounded run may continue through controlled read/edit and then only the allowlisted verification bundle.");
     setControlledEditNote(null);
     setControlledCommandRunNote(null);
     addTimeline("Controlled task execution Start recorded with frozen explicit context");
-    appendTrace({ family: "controlledAgent.taskExecution", title: "Controlled task execution Start recorded", status: "pending", summary: "User clicked VS Code Start; reducer advanced to context-ready with a frozen explicit context snapshot and without posting host apply or verification commands.", details: { host: bridgeHost, phase: "context_ready", contextSummary: frozenContext.summary } });
+    appendTrace({ family: "controlledAgent.taskExecution", title: "Controlled task execution Start recorded", status: "pending", summary: "User clicked VS Code Start; reducer advanced to context-ready with a frozen explicit context snapshot before bounded read, edit, and allowlisted verification bundle execution.", details: { host: bridgeHost, phase: "context_ready", contextSummary: frozenContext.summary } });
+    setOneStepLoopState((current) => reduceControlledOneStepAgentLoopState(current, { type: "start", metadata: { source: "gui", confirmedBy: "user", assistantMinted: false, explicitUserStart: true, requestId: `s96-one-step-`, summary: "Explicit VS Code Start accepted for one bounded read/edit/verification-bundle run." } }));
+    controlledFileReadCorrelationRef.current = readRequest.correlation ?? null;
+    controlledFileReadCompletedRequestIdRef.current = null;
+    oneStepFileReadRequestIdRef.current = readRequest.bridgeRequest?.requestId ?? null;
+    setPendingControlledFileReadRequestId(readRequest.bridgeRequest?.requestId ?? null);
+    setControlledFileReadResultMetadata(null);
+    if (readRequest.bridgeRequest) {
+      bridgeAdapterRef.current?.post(readRequest.bridgeRequest);
+      addTimeline(`S96 one-step controlled read requested `);
+      appendTrace({ family: "controlledAgent.fileReadPlanned", title: "S96 one-step controlled read requested", status: "pending", summary: "Started VS Code run posted one bounded controlled read request before edit and allowlisted verification bundle.", requestId: readRequest.bridgeRequest.requestId, details: readRequest.details });
+    }
   }, [addTimeline, appendTrace, bridgeHost, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle]);
 
   const stopOneStepAgentRun = useCallback(() => {
     controlledFileReadCorrelationRef.current = null;
     controlledEditCorrelationRef.current = null;
     controlledCommandRunCorrelationRef.current = null;
+    controlledVerificationBundleCorrelationRef.current = null;
     oneStepFileReadRequestIdRef.current = null;
     oneStepEditRequestIdRef.current = null;
     oneStepCommandRunRequestIdRef.current = null;
+          oneStepVerificationBundleRequestIdRef.current = null;
     agentRunVerificationCorrelationRef.current = null;
     agentRunVerificationChatIdRef.current = null;
     setPendingControlledFileReadRequestId(null);
@@ -4279,6 +4337,91 @@ function oneStepEditMetadata(editMetadata: unknown, runtimeSessionMetadata: unkn
   const runId = typeof runtimeSession?.sessionId === "string" ? runtimeSession.sessionId : editMetadata.runId;
   const workspaceReadinessId = typeof runtimeWorkspace?.readinessId === "string" ? runtimeWorkspace.readinessId : typeof workspaceReadinessIsolation?.readinessId === "string" ? workspaceReadinessIsolation.readinessId : editMetadata.workspaceReadinessId;
   return { ...editMetadata, runId, workspaceReadinessId };
+}
+
+function verificationBundleToOneStepMetadata(correlation: ControlledAgentVerificationBundleRequestCorrelation, bundle: ControlledAgentVerificationBundleEvaluation): Record<string, unknown> {
+  const firstCommand = bundle.commands[0];
+  const status = bundle.status === "succeeded" ? "succeeded" : bundle.status === "running" ? "running" : bundle.status === "timed_out" ? "timed_out" : bundle.status === "killed" ? "killed" : bundle.status === "blocked" ? "blocked" : "failed";
+  return {
+    kind: "controlled_agent_command_runner",
+    version: "2026-06-29",
+    authority: "allowlisted_command_id_metadata",
+    cloudRequired: false,
+    executionAllowed: false,
+    freeformCommandAllowed: false,
+    agentStartAllowed: false,
+    workspace: {
+      controlledWorkspaceId: correlation.controlledWorkspaceId,
+      runId: correlation.runId,
+      workspaceMode: "worktree",
+      host: "vscode",
+      privatePathExposed: false,
+      workspaceLabel: "Controlled Agent Run verification bundle",
+    },
+    request: {
+      requestId: correlation.requestId,
+      source: "gui",
+      requestIdMintedBy: "gui",
+      assistantMinted: false,
+      correlation: {
+        origin: "user",
+        confirmedBy: "user",
+        confirmationId: correlation.requestId,
+        hostCorrelationId: correlation.bundleId,
+        label: "User confirmed controlled Agent Run verification bundle",
+      },
+      commandId: firstCommand?.commandId ?? correlation.commandIds[0],
+      limits: {
+        timeoutMs: 1800000,
+        maxOutputBytes: 20000,
+        maxOutputLines: 400,
+        tailOnly: true,
+        commandStringAllowed: false,
+        argsAllowed: false,
+        cwdAllowed: false,
+        envAllowed: false,
+        shellAllowed: false,
+        limitLabel: "Bounded sanitized tail only",
+      },
+      reason: "Verify controlled Agent Run after applied edit",
+    },
+    policyFlags: {
+      allowlistedCommandIdOnly: true,
+      freeformCommandAllowed: false,
+      argsAllowed: false,
+      cwdAllowed: false,
+      envAllowed: false,
+      shellAllowed: false,
+      gitAllowed: false,
+      networkAllowed: false,
+      providerAllowed: false,
+      toolAllowed: false,
+      packageInstallAllowed: false,
+      fileReadAllowed: false,
+      fileWriteAllowed: false,
+      hiddenSearchAllowed: false,
+      indexingAllowed: false,
+      autoStartAllowed: false,
+      autoApplyAllowed: false,
+      autoRunAllowed: false,
+      autoVerifyAllowed: false,
+      autoFixAllowed: false,
+    },
+    result: {
+      status,
+      cloudRequired: false,
+      freeformCommandAllowed: false,
+      truncated: firstCommand?.truncated ?? false,
+      message: bundle.details.status ? `Verification bundle ${bundle.details.status}.` : "Verification bundle completed with sanitized metadata.",
+      exitCode: firstCommand?.exitCode,
+      durationMs: firstCommand?.durationMs,
+      outputTail: firstCommand?.outputTail,
+      outputByteCount: firstCommand?.outputByteCount,
+      outputLineCount: firstCommand?.outputLineCount,
+      resultHash: firstCommand?.resultHash,
+      blockedReason: status === "blocked" ? "policy_denied" : undefined,
+    },
+  };
 }
 
 function controlledCommandRunResultToRunnerMetadata(correlation: ControlledAgentCommandRunRequestCorrelation, result: ControlledAgentCommandRunResultSummary): Record<string, unknown> {

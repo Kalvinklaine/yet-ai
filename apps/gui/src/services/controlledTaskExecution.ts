@@ -145,7 +145,7 @@ export function reduceControlledTaskExecution(state: ControlledTaskExecutionStat
         phase: "completed",
       };
     case "blocked":
-      if (state.phase !== "repairing" || !hasRunId(state, event.runId) || !matchesCurrentId(state.lineage.proposalId, event.proposalId) || !matchesCurrentId(state.lineage.verificationBundleId, event.verificationBundleId)) {
+      if (!["applying", "verifying", "repairing"].includes(state.phase) || !hasRunId(state, event.runId) || !matchesCurrentId(state.lineage.proposalId, event.proposalId) || !matchesCurrentId(state.lineage.verificationBundleId, event.verificationBundleId)) {
         return state;
       }
       return {

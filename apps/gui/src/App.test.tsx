@@ -9427,12 +9427,12 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
-  it("controlled task execution freezes context on VS Code Start without host commands", async () => {
+  it("controlled task execution Start requests allowlisted verification bundle after bounded edit", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
-      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata() }),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata(), controlledAgentVerificationBundle: plannedVerificationBundle }),
     });
 
     renderApp();
@@ -9440,52 +9440,60 @@ describe("edit proposal preview", () => {
     await flushAsync();
     postMessage.mockClear();
 
-    const panel = agentRunPanel();
-    expect(panel.textContent).toContain("Controlled task execution Start");
-    expect(panel.textContent).toContain("Controlled phase: idle");
-    expect(buttonWithin(panel, "Start one-step Agent Run").disabled).toBe(false);
-    await act(async () => { setInputValue(projectSnippetQueryInput(), "chat composer"); });
-    await act(async () => { findButton("Search project snippets").click(); });
-    await dispatchHostIdeActionResult("gui-workspace-snippet-search-1", workspaceSnippetSearchResultPayload({ snippets: [{ workspaceRelativePath: "apps/gui/src/BeforeStart.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 1 } }, text: "function BeforeStart() { return true; }" }] }));
-    await act(async () => { Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? [])[0]?.click(); });
-    await act(async () => { findButton("Attach selected snippets (1)").click(); });
-    postMessage.mockClear();
-    await act(async () => {
-      buttonWithin(panel, "Start one-step Agent Run").click();
-    });
-
-    expect(postMessage).not.toHaveBeenCalled();
-
-    const startedPanel = agentRunPanel();
-    expect(startedPanel.textContent).toContain("Controlled phase: context ready");
-    expect(startedPanel.textContent).toContain("Active run: yes");
-    expect(startedPanel.textContent).toContain("Workspace lineage: present");
-    expect(startedPanel.textContent).toContain("Runtime lineage: present");
-    expect(startedPanel.textContent).toContain("VS Code Start recorded; planning/context is ready in controlled task execution state.");
-    expect(startedPanel.textContent).toContain("no host apply, verification, provider, shell, git, or network command was sent.");
-    expect(buttonWithin(startedPanel, "Start one-step Agent Run").disabled).toBe(true);
-    expect(container?.querySelector('[data-testid="controlled-run-history-panel"]')?.textContent).toContain("apps/gui/src/BeforeStart.tsx");
-    await act(async () => { findButton("Clear bundle").click(); });
-    await act(async () => { setInputValue(projectSnippetQueryInput(), "chat composer"); });
-    await act(async () => { findButton("Search project snippets").click(); });
-    await dispatchHostIdeActionResult("gui-workspace-snippet-search-2", workspaceSnippetSearchResultPayload({ snippets: [{ workspaceRelativePath: "apps/gui/src/AfterStart.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 1 } }, text: "function AfterStart() { return true; }" }] }));
-    await act(async () => { Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? [])[0]?.click(); });
-    await act(async () => { findButton("Attach selected snippets (1)").click(); });
-    const messagesAfterStart = postMessage.mock.calls.map(([message]) => message);
-    expect(messagesAfterStart).toEqual([
-      { version: bridgeVersion, type: "gui.ideActionRequest", requestId: "gui-workspace-snippet-search-2", payload: { action: "searchWorkspaceSnippets", query: "chat composer" } },
-    ]);
-
-    const runHistoryPanel = container?.querySelector('[data-testid="controlled-run-history-panel"]');
-    expect(runHistoryPanel?.textContent).toContain("apps/gui/src/BeforeStart.tsx");
-    expect(runHistoryPanel?.textContent).not.toContain("apps/gui/src/AfterStart.tsx");
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
-
     await act(async () => {
       buttonWithin(agentRunPanel(), "Start one-step Agent Run").click();
     });
-    expect(agentRunPanel().textContent).toContain("Controlled phase: context ready");
-    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentFileReadRequest" || message.type === "gui.controlledAgentEditRequest" || message.type === "gui.controlledAgentCommandRunRequest" || message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+
+    const readRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    expect(readRequest).toBeDefined();
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")).toHaveLength(0);
+    const readResult = controlledReadHostMessage(readRequest.requestId, readRequest.payload);
+    await dispatchHostControlledFileReadResult(readResult.requestId, readResult.payload);
+    const editRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentEditRequest")?.[0] as { requestId: string; payload: Record<string, any> };
+    expect(editRequest).toBeDefined();
+    await dispatchHostControlledEditResult(editRequest.requestId, controlledEditHostMessage(editRequest.requestId, editRequest.payload).payload);
+
+    const bundleRequests = postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest");
+    expect(bundleRequests).toHaveLength(1);
+    const bundleRequest = bundleRequests[0][0] as { requestId: string; payload: Record<string, unknown> };
+    expect(bundleRequest.payload).toMatchObject({ runId: plannedVerificationBundle.workspace.runId, bundleId: plannedVerificationBundle.bundle.bundleId, commandIds: ["repository-check", "gui-app-tests", "engine-chat-tests"] });
+    expect(bundleRequest.payload).not.toHaveProperty("command");
+    expect(bundleRequest.payload).not.toHaveProperty("cwd");
+    expect(bundleRequest.payload).not.toHaveProperty("env");
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest" || (message.type === "gui.ideActionRequest" && message.payload?.action === "runVerificationCommand"))).toHaveLength(0);
+    expect(agentRunPanel().textContent).toContain("Controlled phase: verifying");
+  });
+
+  it("controlled task execution ignores stale verification bundle results", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      capsResponse: capsResponse({ controlledAgentWorkspaceReadiness: worktreeReadiness, controlledAgentRuntimeSession: runtimeSessionReady, controlledAgentEditExecutor: controlledEditMetadata(), controlledAgentVerificationBundle: plannedVerificationBundle }),
+    });
+
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+    postMessage.mockClear();
+
+    await act(async () => { buttonWithin(agentRunPanel(), "Start one-step Agent Run").click(); });
+    const readRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    await dispatchHostControlledFileReadResult(readRequest.requestId, controlledReadHostMessage(readRequest.requestId, readRequest.payload).payload);
+    const editRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentEditRequest")?.[0] as { requestId: string; payload: Record<string, any> };
+    await dispatchHostControlledEditResult(editRequest.requestId, controlledEditHostMessage(editRequest.requestId, editRequest.payload).payload);
+    const bundleRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentVerificationBundleRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
+    const stale = JSON.parse(JSON.stringify(succeededVerificationBundle)) as Record<string, any>;
+    stale.workspace.controlledWorkspaceId = bundleRequest.payload.controlledWorkspaceId;
+    stale.workspace.runId = "other-run";
+    stale.workspace.workspaceReadinessId = bundleRequest.payload.workspaceReadinessId;
+    stale.bundle.bundleId = bundleRequest.payload.bundleId;
+    await dispatchHostMessage({ version: bridgeVersion, type: "host.controlledAgentVerificationBundleResult", requestId: bundleRequest.requestId, payload: stale });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Ignored stale verification bundle result.");
+    expect(agentRunPanel().textContent).toContain("Controlled phase: blocked");
+    expect(agentRunPanel().textContent).not.toContain("Controlled phase: completed");
   });
 
   it("controlled task execution Start stays visible but fail-closed for unsupported hosts", async () => {
