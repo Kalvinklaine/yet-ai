@@ -149,7 +149,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const oneStepActive = Boolean(controlledTaskExecutionState && !["idle", "completed", "blocked", "stopped"].includes(controlledTaskExecutionState.phase));
   const canStartOneStep = host === "vscode" && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
   const canStopOneStep = Boolean(onStopOneStepRun) && oneStepActive;
-  const showRepairLoop = Boolean(repairLoop && repairLoop.state !== "disabled");
+  const showLegacyRepairLoop = !controlledTaskExecutionState && Boolean(repairLoop && repairLoop.state !== "disabled");
   const repairEligibleState = repairLoop?.state === "eligible" || repairLoop?.state === "proposal_ready";
   const repairActionPending = pendingRepairEdit || pendingRepairVerification;
   const canConfirmRepair = Boolean(onConfirmRepairAttempt) && repairEligibleState && repairLoop?.canAttemptRepair === true && repairDraftReady && !repairActionPending;
@@ -159,10 +159,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
     runtimeReady: supported,
     oneStepReady: oneStepReadReady && oneStepEditReady,
     verificationReady: oneStepCommandReady,
-    repairReady: Boolean(repairLoop && repairLoop.state !== "disabled"),
+    repairReady: showLegacyRepairLoop,
     stopped: oneStepLoopState?.phase === "stopped",
   });
-  const devPreviewReport = showOneStepLoop || showRepairLoop ? createControlledAgentDevPreviewReport({
+  const devPreviewReport = showOneStepLoop || showLegacyRepairLoop ? createControlledAgentDevPreviewReport({
     host,
     status: oneStepLoopState ? controlledReportStatusFromOneStep(oneStepLoopState.phase) : repairLoop?.state === "eligible" || repairLoop?.state === "proposal_ready" ? "failed" : "blocked",
     capabilities: {
@@ -170,7 +170,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       bounded_read: oneStepReadReady,
       bounded_edit: oneStepEditReady,
       allowlisted_verification: oneStepCommandReady,
-      bounded_repair: Boolean(repairLoop && repairLoop.state !== "disabled"),
+      bounded_repair: showLegacyRepairLoop,
       sanitized_report: true,
     },
     counters: oneStepLoopState ? {
@@ -219,7 +219,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
     setTaskPresetGuidance(buildControlledAgentTaskPresetGuidance(presetId, { goal: textDetail(details.goalTitle) || textDetail(details.goalSummary) || "Review a local coding task before sending.", selectedSearchResultCount: controlledSearchSelectedSafeCount }));
   };
   const recoveryGuidance = buildControlledRecoveryGuidance(host, oneStepLoopState?.phase, repairLoop?.state, view.state);
-  const showRecoveryGuidance = showOneStepLoop || showRepairLoop || view.state === "verification_failed";
+  const showRecoveryGuidance = !controlledTaskExecutionState && (showOneStepLoop || showLegacyRepairLoop || view.state === "verification_failed");
 
   return (
     <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
@@ -521,7 +521,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           <button type="button" className="secondary-button" onClick={onClearControlledMultifileApply} disabled={!pendingControlledMultifileApply && !controlledMultifileApplyResult && !controlledMultifileApplyConfirmed}>Clear multi-file apply state</button>
         </div>
       </div>}
-      {(showOneStepLoop || showRepairLoop) && (      <div className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
+      {(showOneStepLoop || showLegacyRepairLoop) && (      <div className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">
           <strong>S91 controlled dev-preview status</strong>
           <span className={devPreviewStatus.state === "ready" ? "badge ok" : "badge warn"}>{devPreviewStatus.state}</span>
@@ -660,7 +660,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           </div>
         </div>
       )}
-      {showRepairLoop && repairLoop && (
+      {showLegacyRepairLoop && repairLoop && (
         <div className={`readiness-card ${canConfirmRepair ? "ready" : "warn"} stack`} role="status" aria-label="Agent Run controlled repair eligibility">
           <div className="row">
             <strong>Controlled repair eligibility</strong>

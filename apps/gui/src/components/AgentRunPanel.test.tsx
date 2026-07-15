@@ -735,6 +735,31 @@ describe("AgentRunPanel", () => {
     expect(findButton("Manually apply reviewed patch").disabled).toBe(true);
   });
 
+  it("controlled task execution suppresses legacy repair loop copy when repair props are present", () => {
+    renderPanel(readyInput, {
+      host: "vscode",
+      controlledTaskExecutionState: {
+        phase: "planning",
+        lineage: { runId: "controlled-run-with-repair" },
+      },
+      oneStepLoopState: activeOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+      repairLoop: eligibleRepairLoop,
+      repairDraftReady: true,
+      onConfirmRepairAttempt: vi.fn(),
+      onStartOneStepRun: vi.fn(),
+      onStopOneStepRun: vi.fn(),
+    });
+
+    expect(panelText()).toContain("Controlled task execution Start");
+    expect(panelText()).not.toContain("Controlled repair eligibility");
+    expect(panelText()).not.toContain("Confirm one repair attempt");
+    expect(panelText()).not.toContain("no automatic repair");
+    expect(panelText()).not.toContain("no auto retry/rollback/repair");
+  });
+
   it("renders controlled task execution fallback and explicit S86 one-step Agent Run Start and Stop controls", () => {
     renderPanel(undefined, {
       host: "vscode",
@@ -934,7 +959,7 @@ describe("AgentRunPanel", () => {
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
   });
 
-  it("renders controlled repair eligibility with sanitized counters and explicit callback", () => {
+  it("renders legacy repair eligibility with sanitized counters and explicit callback", () => {
     const onConfirmRepairAttempt = vi.fn();
     renderPanel(readyInput, {
       host: "vscode",
