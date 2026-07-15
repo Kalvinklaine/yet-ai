@@ -9427,7 +9427,7 @@ describe("edit proposal preview", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest" || message.type === "gui.ideActionRequest")).toHaveLength(0);
   });
 
-  it("S96 one-step Start sequences read edit and controlled verification, while Stop ignores stale read", async () => {
+  it("controlled task execution freezes context on S96 one-step Start, sequences read edit and controlled verification, while Stop ignores stale read", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     mockRuntimeResponses({
@@ -9443,12 +9443,27 @@ describe("edit proposal preview", () => {
     const panel = agentRunPanel();
     expect(panel.textContent).toContain("S96 useful one-step Agent Run");
     expect(buttonWithin(panel, "Start one-step Agent Run").disabled).toBe(false);
+    await act(async () => { setInputValue(projectSnippetQueryInput(), "chat composer"); });
+    await act(async () => { findButton("Search project snippets").click(); });
+    await dispatchHostIdeActionResult("gui-workspace-snippet-search-1", workspaceSnippetSearchResultPayload({ snippets: [{ workspaceRelativePath: "apps/gui/src/BeforeStart.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 1 } }, text: "function BeforeStart() { return true; }" }] }));
+    await act(async () => { Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? [])[0]?.click(); });
+    await act(async () => { findButton("Attach selected snippets (1)").click(); });
     await act(async () => {
       buttonWithin(panel, "Start one-step Agent Run").click();
     });
 
     const readRequest = postMessage.mock.calls.find(([message]) => message.type === "gui.controlledAgentFileReadRequest")?.[0] as { requestId: string; payload: Record<string, unknown> };
     expect(readRequest).toBeDefined();
+    expect(container?.querySelector('[data-testid="controlled-run-history-panel"]')?.textContent).toContain("apps/gui/src/BeforeStart.tsx");
+    await act(async () => { findButton("Clear bundle").click(); });
+    await act(async () => { setInputValue(projectSnippetQueryInput(), "chat composer"); });
+    await act(async () => { findButton("Search project snippets").click(); });
+    await dispatchHostIdeActionResult("gui-workspace-snippet-search-2", workspaceSnippetSearchResultPayload({ snippets: [{ workspaceRelativePath: "apps/gui/src/AfterStart.tsx", languageId: "typescript", range: { start: { line: 1, character: 0 }, end: { line: 2, character: 1 } }, text: "function AfterStart() { return true; }" }] }));
+    await act(async () => { Array.from(container?.querySelectorAll<HTMLInputElement>(".workspace-snippet-search-card input[type='checkbox']") ?? [])[0]?.click(); });
+    await act(async () => { findButton("Attach selected snippets (1)").click(); });
+    const runHistoryPanel = container?.querySelector('[data-testid="controlled-run-history-panel"]');
+    expect(runHistoryPanel?.textContent).toContain("apps/gui/src/BeforeStart.tsx");
+    expect(runHistoryPanel?.textContent).not.toContain("apps/gui/src/AfterStart.tsx");
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentEditRequest")).toHaveLength(0);
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.controlledAgentCommandRunRequest")).toHaveLength(0);
 

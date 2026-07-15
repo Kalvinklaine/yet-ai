@@ -29,6 +29,7 @@ import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editP
 import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { buildContextBudgetSummary, type ContextBudgetSummary } from "./services/contextBudget";
+import { createControlledExecutionContextBundleSnapshot, type ControlledExecutionContextBundleSnapshot } from "./services/controlledExecutionContextBundle";
 import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt";
 import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult, type AgentRunModelProviderProposalState } from "./services/agentRunModelProposal";
 import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type AgentRunApplyCorrelationMetadata } from "./services/agentRunApply";
@@ -444,6 +445,7 @@ export function App() {
   const [includeExplicitContextBundle, setIncludeExplicitContextBundle] = useState(true);
   const [includeControlledRunContext, setIncludeControlledRunContext] = useState(true);
   const [explicitContextBundleStatus, setExplicitContextBundleStatus] = useState<string | null>(null);
+  const [controlledExecutionContextSnapshot, setControlledExecutionContextSnapshot] = useState<ControlledExecutionContextBundleSnapshot | null>(null);
   const [workspaceSnippetQuery, setWorkspaceSnippetQuery] = useState("");
   const [workspaceSnippetResult, setWorkspaceSnippetResult] = useState<WorkspaceSnippetSearchResultPayload | null>(null);
   const [selectedWorkspaceSnippetKeys, setSelectedWorkspaceSnippetKeys] = useState<string[]>([]);
@@ -986,12 +988,12 @@ export function App() {
       phaseLabel: controlledRunHistoryPhaseLabel(controlledAgentRunState, oneStepLoopState),
       resultLabel: controlledRunHistoryResultLabel(controlledAgentRunState, oneStepLoopState),
       counters: controlledRunHistoryCounters(controlledAgentRunState, oneStepLoopState),
-      summaryLabels: [controlledAgentRunState.summary, oneStepLoopState.summary],
+      summaryLabels: [controlledAgentRunState.summary, oneStepLoopState.summary, controlledExecutionContextSnapshot?.summary].filter((label): label is string => Boolean(label)),
       artifactLabels: controlledRunHistoryArtifactLabels(controlledAgentRunState, oneStepLoopState),
       checksumLabels: controlledRunHistoryChecksumLabels(controlledAgentRunState, oneStepLoopState),
     });
     setControlledRunHistory((current) => appendControlledRunHistoryItem(current.filter((existing) => existing.runId !== item.runId), item, 8));
-  }, [bridgeHost, controlledAgentRunState, oneStepLoopState, showControlledAgentRunPanel, showOneStepAgentRunPanel]);
+  }, [bridgeHost, controlledAgentRunState, controlledExecutionContextSnapshot, oneStepLoopState, showControlledAgentRunPanel, showOneStepAgentRunPanel]);
 
   useEffect(() => {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
@@ -2847,6 +2849,13 @@ export function App() {
       setControlledFileReadNote("S86 one-step Start requires VS Code and ready controlled read, edit, and verification metadata.");
       return;
     }
+    const frozenContext = createControlledExecutionContextBundleSnapshot({
+      activeFileExcerpt: currentActiveFileExcerpt,
+      includeActiveFileExcerpt: includeAttachedContext,
+      explicitContextItems: explicitContextBundleItems,
+      includeExplicitContextBundle,
+    });
+    setControlledExecutionContextSnapshot(frozenContext);
     oneStepLoopRunCounterRef.current += 1;
     oneStepFileReadRequestIdRef.current = readRequest.bridgeRequest.requestId;
     oneStepEditRequestIdRef.current = null;
@@ -2866,7 +2875,7 @@ export function App() {
     bridgeAdapterRef.current?.post(readRequest.bridgeRequest);
     addTimeline(`S86 one-step controlled read requested ${readRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.fileReadPlanned", title: `S86 one-step controlled read requested ${oneStepLoopRunCounterRef.current}`, status: "pending", summary: "User clicked Start one-step Agent Run; one bounded read was posted.", requestId: readRequest.bridgeRequest.requestId, details: readRequest.details });
-  }, [addTimeline, appendTrace, bridgeHost, pendingControlledCommandRunRequestId, pendingControlledEditRequestId, pendingControlledFileReadRequestId]);
+  }, [addTimeline, appendTrace, bridgeHost, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle, pendingControlledCommandRunRequestId, pendingControlledEditRequestId, pendingControlledFileReadRequestId]);
 
   const stopOneStepAgentRun = useCallback(() => {
     controlledFileReadCorrelationRef.current = null;
