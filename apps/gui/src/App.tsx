@@ -4861,8 +4861,13 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDe
 function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMessageId, activeIdeActionProposal, rejectedIdeActionProposalSourceMessageId }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; rejectedEditProposalSourceMessageId: string | null; activeIdeActionProposal: IdeActionProposalState | null; rejectedIdeActionProposalSourceMessageId: string | null }) {
   const editProposal = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? parseEditProposalContent(message.content) : null;
   const editProposalAnalysis = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? analyzeEditProposalContent(message.content) : { state: "none" as const };
-  const editProposalJson = editProposal ? JSON.stringify(editProposal, null, 2) : null;
+  const editProposalJson = editProposal ? JSON.stringify(sanitizeDisplayValue(editProposal), null, 2) : null;
   const editProposalKey = editProposal ? editProposalPayloadKey(editProposal) : null;
+  const [inspectedEditProposalKey, setInspectedEditProposalKey] = useState<string | null>(null);
+  useEffect(() => {
+    setInspectedEditProposalKey(null);
+  }, [editProposalKey]);
+  const isEditProposalInspected = Boolean(editProposalKey && inspectedEditProposalKey === editProposalKey);
   const isActiveEditProposal = Boolean(editProposalKey && activeEditProposal?.sourceMessageId === message.id && activeEditProposal.payloadKey === editProposalKey);
   const isRejectedEditProposal = editProposalAnalysis.state === "rejected" && rejectedEditProposalSourceMessageId === message.id;
   const proposal = message.role === "assistant" && isCompleteAssistantIdeActionProposalStatus(message.status) ? parseAssistantIdeActionProposalContent(message.content) : null;
@@ -4878,16 +4883,9 @@ function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMes
       <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
       {editProposal && editProposalJson && editProposalKey ? (
         <div className="assistant-proposal-compact stack">
-          <span>{isActiveEditProposal ? "Safe edit proposal ready for review. Nothing applies automatically." : "Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
-          <div className="proposal-summary-grid" aria-label="Edit proposal summary">
-            <span>Files: {editProposal.edits.length}</span>
-            <span>Edits: {editProposal.edits.reduce((count, edit) => count + edit.textReplacements.length, 0)}</span>
-            <span>Confirmation: {editProposal.requiresUserConfirmation ? "required" : "missing"}</span>
-          </div>
-          <details className="inspect-details">
-            <summary>Inspect sanitized proposal JSON</summary>
-            <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>
-          </details>
+          <span>{isActiveEditProposal ? "Proposed a safe edit. Review the proposal card below. It will not apply automatically." : "Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
+          <button type="button" className="secondary-button" disabled={!editProposalKey} onClick={() => setInspectedEditProposalKey(editProposalKey)}>Inspect proposal JSON</button>
+          {isEditProposalInspected && <pre aria-label="Assistant edit proposal JSON">{editProposalJson}</pre>}
         </div>
       ) : isRejectedEditProposal && editProposalAnalysis.state === "rejected" ? (
         <div className="assistant-proposal-compact stack rejection-summary-card" role="status">

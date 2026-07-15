@@ -161,7 +161,7 @@ export function EditProposalPreview({ proposal, host, pending, onApply, onCancel
           {pending && <button type="button" onClick={onCancelPending}>Clear pending apply state</button>}
         </div>
       )}
-      <span className="subtle">Nothing is applied automatically. The GUI never edits files directly; the IDE host must confirm and apply any workspace mutation. Clearing pending state only lets the GUI ignore an old host result; it does not close an already-open IDE confirmation dialog.</span>
+      <span className="subtle">No auto-apply. IDE host confirmation is required.</span>
     </div>
   );
 }
