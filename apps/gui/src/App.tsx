@@ -4962,8 +4962,10 @@ function FirstRunChecklist({ runtimeConnected, demoModeReady, apiKeyReady, exper
   const modelReady = demoModeReady || apiKeyReady || experimentalAccountReady;
   const steps = [
     { label: "Runtime", detail: runtimeConnected ? "connected" : "refresh local runtime", ok: runtimeConnected },
-    { label: "Model path", detail: demoModeReady ? "Demo Mode ready" : apiKeyReady ? readinessState === "local_provider_ready" ? "local provider ready" : "BYOK provider ready" : experimentalAccountReady ? "experimental fallback ready" : "choose Demo Mode or BYOK", ok: modelReady },
-    { label: "First message", detail: canSendChat ? "Send available" : "Send disabled", ok: canSendChat },
+    { label: "Demo Mode", detail: demoModeReady ? "local canned trial ready" : "no-key local canned trial", ok: demoModeReady },
+    { label: "Real provider", detail: apiKeyReady ? readinessState === "local_provider_ready" ? "Local provider ready through direct local runtime calls" : "BYOK API-key ready" : "local Ollama or API-key fallback", ok: apiKeyReady },
+    { label: "First message", detail: canSendChat ? "Send available" : "choose Demo Mode or BYOK provider", ok: canSendChat },
+    { label: "Account login", detail: experimentalAccountReady ? "experimental high-risk connected" : "experimental non-default", ok: experimentalAccountReady },
   ];
   return (
     <div className="first-run-checklist compact" role="list" aria-label="First-run setup checklist">
@@ -5000,7 +5002,7 @@ function FirstMessageReadinessWizard({ readiness, canSendChat, runtimeRefreshInF
             <strong>{readiness.title}</strong>
             <span className={`badge ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? "Send available" : "Send disabled"}</span>
           </div>
-          <span>Next: {readiness.nextAction}</span>
+          <span>Next safest action: {readiness.nextAction}</span>
         </div>
         {primaryAction && <div className="readiness-primary-action"><FirstMessageActionButton action={primaryAction} runtimeRefreshInFlight={runtimeRefreshInFlight} providerTestState={providerTestState} demoModeEnabled={demoModeEnabled} demoModeWorking={demoModeWorking} onRefreshRuntime={onRefreshRuntime} onToggleDemoMode={onToggleDemoMode} onApiKeyFallback={onApiKeyFallback} onTestProvider={onTestProvider} onFocusPrompt={onFocusPrompt} /></div>}
       </div>
@@ -6222,7 +6224,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       </div>
       {status.status !== "login_unavailable" && (
         <div className="recovery-card" role="status">
-          <strong>{"Recovery guidance"}</strong>
+          <strong>{status.status === "not_configured" ? "Safe next step" : "Recovery guidance"}</strong>
           <span>{providerAuthRecoveryCopy(status)}</span>
           {!runtimeConnected && <span>Runtime unavailable or restarted: click Refresh runtime, then Refresh login status. If the pending browser session is stale, reconnect or use the API-key fallback.</span>}
           <span className="subtle">Login/chat only. No workspace execution.</span>
