@@ -4907,9 +4907,9 @@ function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMes
             <pre aria-label="IDE action proposal rejection details">{JSON.stringify(sanitizeDisplayValue(proposalAnalysis.diagnostic), null, 2)}</pre>
           </details>
         </div>
-      ) : proposal && proposalJson && proposalLabel ? (
+      ) : isActiveProposal && proposal && proposalJson && proposalLabel ? (
         <div className="assistant-proposal-compact stack">
-          <span>{isActiveProposal ? `Read-only IDE action proposal ready: . It will not run automatically.` : `Earlier read-only IDE action proposal: . Only the latest valid proposal can be run from the proposal card.`}</span>
+          <span>{`Read-only IDE action proposal ready: ${proposalLabel}. It will not run automatically.`}</span>
           <div className="proposal-summary-grid" aria-label="IDE action proposal summary">
             <span>Action: {sanitizeDisplayText(proposal.action)}</span>
             <span>Confirmation: {proposal.requiresUserConfirmation ? "required" : "missing"}</span>

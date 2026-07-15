@@ -57,6 +57,7 @@ export function RejectedEditProposalPreview({ rejected }: { rejected: RejectedEd
   return (
     <div className="readiness-card warn stack" role="status" data-testid="edit-proposal-rejected-card">
       <strong>Edit proposal detected but rejected</strong>
+      <span>Edit proposal detected but rejected. Review the rejection card below; no apply action is available.</span>
       <span>{sanitizeDisplayText(rejected.diagnostic.message)}</span>
       <span className="subtle">Reason: {sanitizeDisplayText(rejected.diagnostic.reasonCode)}</span>
       <span>Apply is unavailable because this response did not pass safe-edit proposal validation. No apply request is available for this response.</span>
