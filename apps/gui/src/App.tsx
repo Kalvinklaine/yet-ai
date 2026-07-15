@@ -29,6 +29,7 @@ import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editP
 import { codingActions, type CodingAction } from "./services/codingActions";
 import { buildCodingTaskPrompt, type CodingTaskPromptMode } from "./services/codingTaskPrompt";
 import { buildContextBudgetSummary, type ContextBudgetSummary } from "./services/contextBudget";
+import { createControlledExecutionContextBundleSnapshot, type ControlledExecutionContextBundleSnapshot } from "./services/controlledExecutionContextBundle";
 import { buildOneStepModelProposalPrompt } from "./services/modelProposalPrompt";
 import { evaluateAgentRunModelProposal, type AgentRunModelProposalResult, type AgentRunModelProviderProposalState } from "./services/agentRunModelProposal";
 import { normalizeAgentRunApplyRequest, correlateAgentRunApplyResult, type AgentRunApplyCorrelationMetadata } from "./services/agentRunApply";
@@ -445,6 +446,7 @@ export function App() {
   const [includeExplicitContextBundle, setIncludeExplicitContextBundle] = useState(true);
   const [includeControlledRunContext, setIncludeControlledRunContext] = useState(true);
   const [explicitContextBundleStatus, setExplicitContextBundleStatus] = useState<string | null>(null);
+  const [controlledExecutionContextSnapshot, setControlledExecutionContextSnapshot] = useState<ControlledExecutionContextBundleSnapshot | null>(null);
   const [workspaceSnippetQuery, setWorkspaceSnippetQuery] = useState("");
   const [workspaceSnippetResult, setWorkspaceSnippetResult] = useState<WorkspaceSnippetSearchResultPayload | null>(null);
   const [selectedWorkspaceSnippetKeys, setSelectedWorkspaceSnippetKeys] = useState<string[]>([]);
@@ -989,12 +991,12 @@ export function App() {
       phaseLabel: controlledRunHistoryPhaseLabel(controlledAgentRunState, oneStepLoopState),
       resultLabel: controlledRunHistoryResultLabel(controlledAgentRunState, oneStepLoopState),
       counters: controlledRunHistoryCounters(controlledAgentRunState, oneStepLoopState),
-      summaryLabels: [controlledAgentRunState.summary, oneStepLoopState.summary],
+      summaryLabels: [controlledAgentRunState.summary, oneStepLoopState.summary, controlledExecutionContextSnapshot?.summary].filter((label): label is string => Boolean(label)),
       artifactLabels: controlledRunHistoryArtifactLabels(controlledAgentRunState, oneStepLoopState),
       checksumLabels: controlledRunHistoryChecksumLabels(controlledAgentRunState, oneStepLoopState),
     });
     setControlledRunHistory((current) => appendControlledRunHistoryItem(current.filter((existing) => existing.runId !== item.runId), item, 8));
-  }, [bridgeHost, controlledAgentRunState, oneStepLoopState, showControlledAgentRunPanel, showOneStepAgentRunPanel]);
+  }, [bridgeHost, controlledAgentRunState, controlledExecutionContextSnapshot, oneStepLoopState, showControlledAgentRunPanel, showOneStepAgentRunPanel]);
 
   useEffect(() => {
     setControlledAgentRunState(buildControlledAgentRunPreviewState(controlledWorkspaceReadinessMetadata, effectiveControlledAgentFileReadMetadata, controlledAgentCommandRunnerMetadata));
@@ -2850,6 +2852,13 @@ export function App() {
       setControlledFileReadNote("Controlled task execution Start requires VS Code and ready controlled read, edit, and verification metadata. No bridge request was posted.");
       return;
     }
+const frozenContext = createControlledExecutionContextBundleSnapshot({
+      activeFileExcerpt: currentActiveFileExcerpt,
+      includeActiveFileExcerpt: includeAttachedContext,
+      explicitContextItems: explicitContextBundleItems,
+      includeExplicitContextBundle,
+    });
+    setControlledExecutionContextSnapshot(frozenContext);
     setControlledTaskExecutionState((current) => {
       if (!canStartControlledTaskExecution(current)) {
         return current;
@@ -2864,15 +2873,14 @@ export function App() {
         runId,
         workspaceReadinessId,
         runtimeSessionId,
-        frozenContextSummary: "VS Code Start recorded; controlled context is ready for planning preview. No host apply, verification, provider, shell, git, or network command was sent.",
+        frozenContextSummary: `${frozenContext.summary} Start recorded; no host apply, verification, provider, shell, git, or network command was sent.`,
       });
     });
-    setControlledFileReadNote("Controlled task execution Start recorded in the GUI reducer only. No controlled read, apply, verification, shell, git, provider, or network command was posted.");
+    setControlledFileReadNote("Controlled task execution Start recorded in the GUI reducer only with a frozen explicit context snapshot. No controlled read, apply, verification, shell, git, provider, or network command was posted.");
     setControlledEditNote(null);
     setControlledCommandRunNote(null);
-    addTimeline("Controlled task execution Start recorded without host command emission");
-    appendTrace({ family: "controlledAgent.taskExecution", title: "Controlled task execution Start recorded", status: "pending", summary: "User clicked VS Code Start; reducer advanced to context-ready without posting host apply or verification commands.", details: { host: bridgeHost, phase: "context_ready" } });
-  }, [addTimeline, appendTrace, bridgeHost]);
+    addTimeline("Controlled task execution Start recorded with frozen explicit context");
+    appendTrace({ family: "controlledAgent.taskExecution", title: "Controlled task execution Start recorded", status: "pending", summary: "User clicked VS Code Start; reducer advanced to context-ready with a frozen explicit context snapshot and without posting host apply or verification commands.", details: { host: bridgeHost, phase: "context_ready", contextSummary: frozenContext.summary } });
 
   const stopOneStepAgentRun = useCallback(() => {
     controlledFileReadCorrelationRef.current = null;
@@ -2954,7 +2962,7 @@ export function App() {
     });
     addTimeline(`IDE action requested ${requestId}`);
     appendTrace({ family: payload.action === "runVerificationCommand" ? "verification.runRequested" : "ide.request", title: payload.action === "runVerificationCommand" ? "Verification command requested" : "IDE action requested", status: "pending", summary: `${label} requested.`, requestId, details: { action: payload.action, commandId: "commandId" in payload ? payload.commandId : undefined, workspaceRelativePath: "workspaceRelativePath" in payload ? payload.workspaceRelativePath : undefined } });
-  }, [addTimeline, appendTrace, bridgeHost]);
+  }, [addTimeline, appendTrace, bridgeHost, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle]);
 
   const searchWorkspaceSnippets = () => {
     const validation = workspaceSnippetQueryValidation;
