@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -25,15 +25,16 @@ static CALLBACK_START_LOCK: LazyLock<tokio::sync::Mutex<()>> =
 struct CallbackState {
     started: bool,
     pending_states: HashMap<String, PathBuf>,
+    known_config_dirs: HashSet<PathBuf>,
 }
 
 #[derive(Debug)]
 pub(crate) struct CallbackStartError;
 
 pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStartError> {
-    let _ = config_dir;
     {
-        let state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
+        let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
+        state.known_config_dirs.insert(config_dir.to_path_buf());
         if state.started {
             return Ok(());
         }
@@ -51,6 +52,7 @@ pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStar
     serve_listeners_in_owner_thread(listeners)?;
 
     let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
+    state.known_config_dirs.insert(config_dir.to_path_buf());
     state.started = true;
     Ok(())
 }
@@ -60,6 +62,7 @@ pub(crate) fn register_pending_state(
     config_dir: &Path,
 ) -> Result<(), CallbackStartError> {
     let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
+    state.known_config_dirs.insert(config_dir.to_path_buf());
     state
         .pending_states
         .insert(state_value.to_string(), config_dir.to_path_buf());
@@ -149,7 +152,7 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
         let Some(state) = bounded_query_value(&query, "state", 512) else {
             return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
         };
-        let Some(config_dir) = registered_config_dir_for_state(&state) else {
+        let Some(config_dir) = registered_config_dir_for_state(&state).await else {
             return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
         };
         let result = provider_auth::codex_callback_error(&config_dir, state.clone()).await;
@@ -173,7 +176,7 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
         return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
     };
 
-    let Some(config_dir) = registered_config_dir_for_state(&state) else {
+    let Some(config_dir) = registered_config_dir_for_state(&state).await else {
         return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT);
     };
 
@@ -207,11 +210,29 @@ fn callback_error_should_forget_mapping(
     )
 }
 
-fn registered_config_dir_for_state(state_value: &str) -> Option<PathBuf> {
-    CALLBACK_STATE
+async fn registered_config_dir_for_state(state_value: &str) -> Option<PathBuf> {
+    if let Some(config_dir) = CALLBACK_STATE
         .lock()
         .ok()
         .and_then(|state| state.pending_states.get(state_value).cloned())
+    {
+        return Some(config_dir);
+    }
+    let config_dirs = CALLBACK_STATE
+        .lock()
+        .ok()
+        .map(|state| state.known_config_dirs.iter().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    for config_dir in config_dirs {
+        if provider_auth::codex_callback_state_is_pending(&config_dir, state_value)
+            .await
+            .unwrap_or(false)
+        {
+            let _ = register_pending_state(state_value, &config_dir);
+            return Some(config_dir);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -219,6 +240,14 @@ fn clear_registered_states_for_test() {
     if let Ok(mut state) = CALLBACK_STATE.lock() {
         state.pending_states.clear();
     }
+}
+
+#[cfg(test)]
+fn directly_registered_config_dir_for_test(state_value: &str) -> Option<PathBuf> {
+    CALLBACK_STATE
+        .lock()
+        .ok()
+        .and_then(|state| state.pending_states.get(state_value).cloned())
 }
 
 fn bounded_query_value(
@@ -428,16 +457,43 @@ mod tests {
             .1
             .into_owned();
         clear_registered_states_for_test();
-        assert!(registered_config_dir_for_state(&state).is_none());
+        assert!(directly_registered_config_dir_for_test(&state).is_none());
 
         let status = provider_auth::status(&dir, "openai").await.unwrap();
 
         assert_eq!(status.status, "pending");
-        assert_eq!(registered_config_dir_for_state(&state), Some(dir.clone()));
+        assert_eq!(
+            registered_config_dir_for_state(&state).await,
+            Some(dir.clone())
+        );
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_SUCCESS_TEXT);
-        assert!(registered_config_dir_for_state(&state).is_none());
+        assert!(registered_config_dir_for_state(&state).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn callback_rehydrates_from_registry_without_status_poll() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_registered_states_for_test();
+        let dir = callback_test_dir("direct-rehydrate");
+        let token_endpoint_url = codex_token_endpoint(StatusCode::OK).await;
+        let start = start_codex_pending(&dir, &token_endpoint_url).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        clear_registered_states_for_test();
+        assert!(directly_registered_config_dir_for_test(&state).is_none());
+
+        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(text, CALLBACK_SUCCESS_TEXT);
+        assert!(registered_config_dir_for_state(&state).await.is_none());
     }
 
     #[tokio::test]
@@ -452,7 +508,9 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
         assert_ne!(text, CALLBACK_SUCCESS_TEXT);
-        assert!(registered_config_dir_for_state("missing-state").is_none());
+        assert!(registered_config_dir_for_state("missing-state")
+            .await
+            .is_none());
     }
 
     #[tokio::test]
@@ -479,8 +537,11 @@ mod tests {
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(text, CALLBACK_FAILURE_TEXT);
-        assert_eq!(registered_config_dir_for_state("stale-state"), Some(stale));
-        assert_eq!(registered_config_dir_for_state(&state), Some(valid));
+        assert_eq!(
+            registered_config_dir_for_state("stale-state").await,
+            Some(stale)
+        );
+        assert_eq!(registered_config_dir_for_state(&state).await, Some(valid));
     }
 
     #[tokio::test]
@@ -502,7 +563,7 @@ mod tests {
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(text, CALLBACK_FAILURE_TEXT);
-        assert_eq!(registered_config_dir_for_state(&state), Some(dir));
+        assert_eq!(registered_config_dir_for_state(&state).await, Some(dir));
     }
 
     #[tokio::test]
@@ -524,7 +585,7 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_SUCCESS_TEXT);
-        assert!(registered_config_dir_for_state(&state).is_none());
+        assert!(registered_config_dir_for_state(&state).await.is_none());
     }
 
     #[tokio::test]
@@ -549,7 +610,7 @@ mod tests {
         assert!(!text.contains("access_denied"));
         assert!(!text.contains("raw-denied-secret"));
         assert!(!text.contains(&state));
-        assert!(registered_config_dir_for_state(&state).is_none());
+        assert!(registered_config_dir_for_state(&state).await.is_none());
         let status = provider_auth::status(&dir, "openai").await.unwrap();
         assert_eq!(status.status, "login_unavailable");
         assert!(status.session_id.is_none());
@@ -571,7 +632,9 @@ mod tests {
         assert!(!text.contains("access_denied"));
         assert!(!text.contains("raw-denied-secret"));
         assert!(!text.contains("missing-state-secret"));
-        assert!(registered_config_dir_for_state("missing-state-secret").is_none());
+        assert!(registered_config_dir_for_state("missing-state-secret")
+            .await
+            .is_none());
     }
 
     #[tokio::test]
@@ -588,13 +651,16 @@ mod tests {
             .unwrap()
             .1
             .into_owned();
-        assert_eq!(registered_config_dir_for_state(&state), Some(dir.clone()));
+        assert_eq!(
+            registered_config_dir_for_state(&state).await,
+            Some(dir.clone())
+        );
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
         let status = provider_auth::status(&dir, "openai").await.unwrap();
 
         assert_eq!(status.status, "login_unavailable");
-        assert!(registered_config_dir_for_state(&state).is_none());
+        assert!(registered_config_dir_for_state(&state).await.is_none());
     }
 
     async fn raw_loopback_callback(

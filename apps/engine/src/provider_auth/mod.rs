@@ -73,6 +73,10 @@ pub use types::{
     ProviderAuthExchangeRequest, ProviderAuthResponse, ProviderAuthStartRequest,
 };
 
+use session_registry::{
+    ProviderAuthPendingMode, ProviderAuthPendingRetention, ProviderAuthPendingSession,
+};
+use session_store::{read_session_registry, write_session_registry};
 use status::{
     codex_connected_response, codex_expired_response, codex_pending_response,
     mock_connected_response, mock_pending_response, status_response,
@@ -101,6 +105,7 @@ pub async fn status(
                 ));
             }
             provider_auth_callback::forget_pending_state(&session.state);
+            remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
             write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
         }
         if let Some(response) = codex_connected_status(config_dir, provider).await? {
@@ -169,8 +174,7 @@ pub async fn start(
             },
         )
         .await?;
-        provider_auth_callback::register_pending_state(&session.state, config_dir)
-            .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
+        ensure_codex_pending_callback_state(config_dir, &session).await?;
         return Ok(codex_pending_response(
             provider,
             &session,
@@ -284,6 +288,7 @@ pub async fn disconnect(
         let codex = read_codex_state(config_dir, provider).await?;
         if let Some(session) = codex.pending.as_ref() {
             provider_auth_callback::forget_pending_state(&session.state);
+            remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
         }
         had_codex = codex.pending.is_some() || codex_has_secrets(config_dir, provider).await?;
         if had_codex {
@@ -470,8 +475,16 @@ async fn codex_exchange(
     code: String,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let _guard = try_acquire_codex_exchange_guard(config_dir, provider)?;
+    require_registry_pending_session(config_dir, provider, &session_id, &state_value).await?;
     let mut codex = read_codex_state(config_dir, provider).await?;
     let Some(session) = codex.pending.take() else {
+        retain_registry_after_exchange_failure(
+            config_dir,
+            provider,
+            &session_id,
+            ProviderAuthPendingRetention::Terminal,
+        )
+        .await?;
         return Err(ProviderAuthError::SessionNotFound);
     };
     if session.provider != provider
@@ -485,6 +498,13 @@ async fn codex_exchange(
     if parse_time(&session.expires_at)? <= Utc::now() {
         write_codex_state(config_dir, provider, &codex).await?;
         provider_auth_callback::forget_pending_state(&state_value);
+        retain_registry_after_exchange_failure(
+            config_dir,
+            provider,
+            &session_id,
+            ProviderAuthPendingRetention::Terminal,
+        )
+        .await?;
         return Err(ProviderAuthError::SessionExpired);
     }
 
@@ -493,12 +513,26 @@ async fn codex_exchange(
         Err(error) => {
             codex.pending = Some(session);
             write_codex_state(config_dir, provider, &codex).await?;
+            retain_registry_after_exchange_failure(
+                config_dir,
+                provider,
+                &session_id,
+                ProviderAuthPendingRetention::Retryable,
+            )
+            .await?;
             return Err(error);
         }
     };
     if sanitized_optional_token(token.refresh_token.as_deref()).is_none() {
         codex.pending = Some(session);
         write_codex_state(config_dir, provider, &codex).await?;
+        retain_registry_after_exchange_failure(
+            config_dir,
+            provider,
+            &session_id,
+            ProviderAuthPendingRetention::Retryable,
+        )
+        .await?;
         return Err(ProviderAuthError::TokenExchange);
     }
     let account_id = extract_codex_account_id(&token)?;
@@ -531,6 +565,13 @@ async fn codex_exchange(
         return Err(ProviderAuthError::Storage);
     }
     provider_auth_callback::forget_pending_state(&state_value);
+    retain_registry_after_exchange_failure(
+        config_dir,
+        provider,
+        &session_id,
+        ProviderAuthPendingRetention::Terminal,
+    )
+    .await?;
     Ok(codex_connected_response(provider, metadata, Some(true)))
 }
 
@@ -553,8 +594,12 @@ pub(crate) async fn codex_callback_error(
     config_dir: &Path,
     state_value: String,
 ) -> Result<(), ProviderAuthError> {
+    let registry_session = lookup_codex_registry_session_by_state(config_dir, &state_value).await?;
     let mut codex = read_codex_state(config_dir, "openai").await?;
     let Some(session) = codex.pending.take() else {
+        if let Some(session) = registry_session {
+            remove_codex_registry_session(config_dir, "openai", &session.session_id).await?;
+        }
         return Err(ProviderAuthError::SessionNotFound);
     };
     if session.state != state_value {
@@ -564,9 +609,11 @@ pub(crate) async fn codex_callback_error(
     }
     if parse_time(&session.expires_at)? <= Utc::now() {
         write_codex_state(config_dir, "openai", &codex).await?;
+        remove_codex_registry_session(config_dir, "openai", &session.session_id).await?;
         return Err(ProviderAuthError::SessionExpired);
     }
-    write_codex_state(config_dir, "openai", &codex).await
+    write_codex_state(config_dir, "openai", &codex).await?;
+    remove_codex_registry_session(config_dir, "openai", &session.session_id).await
 }
 
 async fn exchange_codex_token(
@@ -1556,8 +1603,106 @@ async fn ensure_codex_pending_callback_state(
     provider_auth_callback::ensure_started(config_dir)
         .await
         .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
+    upsert_codex_registry_session(config_dir, session).await?;
     provider_auth_callback::register_pending_state(&session.state, config_dir)
         .map_err(|_| ProviderAuthError::CallbackUnavailable)
+}
+
+fn codex_registry_session(session: &CodexOAuthSession) -> ProviderAuthPendingSession {
+    ProviderAuthPendingSession {
+        provider: session.provider.clone(),
+        session_id: session.session_id.clone(),
+        state: session.state.clone(),
+        mode: ProviderAuthPendingMode::BrowserPkce,
+        expires_at: session.expires_at.clone(),
+        callback_owner: Some("loopback".to_string()),
+        token_endpoint_id: Some("codex-like".to_string()),
+    }
+}
+
+async fn upsert_codex_registry_session(
+    config_dir: &Path,
+    session: &CodexOAuthSession,
+) -> Result<(), ProviderAuthError> {
+    let mut registry = read_session_registry(config_dir, &session.provider).await?;
+    registry.insert(codex_registry_session(session));
+    write_session_registry(config_dir, &session.provider, &registry).await
+}
+
+async fn lookup_codex_registry_session_by_state(
+    config_dir: &Path,
+    state_value: &str,
+) -> Result<Option<ProviderAuthPendingSession>, ProviderAuthError> {
+    let registry = read_session_registry(config_dir, "openai").await?;
+    Ok(registry
+        .lookup_by_state("openai", state_value, Utc::now())?
+        .cloned())
+}
+
+async fn require_registry_pending_session(
+    config_dir: &Path,
+    provider: &str,
+    session_id: &str,
+    state_value: &str,
+) -> Result<(), ProviderAuthError> {
+    let registry = read_session_registry(config_dir, provider).await?;
+    if registry
+        .lookup(provider, session_id, state_value, Utc::now())?
+        .is_some()
+    {
+        return Ok(());
+    }
+    let codex = read_codex_state(config_dir, provider).await?;
+    let Some(session) = codex.pending else {
+        return Err(ProviderAuthError::SessionNotFound);
+    };
+    if session.provider != provider
+        || session.session_id != session_id
+        || session.state != state_value
+    {
+        if session.provider == provider {
+            return Err(ProviderAuthError::SessionMismatch);
+        }
+        return Err(ProviderAuthError::SessionNotFound);
+    }
+    if parse_time(&session.expires_at)? <= Utc::now() {
+        return Err(ProviderAuthError::SessionExpired);
+    }
+    upsert_codex_registry_session(config_dir, &session).await
+}
+
+async fn remove_codex_registry_session(
+    config_dir: &Path,
+    provider: &str,
+    session_id: &str,
+) -> Result<(), ProviderAuthError> {
+    let mut registry = read_session_registry(config_dir, provider).await?;
+    if registry.complete_terminal(session_id) {
+        write_session_registry(config_dir, provider, &registry).await?;
+    }
+    Ok(())
+}
+
+async fn retain_registry_after_exchange_failure(
+    config_dir: &Path,
+    provider: &str,
+    session_id: &str,
+    retention: ProviderAuthPendingRetention,
+) -> Result<(), ProviderAuthError> {
+    let mut registry = read_session_registry(config_dir, provider).await?;
+    registry.retain_after_exchange_failure(session_id, retention, Utc::now())?;
+    write_session_registry(config_dir, provider, &registry).await
+}
+
+pub(crate) async fn codex_callback_state_is_pending(
+    config_dir: &Path,
+    state_value: &str,
+) -> Result<bool, ProviderAuthError> {
+    Ok(
+        lookup_codex_registry_session_by_state(config_dir, state_value)
+            .await?
+            .is_some(),
+    )
 }
 
 async fn register_codex_pending_callback_state(
@@ -1570,6 +1715,7 @@ async fn register_codex_pending_callback_state(
             ensure_codex_pending_callback_state(config_dir, &session).await?;
         } else {
             provider_auth_callback::forget_pending_state(&session.state);
+            remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
         }
     }
     Ok(())
@@ -1590,6 +1736,7 @@ async fn prepare_codex_start(
             )));
         }
         provider_auth_callback::forget_pending_state(&session.state);
+        remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
         write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
     }
     if let Some(response) = codex_connected_status(config_dir, provider).await? {
