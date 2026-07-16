@@ -24,7 +24,7 @@ const requests = [];
 let guiServer;
 let runtimeServer;
 let browser;
-let loginStatus = "login_available";
+let loginStatus = "login_unavailable";
 let sessionId;
 let authState;
 let chatCommandCount = 0;
@@ -32,6 +32,8 @@ let internalProviderSecrets;
 let apiKeyFallbackReady = false;
 let demoModeEnabled = false;
 let providerTestHits = 0;
+const providerAuthStartBodies = [];
+const providerAuthStatusResponses = [];
 const chats = new Map([[chatId, thread(chatId, "Login-shaped mock smoke chat", [])]]);
 const subscribers = new Map();
 const chatEventSeq = new Map();
@@ -63,6 +65,7 @@ try {
   page.on("request", (request) => {
     const url = request.url();
     requests.push(`${request.method()} ${url}`);
+    assertNoUrlSecretFragments(url, "browser request URL");
     if (!isLoopbackUrl(url)) failures.push(`Non-loopback request attempted: ${redactUrl(url)}`);
   });
 
@@ -72,13 +75,20 @@ try {
   await configureRuntimeConnection(page);
   await expectVisibleText(page, "Runtime connected", "runtime connected");
 
-  await expectVisibleText(page, "Account login available", "login available state");
-  await expectVisibleText(page, "experimental/non-default", "non-default login copy");
+  assert(loginStatus === "login_unavailable", `expected smoke to begin from login_unavailable, observed ${loginStatus}`);
+  assert(providerAuthStatusResponses.some((response) => response.status === "login_unavailable" && response.supportsLogin === false && response.authSource === "none" && response.configured === false), "expected initial provider-auth status to be default-like login_unavailable/supportsLogin:false/authSource:none/configured:false");
+  await expectVisibleText(page, "Experimental account login (non-default)", "experimental login section");
+  await expectVisibleText(page, "Prod login off", "login_unavailable state");
+  await expectVisibleText(page, "Codex dogfood can start", "Codex dogfood discoverability copy");
+  await expectVisibleText(page, "API-key default", "API-key default copy");
   await expectVisibleText(page, "Use OpenAI API key fallback", "API-key fallback button");
   await expectVisibleText(page, "Provider required for first message", "no-provider readiness");
   await expectSendDisabled(page, "no provider before login");
 
-  await page.getByRole("button", { name: "Connect OpenAI account (experimental)" }).click();
+  const experimentalLoginButton = page.getByRole("button", { name: "Connect OpenAI account (experimental)" });
+  await experimentalLoginButton.waitFor({ state: "visible", timeout: 10_000 });
+  assert(await experimentalLoginButton.isEnabled(), "Expected experimental OpenAI login CTA to be enabled from login_unavailable.");
+  await experimentalLoginButton.click();
   await expectVisibleText(page, "Finish browser verification", "pending provider-auth state");
   await expectVisibleText(page, "high-risk and private-endpoint-style", "high-risk warning");
   await expectVisibleText(page, "Session is tracked locally by the runtime and hidden here", "hidden session copy");
@@ -154,6 +164,8 @@ try {
   assertNoSecretLeak(requests.join("\n"), "browser request list");
   assert(chatCommandCount === 1, `expected only one first-message command across transitions, observed ${chatCommandCount}`);
   assert(providerTestHits === 0, `mock login smoke unexpectedly tested a provider ${providerTestHits} time(s)`);
+  assert(providerAuthStartBodies.length === 2, `expected two experimental provider-auth start requests, observed ${providerAuthStartBodies.length}`);
+  assert(providerAuthStartBodies.every((body) => JSON.stringify(body) === JSON.stringify({ experimentalCodexLike: true })), "provider-auth start request body changed from explicit experimentalCodexLike true");
   assert(runtimeApiRequests.length > 0, "expected runtime API requests to be observed");
   assert(runtimeApiRequests.every((item) => item.authorized), "runtime API route missing Authorization: Bearer session token");
   assert(internalProviderSecrets?.accessToken === fakeAccessToken, "fake access token sentinel was not stored server-side after exchange");
@@ -164,7 +176,7 @@ try {
   const evidence = await saveVisualEvidence(page);
   if (failures.length > 0) throw new Error(`Login first-message smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   console.log("Login first-message smoke passed.");
-  console.log("Verified built GUI against a loopback mock runtime: runtime connected; no-provider and pending states kept Send disabled; experimental/non-default provider-auth moved login_available -> pending -> connected via fake local authorization-code exchange; connected sent exactly one first message and rendered one mock assistant response; disconnect returned to disabled/no-provider state; API-key fallback and Demo Mode each took precedence over experimental connected; and no real provider/hosted service/IDE/JCEF/signing/publishing path was used.");
+  console.log("Verified built GUI against a loopback mock runtime: runtime connected; default-like login_unavailable (supportsLogin:false/authSource:none/configured:false) and pending states kept Send disabled; experimental/non-default provider-auth moved login_unavailable -> pending -> connected via fake local authorization-code exchange; connected sent exactly one first message and rendered one mock assistant response; disconnect returned to disabled/no-provider state; API-key fallback and Demo Mode each took precedence over experimental connected; and no real provider/hosted service/IDE/JCEF/signing/publishing path was used.");
   console.log("Limit: this is bounded mock-only login-shaped coverage; it does not prove official production OpenAI/ChatGPT account login or model quality.");
   console.log(`Saved sanitized visual evidence under ${path.relative(root, evidence.dir)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}).`);
 } finally {
@@ -217,17 +229,23 @@ async function startRuntimeServer() {
     if (request.method === "GET" && url.pathname === "/v1/demo-mode") return json(response, 200, demoModeResponse());
     if (request.method === "GET" && url.pathname === "/v1/models") return json(response, 200, { models: modelSummaries() });
     if (request.method === "GET" && url.pathname === "/v1/providers") return json(response, 200, { providers: providerSummaries(), cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && url.pathname === "/v1/provider-auth/openai/status") {
+      const payload = providerAuthResponse();
+      providerAuthStatusResponses.push(payload);
+      return json(response, 200, payload);
+    }
     if (request.method === "POST" && url.pathname === "/v1/demo-mode") {
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
       demoModeEnabled = body.enabled === true;
       return json(response, 200, demoModeResponse());
     }
-    if (request.method === "GET" && url.pathname === "/v1/provider-auth/openai/status") return json(response, 200, providerAuthResponse());
     if (request.method === "POST" && url.pathname === "/v1/provider-auth/openai/start") {
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
+      providerAuthStartBodies.push(body);
       if (JSON.stringify(body) !== JSON.stringify({ experimentalCodexLike: true })) return json(response, 400, { error: "mock login smoke requires only explicit experimentalCodexLike" });
+      if (providerAuthStartBodies.length === 1) assert(loginStatus === "login_unavailable", `provider-auth start should begin from login_unavailable, observed ${loginStatus}`);
       loginStatus = "pending";
       sessionId = `mock-session-${randomUUID()}`;
       authState = `mock-state-${randomUUID()}`;
@@ -246,7 +264,7 @@ async function startRuntimeServer() {
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
       if (Object.keys(body).length !== 0) return json(response, 400, { error: "disconnect request body must be an empty JSON object" });
-      loginStatus = "not_configured";
+      loginStatus = "login_unavailable";
       sessionId = undefined;
       authState = undefined;
       internalProviderSecrets = undefined;
@@ -281,11 +299,10 @@ async function startRuntimeServer() {
   return listen(server);
 }
 function providerAuthResponse() {
-  const common = { provider: "openai", supportsLogin: true, supportsApiKey: true, cloudRequired: false, message: "Mock-only experimental/non-default account login state from loopback smoke runtime. Not production official login." };
-  if (loginStatus === "pending") return { ...common, configured: false, status: "pending", authSource: "oauth", authorizationUrl: `http://127.0.0.1:${runtimeServer.port}/mock-auth?state=${encodeURIComponent(authState)}`, sessionId, expiresAt: "2026-05-24T01:00:00Z", scopes: ["openid", "profile", "email"] };
-  if (loginStatus === "connected") return { ...common, configured: true, status: "connected", authSource: "oauth", accountLabel: "mock login smoke account", scopes: ["openid", "profile", "email"], expiresAt: "2026-05-24T02:00:00Z", redacted: "mock-oauth-token-redacted" };
-  if (loginStatus === "not_configured") return { ...common, configured: false, status: "not_configured", authSource: "none" };
-  return { ...common, configured: false, status: "login_available", authSource: "none" };
+  const common = { provider: "openai", supportsApiKey: true, cloudRequired: false, message: "Mock-only experimental/non-default account login state from loopback smoke runtime. Not production official login." };
+  if (loginStatus === "pending") return { ...common, supportsLogin: true, configured: false, status: "pending", authSource: "oauth", authorizationUrl: `http://127.0.0.1:${runtimeServer.port}/mock-auth?state=${encodeURIComponent(authState)}`, sessionId, expiresAt: "2026-05-24T01:00:00Z", scopes: ["openid", "profile", "email"] };
+  if (loginStatus === "connected") return { ...common, supportsLogin: true, configured: true, status: "connected", authSource: "oauth", accountLabel: "mock login smoke account", scopes: ["openid", "profile", "email"], expiresAt: "2026-05-24T02:00:00Z", redacted: "mock-oauth-token-redacted" };
+  return { ...common, supportsLogin: false, configured: false, status: "login_unavailable", authSource: "none" };
 }
 function addAssistantResponse(targetChatId) {
   const item = chats.get(targetChatId) ?? thread(targetChatId, targetChatId, []);
@@ -408,6 +425,7 @@ async function assertNoVisibleText(page, text, label) { const visible = await pa
 async function assertAssistantAnswerCount(page, text, expected, label) { await page.locator(".chat-bubble.assistant", { hasText: text }).nth(expected - 1).waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined); const count = await page.locator(".chat-bubble.assistant").evaluateAll((elements, answer) => elements.filter((element) => element.textContent?.includes(String(answer))).length, text); assert(count === expected, "Expected " + label + " " + expected + " time(s), observed " + count); }
 function secretMarkers() { return [...staticSecretMarkers, sessionId, authState].filter(Boolean); }
 function assertNoSecretLeak(text, source) { const value = String(text); const lower = value.toLowerCase(); for (const marker of secretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Secret marker leaked through ${source}.`); } if (/sk-[A-Za-z0-9._-]{8,}/.test(value)) throw new Error(`API-key-like marker leaked through ${source}.`); if (/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth secret marker leaked through ${source}.`); if (/(?:codex|provider-login)-(?:session|state)-[A-Za-z0-9-]+/i.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); }
+function assertNoUrlSecretFragments(value, source) { try { const url = new URL(value); for (const [key, part] of [...url.searchParams.entries(), ["hash", url.hash]]) { if (/(code|token|cookie|secret|key|state|session)/i.test(`${key}=${part}`) && part) throw new Error(`URL secret fragment leaked through ${source}.`); } } catch { assertNoSecretLeak(value, source); } }
 function redactSecrets(text) { let redacted = String(text); for (const marker of secretMarkers()) if (marker) redacted = redacted.split(marker).join("[redacted]"); return redacted.replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9._-]{8,}/g, "[redacted-api-key]").replace(/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/g, "mock-$1-[redacted]").replace(/(?:codex|provider-login)-(session|state)-[A-Za-z0-9-]+/gi, "$1-[redacted]").replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
 function isExpectedFetchConsoleError(text) { return /^Failed to load resource: (net::ERR_CONNECTION_REFUSED|the server responded with a status of 401 \(Unauthorized\)|the server responded with a status of 404 \(Not Found\))$/.test(text); }
 function isLoopbackUrl(value) { try { const url = new URL(value); return (url.protocol === "http:" || url.protocol === "ws:") && ["127.0.0.1", "localhost", "[::1]", "::1"].includes(url.hostname); } catch { return false; } }
