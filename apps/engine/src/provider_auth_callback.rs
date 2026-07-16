@@ -143,7 +143,23 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
     }
     let query: HashMap<String, String> = parsed.query_pairs().into_owned().collect();
     if query.contains_key("error") {
-        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
+        let Some(state) = bounded_query_value(&query, "state", 512) else {
+            return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
+        };
+        let Some(config_dir) = registered_config_dir_for_state(&state) else {
+            return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
+        };
+        let result = provider_auth::codex_callback_error(&config_dir, state.clone()).await;
+        forget_pending_state(&state);
+        return match result {
+            Ok(())
+            | Err(provider_auth::ProviderAuthError::SessionNotFound)
+            | Err(provider_auth::ProviderAuthError::SessionExpired)
+            | Err(provider_auth::ProviderAuthError::SessionMismatch) => {
+                (StatusCode::OK, CALLBACK_FAILURE_TEXT)
+            }
+            Err(error) => (error.status(), CALLBACK_FAILURE_TEXT),
+        };
     }
     let Some(state) = bounded_query_value(&query, "state", 512) else {
         return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
@@ -262,6 +278,8 @@ mod tests {
 
     static CALLBACK_TEST_COUNTER: std::sync::atomic::AtomicU64 =
         std::sync::atomic::AtomicU64::new(0);
+    static CALLBACK_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+        LazyLock::new(|| tokio::sync::Mutex::new(()));
 
     fn callback_test_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -277,12 +295,21 @@ mod tests {
         dir: &Path,
         token_endpoint_url: &str,
     ) -> provider_auth::ProviderAuthResponse {
+        start_codex_pending_with_ttl(dir, token_endpoint_url, None).await
+    }
+
+    async fn start_codex_pending_with_ttl(
+        dir: &Path,
+        token_endpoint_url: &str,
+        ttl_seconds: Option<i64>,
+    ) -> provider_auth::ProviderAuthResponse {
         provider_auth::start(
             dir,
             "openai",
             provider_auth::ProviderAuthStartRequest {
                 experimental_codex_like: true,
                 token_endpoint_url: Some(token_endpoint_url.to_string()),
+                ttl_seconds,
                 ..Default::default()
             },
         )
@@ -337,8 +364,15 @@ mod tests {
         format!("/auth/callback?code=codex-code-callback-test&state={state}")
     }
 
+    fn callback_error_query(state: &str) -> String {
+        format!(
+            "/auth/callback?error=access_denied&error_description=raw-denied-secret&state={state}"
+        )
+    }
+
     #[tokio::test]
     async fn callback_uses_direct_state_mapping_and_ignores_stale_corrupt_dir() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
         clear_registered_states_for_test();
         let stale = callback_test_dir("stale");
         let valid = callback_test_dir("valid");
@@ -366,6 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn callback_mapping_is_retained_on_retryable_exchange_failure() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
         clear_registered_states_for_test();
         let dir = callback_test_dir("retry");
         let token_endpoint_url = codex_token_endpoint(StatusCode::BAD_GATEWAY).await;
@@ -387,6 +422,7 @@ mod tests {
 
     #[tokio::test]
     async fn callback_mapping_is_removed_on_success() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
         clear_registered_states_for_test();
         let dir = callback_test_dir("success");
         let token_endpoint_url = codex_token_endpoint(StatusCode::OK).await;
@@ -407,7 +443,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn callback_provider_error_clears_pending_and_mapping_without_exchange() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_registered_states_for_test();
+        let dir = callback_test_dir("provider-error");
+        let token_endpoint_url = codex_token_endpoint(StatusCode::OK).await;
+        let start = start_codex_pending(&dir, &token_endpoint_url).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+
+        let (status, text) = callback_response("GET", &callback_error_query(&state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert!(!text.contains("access_denied"));
+        assert!(!text.contains("raw-denied-secret"));
+        assert!(!text.contains(&state));
+        assert!(registered_config_dir_for_state(&state).is_none());
+        let status = provider_auth::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "login_unavailable");
+        assert!(status.session_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn callback_provider_error_without_mapped_state_is_sanitized_and_not_terminalizing() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_registered_states_for_test();
+
+        let (status, text) = callback_response(
+            "GET",
+            "/auth/callback?error=access_denied&error_description=raw-denied-secret&state=missing-state-secret",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert!(!text.contains("access_denied"));
+        assert!(!text.contains("raw-denied-secret"));
+        assert!(!text.contains("missing-state-secret"));
+        assert!(registered_config_dir_for_state("missing-state-secret").is_none());
+    }
+
+    #[tokio::test]
+    async fn expired_pending_status_forgets_callback_mapping() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_registered_states_for_test();
+        let dir = callback_test_dir("expired-status");
+        let token_endpoint_url = codex_token_endpoint(StatusCode::OK).await;
+        let start = start_codex_pending_with_ttl(&dir, &token_endpoint_url, Some(1)).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        assert_eq!(registered_config_dir_for_state(&state), Some(dir.clone()));
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+        let status = provider_auth::status(&dir, "openai").await.unwrap();
+
+        assert_eq!(status.status, "login_unavailable");
+        assert!(registered_config_dir_for_state(&state).is_none());
+    }
+
+    #[tokio::test]
     async fn ensure_started_is_safe_for_concurrent_calls() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
         let base =
             std::env::temp_dir().join(format!("yet-ai-callback-start-test-{}", std::process::id()));
         let first = base.join("one");

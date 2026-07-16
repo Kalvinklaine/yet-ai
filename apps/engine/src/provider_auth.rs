@@ -310,6 +310,8 @@ pub async fn status(
             if parse_time(&session.expires_at)? > Utc::now() {
                 return Ok(codex_pending_response(provider, &session, None));
             }
+            provider_auth_callback::forget_pending_state(&session.state);
+            write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
         }
         if let Some(response) = codex_connected_status(config_dir, provider).await? {
             return Ok(response);
@@ -863,6 +865,7 @@ async fn codex_exchange(
     }
     if parse_time(&session.expires_at)? <= Utc::now() {
         write_codex_state(config_dir, provider, &codex).await?;
+        provider_auth_callback::forget_pending_state(&state_value);
         return Err(ProviderAuthError::SessionExpired);
     }
 
@@ -925,6 +928,26 @@ pub(crate) async fn codex_callback_exchange(
         return Err(ProviderAuthError::SessionMismatch);
     }
     codex_exchange(config_dir, "openai", session.session_id, state_value, code).await
+}
+
+pub(crate) async fn codex_callback_error(
+    config_dir: &Path,
+    state_value: String,
+) -> Result<(), ProviderAuthError> {
+    let mut codex = read_codex_state(config_dir, "openai").await?;
+    let Some(session) = codex.pending.take() else {
+        return Err(ProviderAuthError::SessionNotFound);
+    };
+    if session.state != state_value {
+        codex.pending = Some(session);
+        write_codex_state(config_dir, "openai", &codex).await?;
+        return Err(ProviderAuthError::SessionMismatch);
+    }
+    if parse_time(&session.expires_at)? <= Utc::now() {
+        write_codex_state(config_dir, "openai", &codex).await?;
+        return Err(ProviderAuthError::SessionExpired);
+    }
+    write_codex_state(config_dir, "openai", &codex).await
 }
 
 async fn exchange_codex_token(
@@ -1932,6 +1955,7 @@ async fn prepare_codex_start(
         if parse_time(&session.expires_at)? > Utc::now() {
             return Ok(Some(codex_pending_response(provider, &session, Some(true))));
         }
+        provider_auth_callback::forget_pending_state(&session.state);
         write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
     }
     if let Some(response) = codex_connected_status(config_dir, provider).await? {
