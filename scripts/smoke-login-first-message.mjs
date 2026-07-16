@@ -77,6 +77,7 @@ try {
   await expectVisibleText(page, "Runtime connected", "runtime connected");
 
   assert(loginStatus === "login_unavailable", `expected smoke to begin from login_unavailable, observed ${loginStatus}`);
+  await waitForProviderAuthStatusResponse();
   assertDefaultLikeInitialProviderAuthStatus(providerAuthStatusResponses[0]);
   await expectVisibleText(page, "Experimental account login (non-default)", "experimental login section");
   await expectVisibleText(page, "Prod login off", "login_unavailable state");
@@ -417,6 +418,11 @@ async function refreshRuntimeFromUi(page) {
   await refreshButton.waitFor({ state: "visible", timeout: 10_000 });
   await refreshButton.click();
   await expectVisibleText(page, "Runtime connected", "runtime connected after refresh");
+}
+async function waitForProviderAuthStatusResponse(timeout = 5000) {
+  const deadline = Date.now() + timeout;
+  while (providerAuthStatusResponses.length === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  if (providerAuthStatusResponses.length === 0) throw new Error(`Timed out waiting for first /v1/provider-auth/openai/status response after Runtime connected; observed ${providerAuthStatusResponses.length} response(s).`);
 }
 async function expectSendDisabled(page, label) {
   const disabled = await page.getByRole("button", { name: "Send", exact: true }).isDisabled().catch(() => false);
