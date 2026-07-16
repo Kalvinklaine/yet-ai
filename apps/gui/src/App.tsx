@@ -129,9 +129,9 @@ const verificationCommands: VerificationCommand[] = [
 
 const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
   not_configured: "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path; the experimental account path is optional and high-risk.",
-  api_key_configured: "OpenAI API-key fallback is configured locally. Account login is not required for the default real-provider path, and API-key/Demo Mode precedence stays intact.",
+  api_key_configured: "OpenAI API-key fallback is configured as safe/default. Codex dogfood remains discoverable.",
   login_available: "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.",
-  login_unavailable: "OpenAI account login is planned/not available for production; use the OpenAI API-key fallback.",
+  login_unavailable: "Prod login off; Codex dogfood can start; API-key default.",
   pending: "Experimental OpenAI account login is pending. Finish the browser/device step, then exchange the code or refresh status; use API-key fallback for the default path.",
   connected: "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.",
   expired: "Experimental OpenAI account login expired. Reconnect only if you accept the risk, or use the API-key fallback.",
@@ -6403,7 +6403,7 @@ type ProviderAuthJourneyProps = {
 };
 
 function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError, exchangeWorking, runtimeConnected, onExchangeCodeChange, onExchange, onRefresh, onLogin, onDisconnect, onApiKeyFallback }: ProviderAuthJourneyProps) {
-  const canLogin = status.supportsLogin !== false;
+  const canLogin = status.supportsLogin !== false || status.status === "login_unavailable";
   const canDisconnect = status.configured && status.authSource !== "api_key";
   const loginLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : status.status === "connected" ? "Reconnect experimental account" : status.status === "expired" || status.status === "revoked" ? "Reconnect OpenAI account" : "Connect OpenAI account (experimental)";
   return (
@@ -6413,14 +6413,12 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
         <span>{providerAuthStatusCopy[status.status]}</span>
         {status.message && <span>{sanitizeDisplayText(status.message)}</span>}
       </div>
-      {status.status !== "login_unavailable" && (
-        <div className="recovery-card" role="status">
-          <strong>{status.status === "not_configured" ? "Safe next step" : "Recovery guidance"}</strong>
-          <span>{providerAuthRecoveryCopy(status)}</span>
-          {!runtimeConnected && <span>Runtime unavailable or restarted: click Refresh runtime, then Refresh login status. If the pending browser session is stale, reconnect or use the API-key fallback.</span>}
-          <span className="subtle">Login/chat only. No workspace execution.</span>
-        </div>
-      )}
+      <div className="recovery-card" role="status">
+        <strong>{status.status === "not_configured" || status.status === "login_unavailable" ? "Safe next step" : "Recovery guidance"}</strong>
+        <span>{providerAuthRecoveryCopy(status)}</span>
+        {!runtimeConnected && <span>Runtime unavailable or restarted: click Refresh runtime, then Refresh login status. If the pending browser session is stale, reconnect or use the API-key fallback.</span>}
+        <span className="subtle">Login/chat only. No workspace execution.</span>
+      </div>
       <ProviderAuthStateBody status={status} />
       {status.status === "pending" && status.authSource === "oauth" && status.sessionId && (
         <form className="manual-exchange-card stack" onSubmit={onExchange}>
@@ -6442,7 +6440,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       )}
       <div className="row">
         <button type="button" onClick={onRefresh}>Refresh login status</button>
-        {status.status === "login_unavailable" ? <button type="button" onClick={onLogin} disabled>Experimental login unavailable</button> : <button type="button" data-testid="provider-auth-login" onClick={onLogin} disabled={!canLogin}>{loginLabel}</button>}
+        <button type="button" data-testid="provider-auth-login" onClick={onLogin} disabled={!canLogin}>{loginLabel}</button>
         <button type="button" onClick={onDisconnect} disabled={!canDisconnect}>{status.status === "pending" ? "Cancel or disconnect login" : "Disconnect login"}</button>
         <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
       </div>
@@ -6452,7 +6450,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
 
 function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
   if (status.status === "login_unavailable") {
-    return <span className="subtle">Production account login is unavailable in this runtime. Use the OpenAI API-key fallback: create an API key in the provider console, paste it once below, save, test provider, refresh runtime/model readiness, then send. The GUI clears the key from the form.</span>;
+    return <span className="subtle">Prod login off here. Start Codex dogfood intentionally, or use API-key fallback: paste key once, save, test, refresh, send. GUI clears the key.</span>;
   }
   if (status.status === "pending") {
     return (
@@ -6495,7 +6493,7 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
     return <div className="error">Sanitized login error: {sanitizeDisplayText(status.lastError ?? status.message ?? "Unknown provider-auth error")}</div>;
   }
   if (status.status === "api_key_configured") {
-    return <span className="subtle">The safe API-key fallback is already configured locally. You can keep using it or set up account login later.</span>;
+    return <span className="subtle">The safe/default API-key fallback is already configured locally. Keep using it, or intentionally start experimental Codex dogfood login.</span>;
   }
   return <span className="subtle">Account login is not configured. Use the API-key fallback for the safe/default hosted provider path, or start experimental login explicitly.</span>;
 }
@@ -6513,9 +6511,9 @@ function providerAuthRecoveryCopy(status: ProviderAuthResponse): string {
     case "error":
       return "Only sanitized error details are shown. Retry login, reconnect, disconnect, or use the API-key fallback; raw provider payloads are never needed in the GUI.";
     case "api_key_configured":
-      return "The safe/default API-key path is already available locally. Keep using it unless you intentionally start the experimental high-risk path.";
+      return "The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login.";
     case "login_unavailable":
-      return "Normal account login is unavailable. Continue with API-key fallback or Demo Mode; this is not a blocked local-first setup.";
+      return "Prod login off. Use API-key fallback, Demo Mode, or Codex dogfood; local-first setup is not blocked.";
     case "login_available":
       return "Account login is available only as an explicit experimental path. Prefer API-key fallback for real-provider setup unless dogfooding this risk path.";
     default:
