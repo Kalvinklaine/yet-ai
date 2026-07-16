@@ -204,9 +204,17 @@ pub async fn exchange(
     let state_value = required_value(request.state, PROVIDER_AUTH_STATE_MAX_CHARS)?;
     let code = required_value(request.code, PROVIDER_AUTH_CODE_MAX_CHARS)?;
     if provider == "openai" && !code.starts_with("mock-code-") {
-        return openai_codex_adapter(config_dir)
-            .exchange_response(session_id, state_value, code)
-            .await;
+        return ProviderOAuthAdapter::exchange_code(
+            &openai_codex_adapter(config_dir),
+            adapters::ProviderOAuthExchangeCodeRequest {
+                session_id,
+                state: state_value,
+                code,
+            },
+        )
+        .await
+        .map(|status| status.to_response())
+        .map_err(Into::into);
     }
     if !code.starts_with("mock-code-") {
         return Err(ProviderAuthError::InvalidRequest);
@@ -503,44 +511,9 @@ pub(super) async fn codex_exchange(
         .await?;
         return Err(ProviderAuthError::TokenExchange);
     }
-    let account_id = extract_codex_account_id(&token)?;
-    let chat_model = discover_codex_model(&session.chat_base_url, &token.access_token, &account_id)
+    openai_codex_adapter(config_dir)
+        .complete_exchange_with_token(session, &session_id, &state_value, token)
         .await
-        .map_err(|error| {
-            let _ = error;
-            ProviderAuthError::TokenExchange
-        })?;
-    let scopes = codex_token_scopes(token.scope.as_deref(), &session.scopes)?;
-    let expires_in = validate_codex_token_expires_in(token.expires_in)?;
-    let expires_at = (Utc::now() + Duration::seconds(expires_in)).to_rfc3339();
-    let metadata = CodexAuthMetadata {
-        provider: provider.to_string(),
-        account_label: sanitized_account_label(token.account_label.as_deref()),
-        scopes,
-        expires_at,
-        redacted: crate::secret_store::redact_secret(&token.access_token),
-        chatgpt_account_id: account_id,
-        chat_base_url: session.chat_base_url,
-        chat_model,
-        token_endpoint_url: session.token_endpoint_url,
-    };
-    store_codex_connection(config_dir, provider, &token, &metadata).await?;
-    if write_codex_state(config_dir, provider, &CodexOAuthState::default())
-        .await
-        .is_err()
-    {
-        delete_codex_secrets(config_dir, provider).await?;
-        return Err(ProviderAuthError::Storage);
-    }
-    provider_auth_callback::forget_pending_state(&state_value);
-    retain_registry_after_exchange_failure(
-        config_dir,
-        provider,
-        &session_id,
-        ProviderAuthPendingRetention::Terminal,
-    )
-    .await?;
-    Ok(codex_connected_response(provider, metadata, Some(true)))
 }
 
 pub(crate) async fn codex_callback_exchange(
@@ -714,7 +687,7 @@ struct CodexModelEntry {
     id: String,
 }
 
-async fn discover_codex_model(
+pub(in crate::provider_auth) async fn discover_codex_model(
     chat_base_url: &str,
     access_token: &str,
     account_id: &str,
@@ -800,7 +773,9 @@ fn sanitized_optional_token(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-fn extract_codex_account_id(token: &CodexTokenResponse) -> Result<String, ProviderAuthError> {
+pub(in crate::provider_auth) fn extract_codex_account_id(
+    token: &CodexTokenResponse,
+) -> Result<String, ProviderAuthError> {
     token
         .id_token
         .as_deref()
@@ -882,7 +857,9 @@ fn validate_codex_account_id(value: &str) -> Result<(), ProviderAuthError> {
     Ok(())
 }
 
-fn validate_codex_token_expires_in(value: Option<i64>) -> Result<i64, ProviderAuthError> {
+pub(in crate::provider_auth) fn validate_codex_token_expires_in(
+    value: Option<i64>,
+) -> Result<i64, ProviderAuthError> {
     let value = value.unwrap_or(CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS);
     if value <= 0 || value > MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS {
         return Err(ProviderAuthError::TokenExchange);
@@ -890,7 +867,7 @@ fn validate_codex_token_expires_in(value: Option<i64>) -> Result<i64, ProviderAu
     Ok(value)
 }
 
-fn codex_token_scopes(
+pub(in crate::provider_auth) fn codex_token_scopes(
     token_scope: Option<&str>,
     default_scopes: &[String],
 ) -> Result<Vec<String>, ProviderAuthError> {
@@ -976,7 +953,7 @@ fn is_safe_codex_scope_char(value: char) -> bool {
     value.is_ascii_alphanumeric() || matches!(value, ':' | '.' | '_' | '-' | '/')
 }
 
-fn sanitized_account_label(value: Option<&str>) -> String {
+pub(in crate::provider_auth) fn sanitized_account_label(value: Option<&str>) -> String {
     let label = value
         .unwrap_or("OpenAI account")
         .trim()
@@ -1042,7 +1019,7 @@ fn is_url_safe_token(value: &str) -> bool {
         .all(|value| value.is_ascii_alphanumeric() || value == '-' || value == '_')
 }
 
-async fn store_codex_connection(
+pub(in crate::provider_auth) async fn store_codex_connection(
     config_dir: &Path,
     provider: &str,
     token: &CodexTokenResponse,
@@ -1127,7 +1104,17 @@ async fn codex_connected_status(
 pub async fn experimental_codex_chat_auth(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    openai_codex_adapter(config_dir).chat_auth_snapshot().await
+    ProviderOAuthAdapter::chat_auth_snapshot(&openai_codex_adapter(config_dir))
+        .await
+        .map(|snapshot| {
+            snapshot.map(|snapshot| ExperimentalCodexChatAuth {
+                access_token: snapshot.access_token,
+                chatgpt_account_id: snapshot.account_id,
+                base_url: snapshot.base_url,
+                model: snapshot.model,
+            })
+        })
+        .map_err(Into::into)
 }
 
 pub(super) async fn experimental_codex_chat_auth_impl(
@@ -1171,9 +1158,24 @@ pub async fn refresh_experimental_codex_chat_auth_after_rejection(
     config_dir: &Path,
     rejected_access_token: &str,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    openai_codex_adapter(config_dir)
-        .refresh_chat_auth(Some(rejected_access_token))
-        .await
+    ProviderOAuthAdapter::refresh(
+        &openai_codex_adapter(config_dir),
+        adapters::ProviderOAuthRefreshRequest {
+            rejected_access_token: Some(rejected_access_token.to_string()),
+        },
+    )
+    .await
+    .map(|outcome| {
+        outcome
+            .chat_auth_snapshot
+            .map(|snapshot| ExperimentalCodexChatAuth {
+                access_token: snapshot.access_token,
+                chatgpt_account_id: snapshot.account_id,
+                base_url: snapshot.base_url,
+                model: snapshot.model,
+            })
+    })
+    .map_err(Into::into)
 }
 
 pub async fn refresh_experimental_codex_chat_auth_if_needed(
@@ -1676,6 +1678,20 @@ async fn retain_registry_after_exchange_failure(
     write_session_registry(config_dir, provider, &registry).await
 }
 
+pub(super) async fn complete_codex_registry_session(
+    config_dir: &Path,
+    provider: &str,
+    session_id: &str,
+) -> Result<(), ProviderAuthError> {
+    retain_registry_after_exchange_failure(
+        config_dir,
+        provider,
+        session_id,
+        ProviderAuthPendingRetention::Terminal,
+    )
+    .await
+}
+
 pub(crate) async fn codex_callback_state_is_pending(
     config_dir: &Path,
     state_value: &str,
@@ -1695,12 +1711,10 @@ pub(super) async fn codex_callback_state_is_pending_impl(
     provider: &str,
     state_value: &str,
 ) -> Result<bool, ProviderAuthError> {
-    Ok(
-        read_session_registry(config_dir, provider)
-            .await?
-            .lookup_by_state(provider, state_value, Utc::now())?
-            .is_some(),
-    )
+    Ok(read_session_registry(config_dir, provider)
+        .await?
+        .lookup_by_state(provider, state_value, Utc::now())?
+        .is_some())
 }
 
 async fn register_codex_pending_callback_state(
@@ -1869,7 +1883,7 @@ async fn read_codex_state(
     read_provider_auth_state(config_dir, "provider-auth-openai", provider).await
 }
 
-async fn write_codex_state(
+pub(in crate::provider_auth) async fn write_codex_state(
     config_dir: &Path,
     provider: &str,
     state: &CodexOAuthState,
@@ -2370,6 +2384,51 @@ mod tests {
         )
         .await
         .unwrap();
+    }
+
+    async fn codex_models_endpoint() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer).await;
+                let body = r#"{"data":[{"id":"gpt-5-codex"}]}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        url
+    }
+
+    async fn create_codex_oauth_connection_via_adapter(dir: &std::path::Path) {
+        let token = super::CodexTokenResponse {
+            access_token: "codex-access-token-secret".to_string(),
+            refresh_token: Some("codex-refresh-token-secret".to_string()),
+            expires_in: Some(3600),
+            scope: Some("openid profile email offline_access".to_string()),
+            id_token: Some(test_jwt_with_payload(
+                serde_json::json!({ "chatgpt_account_id": "acct-test" }),
+            )),
+            account_label: Some("Codex Test Account".to_string()),
+        };
+        let models_endpoint = codex_models_endpoint().await;
+        let mut session = super::new_codex_session(600, None, None).unwrap();
+        session.chat_base_url = models_endpoint;
+        super::openai_codex_adapter(dir)
+            .complete_exchange_with_token(
+                session,
+                "codex-adapter-session",
+                "codex-adapter-state",
+                token,
+            )
+            .await
+            .unwrap();
     }
 
     async fn create_codex_oauth_connection(dir: &std::path::Path) {
@@ -3209,10 +3268,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status, "pending");
-        assert_eq!(
-            pending.token_endpoint_url,
-            "http://127.0.0.1:3457/token"
-        );
+        assert_eq!(pending.token_endpoint_url, "http://127.0.0.1:3457/token");
         assert_eq!(
             pending.chat_base_url,
             "http://127.0.0.1:3457/backend-api/codex"
@@ -3309,6 +3365,32 @@ mod tests {
         let status = super::status(&dir, "openai").await.unwrap();
         assert_eq!(status.status, "connected");
         assert_ne!(status.redacted.as_deref(), Some("mock-oauth-...connected"));
+    }
+
+    #[tokio::test]
+    async fn openai_adapter_exchange_lifecycle_owns_token_custody_and_status_projection() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_via_adapter(&dir).await;
+
+        let auth = super::experimental_codex_chat_auth(&dir)
+            .await
+            .unwrap()
+            .expect("adapter-owned exchange should store chat auth");
+        let status = super::status(&dir, "openai").await.unwrap();
+
+        assert_eq!(auth.access_token, "codex-access-token-secret");
+        assert_eq!(auth.chatgpt_account_id, "acct-test");
+        assert_eq!(auth.model, super::CODEX_CHAT_MODEL);
+        assert_eq!(status.status, "connected");
+        assert_eq!(status.account_label.as_deref(), Some("Codex Test Account"));
+        assert_response_sanitized(
+            &status,
+            &[
+                "codex-access-token-secret",
+                "codex-refresh-token-secret",
+                "acct-test",
+            ],
+        );
     }
 
     #[tokio::test]

@@ -198,6 +198,7 @@ pub(super) enum ProviderOAuthAdapterError {
     PolicyBlocked,
     ProviderRejected,
     InvalidSession,
+    SessionNotFound,
     SessionExpired,
     ExchangeFailed,
     Storage,
@@ -210,6 +211,7 @@ impl From<ProviderOAuthAdapterError> for ProviderAuthError {
             ProviderOAuthAdapterError::PolicyBlocked => ProviderAuthError::InvalidRequest,
             ProviderOAuthAdapterError::ProviderRejected => ProviderAuthError::TokenExchange,
             ProviderOAuthAdapterError::InvalidSession => ProviderAuthError::SessionMismatch,
+            ProviderOAuthAdapterError::SessionNotFound => ProviderAuthError::SessionNotFound,
             ProviderOAuthAdapterError::SessionExpired => ProviderAuthError::SessionExpired,
             ProviderOAuthAdapterError::ExchangeFailed => ProviderAuthError::TokenExchange,
             ProviderOAuthAdapterError::Storage => ProviderAuthError::Storage,
@@ -263,13 +265,15 @@ pub(in crate::provider_auth) mod openai_codex {
     use super::{
         AdapterFuture, ProviderOAuthAdapter, ProviderOAuthAdapterError, ProviderOAuthAuthMode,
         ProviderOAuthCallbackErrorRequest, ProviderOAuthCallbackExchangeRequest,
-        ProviderOAuthCallbackStateRequest, ProviderOAuthCapabilities, ProviderOAuthChatAuthSnapshot,
-        ProviderOAuthExchangeCodeRequest, ProviderOAuthPolicyGate, ProviderOAuthProviderId,
-        ProviderOAuthRefreshOutcome, ProviderOAuthRefreshRequest, ProviderOAuthStartSession,
-        ProviderOAuthStartSessionRequest, ProviderOAuthStatusKind, ProviderOAuthStatusView,
+        ProviderOAuthCallbackStateRequest, ProviderOAuthCapabilities,
+        ProviderOAuthChatAuthSnapshot, ProviderOAuthExchangeCodeRequest, ProviderOAuthPolicyGate,
+        ProviderOAuthProviderId, ProviderOAuthRefreshOutcome, ProviderOAuthRefreshRequest,
+        ProviderOAuthStartSession, ProviderOAuthStartSessionRequest, ProviderOAuthStatusKind,
+        ProviderOAuthStatusView,
     };
     use crate::provider_auth::types::{
-        ExperimentalCodexChatAuth, ProviderAuthError, ProviderAuthResponse,
+        CodexAuthMetadata, CodexOAuthSession, CodexOAuthState, ExperimentalCodexChatAuth,
+        ProviderAuthError, ProviderAuthResponse,
     };
 
     const PROVIDER_ID: ProviderOAuthProviderId = ProviderOAuthProviderId::new("openai");
@@ -363,6 +367,99 @@ pub(in crate::provider_auth) mod openai_codex {
                 self.provider,
                 &session,
                 crate::provider_auth::codex_authorization_url(&session),
+                Some(true),
+            ))
+        }
+
+        async fn discover_model(
+            &self,
+            session: &CodexOAuthSession,
+            access_token: &str,
+            account_id: &str,
+        ) -> Result<String, ProviderAuthError> {
+            crate::provider_auth::discover_codex_model(
+                &session.chat_base_url,
+                access_token,
+                account_id,
+            )
+            .await
+        }
+
+        async fn store_connection(
+            &self,
+            token: &crate::provider_auth::types::CodexTokenResponse,
+            metadata: &CodexAuthMetadata,
+        ) -> Result<(), ProviderAuthError> {
+            crate::provider_auth::store_codex_connection(
+                &self.config_dir,
+                self.provider,
+                token,
+                metadata,
+            )
+            .await
+        }
+
+        async fn clear_pending_after_success(
+            &self,
+            state: &str,
+            session_id: &str,
+        ) -> Result<(), ProviderAuthError> {
+            if crate::provider_auth::write_codex_state(
+                &self.config_dir,
+                self.provider,
+                &CodexOAuthState::default(),
+            )
+            .await
+            .is_err()
+            {
+                crate::provider_auth::delete_codex_secrets(&self.config_dir, self.provider).await?;
+                return Err(ProviderAuthError::Storage);
+            }
+            crate::provider_auth_callback::forget_pending_state(state);
+            crate::provider_auth::complete_codex_registry_session(
+                &self.config_dir,
+                self.provider,
+                session_id,
+            )
+            .await
+        }
+
+        pub(in crate::provider_auth) async fn complete_exchange_with_token(
+            &self,
+            session: CodexOAuthSession,
+            session_id: &str,
+            state: &str,
+            token: crate::provider_auth::types::CodexTokenResponse,
+        ) -> Result<ProviderAuthResponse, ProviderAuthError> {
+            let account_id = crate::provider_auth::extract_codex_account_id(&token)?;
+            let chat_model = self
+                .discover_model(&session, &token.access_token, &account_id)
+                .await
+                .map_err(|_| ProviderAuthError::TokenExchange)?;
+            let scopes =
+                crate::provider_auth::codex_token_scopes(token.scope.as_deref(), &session.scopes)?;
+            let expires_in =
+                crate::provider_auth::validate_codex_token_expires_in(token.expires_in)?;
+            let expires_at =
+                (chrono::Utc::now() + chrono::Duration::seconds(expires_in)).to_rfc3339();
+            let metadata = CodexAuthMetadata {
+                provider: self.provider.to_string(),
+                account_label: crate::provider_auth::sanitized_account_label(
+                    token.account_label.as_deref(),
+                ),
+                scopes,
+                expires_at,
+                redacted: crate::secret_store::redact_secret(&token.access_token),
+                chatgpt_account_id: account_id,
+                chat_base_url: session.chat_base_url,
+                chat_model,
+                token_endpoint_url: session.token_endpoint_url,
+            };
+            self.store_connection(&token, &metadata).await?;
+            self.clear_pending_after_success(state, session_id).await?;
+            Ok(crate::provider_auth::status::codex_connected_response(
+                self.provider,
+                metadata,
                 Some(true),
             ))
         }
@@ -622,8 +719,11 @@ pub(in crate::provider_auth) mod openai_codex {
                         ProviderAuthError::SessionExpired => {
                             ProviderOAuthAdapterError::SessionExpired
                         }
-                        ProviderAuthError::SessionMismatch | ProviderAuthError::SessionNotFound => {
+                        ProviderAuthError::SessionMismatch => {
                             ProviderOAuthAdapterError::InvalidSession
+                        }
+                        ProviderAuthError::SessionNotFound => {
+                            ProviderOAuthAdapterError::SessionNotFound
                         }
                         ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
                         _ => ProviderOAuthAdapterError::ExchangeFailed,
