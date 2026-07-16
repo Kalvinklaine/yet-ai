@@ -152,7 +152,9 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
             return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
         };
         let result = provider_auth::codex_callback_error(&config_dir, state.clone()).await;
-        forget_pending_state(&state);
+        if callback_error_should_forget_mapping(&result) {
+            forget_pending_state(&state);
+        }
         return match result {
             Ok(())
             | Err(provider_auth::ProviderAuthError::SessionNotFound)
@@ -190,6 +192,18 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
         }
         Err(error) => (error.status(), CALLBACK_FAILURE_TEXT),
     }
+}
+
+fn callback_error_should_forget_mapping(
+    result: &Result<(), provider_auth::ProviderAuthError>,
+) -> bool {
+    matches!(
+        result,
+        Ok(())
+            | Err(provider_auth::ProviderAuthError::SessionNotFound)
+            | Err(provider_auth::ProviderAuthError::SessionExpired)
+            | Err(provider_auth::ProviderAuthError::SessionMismatch)
+    )
 }
 
 fn registered_config_dir_for_state(state_value: &str) -> Option<PathBuf> {
@@ -276,6 +290,32 @@ mod tests {
 
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(text, CALLBACK_FAILURE_TEXT);
+    }
+
+    #[test]
+    fn provider_error_callback_forget_decision_keeps_retryable_failures() {
+        let cases = [
+            (Ok(()), true),
+            (Err(provider_auth::ProviderAuthError::SessionNotFound), true),
+            (Err(provider_auth::ProviderAuthError::SessionExpired), true),
+            (Err(provider_auth::ProviderAuthError::SessionMismatch), true),
+            (Err(provider_auth::ProviderAuthError::Storage), false),
+            (Err(provider_auth::ProviderAuthError::TokenExchange), false),
+            (
+                Err(provider_auth::ProviderAuthError::CallbackUnavailable),
+                false,
+            ),
+            (
+                Err(provider_auth::ProviderAuthError::Provider(
+                    crate::providers::ProviderError::Storage,
+                )),
+                false,
+            ),
+        ];
+
+        for (result, should_forget) in cases {
+            assert_eq!(callback_error_should_forget_mapping(&result), should_forget);
+        }
     }
 
     static CALLBACK_TEST_COUNTER: std::sync::atomic::AtomicU64 =
