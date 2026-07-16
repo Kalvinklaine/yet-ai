@@ -432,10 +432,16 @@ pub(in crate::provider_auth) mod openai_codex {
             token: crate::provider_auth::types::CodexTokenResponse,
         ) -> Result<ProviderAuthResponse, ProviderAuthError> {
             let account_id = crate::provider_auth::extract_codex_account_id(&token)?;
-            let chat_model = self
+            let chat_model = match self
                 .discover_model(&session, &token.access_token, &account_id)
                 .await
-                .map_err(|_| ProviderAuthError::TokenExchange)?;
+            {
+                Ok(model) => model,
+                Err(_) => {
+                    crate::provider_auth::validate_codex_chat_model(&session.chat_model)?;
+                    session.chat_model.clone()
+                }
+            };
             let scopes =
                 crate::provider_auth::codex_token_scopes(token.scope.as_deref(), &session.scopes)?;
             let expires_in =
@@ -791,20 +797,27 @@ pub(in crate::provider_auth) mod openai_codex {
         ) -> AdapterFuture<'a, Result<ProviderOAuthRefreshOutcome, ProviderOAuthAdapterError>>
         {
             Box::pin(async move {
-                let auth = self
-                    .refresh_chat_auth(request.rejected_access_token.as_deref())
-                    .await
-                    .map_err(|error| match error {
-                        ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
-                        _ => ProviderOAuthAdapterError::ExchangeFailed,
-                    })?;
-                let status = self
-                    .status_response()
-                    .await
-                    .map_err(|_| ProviderOAuthAdapterError::Storage)?
-                    .unwrap_or_else(|| {
-                        crate::provider_auth::status::status_response(self.provider, None, None)
-                    });
+                let auth = if request.rejected_access_token.is_some() {
+                    self.refresh_chat_auth(request.rejected_access_token.as_deref())
+                        .await
+                } else {
+                    self.refresh_chat_auth_if_needed().await
+                }
+                .map_err(|error| match error {
+                    ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                    ProviderAuthError::InvalidRequest => ProviderOAuthAdapterError::PolicyBlocked,
+                    _ => ProviderOAuthAdapterError::ExchangeFailed,
+                })?;
+                let status = if auth.is_some() {
+                    self.status_response()
+                        .await
+                        .map_err(|_| ProviderOAuthAdapterError::Storage)?
+                        .unwrap_or_else(|| {
+                            crate::provider_auth::status::status_response(self.provider, None, None)
+                        })
+                } else {
+                    crate::provider_auth::status::status_response(self.provider, None, None)
+                };
                 Ok(ProviderOAuthRefreshOutcome {
                     status: Self::status_view_from_response(status),
                     chat_auth_snapshot: auth.map(|auth| ProviderOAuthChatAuthSnapshot {

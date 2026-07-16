@@ -1048,6 +1048,83 @@ pub(in crate::provider_auth) async fn store_codex_connection(
     result
 }
 
+struct CodexCredentialSnapshot {
+    access_token: String,
+    refresh_token: String,
+    metadata: String,
+}
+
+async fn restore_codex_connection_snapshot_in_store(
+    store: &impl ProviderSecretStore,
+    provider: &str,
+    snapshot: &CodexCredentialSnapshot,
+) -> Result<(), ProviderAuthError> {
+    store
+        .put_secret(
+            provider,
+            SecretKind::OAuthAccessToken,
+            &snapshot.access_token,
+        )
+        .await?;
+    store
+        .put_secret(
+            provider,
+            SecretKind::OAuthRefreshToken,
+            &snapshot.refresh_token,
+        )
+        .await?;
+    store
+        .put_secret(provider, SecretKind::AuthMetadata, &snapshot.metadata)
+        .await?;
+    Ok(())
+}
+
+async fn store_codex_refresh_connection_in_store(
+    store: &impl ProviderSecretStore,
+    provider: &str,
+    token: &CodexTokenResponse,
+    metadata: &CodexAuthMetadata,
+    previous: Option<&CodexCredentialSnapshot>,
+) -> Result<(), ProviderAuthError> {
+    let metadata = serde_json::to_string(metadata).map_err(|_| ProviderAuthError::Storage)?;
+    let result = async {
+        if previous.is_none() {
+            let refresh_token = sanitized_optional_token(token.refresh_token.as_deref())
+                .ok_or(ProviderAuthError::TokenExchange)?;
+            store
+                .put_secret(provider, SecretKind::OAuthRefreshToken, &refresh_token)
+                .await?;
+        }
+        store
+            .put_secret(provider, SecretKind::AuthMetadata, &metadata)
+            .await?;
+        store
+            .put_secret(provider, SecretKind::OAuthAccessToken, &token.access_token)
+            .await?;
+        Ok::<(), ProviderAuthError>(())
+    }
+    .await;
+    if result.is_err() {
+        if let Some(previous) = previous {
+            restore_codex_connection_snapshot_in_store(store, provider, previous).await?;
+        } else {
+            delete_codex_secret_bundle(store, provider).await?;
+        }
+    }
+    result
+}
+
+async fn store_codex_refresh_connection(
+    config_dir: &Path,
+    provider: &str,
+    token: &CodexTokenResponse,
+    metadata: &CodexAuthMetadata,
+    previous: Option<&CodexCredentialSnapshot>,
+) -> Result<(), ProviderAuthError> {
+    let store = provider_secret_store(config_dir);
+    store_codex_refresh_connection_in_store(&store, provider, token, metadata, previous).await
+}
+
 async fn delete_codex_secret_bundle(
     store: &impl ProviderSecretStore,
     provider: &str,
@@ -1181,9 +1258,24 @@ pub async fn refresh_experimental_codex_chat_auth_after_rejection(
 pub async fn refresh_experimental_codex_chat_auth_if_needed(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    openai_codex_adapter(config_dir)
-        .refresh_chat_auth_if_needed()
-        .await
+    ProviderOAuthAdapter::refresh(
+        &openai_codex_adapter(config_dir),
+        adapters::ProviderOAuthRefreshRequest {
+            rejected_access_token: None,
+        },
+    )
+    .await
+    .map(|outcome| {
+        outcome
+            .chat_auth_snapshot
+            .map(|snapshot| ExperimentalCodexChatAuth {
+                access_token: snapshot.access_token,
+                chatgpt_account_id: snapshot.account_id,
+                base_url: snapshot.base_url,
+                model: snapshot.model,
+            })
+    })
+    .map_err(Into::into)
 }
 
 pub(super) async fn refresh_experimental_codex_chat_auth_impl(
@@ -1211,6 +1303,13 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
         return Ok(Some(current.auth));
     }
     let refresh_token = current.refresh_token;
+    let previous_metadata =
+        serde_json::to_string(&current.metadata).map_err(|_| ProviderAuthError::Storage)?;
+    let previous_snapshot = CodexCredentialSnapshot {
+        access_token: current.access_token.clone(),
+        refresh_token: refresh_token.clone(),
+        metadata: previous_metadata,
+    };
     let token =
         match refresh_codex_token(&current.metadata.token_endpoint_url, &refresh_token).await {
             Ok(token) => token,
@@ -1225,11 +1324,11 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
             }
             Err(CodexTokenEndpointError::Failed) => return Err(ProviderAuthError::TokenExchange),
         };
-    let Some(refresh_token) =
-        sanitized_optional_token(token.refresh_token.as_deref()).or(Some(refresh_token))
-    else {
-        return Err(ProviderAuthError::TokenExchange);
-    };
+    let returned_refresh_token = sanitized_optional_token(token.refresh_token.as_deref());
+    let old_refresh_token_reused = returned_refresh_token
+        .as_deref()
+        .is_none_or(|value| value == refresh_token);
+    let refresh_token = returned_refresh_token.unwrap_or(refresh_token);
     let account_id = extract_codex_account_id(&token)
         .unwrap_or_else(|_| current.metadata.chatgpt_account_id.clone());
     validate_codex_account_id(&account_id)?;
@@ -1257,7 +1356,14 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
     };
     let mut token = token;
     token.refresh_token = Some(refresh_token);
-    store_codex_connection(config_dir, provider, &token, &metadata).await?;
+    store_codex_refresh_connection(
+        config_dir,
+        provider,
+        &token,
+        &metadata,
+        old_refresh_token_reused.then_some(&previous_snapshot),
+    )
+    .await?;
     Ok(Some(ExperimentalCodexChatAuth {
         access_token: token.access_token,
         chatgpt_account_id: metadata.chatgpt_account_id,
@@ -3394,6 +3500,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_exchange_model_discovery_failure_still_completes_with_session_model() {
+        let dir = temp_dir();
+        let token_endpoint_url = successful_codex_token_endpoint_with_hook(|| {}).await;
+        let pending =
+            create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+
+        let response = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(pending.session_id.clone()),
+                state: Some(pending.state.clone()),
+                code: Some("codex-auth-code".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status, "connected");
+        assert_eq!(response.success, Some(true));
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        let auth = super::experimental_codex_chat_auth(&dir)
+            .await
+            .unwrap()
+            .expect("exchange should store chat auth even when model discovery is unavailable");
+        assert_eq!(auth.model, super::CODEX_CHAT_MODEL);
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "connected");
+        assert!(status.session_id.is_none());
+        assert_response_sanitized(
+            &status,
+            &[
+                "codex-exchange-access-token-secret",
+                "codex-exchange-refresh-token-secret",
+            ],
+        );
+    }
+
+    #[tokio::test]
     async fn codex_start_returns_existing_connected_status_without_mutation() {
         let dir = temp_dir();
         create_codex_oauth_connection(&dir).await;
@@ -3930,6 +4079,129 @@ mod tests {
                 "codex-exchange-access-token-secret",
                 "codex-exchange-refresh-token-secret",
             ],
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_commit_failure_restores_previous_credentials_when_refresh_token_reused() {
+        #[derive(Default)]
+        struct RefreshCommitFailingStore {
+            records: std::sync::Mutex<std::collections::HashMap<SecretKind, String>>,
+        }
+
+        impl ProviderSecretStore for RefreshCommitFailingStore {
+            async fn put_secret(
+                &self,
+                _provider_id: &str,
+                kind: SecretKind,
+                value: &str,
+            ) -> Result<(), SecretStoreError> {
+                if kind == SecretKind::OAuthAccessToken && value == "new-access" {
+                    return Err(SecretStoreError::Storage);
+                }
+                self.records.lock().unwrap().insert(kind, value.to_string());
+                Ok(())
+            }
+
+            async fn put_secret_if_absent(
+                &self,
+                _provider_id: &str,
+                _kind: SecretKind,
+                _value: &str,
+            ) -> Result<bool, SecretStoreError> {
+                Ok(false)
+            }
+
+            async fn get_secret(
+                &self,
+                _provider_id: &str,
+                kind: SecretKind,
+            ) -> Result<Option<String>, SecretStoreError> {
+                Ok(self.records.lock().unwrap().get(&kind).cloned())
+            }
+
+            async fn delete_secret(
+                &self,
+                _provider_id: &str,
+                kind: SecretKind,
+            ) -> Result<(), SecretStoreError> {
+                self.records.lock().unwrap().remove(&kind);
+                Ok(())
+            }
+        }
+
+        let previous_metadata = serde_json::to_string(&super::CodexAuthMetadata {
+            provider: "openai".to_string(),
+            account_label: "Old Account".to_string(),
+            scopes: super::codex_scopes(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
+            redacted: crate::secret_store::redact_secret("old-access"),
+            chatgpt_account_id: "acct-test".to_string(),
+            chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
+            chat_model: super::CODEX_CHAT_MODEL.to_string(),
+            token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+        })
+        .unwrap();
+        let previous = super::CodexCredentialSnapshot {
+            access_token: "old-access".to_string(),
+            refresh_token: "old-refresh".to_string(),
+            metadata: previous_metadata.clone(),
+        };
+        let token = super::CodexTokenResponse {
+            access_token: "new-access".to_string(),
+            refresh_token: Some("old-refresh".to_string()),
+            expires_in: Some(3600),
+            scope: Some("openid profile email offline_access".to_string()),
+            id_token: None,
+            account_label: Some("New Account".to_string()),
+        };
+        let metadata = super::CodexAuthMetadata {
+            provider: "openai".to_string(),
+            account_label: "New Account".to_string(),
+            scopes: super::codex_scopes(),
+            expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            redacted: crate::secret_store::redact_secret("new-access"),
+            chatgpt_account_id: "acct-test".to_string(),
+            chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
+            chat_model: super::CODEX_CHAT_MODEL.to_string(),
+            token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+        };
+        let store = RefreshCommitFailingStore::default();
+
+        let error = super::store_codex_refresh_connection_in_store(
+            &store,
+            "openai",
+            &token,
+            &metadata,
+            Some(&previous),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::Storage));
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::OAuthAccessToken)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("old-access")
+        );
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::OAuthRefreshToken)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("old-refresh")
+        );
+        assert_eq!(
+            store
+                .get_secret("openai", SecretKind::AuthMetadata)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some(previous_metadata.as_str())
         );
     }
 
