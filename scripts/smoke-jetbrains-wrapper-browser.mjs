@@ -122,10 +122,11 @@ let chatSubscriptionCount = 0;
 let chatCommandRequestCountBeforeEditSmoke = 0;
 let demoModeEnabled = false;
 let mockAssistantMessageCounter = 0;
-let providerAuthSmokeState = "available";
+let providerAuthSmokeState = "unavailable";
 let providerAuthCompletionReady = false;
 let providerAuthStartCount = 0;
 let providerAuthDisconnectCount = 0;
+const providerAuthStatusResponses = [];
 let pendingSlowAssistantResponse = false;
 let slowAssistantCompletionCount = 0;
 const chatSseSubscribers = new Map();
@@ -892,8 +893,17 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
   const authState = frameLocator.locator("[data-testid='provider-auth-state']").first();
   await authState.waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Hosted compact OpenAI login state panel was not mounted."));
   const initialStatus = await authState.getAttribute("data-provider-auth-status").catch(() => "");
-  if (initialStatus !== "login_available") {
-    failures.push(`Hosted compact OpenAI login smoke expected login_available before click, got ${String(initialStatus)}.`);
+  if (initialStatus !== "login_unavailable") {
+    failures.push(`Hosted compact OpenAI login smoke expected default-like login_unavailable before click, got ${String(initialStatus)}.`);
+  }
+  assertProviderAuthStatusShape(providerAuthStatusResponses[0], "initial hosted compact OpenAI login status", {
+    status: "login_unavailable",
+    supportsLogin: false,
+    authSource: "none",
+    configured: false,
+  });
+  if (!await loginButton.isEnabled().catch(() => false)) {
+    failures.push("Hosted compact OpenAI login CTA was not enabled from default-like login_unavailable state.");
   }
   await clickControlWithActionability(loginButton, "Connect OpenAI account (experimental)", { assertHitTest: true });
   await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='pending']").first().waitFor({ state: "attached", timeout: 5000 })
@@ -917,8 +927,14 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
   const disconnectButton = frameLocator.locator("[data-testid='provider-auth-state']").getByRole("button", { name: "Disconnect login", exact: true }).first();
   await openProviderDetailsForAuthControl(providerDetails, providerSummary, disconnectButton);
   await clickControlWithActionability(disconnectButton, "Disconnect OpenAI login", { assertHitTest: true });
-  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='login_available']").first().waitFor({ state: "attached", timeout: 5000 })
-    .catch(() => failures.push("Hosted compact OpenAI login smoke did not return to login_available after disconnect."));
+  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='login_unavailable']").first().waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push("Hosted compact OpenAI login smoke did not return to default-like login_unavailable after disconnect."));
+  assertProviderAuthStatusShape(providerAuthStatusResponses.at(-1), "post-disconnect hosted compact OpenAI login status", {
+    status: "login_unavailable",
+    supportsLogin: false,
+    authSource: "none",
+    configured: false,
+  });
   if (providerAuthDisconnectCount !== 1) {
     failures.push(`Hosted compact OpenAI login smoke expected one provider-auth disconnect request, observed ${providerAuthDisconnectCount}.`);
   }
@@ -1026,7 +1042,7 @@ async function assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocato
 
 async function waitForAssistantAnswerCount(frameLocator, text, expected, description) {
   await frameLocator.locator(".chat-bubble.assistant", { hasText: text }).nth(expected - 1).waitFor({ state: "visible", timeout: 5000 })
-    .catch(() => failures.push(`Expected  to appear at least  time(s) in assistant bubbles before assertion: `));
+    .catch(() => failures.push(`Expected ${JSON.stringify(text)} to appear at least ${expected} time(s) in assistant bubbles before assertion, observed fewer than ${expected}: ${description}.`));
 }
 
 async function assertAssistantAnswerCount(frameLocator, text, expected, description) {
@@ -1035,7 +1051,19 @@ async function assertAssistantAnswerCount(frameLocator, text, expected, descript
     text,
   );
   if (count !== expected) {
-    failures.push(`Expected  to appear exactly  time(s) in assistant bubbles, observed : `);
+    failures.push(`Expected ${JSON.stringify(text)} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${description}.`);
+  }
+}
+
+function assertProviderAuthStatusShape(response, description, expected) {
+  if (!response || typeof response !== "object") {
+    failures.push(`Missing provider-auth status response for ${description}.`);
+    return;
+  }
+  for (const [key, value] of Object.entries(expected)) {
+    if (response[key] !== value) {
+      failures.push(`${description} expected ${key}=${JSON.stringify(value)}, observed ${JSON.stringify(response[key])}.`);
+    }
   }
 }
 
@@ -2712,17 +2740,20 @@ async function startMockRuntimeServer() {
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
+      let payload;
       if (demoModeFirstMessage) {
-        json(response, 200, unavailableProviderAuthStatus());
+        payload = unavailableProviderAuthStatus();
       } else if (providerAuthSmokeState === "connected" || (providerAuthSmokeState === "pending" && providerAuthCompletionReady)) {
         providerAuthCompletionReady = false;
         providerAuthSmokeState = "connected";
-        json(response, 200, connectedProviderAuthStatus());
+        payload = connectedProviderAuthStatus();
       } else if (providerAuthSmokeState === "pending") {
-        json(response, 200, pendingProviderAuthStatus());
+        payload = pendingProviderAuthStatus();
       } else {
-        json(response, 200, availableProviderAuthStatus());
+        payload = unavailableProviderAuthStatus();
       }
+      providerAuthStatusResponses.push(payload);
+      json(response, 200, payload);
       return;
     }
     if (request.method === "POST" && requestUrl.pathname === "/v1/provider-auth/openai/start") {
@@ -2751,7 +2782,9 @@ async function startMockRuntimeServer() {
       }
       providerAuthStartCount += 1;
       providerAuthSmokeState = "pending";
-      json(response, 200, pendingProviderAuthStatus());
+      const payload = pendingProviderAuthStatus();
+      providerAuthStatusResponses.push(payload);
+      json(response, 200, payload);
       return;
     }
     if (request.method === "POST" && requestUrl.pathname === "/v1/provider-auth/openai/disconnect") {
@@ -2780,8 +2813,10 @@ async function startMockRuntimeServer() {
       }
       providerAuthDisconnectCount += 1;
       providerAuthCompletionReady = false;
-      providerAuthSmokeState = "available";
-      json(response, 200, { ...availableProviderAuthStatus(), success: true });
+      providerAuthSmokeState = "unavailable";
+      const payload = { ...unavailableProviderAuthStatus(), success: true };
+      providerAuthStatusResponses.push(payload);
+      json(response, 200, payload);
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
@@ -3003,19 +3038,6 @@ function writeSse(response, event) {
   response.write(`data: ${JSON.stringify(event)}\n\n`);
 }
 
-function availableProviderAuthStatus() {
-  return {
-    provider: "openai",
-    configured: false,
-    status: "login_available",
-    authSource: "none",
-    supportsLogin: true,
-    supportsApiKey: true,
-    cloudRequired: false,
-    message: "Experimental OpenAI account login is available in the local mock runtime.",
-  };
-}
-
 function pendingProviderAuthStatus() {
   return {
     provider: "openai",
@@ -3152,6 +3174,7 @@ async function assertLeakDetectorSelfCheck(page) {
       dom: document.documentElement.innerText,
       localStorage: { ...window.localStorage },
       sessionStorage: { ...window.sessionStorage },
+      cookie: document.cookie,
     });
   }, runtimeToken);
   const before = failures.length;
@@ -3177,6 +3200,7 @@ async function collectWrapperLeakState(page) {
       outerHTML: document.documentElement.outerHTML,
       scripts: Array.from(document.scripts, (script) => script.textContent ?? ""),
       globals,
+      cookie: document.cookie,
     });
   });
 }
@@ -3192,6 +3216,7 @@ async function collectPageLeakState(page) {
       .map(([key, value]) => [key, typeof value === "function" ? "[function]" : value])),
     localStorage: { ...window.localStorage },
     sessionStorage: { ...window.sessionStorage },
+    cookie: document.cookie,
   }));
 }
 
@@ -3222,6 +3247,7 @@ async function collectBrowserVisibleState(page) {
       inputValues,
       localStorage: { ...window.localStorage },
       sessionStorage: { ...window.sessionStorage },
+      cookie: document.cookie,
     };
   });
   return JSON.stringify({ pageState, frameState, consoleMessages });
