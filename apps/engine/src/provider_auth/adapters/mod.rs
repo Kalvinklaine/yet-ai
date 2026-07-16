@@ -886,6 +886,308 @@ mod tests {
 
     struct TestAdapter;
 
+    const DEVICE_TEST_PROVIDER: ProviderOAuthProviderId =
+        ProviderOAuthProviderId::new("openai-compatible");
+
+    struct DeviceFlowProofAdapter {
+        config_dir: std::path::PathBuf,
+    }
+
+    impl DeviceFlowProofAdapter {
+        fn new(config_dir: std::path::PathBuf) -> Self {
+            Self { config_dir }
+        }
+
+        fn expires_at() -> String {
+            (chrono::Utc::now() + chrono::Duration::minutes(10)).to_rfc3339()
+        }
+
+        fn pending_status(
+            session: &crate::provider_auth::session_registry::ProviderAuthPendingSession,
+        ) -> ProviderOAuthStatusView {
+            ProviderOAuthStatusView {
+                provider_id: DEVICE_TEST_PROVIDER,
+                kind: ProviderOAuthStatusKind::Pending,
+                configured: false,
+                auth_source: "device",
+                supports_login: true,
+                supports_api_key: true,
+                cloud_required: false,
+                success: Some(true),
+                account_label: None,
+                redacted: None,
+                authorization_url: None,
+                verification_url: Some(
+                    "http://127.0.0.1/mock-device/verify?user_code=YET-MOCK".to_string(),
+                ),
+                session_id: Some(session.session_id.clone()),
+                expires_at: Some(session.expires_at.clone()),
+                scopes: Some(vec!["mock:device".to_string()]),
+                poll_interval_seconds: Some(5),
+                message: "Mock device login is pending.".to_string(),
+            }
+        }
+
+        fn connected_status() -> ProviderOAuthStatusView {
+            ProviderOAuthStatusView {
+                provider_id: DEVICE_TEST_PROVIDER,
+                kind: ProviderOAuthStatusKind::Connected,
+                configured: true,
+                auth_source: "device",
+                supports_login: true,
+                supports_api_key: true,
+                cloud_required: false,
+                success: Some(true),
+                account_label: Some("Mock Device Account".to_string()),
+                redacted: Some("device-token-...redacted".to_string()),
+                authorization_url: None,
+                verification_url: None,
+                session_id: None,
+                expires_at: Some(Self::expires_at()),
+                scopes: Some(vec!["mock:device".to_string()]),
+                poll_interval_seconds: None,
+                message: "Mock device login is connected.".to_string(),
+            }
+        }
+    }
+
+    impl ProviderOAuthAdapter for DeviceFlowProofAdapter {
+        fn provider_id(&self) -> ProviderOAuthProviderId {
+            DEVICE_TEST_PROVIDER
+        }
+
+        fn display_label(&self) -> &'static str {
+            "Mock Device Provider"
+        }
+
+        fn capabilities(&self) -> ProviderOAuthCapabilities {
+            ProviderOAuthCapabilities {
+                provider_id: DEVICE_TEST_PROVIDER,
+                display_label: self.display_label().to_string(),
+                auth_modes: vec![ProviderOAuthAuthMode::DeviceCode],
+                policy_gates: vec![ProviderOAuthPolicyGate {
+                    name: "test-device-only",
+                    allowed: true,
+                    message: None,
+                }],
+                supports_refresh: false,
+                supports_disconnect: true,
+                supports_chat_auth_snapshot: false,
+            }
+        }
+
+        fn status<'a>(
+            &'a self,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                let registry = crate::provider_auth::session_store::read_session_registry(
+                    &self.config_dir,
+                    DEVICE_TEST_PROVIDER.as_str(),
+                )
+                .await
+                .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                if let Some(session) = registry
+                    .lookup_by_state(
+                        DEVICE_TEST_PROVIDER.as_str(),
+                        "mock-device-state",
+                        chrono::Utc::now(),
+                    )
+                    .map_err(|_| ProviderOAuthAdapterError::Storage)?
+                {
+                    return Ok(Self::pending_status(session));
+                }
+                Ok(ProviderOAuthStatusView {
+                    provider_id: DEVICE_TEST_PROVIDER,
+                    kind: ProviderOAuthStatusKind::LoginAvailable,
+                    configured: false,
+                    auth_source: "none",
+                    supports_login: true,
+                    supports_api_key: true,
+                    cloud_required: false,
+                    success: None,
+                    account_label: None,
+                    redacted: None,
+                    authorization_url: None,
+                    verification_url: None,
+                    session_id: None,
+                    expires_at: None,
+                    scopes: None,
+                    poll_interval_seconds: None,
+                    message: "Mock device login is available.".to_string(),
+                })
+            })
+        }
+
+        fn start_session<'a>(
+            &'a self,
+            request: ProviderOAuthStartSessionRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStartSession, ProviderOAuthAdapterError>>
+        {
+            Box::pin(async move {
+                if request.mode != ProviderOAuthAuthMode::DeviceCode {
+                    return Err(ProviderOAuthAdapterError::UnsupportedMode);
+                }
+                let session = crate::provider_auth::session_registry::ProviderAuthPendingSession {
+                    provider: DEVICE_TEST_PROVIDER.as_str().to_string(),
+                    session_id: "mock-device-session".to_string(),
+                    state: "mock-device-state".to_string(),
+                    mode: crate::provider_auth::session_registry::ProviderAuthPendingMode::Device,
+                    expires_at: Self::expires_at(),
+                    callback_owner: None,
+                    token_endpoint_id: Some("mock-device".to_string()),
+                };
+                let mut registry = crate::provider_auth::session_store::read_session_registry(
+                    &self.config_dir,
+                    DEVICE_TEST_PROVIDER.as_str(),
+                )
+                .await
+                .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                registry.insert(session.clone());
+                crate::provider_auth::session_store::write_session_registry(
+                    &self.config_dir,
+                    DEVICE_TEST_PROVIDER.as_str(),
+                    &registry,
+                )
+                .await
+                .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                Ok(ProviderOAuthStartSession {
+                    status: Self::pending_status(&session),
+                })
+            })
+        }
+
+        fn exchange_code<'a>(
+            &'a self,
+            request: ProviderOAuthExchangeCodeRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                if !request.code.starts_with("device-approved-") {
+                    return Err(ProviderOAuthAdapterError::ExchangeFailed);
+                }
+                let mut registry = crate::provider_auth::session_store::read_session_registry(
+                    &self.config_dir,
+                    DEVICE_TEST_PROVIDER.as_str(),
+                )
+                .await
+                .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                let pending = registry
+                    .lookup(
+                        DEVICE_TEST_PROVIDER.as_str(),
+                        &request.session_id,
+                        &request.state,
+                        chrono::Utc::now(),
+                    )
+                    .map_err(|_| ProviderOAuthAdapterError::Storage)?
+                    .is_some();
+                if !pending {
+                    return Err(ProviderOAuthAdapterError::InvalidSession);
+                }
+                registry.complete_terminal(&request.session_id);
+                crate::provider_auth::session_store::write_session_registry(
+                    &self.config_dir,
+                    DEVICE_TEST_PROVIDER.as_str(),
+                    &registry,
+                )
+                .await
+                .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                Ok(Self::connected_status())
+            })
+        }
+
+        fn callback_exchange<'a>(
+            &'a self,
+            _request: ProviderOAuthCallbackExchangeRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async { Err(ProviderOAuthAdapterError::UnsupportedMode) })
+        }
+
+        fn callback_error<'a>(
+            &'a self,
+            _request: ProviderOAuthCallbackErrorRequest,
+        ) -> AdapterFuture<'a, Result<(), ProviderOAuthAdapterError>> {
+            Box::pin(async { Err(ProviderOAuthAdapterError::UnsupportedMode) })
+        }
+
+        fn callback_state_pending<'a>(
+            &'a self,
+            request: ProviderOAuthCallbackStateRequest,
+        ) -> AdapterFuture<'a, Result<bool, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                let registry = crate::provider_auth::session_store::read_session_registry(
+                    &self.config_dir,
+                    DEVICE_TEST_PROVIDER.as_str(),
+                )
+                .await
+                .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                Ok(registry
+                    .lookup_by_state(
+                        DEVICE_TEST_PROVIDER.as_str(),
+                        &request.state,
+                        chrono::Utc::now(),
+                    )
+                    .map_err(|_| ProviderOAuthAdapterError::Storage)?
+                    .is_some())
+            })
+        }
+
+        fn refresh<'a>(
+            &'a self,
+            _request: ProviderOAuthRefreshRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthRefreshOutcome, ProviderOAuthAdapterError>>
+        {
+            Box::pin(async { Err(ProviderOAuthAdapterError::UnsupportedMode) })
+        }
+
+        fn disconnect<'a>(
+            &'a self,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                let mut registry = crate::provider_auth::session_store::read_session_registry(
+                    &self.config_dir,
+                    DEVICE_TEST_PROVIDER.as_str(),
+                )
+                .await
+                .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                registry.complete_terminal("mock-device-session");
+                crate::provider_auth::session_store::write_session_registry(
+                    &self.config_dir,
+                    DEVICE_TEST_PROVIDER.as_str(),
+                    &registry,
+                )
+                .await
+                .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                Ok(ProviderOAuthStatusView {
+                    provider_id: DEVICE_TEST_PROVIDER,
+                    kind: ProviderOAuthStatusKind::Revoked,
+                    configured: false,
+                    auth_source: "none",
+                    supports_login: true,
+                    supports_api_key: true,
+                    cloud_required: false,
+                    success: Some(true),
+                    account_label: None,
+                    redacted: None,
+                    authorization_url: None,
+                    verification_url: None,
+                    session_id: None,
+                    expires_at: None,
+                    scopes: None,
+                    poll_interval_seconds: None,
+                    message: "Mock device login was disconnected.".to_string(),
+                })
+            })
+        }
+
+        fn chat_auth_snapshot<'a>(
+            &'a self,
+        ) -> AdapterFuture<
+            'a,
+            Result<Option<ProviderOAuthChatAuthSnapshot>, ProviderOAuthAdapterError>,
+        > {
+            Box::pin(async { Ok(None) })
+        }
+    }
+
     impl TestAdapter {
         fn pending_status(success: Option<bool>) -> ProviderOAuthStatusView {
             ProviderOAuthStatusView {
@@ -1280,6 +1582,87 @@ mod tests {
             .unwrap();
 
         assert_eq!(status.to_response().status, "connected");
+    }
+
+    #[tokio::test]
+    async fn device_flow_adapter_proof_uses_shared_session_registry_and_status_contract() {
+        let dir = std::env::temp_dir().join(format!(
+            "yet-ai-device-flow-adapter-proof-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let adapter = DeviceFlowProofAdapter::new(dir.clone());
+        let capabilities = adapter.capabilities();
+
+        assert_eq!(adapter.provider_id().as_str(), "openai-compatible");
+        assert!(capabilities.supports_mode(ProviderOAuthAuthMode::DeviceCode));
+        assert!(!capabilities.supports_mode(ProviderOAuthAuthMode::BrowserPkce));
+        assert!(capabilities.login_allowed());
+
+        let start = adapter
+            .start_session(ProviderOAuthStartSessionRequest {
+                mode: ProviderOAuthAuthMode::DeviceCode,
+                ttl_seconds: Some(600),
+                token_endpoint_url: None,
+                chat_endpoint_url: None,
+            })
+            .await
+            .unwrap();
+        let pending_response = start.status.to_response();
+
+        assert_eq!(pending_response.provider, "openai-compatible");
+        assert_eq!(pending_response.status, "pending");
+        assert_eq!(pending_response.auth_source, "device");
+        assert!(pending_response.authorization_url.is_none());
+        assert!(pending_response.verification_url.is_some());
+        assert_response_has_no_secret(&pending_response);
+
+        let registry =
+            crate::provider_auth::session_store::read_session_registry(&dir, "openai-compatible")
+                .await
+                .unwrap();
+        let session = registry
+            .lookup(
+                "openai-compatible",
+                "mock-device-session",
+                "mock-device-state",
+                chrono::Utc::now(),
+            )
+            .unwrap()
+            .expect("device session should use shared registry");
+        assert_eq!(
+            session.mode,
+            crate::provider_auth::session_registry::ProviderAuthPendingMode::Device
+        );
+
+        assert!(adapter
+            .callback_state_pending(ProviderOAuthCallbackStateRequest {
+                state: "mock-device-state".to_string(),
+            })
+            .await
+            .unwrap());
+        let connected = adapter
+            .exchange_code(ProviderOAuthExchangeCodeRequest {
+                session_id: "mock-device-session".to_string(),
+                state: "mock-device-state".to_string(),
+                code: "device-approved-code".to_string(),
+            })
+            .await
+            .unwrap()
+            .to_response();
+
+        assert_eq!(connected.status, "connected");
+        assert_eq!(connected.auth_source, "device");
+        assert_response_has_no_secret(&connected);
+        assert!(crate::provider_auth::session_store::read_session_registry(
+            &dir,
+            "openai-compatible",
+        )
+        .await
+        .unwrap()
+        .lookup_by_state("openai-compatible", "mock-device-state", chrono::Utc::now(),)
+        .unwrap()
+        .is_none());
     }
 
     #[tokio::test]
