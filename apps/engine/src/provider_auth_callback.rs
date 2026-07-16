@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
@@ -18,6 +18,8 @@ const CALLBACK_NOT_FOUND_TEXT: &str =
 
 static CALLBACK_STATE: LazyLock<Mutex<CallbackState>> =
     LazyLock::new(|| Mutex::new(CallbackState::default()));
+static CALLBACK_START_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Default)]
 struct CallbackState {
@@ -37,13 +39,36 @@ pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStar
         }
     }
 
-    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, CALLBACK_PORT)))
-        .await
-        .map_err(|_| CallbackStartError)?;
-    serve_listener_in_thread(listener)?;
+    let _guard = CALLBACK_START_LOCK.lock().await;
+    {
+        let state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
+        if state.started {
+            return Ok(());
+        }
+    }
+
+    let listeners = bind_loopback_listeners().await?;
+    serve_listeners_in_threads(listeners)?;
 
     let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
     state.started = true;
+    Ok(())
+}
+
+async fn bind_loopback_listeners() -> Result<Vec<TcpListener>, CallbackStartError> {
+    let ipv4 = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, CALLBACK_PORT)))
+        .await
+        .map_err(|_| CallbackStartError)?;
+    let ipv6 = TcpListener::bind(SocketAddr::from((Ipv6Addr::LOCALHOST, CALLBACK_PORT)))
+        .await
+        .map_err(|_| CallbackStartError)?;
+    Ok(vec![ipv4, ipv6])
+}
+
+fn serve_listeners_in_threads(listeners: Vec<TcpListener>) -> Result<(), CallbackStartError> {
+    for listener in listeners {
+        serve_listener_in_thread(listener)?;
+    }
     Ok(())
 }
 
@@ -83,12 +108,16 @@ async fn handle_stream(mut stream: TcpStream) {
     };
     let request = String::from_utf8_lossy(&buffer[..read]);
     let first_line = request.lines().next().unwrap_or_default();
+    let method = first_line.split_whitespace().next().unwrap_or_default();
     let path_and_query = first_line.split_whitespace().nth(1).unwrap_or_default();
-    let (status, text) = callback_response(path_and_query).await;
+    let (status, text) = callback_response(method, path_and_query).await;
     write_response(&mut stream, status, text).await;
 }
 
-async fn callback_response(path_and_query: &str) -> (StatusCode, &'static str) {
+async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &'static str) {
+    if method != "GET" {
+        return (StatusCode::METHOD_NOT_ALLOWED, CALLBACK_FAILURE_TEXT);
+    }
     let Ok(parsed) = reqwest::Url::parse(&format!("http://localhost{path_and_query}")) else {
         return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
     };
@@ -199,5 +228,30 @@ mod tests {
             assert!(!lower.contains("secret"));
             assert!(!lower.contains("/users/"));
         }
+    }
+
+    #[tokio::test]
+    async fn callback_response_rejects_non_get_without_exchange() {
+        let (status, text) = callback_response(
+            "POST",
+            "/auth/callback?code=codex-code-secret&state=codex-state-secret",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+    }
+
+    #[tokio::test]
+    async fn ensure_started_is_safe_for_concurrent_calls() {
+        let base =
+            std::env::temp_dir().join(format!("yet-ai-callback-start-test-{}", std::process::id()));
+        let first = base.join("one");
+        let second = base.join("two");
+
+        let (first, second) = tokio::join!(ensure_started(&first), ensure_started(&second));
+
+        assert!(first.is_ok());
+        assert!(second.is_ok());
     }
 }

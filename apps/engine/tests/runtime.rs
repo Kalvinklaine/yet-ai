@@ -1500,7 +1500,7 @@ fn state_from_authorization_url(value: &str) -> &str {
 }
 
 async fn provider_auth_callback_text(state: &str, code: &str) -> (reqwest::StatusCode, String) {
-    let url = format!("http://127.0.0.1:1455/auth/callback?code={code}&state={state}");
+    let url = format!("http://localhost:1455/auth/callback?code={code}&state={state}");
     provider_auth_callback_url_text(&url).await
 }
 

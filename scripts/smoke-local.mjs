@@ -759,11 +759,11 @@ async function requestEmpty(baseUrl, route, init = {}) {
 }
 
 async function requestCallback(state, code) {
-  const callbackUrl = new URL("http://127.0.0.1:1455/auth/callback");
+  const callbackUrl = new URL("http://localhost:1455/auth/callback");
   callbackUrl.searchParams.set("code", code);
   callbackUrl.searchParams.set("state", state);
   const response = await fetch(callbackUrl, {
-    headers: { Host: "localhost:1455", Accept: "text/html" }
+    headers: { Accept: "text/html" }
   });
   const body = await response.text();
   return {
