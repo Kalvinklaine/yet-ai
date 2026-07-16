@@ -61,6 +61,8 @@ static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
 static CODEX_REFRESH_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+mod session_registry;
+mod session_store;
 mod status;
 mod types;
 mod validation;
@@ -1768,7 +1770,10 @@ fn provider_auth_state_path(
     provider: &str,
 ) -> Result<PathBuf, ProviderAuthError> {
     providers::validate_provider_id(provider).map_err(|_| ProviderAuthError::InvalidProvider)?;
-    if !matches!(tree_name, "provider-auth-mock" | "provider-auth-openai") {
+    if !matches!(
+        tree_name,
+        "provider-auth-mock" | "provider-auth-openai" | "provider-auth-sessions"
+    ) {
         return Err(ProviderAuthError::Storage);
     }
     let root = config_dir.join(tree_name);
