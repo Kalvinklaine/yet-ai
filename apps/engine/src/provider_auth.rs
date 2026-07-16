@@ -308,6 +308,7 @@ pub async fn status(
         let codex = read_codex_state(config_dir, provider).await?;
         if let Some(session) = codex.pending {
             if parse_time(&session.expires_at)? > Utc::now() {
+                ensure_codex_pending_callback_state(config_dir, &session).await?;
                 return Ok(codex_pending_response(provider, &session, None));
             }
             provider_auth_callback::forget_pending_state(&session.state);
@@ -1930,6 +1931,17 @@ async fn reject_codex_mock_coexistence(
     Ok(())
 }
 
+async fn ensure_codex_pending_callback_state(
+    config_dir: &Path,
+    session: &CodexOAuthSession,
+) -> Result<(), ProviderAuthError> {
+    provider_auth_callback::ensure_started(config_dir)
+        .await
+        .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
+    provider_auth_callback::register_pending_state(&session.state, config_dir)
+        .map_err(|_| ProviderAuthError::CallbackUnavailable)
+}
+
 async fn register_codex_pending_callback_state(
     config_dir: &Path,
     provider: &str,
@@ -1937,8 +1949,7 @@ async fn register_codex_pending_callback_state(
     let codex = read_codex_state(config_dir, provider).await?;
     if let Some(session) = codex.pending {
         if parse_time(&session.expires_at)? > Utc::now() {
-            provider_auth_callback::register_pending_state(&session.state, config_dir)
-                .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
+            ensure_codex_pending_callback_state(config_dir, &session).await?;
         } else {
             provider_auth_callback::forget_pending_state(&session.state);
         }

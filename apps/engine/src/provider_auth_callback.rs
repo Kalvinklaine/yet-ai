@@ -181,7 +181,7 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
         | Err(provider_auth::ProviderAuthError::SessionExpired)
         | Err(provider_auth::ProviderAuthError::SessionMismatch) => {
             forget_pending_state(&state);
-            (StatusCode::OK, CALLBACK_SUCCESS_TEXT)
+            (StatusCode::OK, CALLBACK_NOT_FOUND_TEXT)
         }
         Err(provider_auth::ProviderAuthError::TokenExchange) => {
             (StatusCode::BAD_GATEWAY, CALLBACK_FAILURE_TEXT)
@@ -368,6 +368,48 @@ mod tests {
         format!(
             "/auth/callback?error=access_denied&error_description=raw-denied-secret&state={state}"
         )
+    }
+
+    #[tokio::test]
+    async fn status_rehydrates_persisted_pending_callback_mapping() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_registered_states_for_test();
+        let dir = callback_test_dir("rehydrate");
+        let token_endpoint_url = codex_token_endpoint(StatusCode::OK).await;
+        let start = start_codex_pending(&dir, &token_endpoint_url).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        clear_registered_states_for_test();
+        assert!(registered_config_dir_for_state(&state).is_none());
+
+        let status = provider_auth::status(&dir, "openai").await.unwrap();
+
+        assert_eq!(status.status, "pending");
+        assert_eq!(registered_config_dir_for_state(&state), Some(dir.clone()));
+        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(text, CALLBACK_SUCCESS_TEXT);
+        assert!(registered_config_dir_for_state(&state).is_none());
+    }
+
+    #[tokio::test]
+    async fn terminal_callback_failures_do_not_show_success_text() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_registered_states_for_test();
+        let dir = callback_test_dir("terminal-failure");
+        register_pending_state("missing-state", &dir).unwrap();
+
+        let (status, text) = callback_response("GET", &callback_query("missing-state")).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
+        assert_ne!(text, CALLBACK_SUCCESS_TEXT);
+        assert!(registered_config_dir_for_state("missing-state").is_none());
     }
 
     #[tokio::test]
