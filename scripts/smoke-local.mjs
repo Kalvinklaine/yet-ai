@@ -162,13 +162,14 @@ try {
   assert(codexExchange.cloudRequired === false, "experimental Codex-like retry exchange unexpectedly requires cloud");
 
   assert(codexTokenRequestCount === 2, "experimental Codex-like retry exchange did not call mock token endpoint twice total");
-  const parsedCodexTokenBodies = codexTokenRequestBody.trim().split("\n").map((body) => JSON.parse(body));
+  const parsedCodexTokenBodies = codexTokenRequestBody.trim().split("\n").map(parseFormBody);
   const parsedFailedCodexTokenBody = parsedCodexTokenBodies[0];
   const parsedCodexTokenBody = parsedCodexTokenBodies[1];
   assert(parsedFailedCodexTokenBody.grant_type === "authorization_code", "experimental Codex-like failed exchange used unexpected grant type");
   assert(parsedFailedCodexTokenBody.code === "codex-code-smoke-failure-secret", "experimental Codex-like failed exchange did not send auth code to mock token endpoint");
   assert(parsedCodexTokenBody.grant_type === "authorization_code", "experimental Codex-like retry exchange used unexpected grant type");
   assert(parsedCodexTokenBody.code === "codex-code-smoke-secret", "experimental Codex-like retry exchange did not send auth code to mock token endpoint");
+  assert(parsedCodexTokenBody.redirect_uri === "http://localhost:1455/auth/callback", "experimental Codex-like retry exchange used unexpected redirect URI");
   assert(typeof parsedCodexTokenBody.code_verifier === "string" && parsedCodexTokenBody.code_verifier.length > 20, "experimental Codex-like retry exchange did not send PKCE verifier to mock token endpoint");
   assert(parsedFailedCodexTokenBody.code_verifier === parsedCodexTokenBody.code_verifier, "experimental Codex-like retry did not reuse pending verifier");
   assert(parsedCodexTokenBody.code_verifier !== codexState, "experimental Codex-like verifier reused state");
@@ -219,15 +220,25 @@ try {
   const codexRestartState = new URL(codexRestart.authorizationUrl).searchParams.get("state");
   assert(codexRestart.sessionId !== codexStart.sessionId, "experimental Codex-like restart reused prior session id");
   assert(codexRestartState !== codexState, "experimental Codex-like restart reused prior state");
-  const codexReconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/exchange", {
-    method: "POST",
-    body: JSON.stringify({
-      sessionId: codexRestart.sessionId,
-      state: codexRestartState,
-      code: "codex-code-smoke-reconnect-secret"
-    })
-  });
+  const codexReconnectCallback = await requestCallback(codexRestartState, "codex-code-smoke-reconnect-secret");
+  assert(codexReconnectCallback.status === 200, "experimental Codex-like callback did not return HTTP 200");
+  assert(codexReconnectCallback.body.includes("Login received. Return to Yet AI."), "experimental Codex-like callback did not return safe success text");
+  assertNoSecretLeak(codexReconnectCallback.raw, [
+    { label: "Codex-like callback auth code", value: "codex-code-smoke-reconnect-secret" },
+    { label: "Codex-like callback state", value: codexRestartState },
+    { label: "Codex-like access token", value: "codex-smoke-access-token-secret" },
+    { label: "Codex-like refresh token", value: "codex-smoke-refresh-token-secret" },
+    { label: "authorization header marker", value: "authorization: bearer" },
+    { label: "cookie marker", value: "cookie" },
+    { label: "raw code query marker", value: "?code=" },
+    { label: "raw state query marker", value: "&state=" },
+    { label: "private path marker", value: tempHome }
+  ]);
+  const codexReconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
   assert(codexReconnect.status === "connected", "experimental Codex-like reconnect did not return connected status");
+  assert(codexReconnect.configured === true, "experimental Codex-like callback did not configure auth");
+  assert(codexReconnect.sessionId === undefined, "experimental Codex-like callback connected status exposed session id");
+  assert(codexReconnect.authorizationUrl === undefined, "experimental Codex-like callback connected status exposed authorization URL");
   assert(codexTokenRequestCount === 3, "experimental Codex-like reconnect did not call mock token endpoint a third time");
 
   const codexChatId = `smoke-codex-chat-${crypto.randomUUID()}`;
@@ -259,8 +270,8 @@ try {
   const parsedCodexChatBody = JSON.parse(codexChatRequestBody);
   assert(parsedCodexChatBody.stream === true, "experimental Codex-like chat request was not streaming");
   assert(parsedCodexChatBody.model === "gpt-5-codex", "experimental Codex-like chat request used unexpected model");
-  assert(parsedCodexChatBody.messages?.[0]?.role === "user", "experimental Codex-like chat request did not send user role");
-  assert(parsedCodexChatBody.messages?.[0]?.content === "Say hello through experimental mock OAuth.", "experimental Codex-like chat request did not send first message content");
+  assert(parsedCodexChatBody.input?.[0]?.role === "user", "experimental Codex-like chat request did not send user role");
+  assert(parsedCodexChatBody.input?.[0]?.content?.[0]?.text === "Say hello through experimental mock OAuth.", "experimental Codex-like chat request did not send first message content");
 
   const noModelProviderResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
@@ -462,6 +473,7 @@ try {
     incompleteCodexEvents,
     incompleteCodexRaw,
     codexRestart,
+    codexReconnectCallback,
     codexReconnect,
     codexCommandResponse,
     codexEvents,
@@ -631,6 +643,11 @@ async function startMockProvider() {
 
 async function startMockCodexTokenEndpoint() {
   const server = http.createServer((request, response) => {
+    if (request.method === "GET" && request.url === "/backend-api/codex/models") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [{ id: "gpt-5-codex" }] }));
+      return;
+    }
     if (request.method !== "POST" || request.url !== "/oauth/token") {
       response.writeHead(404).end();
       return;
@@ -652,6 +669,7 @@ async function startMockCodexTokenEndpoint() {
       response.end(JSON.stringify({
         access_token: "codex-smoke-access-token-secret",
         refresh_token: "codex-smoke-refresh-token-secret",
+        id_token: fakeCodexIdToken(),
         expires_in: 1800,
         scope: "openid profile email offline_access",
         account_label: "smoke-user@example.test"
@@ -665,7 +683,13 @@ async function startMockCodexTokenEndpoint() {
 
 async function startMockCodexChatEndpoint() {
   const server = http.createServer((request, response) => {
-    if (request.method !== "POST" || !["/chat/completions", "/v1/chat/completions"].includes(request.url)) {
+    if (request.method === "GET" && request.url?.startsWith("/models")) {
+      codexChatAuth = request.headers.authorization;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [{ id: "gpt-5-codex" }] }));
+      return;
+    }
+    if (request.method !== "POST" || !["/responses", "/chat/completions", "/v1/chat/completions"].includes(request.url)) {
       response.writeHead(404).end();
       return;
     }
@@ -680,14 +704,23 @@ async function startMockCodexChatEndpoint() {
         "content-type": "text/event-stream",
         "cache-control": "no-cache"
       });
-      response.write('data: {"choices":[{"delta":{"content":"OAuth"}}]}\n\n');
-      response.write('data: {"choices":[{"delta":{"content":" smoke"}}]}\n\n');
-      response.end("data: [DONE]\n\n");
+      response.write('data: {"type":"response.output_text.delta","delta":"OAuth"}\n\n');
+      response.write('data: {"type":"response.output_text.delta","delta":" smoke"}\n\n');
+      response.end('data: {"type":"response.completed"}\n\n');
     });
   });
   await listen(server, "127.0.0.1", 0);
   const address = server.address();
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+function fakeCodexIdToken() {
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "none", typ: "JWT" })}.${encode({ chatgpt_account_id: "account-smoke" })}.signature`;
+}
+
+function parseFormBody(body) {
+  return Object.fromEntries(new URLSearchParams(body).entries());
 }
 
 async function requestJson(baseUrl, route, init = {}) {
@@ -723,6 +756,25 @@ async function requestEmpty(baseUrl, route, init = {}) {
     throw new Error(`Request ${route} returned unexpected HTTP status ${response.status}`);
   }
   await response.arrayBuffer();
+}
+
+async function requestCallback(state, code) {
+  const callbackUrl = new URL("http://127.0.0.1:1455/auth/callback");
+  callbackUrl.searchParams.set("code", code);
+  callbackUrl.searchParams.set("state", state);
+  const response = await fetch(callbackUrl, {
+    headers: { Host: "localhost:1455", Accept: "text/html" }
+  });
+  const body = await response.text();
+  return {
+    status: response.status,
+    body,
+    raw: JSON.stringify({
+      status: response.status,
+      headers: Object.fromEntries(response.headers.entries()),
+      body
+    })
+  };
 }
 
 async function readSnapshot(baseUrl, id) {
