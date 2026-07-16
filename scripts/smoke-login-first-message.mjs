@@ -34,6 +34,7 @@ let demoModeEnabled = false;
 let providerTestHits = 0;
 const providerAuthStartBodies = [];
 const providerAuthStatusResponses = [];
+const providerAuthUrls = [];
 const chats = new Map([[chatId, thread(chatId, "Login-shaped mock smoke chat", [])]]);
 const subscribers = new Map();
 const chatEventSeq = new Map();
@@ -65,7 +66,7 @@ try {
   page.on("request", (request) => {
     const url = request.url();
     requests.push(`${request.method()} ${url}`);
-    assertNoUrlSecretFragments(url, "browser request URL");
+    assertNoRuntimeRequestUrlSecretFragments(url, "browser request URL");
     if (!isLoopbackUrl(url)) failures.push(`Non-loopback request attempted: ${redactUrl(url)}`);
   });
 
@@ -76,7 +77,7 @@ try {
   await expectVisibleText(page, "Runtime connected", "runtime connected");
 
   assert(loginStatus === "login_unavailable", `expected smoke to begin from login_unavailable, observed ${loginStatus}`);
-  assert(providerAuthStatusResponses.some((response) => response.status === "login_unavailable" && response.supportsLogin === false && response.authSource === "none" && response.configured === false), "expected initial provider-auth status to be default-like login_unavailable/supportsLogin:false/authSource:none/configured:false");
+  assertDefaultLikeInitialProviderAuthStatus(providerAuthStatusResponses[0]);
   await expectVisibleText(page, "Experimental account login (non-default)", "experimental login section");
   await expectVisibleText(page, "Prod login off", "login_unavailable state");
   await expectVisibleText(page, "Codex dogfood can start", "Codex dogfood discoverability copy");
@@ -95,8 +96,10 @@ try {
   await expectVisibleText(page, "Manual authorization-code exchange", "manual code exchange");
   await expectSendDisabled(page, "pending provider-auth without provider");
   assert(chatCommandCount === 0, `pending state sent an unexpected command, observed ${chatCommandCount}`);
+  assert(providerAuthUrls.length > 0, "expected an auth URL after provider-auth start");
+  for (const authUrl of providerAuthUrls) assertSafeRecordedAuthUrl(authUrl);
   assertNoSecretLeak(await page.locator("body").innerText(), "DOM after provider-auth start");
-  assertNoSecretLeak(requests.join("\n"), "browser request list after provider-auth start");
+  assertNoRawSecretLeak(requests.join("\n"), "browser request list after provider-auth start");
   await assertNoVisibleText(page, sessionId ?? "provider-login-session", "raw provider-auth session id");
 
   await page.getByLabel("Authorization code").fill(fakeAuthCode);
@@ -117,7 +120,7 @@ try {
   await expectVisibleText(page, "OpenAI API-key fallback remains the safe/default setup", "API-key fallback safe/default copy");
   await expectSendEnabled(page, "experimental connected without API-key or Demo Mode");
   assertNoSecretLeak(await page.locator("body").innerText(), "DOM after provider-auth exchange");
-  assertNoSecretLeak(requests.join("\n"), "browser request list after provider-auth exchange");
+  assertNoRawSecretLeak(requests.join("\n"), "browser request list after provider-auth exchange");
 
   await openDetailsBySummary(page, "Advanced chat controls", page.getByLabel("Chat id"));
   await page.getByLabel("Chat id").fill(chatId);
@@ -161,11 +164,13 @@ try {
   }));
   assertNoSecretLeak(pageState, "DOM or browser storage");
   assertNoSecretLeak(JSON.stringify(browserVisible), "browser console/page errors");
-  assertNoSecretLeak(requests.join("\n"), "browser request list");
+  assertNoRawSecretLeak(requests.join("\n"), "browser request list");
   assert(chatCommandCount === 1, `expected only one first-message command across transitions, observed ${chatCommandCount}`);
   assert(providerTestHits === 0, `mock login smoke unexpectedly tested a provider ${providerTestHits} time(s)`);
   assert(providerAuthStartBodies.length === 2, `expected two experimental provider-auth start requests, observed ${providerAuthStartBodies.length}`);
   assert(providerAuthStartBodies.every((body) => JSON.stringify(body) === JSON.stringify({ experimentalCodexLike: true })), "provider-auth start request body changed from explicit experimentalCodexLike true");
+  assert(providerAuthUrls.length >= 2, `expected auth URLs to be recorded for experimental starts, observed ${providerAuthUrls.length}`);
+  for (const authUrl of providerAuthUrls) assertSafeRecordedAuthUrl(authUrl);
   assert(runtimeApiRequests.length > 0, "expected runtime API requests to be observed");
   assert(runtimeApiRequests.every((item) => item.authorized), "runtime API route missing Authorization: Bearer session token");
   assert(internalProviderSecrets?.accessToken === fakeAccessToken, "fake access token sentinel was not stored server-side after exchange");
@@ -300,7 +305,11 @@ async function startRuntimeServer() {
 }
 function providerAuthResponse() {
   const common = { provider: "openai", supportsApiKey: true, cloudRequired: false, message: "Mock-only experimental/non-default account login state from loopback smoke runtime. Not production official login." };
-  if (loginStatus === "pending") return { ...common, supportsLogin: true, configured: false, status: "pending", authSource: "oauth", authorizationUrl: `http://127.0.0.1:${runtimeServer.port}/mock-auth?state=${encodeURIComponent(authState)}`, sessionId, expiresAt: "2026-05-24T01:00:00Z", scopes: ["openid", "profile", "email"] };
+  if (loginStatus === "pending") {
+    const authorizationUrl = `http://127.0.0.1:${runtimeServer.port}/mock-auth?state=${encodeURIComponent(authState)}&session=browser-benign`;
+    providerAuthUrls.push(authorizationUrl);
+    return { ...common, supportsLogin: true, configured: false, status: "pending", authSource: "oauth", authorizationUrl, sessionId, expiresAt: "2026-05-24T01:00:00Z", scopes: ["openid", "profile", "email"] };
+  }
   if (loginStatus === "connected") return { ...common, supportsLogin: true, configured: true, status: "connected", authSource: "oauth", accountLabel: "mock login smoke account", scopes: ["openid", "profile", "email"], expiresAt: "2026-05-24T02:00:00Z", redacted: "mock-oauth-token-redacted" };
   return { ...common, supportsLogin: false, configured: false, status: "login_unavailable", authSource: "none" };
 }
@@ -424,8 +433,13 @@ async function expectVisibleText(page, text, label, timeout = 20_000) { await pa
 async function assertNoVisibleText(page, text, label) { const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false); assert(!visible, `Unexpected visible ${label}: ${text}`); }
 async function assertAssistantAnswerCount(page, text, expected, label) { await page.locator(".chat-bubble.assistant", { hasText: text }).nth(expected - 1).waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined); const count = await page.locator(".chat-bubble.assistant").evaluateAll((elements, answer) => elements.filter((element) => element.textContent?.includes(String(answer))).length, text); assert(count === expected, "Expected " + label + " " + expected + " time(s), observed " + count); }
 function secretMarkers() { return [...staticSecretMarkers, sessionId, authState].filter(Boolean); }
-function assertNoSecretLeak(text, source) { const value = String(text); const lower = value.toLowerCase(); for (const marker of secretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Secret marker leaked through ${source}.`); } if (/sk-[A-Za-z0-9._-]{8,}/.test(value)) throw new Error(`API-key-like marker leaked through ${source}.`); if (/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth secret marker leaked through ${source}.`); if (/(?:codex|provider-login)-(?:session|state)-[A-Za-z0-9-]+/i.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); }
-function assertNoUrlSecretFragments(value, source) { try { const url = new URL(value); for (const [key, part] of [...url.searchParams.entries(), ["hash", url.hash]]) { if (/(code|token|cookie|secret|key|state|session)/i.test(`${key}=${part}`) && part) throw new Error(`URL secret fragment leaked through ${source}.`); } } catch { assertNoSecretLeak(value, source); } }
+function rawSecretMarkers() { return staticSecretMarkers.filter(Boolean); }
+function assertDefaultLikeInitialProviderAuthStatus(response) { assert(JSON.stringify(response) === JSON.stringify({ provider: "openai", supportsApiKey: true, cloudRequired: false, message: "Mock-only experimental/non-default account login state from loopback smoke runtime. Not production official login.", supportsLogin: false, configured: false, status: "login_unavailable", authSource: "none" }), "expected first provider-auth status response to be exactly default-like login_unavailable/supportsLogin:false/authSource:none/configured:false"); }
+function assertNoSecretLeak(text, source) { assertNoRawSecretLeak(text, source); const value = String(text); const lower = value.toLowerCase(); for (const marker of secretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Secret marker leaked through ${source}.`); } if (/mock-(session|state)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); if (/(?:codex|provider-login)-(?:session|state)-[A-Za-z0-9-]+/i.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); }
+function assertNoRawSecretLeak(text, source) { const value = String(text); const lower = value.toLowerCase(); for (const marker of rawSecretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Raw secret marker leaked through ${source}.`); } if (/sk-[A-Za-z0-9._-]{8,}/.test(value)) throw new Error(`API-key-like marker leaked through ${source}.`); if (/mock-(auth-code|access-token|refresh-token|cookie)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth secret marker leaked through ${source}.`); }
+function assertNoRuntimeRequestUrlSecretFragments(value, source) { try { const url = new URL(value); if (!url.pathname.startsWith("/v1/")) return; assertNoUrlSecretFragments(url, source); } catch { assertNoRawSecretLeak(value, source); } }
+function assertSafeRecordedAuthUrl(value) { assert(value, "expected provider-auth start to return an auth URL"); const url = new URL(value); assert(isLoopbackUrl(value), "provider-auth URL must be loopback-only in smoke"); assertNoUrlSecretFragments(url, "provider-auth URL"); assertNoRawSecretLeak(value, "provider-auth URL"); }
+function assertNoUrlSecretFragments(url, source) { for (const [key, part] of [...url.searchParams.entries(), ["hash", url.hash]]) { if (/(access_token|refresh_token|id_token|token|cookie|secret|api_?key|auth_?code|code)/i.test(key) && part) throw new Error(`URL secret fragment leaked through ${source}.`); if (/(access_token|refresh_token|id_token|bearer|cookie|sk-|auth.json|openai_api_key)/i.test(String(part))) throw new Error(`URL secret fragment leaked through ${source}.`); } }
 function redactSecrets(text) { let redacted = String(text); for (const marker of secretMarkers()) if (marker) redacted = redacted.split(marker).join("[redacted]"); return redacted.replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9._-]{8,}/g, "[redacted-api-key]").replace(/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/g, "mock-$1-[redacted]").replace(/(?:codex|provider-login)-(session|state)-[A-Za-z0-9-]+/gi, "$1-[redacted]").replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
 function isExpectedFetchConsoleError(text) { return /^Failed to load resource: (net::ERR_CONNECTION_REFUSED|the server responded with a status of 401 \(Unauthorized\)|the server responded with a status of 404 \(Not Found\))$/.test(text); }
 function isLoopbackUrl(value) { try { const url = new URL(value); return (url.protocol === "http:" || url.protocol === "ws:") && ["127.0.0.1", "localhost", "[::1]", "::1"].includes(url.hostname); } catch { return false; } }
