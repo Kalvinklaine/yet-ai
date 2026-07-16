@@ -73,6 +73,7 @@ pub use types::{
     ProviderAuthExchangeRequest, ProviderAuthResponse, ProviderAuthStartRequest,
 };
 
+use adapters::openai_codex::OpenAiCodexOAuthAdapter;
 use session_registry::{
     ProviderAuthPendingMode, ProviderAuthPendingRetention, ProviderAuthPendingSession,
 };
@@ -87,28 +88,17 @@ use types::{
     MockOAuthState,
 };
 
+fn openai_codex_adapter(config_dir: &Path) -> OpenAiCodexOAuthAdapter {
+    OpenAiCodexOAuthAdapter::new(config_dir, "openai")
+}
+
 pub async fn status(
     config_dir: &Path,
     provider: &str,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let provider = normalize_supported_provider(provider)?;
     if provider == "openai" {
-        let codex = read_codex_state(config_dir, provider).await?;
-        if let Some(session) = codex.pending {
-            if parse_time(&session.expires_at)? > Utc::now() {
-                ensure_codex_pending_callback_state(config_dir, &session).await?;
-                return Ok(codex_pending_response(
-                    provider,
-                    &session,
-                    codex_authorization_url(&session),
-                    None,
-                ));
-            }
-            provider_auth_callback::forget_pending_state(&session.state);
-            remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
-            write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
-        }
-        if let Some(response) = codex_connected_status(config_dir, provider).await? {
+        if let Some(response) = openai_codex_adapter(config_dir).status_response().await? {
             return Ok(response);
         }
     }
@@ -153,34 +143,13 @@ pub async fn start(
         return Ok(mock_pending_response(provider, &session, Some(true)));
     }
     if request.experimental_codex_like && provider == "openai" {
-        provider_auth_callback::ensure_started(config_dir)
-            .await
-            .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
-        reject_codex_mock_coexistence(config_dir, provider).await?;
-        if let Some(response) = prepare_codex_start(config_dir, provider).await? {
-            register_codex_pending_callback_state(config_dir, provider).await?;
-            return Ok(response);
-        }
-        let session = new_codex_session(
-            request.ttl_seconds.unwrap_or(CODEX_TTL_SECONDS),
-            request.token_endpoint_url.as_deref(),
-            request.chat_endpoint_url.as_deref(),
-        )?;
-        write_codex_state(
-            config_dir,
-            provider,
-            &CodexOAuthState {
-                pending: Some(session.clone()),
-            },
-        )
-        .await?;
-        ensure_codex_pending_callback_state(config_dir, &session).await?;
-        return Ok(codex_pending_response(
-            provider,
-            &session,
-            codex_authorization_url(&session),
-            Some(true),
-        ));
+        return openai_codex_adapter(config_dir)
+            .start_response(
+                request.ttl_seconds,
+                request.token_endpoint_url.as_deref(),
+                request.chat_endpoint_url.as_deref(),
+            )
+            .await;
     }
     Ok(status_response(
         provider,
@@ -231,7 +200,9 @@ pub async fn exchange(
     let state_value = required_value(request.state, PROVIDER_AUTH_STATE_MAX_CHARS)?;
     let code = required_value(request.code, PROVIDER_AUTH_CODE_MAX_CHARS)?;
     if provider == "openai" && !code.starts_with("mock-code-") {
-        return codex_exchange(config_dir, provider, session_id, state_value, code).await;
+        return openai_codex_adapter(config_dir)
+            .exchange_response(session_id, state_value, code)
+            .await;
     }
     if !code.starts_with("mock-code-") {
         return Err(ProviderAuthError::InvalidRequest);
@@ -285,16 +256,9 @@ pub async fn disconnect(
 
     let mut had_codex = false;
     if provider == "openai" {
-        let codex = read_codex_state(config_dir, provider).await?;
-        if let Some(session) = codex.pending.as_ref() {
-            provider_auth_callback::forget_pending_state(&session.state);
-            remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
-        }
-        had_codex = codex.pending.is_some() || codex_has_secrets(config_dir, provider).await?;
-        if had_codex {
-            write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
-            delete_codex_secrets(config_dir, provider).await?;
-        }
+        had_codex = openai_codex_adapter(config_dir)
+            .disconnect_cleanup()
+            .await?;
     }
 
     let configured = configured_api_key(config_dir, provider).await?;
@@ -467,7 +431,7 @@ fn try_acquire_codex_exchange_guard(
     Ok(CodexExchangeGuard { key })
 }
 
-async fn codex_exchange(
+pub(super) async fn codex_exchange(
     config_dir: &Path,
     provider: &str,
     session_id: String,
@@ -580,40 +544,45 @@ pub(crate) async fn codex_callback_exchange(
     state_value: String,
     code: String,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
-    let codex = read_codex_state(config_dir, "openai").await?;
-    let Some(session) = codex.pending else {
-        return Err(ProviderAuthError::SessionNotFound);
-    };
-    if session.state != state_value {
-        return Err(ProviderAuthError::SessionMismatch);
-    }
-    codex_exchange(config_dir, "openai", session.session_id, state_value, code).await
+    openai_codex_adapter(config_dir)
+        .callback_exchange(state_value, code)
+        .await
 }
 
 pub(crate) async fn codex_callback_error(
     config_dir: &Path,
     state_value: String,
 ) -> Result<(), ProviderAuthError> {
+    openai_codex_adapter(config_dir)
+        .callback_error(state_value)
+        .await
+}
+
+pub(super) async fn codex_callback_error_impl(
+    config_dir: &Path,
+    provider: &str,
+    state_value: String,
+) -> Result<(), ProviderAuthError> {
     let registry_session = lookup_codex_registry_session_by_state(config_dir, &state_value).await?;
-    let mut codex = read_codex_state(config_dir, "openai").await?;
+    let mut codex = read_codex_state(config_dir, provider).await?;
     let Some(session) = codex.pending.take() else {
         if let Some(session) = registry_session {
-            remove_codex_registry_session(config_dir, "openai", &session.session_id).await?;
+            remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
         }
         return Err(ProviderAuthError::SessionNotFound);
     };
     if session.state != state_value {
         codex.pending = Some(session);
-        write_codex_state(config_dir, "openai", &codex).await?;
+        write_codex_state(config_dir, provider, &codex).await?;
         return Err(ProviderAuthError::SessionMismatch);
     }
     if parse_time(&session.expires_at)? <= Utc::now() {
-        write_codex_state(config_dir, "openai", &codex).await?;
-        remove_codex_registry_session(config_dir, "openai", &session.session_id).await?;
+        write_codex_state(config_dir, provider, &codex).await?;
+        remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
         return Err(ProviderAuthError::SessionExpired);
     }
-    write_codex_state(config_dir, "openai", &codex).await?;
-    remove_codex_registry_session(config_dir, "openai", &session.session_id).await
+    write_codex_state(config_dir, provider, &codex).await?;
+    remove_codex_registry_session(config_dir, provider, &session.session_id).await
 }
 
 async fn exchange_codex_token(
@@ -1144,7 +1113,13 @@ async fn codex_connected_status(
 pub async fn experimental_codex_chat_auth(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    let provider = "openai";
+    openai_codex_adapter(config_dir).chat_auth_snapshot().await
+}
+
+pub(super) async fn experimental_codex_chat_auth_impl(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
     let store = provider_secret_store(config_dir);
     let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
         return Ok(None);
@@ -1182,31 +1157,24 @@ pub async fn refresh_experimental_codex_chat_auth_after_rejection(
     config_dir: &Path,
     rejected_access_token: &str,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    refresh_experimental_codex_chat_auth(config_dir, Some(rejected_access_token)).await
+    openai_codex_adapter(config_dir)
+        .refresh_chat_auth(Some(rejected_access_token))
+        .await
 }
 
 pub async fn refresh_experimental_codex_chat_auth_if_needed(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    let provider = "openai";
-    if codex_pending_session_is_unexpired(config_dir, provider).await? {
-        return Ok(None);
-    }
-    let Some(snapshot) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
-        return Ok(None);
-    };
-    if metadata_needs_refresh(&snapshot.metadata)? {
-        refresh_experimental_codex_chat_auth(config_dir, None).await
-    } else {
-        Ok(Some(snapshot.auth))
-    }
+    openai_codex_adapter(config_dir)
+        .refresh_chat_auth_if_needed()
+        .await
 }
 
-async fn refresh_experimental_codex_chat_auth(
+pub(super) async fn refresh_experimental_codex_chat_auth_impl(
     config_dir: &Path,
+    provider: &str,
     rejected_access_token: Option<&str>,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    let provider = "openai";
     if codex_pending_session_is_unexpired(config_dir, provider).await? {
         return Ok(None);
     }

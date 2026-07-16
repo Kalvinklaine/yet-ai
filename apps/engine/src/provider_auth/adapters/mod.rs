@@ -218,6 +218,442 @@ pub(super) trait ProviderOAuthAdapter: Send + Sync {
     ) -> AdapterFuture<'a, Result<Option<ProviderOAuthChatAuthSnapshot>, ProviderOAuthAdapterError>>;
 }
 
+pub(in crate::provider_auth) mod openai_codex {
+    use std::path::{Path, PathBuf};
+
+    use super::{
+        AdapterFuture, ProviderOAuthAdapter, ProviderOAuthAdapterError, ProviderOAuthAuthMode,
+        ProviderOAuthCapabilities, ProviderOAuthChatAuthSnapshot, ProviderOAuthExchangeCodeRequest,
+        ProviderOAuthPolicyGate, ProviderOAuthProviderId, ProviderOAuthRefreshOutcome,
+        ProviderOAuthRefreshRequest, ProviderOAuthStartSession, ProviderOAuthStartSessionRequest,
+        ProviderOAuthStatusKind, ProviderOAuthStatusView,
+    };
+    use crate::provider_auth::types::{
+        ExperimentalCodexChatAuth, ProviderAuthError, ProviderAuthResponse,
+    };
+
+    const PROVIDER_ID: ProviderOAuthProviderId = ProviderOAuthProviderId::new("openai");
+
+    pub(in crate::provider_auth) struct OpenAiCodexOAuthAdapter {
+        config_dir: PathBuf,
+        provider: &'static str,
+    }
+
+    impl OpenAiCodexOAuthAdapter {
+        pub(in crate::provider_auth) fn new(config_dir: &Path, provider: &'static str) -> Self {
+            Self {
+                config_dir: config_dir.to_path_buf(),
+                provider,
+            }
+        }
+
+        pub(in crate::provider_auth) async fn status_response(
+            &self,
+        ) -> Result<Option<ProviderAuthResponse>, ProviderAuthError> {
+            let codex =
+                crate::provider_auth::read_codex_state(&self.config_dir, self.provider).await?;
+            if let Some(session) = codex.pending {
+                if crate::provider_auth::parse_time(&session.expires_at)? > chrono::Utc::now() {
+                    crate::provider_auth::ensure_codex_pending_callback_state(
+                        &self.config_dir,
+                        &session,
+                    )
+                    .await?;
+                    return Ok(Some(crate::provider_auth::status::codex_pending_response(
+                        self.provider,
+                        &session,
+                        crate::provider_auth::codex_authorization_url(&session),
+                        None,
+                    )));
+                }
+                crate::provider_auth_callback::forget_pending_state(&session.state);
+                crate::provider_auth::remove_codex_registry_session(
+                    &self.config_dir,
+                    self.provider,
+                    &session.session_id,
+                )
+                .await?;
+                crate::provider_auth::write_codex_state(
+                    &self.config_dir,
+                    self.provider,
+                    &crate::provider_auth::types::CodexOAuthState::default(),
+                )
+                .await?;
+            }
+            crate::provider_auth::codex_connected_status(&self.config_dir, self.provider).await
+        }
+
+        pub(in crate::provider_auth) async fn start_response(
+            &self,
+            ttl_seconds: Option<i64>,
+            token_endpoint_url: Option<&str>,
+            chat_endpoint_url: Option<&str>,
+        ) -> Result<ProviderAuthResponse, ProviderAuthError> {
+            crate::provider_auth_callback::ensure_started(&self.config_dir)
+                .await
+                .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
+            crate::provider_auth::reject_codex_mock_coexistence(&self.config_dir, self.provider)
+                .await?;
+            if let Some(response) =
+                crate::provider_auth::prepare_codex_start(&self.config_dir, self.provider).await?
+            {
+                crate::provider_auth::register_codex_pending_callback_state(
+                    &self.config_dir,
+                    self.provider,
+                )
+                .await?;
+                return Ok(response);
+            }
+            let session = crate::provider_auth::new_codex_session(
+                ttl_seconds.unwrap_or(crate::provider_auth::CODEX_TTL_SECONDS),
+                token_endpoint_url,
+                chat_endpoint_url,
+            )?;
+            crate::provider_auth::write_codex_state(
+                &self.config_dir,
+                self.provider,
+                &crate::provider_auth::types::CodexOAuthState {
+                    pending: Some(session.clone()),
+                },
+            )
+            .await?;
+            crate::provider_auth::ensure_codex_pending_callback_state(&self.config_dir, &session)
+                .await?;
+            Ok(crate::provider_auth::status::codex_pending_response(
+                self.provider,
+                &session,
+                crate::provider_auth::codex_authorization_url(&session),
+                Some(true),
+            ))
+        }
+
+        pub(in crate::provider_auth) async fn exchange_response(
+            &self,
+            session_id: String,
+            state: String,
+            code: String,
+        ) -> Result<ProviderAuthResponse, ProviderAuthError> {
+            crate::provider_auth::codex_exchange(
+                &self.config_dir,
+                self.provider,
+                session_id,
+                state,
+                code,
+            )
+            .await
+        }
+
+        pub(in crate::provider_auth) async fn callback_exchange(
+            &self,
+            state: String,
+            code: String,
+        ) -> Result<ProviderAuthResponse, ProviderAuthError> {
+            let codex =
+                crate::provider_auth::read_codex_state(&self.config_dir, self.provider).await?;
+            let Some(session) = codex.pending else {
+                return Err(ProviderAuthError::SessionNotFound);
+            };
+            if session.state != state {
+                return Err(ProviderAuthError::SessionMismatch);
+            }
+            self.exchange_response(session.session_id, state, code)
+                .await
+        }
+
+        pub(in crate::provider_auth) async fn callback_error(
+            &self,
+            state: String,
+        ) -> Result<(), ProviderAuthError> {
+            crate::provider_auth::codex_callback_error_impl(&self.config_dir, self.provider, state)
+                .await
+        }
+
+        pub(in crate::provider_auth) async fn disconnect_cleanup(
+            &self,
+        ) -> Result<bool, ProviderAuthError> {
+            let codex =
+                crate::provider_auth::read_codex_state(&self.config_dir, self.provider).await?;
+            if let Some(session) = codex.pending.as_ref() {
+                crate::provider_auth_callback::forget_pending_state(&session.state);
+                crate::provider_auth::remove_codex_registry_session(
+                    &self.config_dir,
+                    self.provider,
+                    &session.session_id,
+                )
+                .await?;
+            }
+            let had_codex = codex.pending.is_some()
+                || crate::provider_auth::codex_has_secrets(&self.config_dir, self.provider).await?;
+            if had_codex {
+                crate::provider_auth::write_codex_state(
+                    &self.config_dir,
+                    self.provider,
+                    &crate::provider_auth::types::CodexOAuthState::default(),
+                )
+                .await?;
+                crate::provider_auth::delete_codex_secrets(&self.config_dir, self.provider).await?;
+            }
+            Ok(had_codex)
+        }
+
+        pub(in crate::provider_auth) async fn chat_auth_snapshot(
+            &self,
+        ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+            crate::provider_auth::experimental_codex_chat_auth_impl(&self.config_dir, self.provider)
+                .await
+        }
+
+        pub(in crate::provider_auth) async fn refresh_chat_auth(
+            &self,
+            rejected_access_token: Option<&str>,
+        ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+            crate::provider_auth::refresh_experimental_codex_chat_auth_impl(
+                &self.config_dir,
+                self.provider,
+                rejected_access_token,
+            )
+            .await
+        }
+
+        pub(in crate::provider_auth) async fn refresh_chat_auth_if_needed(
+            &self,
+        ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+            if crate::provider_auth::codex_pending_session_is_unexpired(
+                &self.config_dir,
+                self.provider,
+            )
+            .await?
+            {
+                return Ok(None);
+            }
+            let Some(snapshot) = crate::provider_auth::read_codex_chat_auth_snapshot(
+                &self.config_dir,
+                self.provider,
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            if crate::provider_auth::metadata_needs_refresh(&snapshot.metadata)? {
+                self.refresh_chat_auth(None).await
+            } else {
+                Ok(Some(snapshot.auth))
+            }
+        }
+
+        fn status_view_from_response(response: ProviderAuthResponse) -> ProviderOAuthStatusView {
+            let kind = match response.status {
+                "pending" => ProviderOAuthStatusKind::Pending,
+                "connected" => ProviderOAuthStatusKind::Connected,
+                "expired" => ProviderOAuthStatusKind::Expired,
+                "revoked" => ProviderOAuthStatusKind::Revoked,
+                "api_key_configured" => ProviderOAuthStatusKind::Unavailable,
+                _ => ProviderOAuthStatusKind::Unavailable,
+            };
+            ProviderOAuthStatusView {
+                provider_id: PROVIDER_ID,
+                kind,
+                configured: response.configured,
+                auth_source: response.auth_source,
+                supports_login: response.supports_login,
+                supports_api_key: response.supports_api_key,
+                cloud_required: response.cloud_required,
+                success: response.success,
+                account_label: response.account_label,
+                redacted: response.redacted,
+                authorization_url: response.authorization_url,
+                verification_url: response.verification_url,
+                session_id: response.session_id,
+                expires_at: response.expires_at,
+                scopes: response.scopes,
+                poll_interval_seconds: response.poll_interval_seconds,
+                message: response.message,
+            }
+        }
+    }
+
+    impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
+        fn provider_id(&self) -> ProviderOAuthProviderId {
+            PROVIDER_ID
+        }
+
+        fn display_label(&self) -> &'static str {
+            "Experimental OpenAI Codex-like login"
+        }
+
+        fn capabilities(&self) -> ProviderOAuthCapabilities {
+            ProviderOAuthCapabilities {
+                provider_id: PROVIDER_ID,
+                display_label: self.display_label().to_string(),
+                auth_modes: vec![
+                    ProviderOAuthAuthMode::BrowserPkce,
+                    ProviderOAuthAuthMode::ManualCode,
+                ],
+                policy_gates: vec![ProviderOAuthPolicyGate {
+                    name: "experimental-codex-like",
+                    allowed: true,
+                    message: Some(crate::provider_auth::CODEX_PENDING_MESSAGE.to_string()),
+                }],
+                supports_refresh: true,
+                supports_disconnect: true,
+                supports_chat_auth_snapshot: true,
+            }
+        }
+
+        fn status<'a>(
+            &'a self,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                let response = self
+                    .status_response()
+                    .await
+                    .map_err(|error| match error {
+                        ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                        ProviderAuthError::TokenExchange => {
+                            ProviderOAuthAdapterError::ExchangeFailed
+                        }
+                        _ => ProviderOAuthAdapterError::ProviderRejected,
+                    })?
+                    .unwrap_or_else(|| {
+                        crate::provider_auth::status::status_response(self.provider, None, None)
+                    });
+                Ok(Self::status_view_from_response(response))
+            })
+        }
+
+        fn start_session<'a>(
+            &'a self,
+            request: ProviderOAuthStartSessionRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStartSession, ProviderOAuthAdapterError>>
+        {
+            Box::pin(async move {
+                if !matches!(
+                    request.mode,
+                    ProviderOAuthAuthMode::BrowserPkce | ProviderOAuthAuthMode::ManualCode
+                ) {
+                    return Err(ProviderOAuthAdapterError::UnsupportedMode);
+                }
+                let status = self
+                    .start_response(request.ttl_seconds, None, None)
+                    .await
+                    .map_err(|error| match error {
+                        ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                        ProviderAuthError::InvalidRequest => {
+                            ProviderOAuthAdapterError::PolicyBlocked
+                        }
+                        _ => ProviderOAuthAdapterError::ProviderRejected,
+                    })?;
+                Ok(ProviderOAuthStartSession {
+                    status: Self::status_view_from_response(status),
+                })
+            })
+        }
+
+        fn exchange_code<'a>(
+            &'a self,
+            request: ProviderOAuthExchangeCodeRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                let response = self
+                    .exchange_response(request.session_id, request.state, request.code)
+                    .await
+                    .map_err(|error| match error {
+                        ProviderAuthError::SessionExpired => {
+                            ProviderOAuthAdapterError::SessionExpired
+                        }
+                        ProviderAuthError::SessionMismatch | ProviderAuthError::SessionNotFound => {
+                            ProviderOAuthAdapterError::InvalidSession
+                        }
+                        ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                        _ => ProviderOAuthAdapterError::ExchangeFailed,
+                    })?;
+                Ok(Self::status_view_from_response(response))
+            })
+        }
+
+        fn refresh<'a>(
+            &'a self,
+            request: ProviderOAuthRefreshRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthRefreshOutcome, ProviderOAuthAdapterError>>
+        {
+            Box::pin(async move {
+                let auth = self
+                    .refresh_chat_auth(request.rejected_access_token.as_deref())
+                    .await
+                    .map_err(|error| match error {
+                        ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                        _ => ProviderOAuthAdapterError::ExchangeFailed,
+                    })?;
+                let status = self
+                    .status_response()
+                    .await
+                    .map_err(|_| ProviderOAuthAdapterError::Storage)?
+                    .unwrap_or_else(|| {
+                        crate::provider_auth::status::status_response(self.provider, None, None)
+                    });
+                Ok(ProviderOAuthRefreshOutcome {
+                    status: Self::status_view_from_response(status),
+                    chat_auth_snapshot: auth.map(|auth| ProviderOAuthChatAuthSnapshot {
+                        access_token: auth.access_token,
+                        account_id: auth.chatgpt_account_id,
+                        base_url: auth.base_url,
+                        model: auth.model,
+                    }),
+                })
+            })
+        }
+
+        fn disconnect<'a>(
+            &'a self,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                self.disconnect_cleanup()
+                    .await
+                    .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                Ok(ProviderOAuthStatusView {
+                    provider_id: PROVIDER_ID,
+                    kind: ProviderOAuthStatusKind::Revoked,
+                    configured: false,
+                    auth_source: "none",
+                    supports_login: true,
+                    supports_api_key: true,
+                    cloud_required: false,
+                    success: Some(true),
+                    account_label: None,
+                    redacted: None,
+                    authorization_url: None,
+                    verification_url: None,
+                    session_id: None,
+                    expires_at: None,
+                    scopes: None,
+                    poll_interval_seconds: None,
+                    message: crate::provider_auth::DISCONNECT_MESSAGE.to_string(),
+                })
+            })
+        }
+
+        fn chat_auth_snapshot<'a>(
+            &'a self,
+        ) -> AdapterFuture<
+            'a,
+            Result<Option<ProviderOAuthChatAuthSnapshot>, ProviderOAuthAdapterError>,
+        > {
+            Box::pin(async move {
+                Ok(self
+                    .chat_auth_snapshot()
+                    .await
+                    .map_err(|_| ProviderOAuthAdapterError::Storage)?
+                    .map(|auth| ProviderOAuthChatAuthSnapshot {
+                        access_token: auth.access_token,
+                        account_id: auth.chatgpt_account_id,
+                        base_url: auth.base_url,
+                        model: auth.model,
+                    }))
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,6 +856,22 @@ mod tests {
             !json.contains("refresh_token"),
             "response leaked token key: {json}"
         );
+    }
+
+    #[test]
+    fn openai_codex_adapter_declares_browser_manual_refresh_and_secret_snapshot_support() {
+        let dir = std::env::temp_dir().join("yet-ai-openai-codex-adapter-capabilities-test");
+        let adapter = openai_codex::OpenAiCodexOAuthAdapter::new(&dir, "openai");
+        let capabilities = adapter.capabilities();
+
+        assert_eq!(adapter.provider_id().as_str(), "openai");
+        assert!(capabilities.supports_mode(ProviderOAuthAuthMode::BrowserPkce));
+        assert!(capabilities.supports_mode(ProviderOAuthAuthMode::ManualCode));
+        assert!(!capabilities.supports_mode(ProviderOAuthAuthMode::DeviceCode));
+        assert!(capabilities.supports_refresh);
+        assert!(capabilities.supports_disconnect);
+        assert!(capabilities.supports_chat_auth_snapshot);
+        assert!(capabilities.login_allowed());
     }
 
     #[test]
