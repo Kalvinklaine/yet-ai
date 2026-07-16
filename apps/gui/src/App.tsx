@@ -131,15 +131,15 @@ const verificationCommands: VerificationCommand[] = [
 ];
 
 const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
-  not_configured: "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path; the experimental account path is optional and high-risk.",
-  api_key_configured: "OpenAI API-key fallback is configured as safe/default. Codex dogfood remains discoverable.",
-  login_available: "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.",
-  login_unavailable: "Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.",
-  pending: "Experimental OpenAI account login is pending. Finish the browser step; the local callback should update this page automatically. Paste a code only if the callback did not complete, or use API-key fallback for the default path.",
-  connected: "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.",
-  expired: "Experimental OpenAI account login expired. Reconnect only if you accept the risk, or use the API-key fallback.",
-  revoked: "Experimental OpenAI account login was revoked or disconnected. Reconnect only if you accept the risk, or use the API-key fallback.",
-  error: "Experimental OpenAI account login reported a sanitized error. Retry/reconnect only if you accept the risk, or use the API-key fallback.",
+  not_configured: "No provider account login is configured. Use the API-key fallback as the safe/default real-provider path; account login is optional and runtime-owned.",
+  api_key_configured: "API-key fallback is configured as safe/default. Account login remains available as an explicit provider-auth path.",
+  login_available: "Provider account login is exposed by the local runtime, but API-key or local providers remain the default first-message path.",
+  login_unavailable: "Provider account login is unavailable. Use API-key fallback, Demo Mode, or a local/BYOK provider path.",
+  pending: "Provider account login is pending. Finish the browser step; the local callback should update this page automatically. Paste a code only if the callback did not complete, or use API-key fallback for the default path.",
+  connected: "Provider account login is connected through the local runtime, but API-key fallback remains the default real-provider path.",
+  expired: "Provider account login expired. Reconnect only if you accept this provider-auth path, or use the API-key fallback.",
+  revoked: "Provider account login was revoked or disconnected. Reconnect only if you accept this provider-auth path, or use the API-key fallback.",
+  error: "Provider account login reported a sanitized error. Retry/reconnect only if you accept this provider-auth path, or use the API-key fallback.",
 };
 
 function sanitizeSseEvent(event: SseEvent): SseEvent {
@@ -268,7 +268,7 @@ const providerPresets: ProviderPreset[] = [
   {
     id: "openai-api",
     label: "OpenAI API key fallback (safe default)",
-    description: "Official OpenAI API endpoint. Paste an API key into the local runtime for the current safe/default real-provider path; account login stays experimental/non-default.",
+    description: "Official OpenAI API endpoint. Paste an API key into the local runtime for the current safe/default real-provider path; account login stays optional/non-default.",
     form: {
       providerId: "openai-api",
       kind: "openai-compatible",
@@ -639,9 +639,9 @@ export function App() {
       : apiKeyReadiness.mismatch
         ? "Runtime model/provider mismatch"
         : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
-          ? "OpenAI account login changing"
+          ? "Provider account login changing"
           : experimentalOauthChatReady
-            ? "Experimental OpenAI account fallback / gpt-5-codex"
+            ? "Provider account login fallback"
             : apiKeyReadiness.message
               ? readinessStateLabel(apiKeyReadinessState, false)
               : "Provider required";
@@ -656,9 +656,9 @@ export function App() {
       : apiKeyReadiness.message
         ? apiKeyReadiness.message
         : providerAuthMutationInFlight && activeProviderAuthStatus?.authSource === "oauth" && !apiKeyChatReady
-          ? "OpenAI account login state is changing. Wait for the local runtime to finish, refresh login status, or use the API-key fallback before sending."
+          ? "Provider account login state is changing. Wait for the local runtime to finish, refresh login status, or use the API-key fallback before sending."
           : experimentalOauthChatReady
-            ? "Experimental Codex-like OpenAI account chat is available as a fallback through the local runtime because no safer API-key, OpenAI-compatible, local, or Demo Mode path is ready. This private-endpoint path is high-risk, not official public OAuth support, not default, and not production-ready."
+            ? "Provider account login chat is available as a fallback through the local runtime because no safer API-key, OpenAI-compatible, local, or Demo Mode path is ready. This provider-auth path is runtime-owned, explicit, not default, and not required for local-first BYOK setup."
             : activeModelError
               ? "Runtime model refresh failed. Check the local runtime/provider details shown here, Test provider if one is saved, then Refresh runtime again before sending the first message."
               : "Provider required: choose Demo Mode for a no-key local canned trial, or configure a BYOK provider/model such as local Ollama or OpenAI-compatible for real answers. No production account login is required.";
@@ -2502,7 +2502,7 @@ export function App() {
         status: mutation === "disconnect" ? "not_configured" : "pending",
         accountLabel: undefined,
         redacted: undefined,
-        message: mutation === "disconnect" ? "Disconnecting OpenAI account login." : "Updating OpenAI account login.",
+        message: mutation === "disconnect" ? "Disconnecting provider account login." : "Updating provider account login.",
       });
       setProviderAuthDataRevision(settingsRevisionRef.current);
     }
@@ -3543,10 +3543,10 @@ export function App() {
     ];
     const authStatus = activeProviderAuthStatus?.status;
     if (activeProviderAuthStatus?.configured && activeProviderAuthStatus.authSource === "oauth") {
-      notes.push("Experimental account login is connected/available only as an explicit high-risk path; API-key providers remain the safe default when configured.");
-      notes.push("If the first message fails through experimental account auth, review the sanitized error only: retry login, reconnect runtime, disconnect the account path, reduce attached context when the error says the request is too large, or switch to the API-key fallback.");
+      notes.push("Provider account login is connected/available only as an explicit runtime-owned path; API-key providers remain the safe default when configured.");
+      notes.push("If the first message fails through provider account auth, review the sanitized error only: retry login, reconnect runtime, disconnect the account path, reduce attached context when the error says the request is too large, or switch to the API-key fallback.");
     } else if (authStatus === "login_available") {
-      notes.push("Account login may be available, but it is not the default first-message path; use an API-key provider unless you intentionally choose the experimental flow.");
+      notes.push("Account login may be available, but it is not the default first-message path; use an API-key provider unless you intentionally choose the provider-auth flow.");
     } else if (authStatus === "api_key_configured") {
       notes.push("API-key fallback status is available locally; test the saved provider and refresh runtime/model readiness if Send is still disabled.");
     }
@@ -3582,9 +3582,9 @@ export function App() {
     }
     if (experimentalOauthChatReady) {
       return {
-        title: "Experimental account login can send",
-        reason: "The account login fallback is connected only because no safer API-key/OpenAI-compatible, local, or Demo Mode chat path is ready; this private-endpoint path is not the safe/default provider setup.",
-        nextAction: "Prefer configuring an API-key or local provider. If you send through this experimental path and the first message fails, use the sanitized error to choose one manual action: retry login, reconnect runtime, disconnect, reduce context if the request is too large, or switch to the API-key fallback.",
+        title: "Provider account login can send",
+        reason: "The account login fallback is connected only because no safer API-key/OpenAI-compatible, local, or Demo Mode chat path is ready; this provider-auth path is not the safe/default provider setup.",
+        nextAction: "Prefer configuring an API-key or local provider. If you send through this provider-auth path and the first message fails, use the sanitized error to choose one manual action: retry login, reconnect runtime, disconnect, reduce context if the request is too large, or switch to the API-key fallback.",
         actions: [{ kind: "api_key_fallback", label: "Use OpenAI API key fallback" }, { kind: "send_first_message", label: "Send first message" }],
         notes,
       };
@@ -3756,7 +3756,7 @@ export function App() {
             </div>
             <div className="chat-readiness-tiles" aria-label="Chat readiness checkpoints">
               <span className={`readiness-pill ${runtimeConnected ? "ok" : "warn"}`}>{runtimeConnected ? "Runtime ready" : "Runtime needs refresh"}</span>
-              <span className={`readiness-pill ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? activeSelectedDemoMode ? "Demo send ready" : experimentalOauthChatReady ? "Experimental fallback send ready" : "Provider send ready" : "Provider or Demo Mode needed"}</span>
+              <span className={`readiness-pill ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? activeSelectedDemoMode ? "Demo send ready" : experimentalOauthChatReady ? "Provider-auth fallback send ready" : "Provider send ready" : "Provider or Demo Mode needed"}</span>
               <span className="readiness-pill ok">Local-first BYOK</span>
             </div>
           </div>
@@ -3792,7 +3792,7 @@ export function App() {
               <span className={canSendChat ? "badge ok" : "badge warn"}>{canSendChat ? "send ready" : "provider/demo needed"}</span>
             </summary>
             <div className="compact-host-setup-body stack">
-              <span className="subtle">Chat stays primary in compact IDE layout. Runtime, provider API-key setup, experimental OpenAI account login, and Demo Mode controls remain available below.</span>
+              <span className="subtle">Chat stays primary in compact IDE layout. Runtime, provider API-key setup, provider account login, and Demo Mode controls remain available below.</span>
               <div className="row">
                 <button type="button" onClick={() => { setRuntimeDetailsOpen(true); void connect(true); }} disabled={runtimeRefreshInFlight}>{runtimeRefreshInFlight ? "Checking runtime…" : "Refresh runtime"}</button>
                 <button type="button" onClick={() => { setProviderDetailsOpen(true); applyOpenAiApiPreset(); }}>Use OpenAI API key fallback</button>
@@ -4006,20 +4006,20 @@ export function App() {
           </div>
         )}
         <p className="subtle"><strong>Runtime Session token</strong> is only for this GUI talking to the local loopback runtime. <strong>Provider API key</strong> is for upstream providers that require one and is sent to the local runtime only on save, cleared from this form immediately after save/update is submitted, and never written to browser storage. Ollama local uses auth None.</p>
-        <p className="subtle">ChatGPT/OpenAI account login is experimental/non-default until officially supported and reviewed. It is not production official login. OpenAI API-key setup remains available as the safe/default hosted real-provider path.</p>
+        <p className="subtle">Provider account login is an optional runtime-owned provider-auth flow. API-key setup remains available as the safe/default hosted real-provider path.</p>
         <p className="subtle">For local Ollama, the engine calls your Ollama server directly at http://127.0.0.1:11434. No API key, hosted Yet AI service, account, managed model gateway, cloud workspace, or product credit balance is required.</p>
         {providerSetupStatus && <div className="provider-setup-status" role="status"><strong>OpenAI API-key setup opened</strong><span>{providerSetupStatus}</span></div>}
         {providerError && <ErrorBox error={providerError} />}
         <div className="provider-item account-login-card stack" data-testid="provider-auth-card">
           <div className="row">
-            <h3>Experimental account login (non-default)</h3>
-            <span className="badge warn">experimental</span>
+            <h3>Provider account login (non-default)</h3>
+            <span className="badge warn">optional</span>
             <span className={activeProviderAuthStatus?.configured ? "badge ok" : "badge warn"}>{activeProviderAuthStatus?.status ?? "not checked"}</span>
           </div>
-          <p className="subtle">This card is not production official OpenAI login. The local runtime owns the experimental account state, the GUI opens only safe authorization URLs and renders sanitized status, and browser storage never stores provider auth state.</p>
+          <p className="subtle">The local runtime owns provider account state, the GUI opens only safe authorization URLs and renders sanitized status, and browser storage never stores provider auth state.</p>
           <div className="risk-card stack">
-            <strong>Experimental Codex-like account login risk</strong>
-            <span>This OpenAI account path is high-risk and private-endpoint-style. It is not official public OpenAI OAuth support, not production-ready, and must not replace the OpenAI API-key fallback as the safe/default real-provider path.</span>
+            <strong>Provider account login</strong>
+            <span>This provider-auth path is runtime-owned and explicit. It is not required for local-first setup and must not replace the API-key fallback as the safe/default real-provider path.</span>
           </div>
           {providerAuthError && <ProviderAuthStartErrorRecovery error={providerAuthError} onRefresh={() => void refreshProviderAuthStatus()} onLogin={() => void startOpenAiLogin()} onApiKeyFallback={applyOpenAiApiPreset} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
@@ -5206,7 +5206,7 @@ function FirstRunChecklist({ runtimeConnected, demoModeReady, apiKeyReady, exper
     { label: "Demo Mode", detail: demoModeReady ? "local canned trial ready" : "no-key local canned trial", ok: demoModeReady },
     { label: "Real provider", detail: apiKeyReady ? readinessState === "local_provider_ready" ? "Local provider ready through direct local runtime calls" : "BYOK API-key ready" : "local Ollama or API-key fallback", ok: apiKeyReady },
     { label: "First message", detail: canSendChat ? "Send available" : "choose Demo Mode or BYOK provider", ok: canSendChat },
-    { label: "Account login", detail: experimentalAccountReady ? "experimental high-risk connected" : "experimental non-default", ok: experimentalAccountReady },
+    { label: "Account login", detail: experimentalAccountReady ? "provider-auth connected" : "optional non-default", ok: experimentalAccountReady },
   ];
   return (
     <div className="first-run-checklist compact" role="list" aria-label="First-run setup checklist">
@@ -6405,10 +6405,10 @@ function RuntimeAuthMismatchRecovery({ host, hostedRuntimeConnection }: { host: 
     <div className="recovery-card stack" role="status">
       <strong>Local runtime session token mismatch</strong>
       <span>The local runtime rejected this GUI session with 401. This is a GUI-to-runtime Session token or loopback URL mismatch, not an OpenAI, GPT, OAuth, or provider API-key problem.</span>
-      {host === "browser" && <span>Browser standalone cannot launch or restart the runtime. GPT/OpenAI experimental login cannot start until you provide a matching loopback runtime URL and Session token from the already running local runtime.</span>}
+      {host === "browser" && <span>Browser standalone cannot launch or restart the runtime. Provider account login cannot start until you provide a matching loopback runtime URL and Session token from the already running local runtime.</span>}
       {host !== "browser" && hostedRuntimeConnection && <span>{hostLabel} manages runtime recovery: use Refresh runtime or the IDE restart-runtime command, then retry login or provider setup after the runtime connection works.</span>}
       {host !== "browser" && !hostedRuntimeConnection && <span>{hostLabel} has not supplied matching runtime settings yet. Refresh/restart the IDE-managed runtime, then wait for the host to provide the loopback URL and hidden Session token.</span>}
-      <span>Next actions: fix the runtime URL/Session token, refresh runtime, then retry experimental login or configure a provider. OpenAI API-key fallback remains available, but it does not repair this runtime session-token mismatch.</span>
+      <span>Next actions: fix the runtime URL/Session token, refresh runtime, then retry provider account login or configure a provider. OpenAI API-key fallback remains available, but it does not repair this runtime session-token mismatch.</span>
     </div>
   );
 }
@@ -6417,12 +6417,12 @@ function ProviderAuthStartErrorRecovery({ error, onRefresh, onLogin, onApiKeyFal
   return (
     <div className="recovery-card" role="alert">
       <strong>Account login start needs attention</strong>
-      <span>OpenAI account login could not start. The runtime returned a sanitized error ({error.status}: {sanitizeDisplayText(error.message)}).</span>
-      <span>Use Refresh login status, retry the experimental account login once, or switch to the OpenAI API-key fallback. This remains a private-endpoint-style experimental path, not official public OpenAI OAuth.</span>
+      <span>Provider account login could not start. The runtime returned a sanitized error ({error.status}: {sanitizeDisplayText(error.message)}).</span>
+      <span>Use Refresh login status, retry the provider account login once, or switch to the OpenAI API-key fallback. This remains a runtime-owned provider-auth path.</span>
       <span className="subtle">Do not paste raw session ids, auth codes, tokens, cookies, provider files, or private paths into the GUI.</span>
       <div className="row">
         <button type="button" onClick={onRefresh}>Refresh login status</button>
-        <button type="button" onClick={onLogin}>Retry experimental account login</button>
+        <button type="button" onClick={onLogin}>Retry provider account login</button>
         <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
       </div>
     </div>
@@ -6438,20 +6438,20 @@ function BlockedProviderAuthJourney({ host, hostedRuntimeConnection, onRefresh, 
   return (
     <div className="login-state-panel stack blocked">
       <div className="stack">
-        <strong>Experimental GPT/OpenAI login is blocked by runtime auth</strong>
-        <span>This experimental, non-default account-login entrypoint is still here, but it cannot start while local runtime requests return 401.</span>
+        <strong>Provider account login is blocked by runtime auth</strong>
+        <span>This optional account-login entrypoint is still here, but it cannot start while local runtime requests return 401.</span>
         <span>{hostAction}</span>
         <span className="subtle">No production OAuth claim. No raw tokens, authorization URLs, provider secrets, or Session token values are stored in browser storage or shown here.</span>
       </div>
       <div className="recovery-card" role="status">
         <strong>Blocked prerequisite</strong>
-        <span>Fix the local GUI-to-runtime Session token mismatch first, then refresh login status and retry the experimental GPT/OpenAI login only if you accept the dev-preview risk.</span>
+        <span>Fix the local GUI-to-runtime Session token mismatch first, then refresh login status and retry the provider account login after runtime auth recovers.</span>
         <span>OpenAI API-key fallback is visible for BYOK provider setup, but it does not fix runtime 401 session-token mismatch.</span>
         <span className="subtle">Login/chat only. No workspace execution.</span>
       </div>
       <div className="row">
         <button type="button" onClick={onRefresh}>Refresh runtime</button>
-        <button type="button" disabled>Connect OpenAI account (experimental)</button>
+        <button type="button" disabled>Connect provider account</button>
         <button type="button" onClick={onApiKeyFallback}>Use OpenAI API key fallback</button>
       </div>
     </div>
@@ -6480,7 +6480,7 @@ function canStartExperimentalProviderAuth(status: ProviderAuthResponse): boolean
 function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError, exchangeWorking, runtimeConnected, onExchangeCodeChange, onExchange, onRefresh, onLogin, onDisconnect, onApiKeyFallback }: ProviderAuthJourneyProps) {
   const canLogin = canStartExperimentalProviderAuth(status);
   const canDisconnect = status.configured && status.authSource !== "api_key";
-  const loginLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : status.status === "connected" ? "Reconnect experimental account" : status.status === "expired" || status.status === "revoked" ? "Reconnect OpenAI account" : "Connect OpenAI account (experimental)";
+  const loginLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : status.status === "connected" ? "Reconnect provider account" : status.status === "expired" || status.status === "revoked" ? "Reconnect provider account" : "Connect provider account";
   return (
     <div className={`login-state-panel stack ${status.status}`} data-testid="provider-auth-state" data-provider-auth-status={status.status}>
       <div className="stack">
@@ -6525,7 +6525,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
 
 function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
   if (status.status === "login_unavailable") {
-    return <span className="subtle">Production login unavailable. Use API-key fallback, or start GPT/Codex dogfood.</span>;
+    return <span className="subtle">Account login unavailable. Use API-key fallback, or start provider account login.</span>;
   }
   if (status.status === "pending") {
     return (
@@ -6543,7 +6543,7 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
   if (status.status === "connected") {
     return (
       <div className="stack">
-        <span>Ready for chat through the local runtime when the experimental account path is selected and no API-key provider is configured.</span>
+        <span>Ready for chat through the local runtime when the provider-auth path is selected and no API-key provider is configured.</span>
         {status.accountLabel && <span>Account: {sanitizeDisplayText(status.accountLabel)}</span>}
         <details className="inspect-details">
           <summary>Inspect sanitized login metadata</summary>
@@ -6568,9 +6568,9 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
     return <div className="error">Sanitized login error: {sanitizeDisplayText(status.lastError ?? status.message ?? "Unknown provider-auth error")}</div>;
   }
   if (status.status === "api_key_configured") {
-    return <span className="subtle">The safe/default API-key fallback is already configured locally. Keep using it, or intentionally start experimental Codex dogfood login.</span>;
+    return <span className="subtle">The safe/default API-key fallback is already configured locally. Keep using it, or intentionally start provider account login.</span>;
   }
-  return <span className="subtle">Account login is not configured. Use the API-key fallback for the safe/default hosted provider path, or start experimental login explicitly.</span>;
+  return <span className="subtle">Account login is not configured. Use the API-key fallback for the safe/default hosted provider path, or start provider account login explicitly.</span>;
 }
 
 function providerAuthRecoveryCopy(status: ProviderAuthResponse): string {
@@ -6580,19 +6580,19 @@ function providerAuthRecoveryCopy(status: ProviderAuthResponse): string {
     case "connected":
       return "Connected status is sanitized runtime evidence only. API-key providers and Demo Mode still take precedence for chat when ready. If the first message fails, use the sanitized error to retry login, reconnect runtime, disconnect, reduce context when relevant, or switch to the API-key fallback; no automatic retry or managed support is implied.";
     case "expired":
-      return "The session can no longer power chat. Reconnect experimental account only after accepting the private-endpoint risk, or switch to the API-key fallback.";
+      return "The session can no longer power chat. Reconnect provider account login only after choosing this provider-auth path, or switch to the API-key fallback.";
     case "revoked":
       return "The runtime reports the account path as revoked or disconnected. Use Disconnect login to clear local state, reconnect explicitly, or switch to the API-key fallback.";
     case "error":
       return "Only sanitized error details are shown. Retry login, reconnect, disconnect, or use the API-key fallback; raw provider payloads are never needed in the GUI.";
     case "api_key_configured":
-      return "The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login.";
+      return "The safe/default API-key path is available locally. Keep it unless intentionally starting provider account login.";
     case "login_unavailable":
-      return "Production login unavailable. Use API-key fallback, Demo Mode, or GPT/Codex dogfood; local setup is not blocked.";
+      return "Account login unavailable. Use API-key fallback, Demo Mode, or provider account login; local setup is not blocked.";
     case "login_available":
-      return "Account login is available only as an explicit experimental path. Prefer API-key fallback for real-provider setup unless dogfooding this risk path.";
+      return "Account login is available only as an explicit runtime-owned provider-auth path. Prefer API-key fallback for real-provider setup unless you intentionally choose this flow.";
     default:
-      return "Choose API-key fallback for the supported real-provider setup, or explicitly start the experimental high-risk account path.";
+      return "Choose API-key fallback for the supported real-provider setup, or explicitly start the provider account login path.";
   }
 }
 
@@ -6603,13 +6603,13 @@ function providerAuthStateTitle(status: ProviderAuthStatus): string {
     case "pending":
       return "Finish browser verification";
     case "connected":
-      return "OpenAI account connected";
+      return "Provider account connected";
     case "expired":
-      return "OpenAI account expired";
+      return "Provider account expired";
     case "revoked":
-      return "OpenAI account revoked";
+      return "Provider account revoked";
     case "error":
-      return "OpenAI login needs attention";
+      return "Provider login needs attention";
     case "api_key_configured":
       return "API-key fallback configured";
     case "login_available":
@@ -6674,19 +6674,19 @@ function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: 
     return {};
   }
   if (!status.authorizationUrl) {
-    return { error: "Authorization state cannot be read from the pending login response. Start experimental login again or use API key fallback." };
+    return { error: "Authorization state cannot be read from the pending login response. Start provider account login again or use API key fallback." };
   }
   try {
     const state = new URL(status.authorizationUrl).searchParams.get("state")?.trim();
     if (!state) {
-      return { error: "Authorization state is missing from the pending login response. Start experimental login again or use API key fallback." };
+      return { error: "Authorization state is missing from the pending login response. Start provider account login again or use API key fallback." };
     }
     if (!isSafeProviderAuthExchangeValue(state, 512)) {
-      return { error: "Authorization state is malformed or unsafe in the pending login response. Start experimental login again or use API key fallback." };
+      return { error: "Authorization state is malformed or unsafe in the pending login response. Start provider account login again or use API key fallback." };
     }
     return { state };
   } catch {
-    return { error: "Authorization state cannot be parsed from the pending login response. Start experimental login again or use API key fallback." };
+    return { error: "Authorization state cannot be parsed from the pending login response. Start provider account login again or use API key fallback." };
   }
 }
 

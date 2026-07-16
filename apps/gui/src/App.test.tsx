@@ -1467,16 +1467,16 @@ describe("runtime refresh feedback", () => {
 });
 
 describe("provider secret boundary", () => {
-  it("renders OpenAI login unavailable with API key fallback", async () => {
+  it("renders provider account login unavailable with API key fallback", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Experimental account login (non-default)");
-    expect(container?.textContent).toContain("Production OpenAI login unavailable");
-    expect(container?.textContent).toContain("GPT/Codex login is experimental dogfood");
-    expect(container?.textContent).toContain("API-key fallback is safe/default");
+    expect(container?.textContent).toContain("Provider account login (non-default)");
+    expect(container?.textContent).toContain("Provider account login is unavailable");
+    expect(container?.textContent).toContain("Use API-key fallback, Demo Mode, or a local/BYOK provider path");
+    expect(container?.textContent).toContain("API-key fallback as the safe/default real-provider path");
     expect(container?.textContent).toContain("Create an API key in the provider console");
 
     await act(async () => {
@@ -1640,7 +1640,7 @@ describe("provider secret boundary", () => {
     expect(localSetItem).not.toHaveBeenCalled();
   });
 
-  it("shows enabled experimental OpenAI account login CTA from default login_unavailable status", async () => {
+  it("shows enabled provider account login CTA from default login_unavailable status", async () => {
     mockRuntimeResponses();
     renderApp();
 
@@ -1648,12 +1648,12 @@ describe("provider secret boundary", () => {
 
     const loginButton = container?.querySelector<HTMLButtonElement>('[data-testid="provider-auth-login"]');
     expect(loginButton).toBeDefined();
-    expect(loginButton?.textContent).toBe("Connect OpenAI account (experimental)");
+    expect(loginButton?.textContent).toBe("Connect provider account");
     expect(loginButton?.disabled).toBe(false);
-    expect(container?.textContent).toContain("Production OpenAI login unavailable");
-    expect(container?.textContent).toContain("GPT/Codex login is experimental dogfood");
-    expect(container?.textContent).toContain("API-key fallback is safe/default");
-    expect(container?.textContent).not.toContain("Experimental login unavailable");
+    expect(container?.textContent).toContain("Provider account login is unavailable");
+    expect(container?.textContent).toContain("Use API-key fallback, Demo Mode, or a local/BYOK provider path");
+    expect(container?.textContent).toContain("API-key fallback as the safe/default real-provider path");
+    expect(container?.textContent).not.toContain("Legacy login unavailable");
   });
 
   it("does not open invalid provider auth URLs", async () => {
@@ -1664,32 +1664,32 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Connect OpenAI account (experimental)").click();
+      findButton("Connect provider account").click();
     });
 
     expect(openMock).not.toHaveBeenCalled();
     expect(container?.textContent).toContain("Provider auth URL was not opened because it is not HTTPS or loopback.");
   });
 
-  it("starts experimental OpenAI login with explicit flag and opens a safe URL", async () => {
+  it("starts provider account login with explicit runtime flag and opens a safe URL", async () => {
     const openMock = vi.spyOn(window, "open").mockImplementation(() => null);
     mockRuntimeResponses({
       authSupportsLogin: true,
       startAuthUrl: "https://auth.openai.com/oauth/authorize?state=codex-test",
-      startAuthMessage: "Experimental high-risk Codex-like OpenAI login is pending.",
+      startAuthMessage: "Provider account login is pending.",
     });
     renderApp();
 
     await flushAsync();
 
     await act(async () => {
-      findButton("Connect OpenAI account (experimental)").click();
+      findButton("Connect provider account").click();
     });
 
     const startCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
     expect(startCall?.[1]?.body).toBe(JSON.stringify({ experimentalCodexLike: true }));
     expect(openMock).toHaveBeenCalledWith("https://auth.openai.com/oauth/authorize?state=codex-test", "_blank", "noopener,noreferrer");
-    expect(container?.textContent).toContain("high-risk and private-endpoint-style");
+    expect(container?.textContent).toContain("runtime-owned provider-auth");
     expect(container?.textContent).toContain("Session is tracked locally by the runtime and hidden here");
     expect(container?.textContent).not.toContain("Session: provider-login-session-001");
     expect(container?.textContent).toContain("Expires: 2026-05-24T01:00:00Z");
@@ -1728,7 +1728,7 @@ describe("provider secret boundary", () => {
     });
 
     await act(async () => {
-      findButton("Connect OpenAI account (experimental)").click();
+      findButton("Connect provider account").click();
       await Promise.resolve();
     });
     await act(async () => {
@@ -1883,7 +1883,7 @@ describe("provider secret boundary", () => {
       await Promise.resolve();
     });
 
-    expect(container?.textContent).toContain("Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.");
+    expect(container?.textContent).toContain("Provider account login is connected through the local runtime, but API-key fallback remains the default real-provider path.");
     expect(container?.textContent).toContain("Account: user@example.test");
     expect(container?.textContent).not.toContain("manual-code-789");
     expect(container?.textContent).not.toContain("access_token");
@@ -1895,7 +1895,7 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("Provider account connected");
     expect(container?.textContent).toContain("Ready for chat through the local runtime");
     expect(container?.textContent).toContain("Account: user@example.test");
     expect(container?.textContent).toContain("Token hint: oauth-...test");
@@ -1918,15 +1918,15 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI account connected");
-    expect(container?.textContent).toContain("Experimental account login is connected/available only as an explicit high-risk path; API-key providers remain the safe default when configured.");
+    expect(container?.textContent).toContain("Provider account connected");
+    expect(container?.textContent).toContain("Provider account login is connected/available only as an explicit runtime-owned path; API-key providers remain the safe default when configured.");
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Why: Send is enabled for GPT-4o mini through openai-api.");
     expect(container?.textContent).toContain("Next safest action: Type a prompt and click Send through the local runtime.");
-    expect(container?.textContent).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
-    expect(container?.textContent).not.toContain("Experimental account login can send");
+    expect(container?.textContent).not.toContain("State: Provider account login fallback");
+    expect(container?.textContent).not.toContain("Provider account login can send");
     expect(container?.textContent).not.toContain("Prefer configuring an API-key or local provider; otherwise type a prompt only if you accept the experimental dev-preview risk.");
-    expect(container?.textContent).not.toContain("Experimental fallback send ready");
+    expect(container?.textContent).not.toContain("Provider-auth fallback send ready");
     expect(findButton("Send").disabled).toBe(false);
     expect(browserStorageDump()).not.toContain("provider-login-session-precedence");
     expect(browserStorageDump()).not.toContain("oauth");
@@ -1949,7 +1949,7 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("Provider account connected");
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
     expect(container?.textContent).toContain("Raw provider tokens, cookies, auth codes, provider API keys, and runtime Session token values are not shown here.");
     expect(container?.textContent).not.toContain(rawSession);
@@ -1980,7 +1980,7 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("Provider account connected");
     expect(container?.textContent).toContain("[redacted]");
     expect(container?.textContent).not.toContain(rawSession);
     expect(container?.textContent).not.toContain(rawPrivatePath);
@@ -2005,7 +2005,7 @@ describe("provider secret boundary", () => {
     expect(text).toContain("GUI-to-runtime Session token or loopback URL mismatch");
     expect(text).toContain("not an OpenAI, GPT, OAuth, or provider API-key problem");
     expect(text).toContain("Browser standalone cannot launch or restart the runtime");
-    expect(text).toContain("GPT/OpenAI experimental login cannot start until you provide a matching loopback runtime URL and Session token");
+    expect(text).toContain("Provider account login cannot start until you provide a matching loopback runtime URL and Session token");
     expect(text).not.toContain("raw-secret");
     expect(text).not.toContain("Bearer");
     expect(findButton("Send").disabled).toBe(true);
@@ -2018,12 +2018,12 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Experimental GPT/OpenAI login is blocked by runtime auth");
+    expect(container?.textContent).toContain("Provider account login is blocked by runtime auth");
     expect(container?.textContent).toContain("Blocked prerequisite");
     expect(container?.textContent).toContain("Fix the local GUI-to-runtime Session token mismatch first");
-    expect(findButton("Connect OpenAI account (experimental)").disabled).toBe(true);
+    expect(findButton("Connect provider account").disabled).toBe(true);
     await act(async () => {
-      findButton("Connect OpenAI account (experimental)").click();
+      findButton("Connect provider account").click();
     });
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST")).toHaveLength(0);
     expect(container?.textContent).not.toContain("authorizationUrl");
@@ -2036,9 +2036,9 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    const healthyLoginButton = findButton("Connect OpenAI account (experimental)");
+    const healthyLoginButton = findButton("Connect provider account");
     expect(healthyLoginButton.disabled).toBe(false);
-    expect(container?.textContent).toContain(status === "api_key_configured" ? "OpenAI API-key fallback is configured as safe/default" : "Production OpenAI login unavailable");
+    expect(container?.textContent).toContain(status === "api_key_configured" ? "API-key fallback is configured as safe/default" : "Provider account login is unavailable");
 
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -2058,12 +2058,12 @@ describe("provider secret boundary", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("Local runtime session token mismatch");
-    expect(text).toContain("Experimental GPT/OpenAI login is blocked by runtime auth");
+    expect(text).toContain("Provider account login is blocked by runtime auth");
     expect(text).toContain("Blocked prerequisite");
-    expect(text).not.toContain("The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login.");
-    expect(text).not.toContain("Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.");
+    expect(text).not.toContain("The safe/default API-key path is available locally. Keep it unless intentionally starting provider account login.");
+    expect(text).not.toContain("Provider account login is unavailable. Use API-key fallback, Demo Mode, or a local/BYOK provider path.");
 
-    const blockedLoginButton = findButton("Connect OpenAI account (experimental)");
+    const blockedLoginButton = findButton("Connect provider account");
     expect(blockedLoginButton.disabled).toBe(true);
     await act(async () => {
       blockedLoginButton.click();
@@ -2097,24 +2097,24 @@ describe("provider secret boundary", () => {
     mockRuntimeResponses({
       authSupportsLogin: true,
       startAuthUrl: authUrl,
-      startAuthMessage: "Experimental high-risk Codex-like OpenAI login is pending.",
+      startAuthMessage: "Provider account login is pending.",
     });
     renderApp();
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Experimental Codex-like account login risk");
-    expect(container?.textContent).toContain("not official public OpenAI OAuth support");
-    expect(container?.textContent).toContain("Connect OpenAI account (experimental)");
-    expect(buttonsNamed("Experimental high-risk account login")).toHaveLength(0);
-    expect(buttonsNamed("Start experimental OpenAI login")).toHaveLength(0);
+    expect(container?.textContent).toContain("Provider account login");
+    expect(container?.textContent).toContain("runtime-owned and explicit");
+    expect(container?.textContent).toContain("Connect provider account");
+    expect(buttonsNamed("Deprecated account login")).toHaveLength(0);
+    expect(buttonsNamed("Start legacy provider login")).toHaveLength(0);
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
     expect(container?.textContent).toContain("Login/chat only. No workspace execution.");
     expect(container?.textContent).not.toContain("secret-state-query");
     expect(container?.textContent).not.toContain("secret-challenge");
 
     await act(async () => {
-      findButton("Connect OpenAI account (experimental)").click();
+      findButton("Connect provider account").click();
     });
 
     expect(openMock).toHaveBeenCalledWith(authUrl, "_blank", "noopener,noreferrer");
@@ -2132,7 +2132,7 @@ describe("provider secret boundary", () => {
     renderApp();
 
     await flushAsync();
-    expect(container?.textContent).toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
+    expect(container?.textContent).toContain("State: Provider account login fallback");
     expect(findButton("Send").disabled).toBe(false);
 
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -2148,7 +2148,7 @@ describe("provider secret boundary", () => {
       await Promise.resolve();
     });
 
-    expect(container?.textContent).toContain("State: OpenAI account login changing");
+    expect(container?.textContent).toContain("State: Provider account login changing");
     expect(container?.textContent).toContain("Send is disabled while the local runtime updates account-login state and no API-key provider is ready.");
     expect(findButton("Send").disabled).toBe(true);
 
@@ -2250,7 +2250,7 @@ describe("provider secret boundary", () => {
     expect(findButton("Exchange authorization code").disabled).toBe(true);
   });
 
-  it("primary OpenAI account login starts the experimental Codex-like path from default login_unavailable", async () => {
+  it("primary provider account login starts the generic provider-auth path from default login_unavailable", async () => {
     vi.spyOn(window, "open").mockImplementation(() => null);
     mockRuntimeResponses();
     renderApp();
@@ -2258,14 +2258,14 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Connect OpenAI account (experimental)").click();
+      findButton("Connect provider account").click();
     });
 
     const startCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
     expect(startCalls).toHaveLength(1);
     expect(startCalls[0]?.[1]?.body).toBe(JSON.stringify({ experimentalCodexLike: true }));
-    expect(buttonsNamed("Experimental high-risk account login")).toHaveLength(0);
-    expect(buttonsNamed("Start experimental OpenAI login")).toHaveLength(0);
+    expect(buttonsNamed("Deprecated account login")).toHaveLength(0);
+    expect(buttonsNamed("Start legacy provider login")).toHaveLength(0);
   });
 
   it("renders sanitized recovery when account login start fails", async () => {
@@ -2275,13 +2275,13 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     await act(async () => {
-      findButton("Connect OpenAI account (experimental)").click();
+      findButton("Connect provider account").click();
     });
 
     const text = container?.textContent ?? "";
     expect(text).toContain("Account login start needs attention");
-    expect(text).toContain("OpenAI account login could not start. The runtime returned a sanitized error");
-    expect(text).toContain("Retry experimental account login");
+    expect(text).toContain("Provider account login could not start. The runtime returned a sanitized error");
+    expect(text).toContain("Retry provider account login");
     expect(text).toContain("Use OpenAI API key fallback");
     expect(text).not.toContain("access_token");
     expect(text).not.toContain("x".repeat(64));
@@ -2298,15 +2298,15 @@ describe("provider secret boundary", () => {
   });
 
   it.each([
-    ["not_configured", "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path; the experimental account path is optional and high-risk.", "Safe next step"],
-    ["login_available", "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.", "Account login is available only as an explicit experimental path."],
-    ["login_unavailable", "Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.", "Production login unavailable. Use API-key fallback, Demo Mode, or GPT/Codex dogfood"],
-    ["api_key_configured", "OpenAI API-key fallback is configured as safe/default. Codex dogfood remains discoverable.", "The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login."],
-    ["pending", "Experimental OpenAI account login is pending. Finish the browser step; the local callback should update this page automatically. Paste a code only if the callback did not complete, or use API-key fallback for the default path.", "Complete browser verification, paste only the authorization code if needed"],
-    ["connected", "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.", "API-key providers and Demo Mode still take precedence for chat when ready"],
-    ["expired", "Experimental OpenAI account login expired. Reconnect only if you accept the risk, or use the API-key fallback.", "The session can no longer power chat."],
-    ["revoked", "Experimental OpenAI account login was revoked or disconnected. Reconnect only if you accept the risk, or use the API-key fallback.", "The runtime reports the account path as revoked or disconnected."],
-    ["error", "Experimental OpenAI account login reported a sanitized error. Retry/reconnect only if you accept the risk, or use the API-key fallback.", "Only sanitized error details are shown."],
+    ["not_configured", "No provider account login is configured. Use the API-key fallback as the safe/default real-provider path; account login is optional and runtime-owned.", "Safe next step"],
+    ["login_available", "Provider account login is exposed by the local runtime, but API-key or local providers remain the default first-message path.", "Account login is available only as an explicit runtime-owned provider-auth path."],
+    ["login_unavailable", "Provider account login is unavailable. Use API-key fallback, Demo Mode, or a local/BYOK provider path.", "Account login unavailable. Use API-key fallback, Demo Mode, or provider account login"],
+    ["api_key_configured", "API-key fallback is configured as safe/default. Account login remains available as an explicit provider-auth path.", "The safe/default API-key path is available locally. Keep it unless intentionally starting provider account login."],
+    ["pending", "Provider account login is pending. Finish the browser step; the local callback should update this page automatically. Paste a code only if the callback did not complete, or use API-key fallback for the default path.", "Complete browser verification, paste only the authorization code if needed"],
+    ["connected", "Provider account login is connected through the local runtime, but API-key fallback remains the default real-provider path.", "API-key providers and Demo Mode still take precedence for chat when ready"],
+    ["expired", "Provider account login expired. Reconnect only if you accept this provider-auth path, or use the API-key fallback.", "The session can no longer power chat."],
+    ["revoked", "Provider account login was revoked or disconnected. Reconnect only if you accept this provider-auth path, or use the API-key fallback.", "The runtime reports the account path as revoked or disconnected."],
+    ["error", "Provider account login reported a sanitized error. Retry/reconnect only if you accept this provider-auth path, or use the API-key fallback.", "Only sanitized error details are shown."],
   ] satisfies Array<[ProviderAuthStatus, string, string]>)("renders provider auth status %s", async (status, copy, recoveryCopy) => {
     mockRuntimeResponses({ authResponse: providerAuthResponse(status) });
     renderApp();
@@ -2337,19 +2337,19 @@ describe("provider secret boundary", () => {
     expect(findButton("Disconnect login").disabled).toBe(true);
   });
 
-  it("enables API-key configured experimental account login and starts the Codex-like path", async () => {
+  it("enables API-key configured provider account login and starts the provider-auth path", async () => {
     vi.spyOn(window, "open").mockImplementation(() => null);
     mockRuntimeResponses({ authResponse: providerAuthResponse("api_key_configured") });
     renderApp();
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI API-key fallback is configured as safe/default");
-    expect(container?.textContent).toContain("Codex dogfood remains discoverable");
+    expect(container?.textContent).toContain("API-key fallback is configured as safe/default");
+    expect(container?.textContent).toContain("Account login remains available as an explicit provider-auth path");
     expect(container?.textContent).toContain("The safe/default API-key fallback is already configured locally");
     expect(findButton("Use OpenAI API key fallback")).toBeDefined();
 
-    const loginButton = findButton("Connect OpenAI account (experimental)");
+    const loginButton = findButton("Connect provider account");
     expect(loginButton.disabled).toBe(false);
 
     await act(async () => {
@@ -2361,7 +2361,7 @@ describe("provider secret boundary", () => {
     expect(startCalls[0]?.[1]?.body).toBe(JSON.stringify({ experimentalCodexLike: true }));
   });
 
-  it("renders runtime-restart recovery guidance for pending experimental login without leaking session data", async () => {
+  it("renders runtime-restart recovery guidance for pending provider login without leaking session data", async () => {
     const rawSession = "provider-login-session-runtime-restart";
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     mockRuntimeResponses({
@@ -2432,9 +2432,9 @@ describe("provider secret boundary", () => {
     const statusCallsAfterReconnect = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
     expect(statusCallsAfterReconnect).toBeGreaterThan(statusCallsBeforeReconnect);
     text = container?.textContent ?? "";
-    expect(text).toContain("OpenAI account expired");
+    expect(text).toContain("Provider account expired");
     expect(text).toContain("Runtime recovered without the pending browser session.");
-    expect(text).toContain("Reconnect OpenAI account");
+    expect(text).toContain("Reconnect provider account");
     expect(text).toContain("Use OpenAI API key fallback");
     expect(text).not.toContain("Manual authorization-code exchange");
     expect(text).not.toContain(rawSession);
@@ -2476,9 +2476,9 @@ describe("provider secret boundary", () => {
 
     const text = container?.textContent ?? "";
     expect(authCodeInputOptional()).toBeUndefined();
-    expect(text).toContain("OpenAI account expired");
+    expect(text).toContain("Provider account expired");
     expect(text).toContain("Pending browser session expired before exchange.");
-    expect(text).toContain("Reconnect OpenAI account");
+    expect(text).toContain("Reconnect provider account");
     expect(text).toContain("Use OpenAI API key fallback");
     expect(text).not.toContain(code);
     expect(localSetItem).not.toHaveBeenCalled();
@@ -2536,7 +2536,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     const statusCallsBeforePoll = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
-    expect(container?.textContent).toContain("Experimental OpenAI account login is pending");
+    expect(container?.textContent).toContain("Provider account login is pending");
 
     await act(async () => {
       vi.advanceTimersByTime(999);
@@ -2583,7 +2583,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length).toBeGreaterThan(statusCallsAfterFirstPoll);
-    expect(container?.textContent).toContain("Experimental OpenAI account login is pending");
+    expect(container?.textContent).toContain("Provider account login is pending");
   });
 
   it("pending oauth poll result updates connected UI automatically", async () => {
@@ -2608,8 +2608,8 @@ describe("provider secret boundary", () => {
     });
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI account connected");
-    expect(container?.textContent).toContain("Experimental OpenAI account login is connected through the local runtime");
+    expect(container?.textContent).toContain("Provider account connected");
+    expect(container?.textContent).toContain("Provider account login is connected through the local runtime");
     expect(container?.textContent).not.toContain("Manual authorization-code exchange");
   });
 
@@ -2642,8 +2642,8 @@ describe("provider secret boundary", () => {
     });
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI account connected");
-    expect(container?.textContent).toContain("Experimental OpenAI account login is connected through the local runtime");
+    expect(container?.textContent).toContain("Provider account connected");
+    expect(container?.textContent).toContain("Provider account login is connected through the local runtime");
     expect(container?.textContent).not.toContain("Manual authorization-code exchange");
   });
 
@@ -2750,8 +2750,8 @@ describe("provider secret boundary", () => {
     await flushAsync();
     await flushAsync();
 
-    expect(container?.textContent).not.toContain("OpenAI account connected");
-    expect(container?.textContent).not.toContain("Experimental OpenAI account fallback / gpt-5-codex");
+    expect(container?.textContent).not.toContain("Provider account connected");
+    expect(container?.textContent).not.toContain("Provider account login fallback");
     expect(container?.textContent).not.toContain("user@example.test");
   });
 
@@ -2816,7 +2816,7 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("OpenAI login needs attention");
+    expect(container?.textContent).toContain("Provider login needs attention");
     expect(container?.textContent).toContain("Sanitized login error: callback failed [redacted]");
     expect(container?.textContent).toContain("Retry login");
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
@@ -4474,7 +4474,7 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Runtimerefresh local runtime");
     expect(text).toContain("Demo Modeno-key local canned trial");
     expect(text).toContain("Real providerlocal Ollama or API-key fallback");
-    expect(text).toContain("Account loginexperimental non-default");
+    expect(text).toContain("Account loginoptional non-default");
     expect(text).toContain("Next safest action: Use Refresh runtime from this chat page; the IDE host will re-deliver trusted runtime settings automatically. If it still fails, use the IDE runtime status/restart command instead of copying a token. In JetBrains installed mode, also use Tools → Yet AI: Show Runtime Status or Restart Runtime if Refresh runtime keeps failing.");
     expect(findButton("Refresh runtime")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
@@ -4500,7 +4500,7 @@ describe("host.ready runtime bootstrap", () => {
     expect(text).toContain("Demo Modeno-key local canned trial");
     expect(text).toContain("Real providerlocal Ollama or API-key fallback");
     expect(text).toContain("First messagechoose Demo Mode or BYOK provider");
-    expect(text).toContain("Account loginexperimental non-default");
+    expect(text).toContain("Account loginoptional non-default");
     expect(text).toContain("Next safest action: For local answers without a provider key, choose Ollama local, confirm http://127.0.0.1:11434 and a pulled model id, save, test provider, refresh runtime/model readiness, then send. For hosted OpenAI-compatible answers, use the API-key fallback. Choose Demo Mode only to try the chat flow without provider calls.");
     expect(findButton("Use OpenAI API key fallback")).toBeDefined();
     expect(findButton("Send").disabled).toBe(true);
@@ -7972,23 +7972,23 @@ describe("chat panel", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("0 enabled providers");
-    expect(text).toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
-    expect(text).toContain("Experimental Codex-like OpenAI account chat is available as a fallback through the local runtime because no safer API-key, OpenAI-compatible, local, or Demo Mode path is ready.");
-    expect(text).toContain("not official public OAuth support");
+    expect(text).toContain("State: Provider account login fallback");
+    expect(text).toContain("Provider account login chat is available as a fallback through the local runtime because no safer API-key, OpenAI-compatible, local, or Demo Mode path is ready.");
+    expect(text).toContain("runtime-owned, explicit, not default");
     expect(text).toContain("not default");
-    expect(text).toContain("not production-ready");
-    expect(text).toContain("Experimental fallback send ready");
-    expect(text).toContain("Experimental account login can send");
-    expect(text).toContain("Why: The account login fallback is connected only because no safer API-key/OpenAI-compatible, local, or Demo Mode chat path is ready; this private-endpoint path is not the safe/default provider setup.");
-    expect(text).toContain("Next safest action: Prefer configuring an API-key or local provider. If you send through this experimental path and the first message fails, use the sanitized error to choose one manual action: retry login, reconnect runtime, disconnect, reduce context if the request is too large, or switch to the API-key fallback.");
-    expect(text).toContain("If the first message fails through experimental account auth, review the sanitized error only: retry login, reconnect runtime, disconnect the account path, reduce attached context when the error says the request is too large, or switch to the API-key fallback.");
+    expect(text).toContain("not required for local-first setup");
+    expect(text).toContain("Provider-auth fallback send ready");
+    expect(text).toContain("Provider account login can send");
+    expect(text).toContain("Why: The account login fallback is connected only because no safer API-key/OpenAI-compatible, local, or Demo Mode chat path is ready; this provider-auth path is not the safe/default provider setup.");
+    expect(text).toContain("Next safest action: Prefer configuring an API-key or local provider. If you send through this provider-auth path and the first message fails, use the sanitized error to choose one manual action: retry login, reconnect runtime, disconnect, reduce context if the request is too large, or switch to the API-key fallback.");
+    expect(text).toContain("If the first message fails through provider account auth, review the sanitized error only: retry login, reconnect runtime, disconnect the account path, reduce attached context when the error says the request is too large, or switch to the API-key fallback.");
     expect(text).toContain("If the first message fails, use the sanitized error to retry login, reconnect runtime, disconnect, reduce context when relevant, or switch to the API-key fallback; no automatic retry or managed support is implied.");
     expect(text).not.toContain("Authorization: Bearer");
     expect(text).not.toContain("access_token");
     expect(text).not.toContain("Cookie:");
     expect(text).not.toContain("/Users/");
     expect(findButton("Send").disabled).toBe(false);
-    expect(text).toContain("Account loginexperimental high-risk connected");
+    expect(text).toContain("Account loginprovider-auth connected");
     expect(text).toContain("First messageSend available");
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain("oauth");
@@ -8002,8 +8002,8 @@ describe("chat panel", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain(status);
-    expect(text).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
-    expect(text).not.toContain("Experimental account login can send");
+    expect(text).not.toContain("State: Provider account login fallback");
+    expect(text).not.toContain("Provider account login can send");
     expect(findButton("Send").disabled).toBe(true);
     expect(browserStorageDump()).not.toContain("oauth");
   });
@@ -8031,7 +8031,7 @@ describe("chat panel", () => {
     });
 
     expect(findButton("Exchanging…").disabled).toBe(true);
-    expect(container?.textContent).toContain("State: OpenAI account login changing");
+    expect(container?.textContent).toContain("State: Provider account login changing");
     expect(findButton("Send").disabled).toBe(true);
 
     exchange.resolve(jsonResponse(connectedExperimentalAuthResponse()));
@@ -8058,8 +8058,8 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
 
-    expect(container?.textContent).toContain("State: OpenAI account login changing");
-    expect(container?.textContent).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
+    expect(container?.textContent).toContain("State: Provider account login changing");
+    expect(container?.textContent).not.toContain("State: Provider account login fallback");
     expect(findButton("Send").disabled).toBe(true);
 
     disconnect.resolve(jsonResponse({ ...providerAuthResponse("not_configured"), success: true }));
@@ -8126,7 +8126,7 @@ describe("chat panel", () => {
     await flushAsync();
 
     expect(container?.textContent).not.toContain("stale disconnect token response");
-    expect(container?.textContent).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
+    expect(container?.textContent).not.toContain("State: Provider account login fallback");
   });
 
   it("renders sanitized provider-auth mutation failures without raw code session token or cookie text", async () => {
@@ -8175,7 +8175,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("1 enabled provider");
     expect(container?.textContent).toContain("State: GPT-4o mini (openai-api)");
     expect(container?.textContent).toContain("Ready to send using GPT-4o mini through the local runtime.");
-    expect(container?.textContent).not.toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
+    expect(container?.textContent).not.toContain("State: Provider account login fallback");
     expect(findButton("Send").disabled).toBe(false);
   });
 
@@ -10541,7 +10541,7 @@ describe("edit proposal preview", () => {
     await flushAsync();
     postMessage.mockClear();
 
-    expect(container?.textContent).toContain("State: Experimental OpenAI account fallback / gpt-5-codex");
+    expect(container?.textContent).toContain("State: Provider account login fallback");
     expect(findButton("Send").disabled).toBe(false);
     await act(async () => { setTextareaByPlaceholder("Describe the coding task goal", "Use connected experimental auth for a controlled provider proposal"); });
     await act(async () => { findButton("Draft one-step safe-edit prompt").click(); });
@@ -12835,7 +12835,7 @@ function pendingExperimentalAuthResponse(): ProviderAuthResponse {
     expiresAt: "2026-05-24T01:00:00Z",
     scopes: ["openid", "profile", "email", "offline_access"],
     cloudRequired: false,
-    message: "Experimental high-risk Codex-like OpenAI login is pending.",
+    message: "Provider account login is pending.",
   };
 }
 
@@ -12843,7 +12843,7 @@ function connectedExperimentalAuthResponse(): ProviderAuthResponse & { success: 
   return {
     ...providerAuthResponse("connected"),
     success: true,
-    message: "OpenAI login is connected.",
+    message: "Provider account login is connected.",
   };
 }
 
@@ -13303,7 +13303,7 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
       supportsLogin: options.authSupportsLogin ?? false,
       supportsApiKey: true,
       cloudRequired: false,
-      message: options.authMessage ?? "Experimental account login (non-default) is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.",
+      message: options.authMessage ?? "Provider account login (non-default) is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.",
     }));
   }
   if (init?.method === "POST" && url.endsWith("/v1/provider-auth/openai/start")) {
