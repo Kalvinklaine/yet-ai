@@ -90,6 +90,7 @@ try {
   await expectVisibleText(page, "Provider required for first message", "no-provider readiness");
   await assertNoDomSecretLeak(page, "DOM at login_unavailable");
   await expectSendDisabled(page, "no provider before login");
+  const preLoginEvidence = await sanitizedPageStateEvidence(page, "login_unavailable");
 
   const experimentalLoginButton = page.getByRole("button", { name: "Connect OpenAI account (experimental)" });
   await experimentalLoginButton.waitFor({ state: "visible", timeout: 10_000 });
@@ -181,7 +182,7 @@ try {
   assert(internalProviderSecrets?.pkceVerifier === fakePkceVerifier, "fake PKCE sentinel was not stored server-side after exchange");
   assert(internalProviderSecrets?.privatePath === fakePrivatePath, "fake private-path sentinel was not stored server-side after exchange");
 
-  const evidence = await saveVisualEvidence(page);
+  const evidence = await saveVisualEvidence(page, preLoginEvidence);
   if (failures.length > 0) throw new Error(`Login first-message smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   console.log("Login first-message smoke passed.");
   console.log("Verified built GUI against a loopback mock runtime: runtime connected; default-like login_unavailable (supportsLogin:false/authSource:none/configured:false) and pending states kept Send disabled; experimental/non-default provider-auth moved login_unavailable -> pending -> connected via fake local authorization-code exchange; connected sent exactly one first message and rendered one mock assistant response; disconnect returned to disabled/no-provider state; API-key fallback and Demo Mode each took precedence over experimental connected; and no real provider/hosted service/IDE/JCEF/signing/publishing path was used.");
@@ -214,15 +215,19 @@ async function requireChromium() {
     process.exit(1);
   }
 }
-async function saveVisualEvidence(page) {
+async function saveVisualEvidence(page, preLoginEvidence) {
   await mkdir(evidenceRoot, { recursive: true });
   const screenshotPath = path.join(evidenceRoot, "login-first-message.png");
   const domPath = path.join(evidenceRoot, "login-first-message.dom.txt");
   await page.screenshot({ path: screenshotPath, fullPage: true });
-  const sanitizedText = await page.evaluate(() => document.body.innerText).then((text) => redactSecrets(text));
-  assertNoSecretLeak(await pageStateSnapshot(page), "saved DOM evidence source");
-  await writeFile(domPath, sanitizedText, "utf8");
+  const finalEvidence = await sanitizedPageStateEvidence(page, "final");
+  await writeFile(domPath, JSON.stringify({ snapshots: [preLoginEvidence, finalEvidence] }, null, 2), "utf8");
   return { dir: evidenceRoot, screenshotPath, domPath };
+}
+async function sanitizedPageStateEvidence(page, label) {
+  const snapshot = await pageStateSnapshot(page);
+  assertNoSecretLeak(snapshot, `${label} evidence source`);
+  return { label, ...JSON.parse(redactSecrets(snapshot)) };
 }
 async function pageStateSnapshot(page) {
   return page.evaluate(() => JSON.stringify({
@@ -231,6 +236,7 @@ async function pageStateSnapshot(page) {
     attributes: Array.from(document.body.querySelectorAll("*")).flatMap((element) => Array.from(element.attributes).filter((attribute) => /^(href|src|data-|aria-)/i.test(attribute.name)).map((attribute) => ({ tag: element.tagName.toLowerCase(), name: attribute.name, value: attribute.value }))),
     localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => [localStorage.key(index) ?? "", localStorage.getItem(localStorage.key(index) ?? "")])),
     sessionStorage: Object.fromEntries(Array.from({ length: sessionStorage.length }, (_, index) => [sessionStorage.key(index) ?? "", sessionStorage.getItem(sessionStorage.key(index) ?? "")])),
+    cookie: document.cookie,
   }));
 }
 async function assertNoDomSecretLeak(page, source) {
