@@ -484,8 +484,11 @@ export function App() {
   const providerAuthMutationAttemptRef = useRef(0);
   const providerAuthExchangeInFlightRef = useRef(false);
   const providerAuthPollTimerRef = useRef<number | null>(null);
+  const providerAuthPollInFlightRef = useRef(false);
+  const providerAuthPollRequestRef = useRef(0);
   const chatHistoryAttemptRef = useRef(0);
   const [providerAuthMutation, setProviderAuthMutation] = useState<"start" | "exchange" | "disconnect" | null>(null);
+  const [providerAuthPollTick, setProviderAuthPollTick] = useState(0);
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
   const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
   const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
@@ -1274,6 +1277,8 @@ export function App() {
     setRuntimeLifecycle(null);
     providerAuthMutationAttemptRef.current += 1;
     providerAuthExchangeInFlightRef.current = false;
+    providerAuthPollInFlightRef.current = false;
+    providerAuthPollRequestRef.current += 1;
     setProviderAuthMutation(null);
     setProviderAuthExchangeCode("");
     setProviderAuthExchangeWorking(false);
@@ -2004,6 +2009,37 @@ export function App() {
     }
   }, [isCurrentRefresh]);
 
+  const pollProviderAuthStatus = useCallback(async (targetSettings: RuntimeSettings, revision: number, requestId: number) => {
+    if (providerAuthPollInFlightRef.current) {
+      return;
+    }
+    providerAuthPollInFlightRef.current = true;
+    try {
+      setProviderAuthError(null);
+      setProviderAuthUrlWarning(null);
+      setProviderAuthExchangeError(null);
+      const result = await getProviderAuthStatus(targetSettings, "openai");
+      if (!isCurrentRefresh(revision) || providerAuthPollRequestRef.current !== requestId) {
+        return;
+      }
+      if (result.ok) {
+        setProviderAuthStatus(result.data);
+        setProviderAuthDataRevision(revision);
+      } else {
+        setProviderAuthStatus(null);
+        setProviderAuthError(result.error);
+        setProviderAuthDataRevision(revision);
+      }
+    } finally {
+      if (providerAuthPollRequestRef.current === requestId) {
+        providerAuthPollInFlightRef.current = false;
+        if (isCurrentRefresh(revision)) {
+          setProviderAuthPollTick((tick) => tick + 1);
+        }
+      }
+    }
+  }, [isCurrentRefresh]);
+
   useEffect(() => {
     if (providerAuthPollTimerRef.current !== null) {
       window.clearTimeout(providerAuthPollTimerRef.current);
@@ -2017,7 +2053,8 @@ export function App() {
     const delaySeconds = normalizeProviderAuthPollIntervalSeconds(activeProviderAuthStatus.pollIntervalSeconds);
     providerAuthPollTimerRef.current = window.setTimeout(() => {
       providerAuthPollTimerRef.current = null;
-      void refreshProviderAuthStatus(targetSettings, targetRevision);
+      const requestId = providerAuthPollRequestRef.current;
+      void pollProviderAuthStatus(targetSettings, targetRevision, requestId);
     }, delaySeconds * 1000);
     return () => {
       if (providerAuthPollTimerRef.current !== null) {
@@ -2025,7 +2062,7 @@ export function App() {
         providerAuthPollTimerRef.current = null;
       }
     };
-  }, [activeProviderAuthStatus?.authSource, activeProviderAuthStatus?.pollIntervalSeconds, activeProviderAuthStatus?.sessionId, activeProviderAuthStatus?.status, refreshProviderAuthStatus, settingsRevision]);
+  }, [activeProviderAuthStatus?.authSource, activeProviderAuthStatus?.pollIntervalSeconds, activeProviderAuthStatus?.sessionId, activeProviderAuthStatus?.status, pollProviderAuthStatus, providerAuthPollTick, settingsRevision]);
 
   useEffect(() => {
     if (activeProviderAuthStatus?.status === "pending") {

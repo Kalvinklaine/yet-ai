@@ -2553,6 +2553,39 @@ describe("provider secret boundary", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length).toBeGreaterThan(statusCallsBeforePoll);
   });
 
+  it("pending oauth keeps polling after identical pending responses", async () => {
+    vi.useFakeTimers();
+    const statusResponse: ProviderAuthResponse = { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(statusResponse));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: statusResponse });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    const statusCallsBeforePoll = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+    const statusCallsAfterFirstPoll = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+    expect(statusCallsAfterFirstPoll).toBeGreaterThan(statusCallsBeforePoll);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length).toBeGreaterThan(statusCallsAfterFirstPoll);
+    expect(container?.textContent).toContain("Experimental OpenAI account login is pending");
+  });
+
   it("pending oauth poll result updates connected UI automatically", async () => {
     vi.useFakeTimers();
     let statusResponse: ProviderAuthResponse = { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 };
@@ -2569,6 +2602,40 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).toContain("Manual authorization-code exchange");
     statusResponse = connectedExperimentalAuthResponse();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("Experimental OpenAI account login is connected through the local runtime");
+    expect(container?.textContent).not.toContain("Manual authorization-code exchange");
+  });
+
+  it("pending oauth updates connected UI after multiple pending polls", async () => {
+    vi.useFakeTimers();
+    let pollCount = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        pollCount += 1;
+        const response = pollCount >= 3 ? connectedExperimentalAuthResponse() : { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 };
+        return Promise.resolve(jsonResponse(response));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+    expect(container?.textContent).toContain("Manual authorization-code exchange");
+
     await act(async () => {
       vi.advanceTimersByTime(1000);
       await Promise.resolve();
@@ -2609,6 +2676,50 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(callsAfterConnected);
+  });
+
+  it("does not start overlapping provider auth poll requests while one is in flight", async () => {
+    vi.useFakeTimers();
+    let delayedPoll: ReturnType<typeof deferred<Response>> | null = null;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        if (delayedPoll) {
+          return delayedPoll.promise;
+        }
+        return Promise.resolve(jsonResponse({ ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 }));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    const statusCallsBeforePoll = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+    delayedPoll = deferred<Response>();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    const statusCallsWithPollInFlight = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+    expect(statusCallsWithPollInFlight).toBe(statusCallsBeforePoll + 1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(statusCallsWithPollInFlight);
+
+    delayedPoll.resolve(jsonResponse({ ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 }));
+    delayedPoll = null;
+    await flushAsync();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length).toBe(statusCallsWithPollInFlight + 1);
   });
 
   it("ignores stale provider auth polling results after runtime settings change", async () => {
