@@ -4,7 +4,7 @@ Status: approved architecture direction for future migration work; implementatio
 
 This ADR defines the target Yet AI provider OAuth framework before further code migration. It uses the inspected reference implementation behavior as architectural signal only. No source, assets, public copy, provider identifiers beyond required protocol facts, or storage paths are copied into Yet AI.
 
-Implementation status: the current engine has crossed from ADR-only design into a framework-oriented implementation for the existing provider-auth routes. `provider_auth/mod.rs` remains the compatibility façade for `/v1/provider-auth/...`, request validation, legacy mock-test harness compatibility, hardened local state helpers, and Codex-like token/storage primitives. `provider_auth/adapters/mod.rs` owns the adapter SPI, dispatch selector, sanitized status projection, and the current `openai` Codex-like adapter. `provider_auth/session_registry.rs` and `provider_auth/session_store.rs` own the persisted pending-session registry used by loopback callback state checks and test-only device-flow proof coverage.
+Implementation status: the current engine has crossed from ADR-only design into a framework-oriented implementation for the existing provider-auth routes, but it is intentionally narrower than the target architecture. Current production-facing behavior is API-key fallback, the mock OAuth test harness, the explicit-risk experimental `openai` Codex-like browser PKCE/manual/callback path, adapter dispatch/session registry plumbing, and test-only device-flow proof coverage. `provider_auth/mod.rs` remains the compatibility façade for `/v1/provider-auth/...`, request validation, legacy mock-test harness compatibility, hardened local state helpers, and Codex-like token/storage primitives. `provider_auth/adapters/mod.rs` owns the adapter SPI, dispatch selector, sanitized status projection, and the current `openai` Codex-like adapter. `provider_auth/session_registry.rs` and `provider_auth/session_store.rs` own the persisted pending-session registry used by loopback callback state checks and test-only device-flow proof coverage. Public provider-auth responses do not currently expose a production mode selector or device-flow `userCode`; complete verification URI and user-code device UX remain target/future contract work.
 
 Task traceability: LT-1 / G1 requested a reference-shaped provider OAuth ADR; this public tracked document intentionally describes that requirement as a reference-informed Yet AI architecture to satisfy publication hygiene while still comparing against the inspected source patterns.
 
@@ -34,6 +34,8 @@ The target framework supports three auth modes:
 2. Device flow: engine starts device authorization, returns verification URI, optional complete URI, user code, expiry, and polling interval; GUI polls status or explicit poll endpoint through sanitized responses.
 3. Manual fallback: GUI accepts a pasted authorization code, full callback URL, or provider-approved code/state bundle only when an adapter declares the accepted format; engine validates state/session before exchange.
 
+These are target architecture modes, not a statement that every mode is production/public today. The current public surface exposes the existing compatibility route envelope only; device-flow `userCode` and complete verification URI handling are future contract fields unless a later card adds versioned public support.
+
 ## State machine
 
 Every provider adapter projects to one sanitized framework state:
@@ -57,7 +59,7 @@ Adapters may keep internal sub-states, but GUI-facing status must use this vocab
 Each provider auth adapter should implement an engine-owned SPI with these responsibilities:
 
 - declare provider id, display-safe label, supported auth modes, scopes, callback requirements, policy gates, and fallback guidance;
-- start login by producing a pending session plus sanitized `authorizationUrl`, `verificationUrl`, `userCode`, `expiresAt`, and `pollIntervalSeconds` fields as applicable;
+- for the target framework, start login by producing a pending session plus sanitized `authorizationUrl`, `verificationUrl`, future `userCode`, `expiresAt`, and `pollIntervalSeconds` fields as applicable; current public responses do not expose `userCode`;
 - validate provider-specific host, redirect, scope, token endpoint, and enterprise/base URL inputs before secrets can be transmitted;
 - exchange authorization code, callback query, device token, or manual fallback input into engine-owned credential material;
 - refresh credentials when supported, including permanent failure classification and refresh-token reuse/invalid-token handling;
@@ -125,6 +127,8 @@ Additive fields may be introduced only after contract/schema updates and GUI han
 ## Current implementation and runbook
 
 Current production-facing provider-auth behavior is intentionally narrower than the target framework:
+
+Implemented today means API-key fallback, mock OAuth test harness, explicit-risk experimental OpenAI/Codex-like browser PKCE/manual/callback behavior, adapter dispatch/session registry infrastructure, and a test-only device-flow proof. It does not mean production/default OpenAI account login, production `openai-compatible` OAuth login, public device-flow mode selection, public `userCode` display, or complete verification URI UX.
 
 - Supported provider ids are `openai` and `openai-compatible`. The production/default login path still reports API-key fallback or unavailable status unless the request explicitly opts into test/mock or experimental modes.
 - The `openai` experimental Codex-like path is routed through the adapter dispatch path. It supports browser PKCE/manual-code exchange, loopback callback completion, sanitized status, disconnect cleanup, chat-auth snapshots, and refresh of stored unexpired credentials.

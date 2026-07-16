@@ -230,6 +230,8 @@ The runtime now supports the experimental pending PKCE start, authorization-code
 
 Provider-auth framework notes for GUI work:
 
+- Current GUI-visible provider-auth behavior is narrower than the target architecture: API-key fallback, local mock OAuth test harness, the explicit-risk experimental OpenAI/Codex-like browser PKCE/manual/callback path, sanitized adapter status projection, and test-only device-flow proof coverage. Do not present device-flow `userCode`, complete verification URI UX, or production/public `openai-compatible` account login as implemented until the engine exposes a versioned public contract for them.
+
 - Treat provider-auth responses as sanitized projections from an engine-owned adapter framework. The GUI should render only the existing response fields and must not infer raw token/session details from status text.
 - Public statuses currently remain `login_unavailable`, `api_key_configured`, `pending`, `connected`, `expired`, `revoked`, and sanitized `error`; adapter-internal provider/exchange/storage failures intentionally collapse to `error` until a versioned contract expands them.
 - The engine owns callback binding, pending session registry, PKCE verifier, token exchange, refresh, disconnect, and credential storage. GUI/IDE code may open approved authorization or verification URLs and may submit a user-pasted code to the local runtime, but must not bind callback ports, persist raw codes, or keep secrets in browser storage.
