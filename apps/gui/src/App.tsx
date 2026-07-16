@@ -6402,8 +6402,12 @@ type ProviderAuthJourneyProps = {
   onApiKeyFallback: () => void;
 };
 
+function canStartExperimentalProviderAuth(status: ProviderAuthResponse): boolean {
+  return status.supportsLogin !== false || status.status === "login_unavailable" || status.status === "api_key_configured";
+}
+
 function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError, exchangeWorking, runtimeConnected, onExchangeCodeChange, onExchange, onRefresh, onLogin, onDisconnect, onApiKeyFallback }: ProviderAuthJourneyProps) {
-  const canLogin = status.supportsLogin !== false || status.status === "login_unavailable";
+  const canLogin = canStartExperimentalProviderAuth(status);
   const canDisconnect = status.configured && status.authSource !== "api_key";
   const loginLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : status.status === "connected" ? "Reconnect experimental account" : status.status === "expired" || status.status === "revoked" ? "Reconnect OpenAI account" : "Connect OpenAI account (experimental)";
   return (

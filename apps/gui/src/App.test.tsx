@@ -2299,7 +2299,8 @@ describe("provider secret boundary", () => {
     expect(findButton("Disconnect login").disabled).toBe(true);
   });
 
-  it("keeps API-key configured copy safe/default while exposing experimental account login", async () => {
+  it("enables API-key configured experimental account login and starts the Codex-like path", async () => {
+    vi.spyOn(window, "open").mockImplementation(() => null);
     mockRuntimeResponses({ authResponse: providerAuthResponse("api_key_configured") });
     renderApp();
 
@@ -2308,8 +2309,18 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("OpenAI API-key fallback is configured as safe/default");
     expect(container?.textContent).toContain("Codex dogfood remains discoverable");
     expect(container?.textContent).toContain("The safe/default API-key fallback is already configured locally");
-    expect(findButton("Connect OpenAI account (experimental)").disabled).toBe(true);
     expect(findButton("Use OpenAI API key fallback")).toBeDefined();
+
+    const loginButton = findButton("Connect OpenAI account (experimental)");
+    expect(loginButton.disabled).toBe(false);
+
+    await act(async () => {
+      loginButton.click();
+    });
+
+    const startCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST");
+    expect(startCalls).toHaveLength(1);
+    expect(startCalls[0]?.[1]?.body).toBe(JSON.stringify({ experimentalCodexLike: true }));
   });
 
   it("renders runtime-restart recovery guidance for pending experimental login without leaking session data", async () => {
