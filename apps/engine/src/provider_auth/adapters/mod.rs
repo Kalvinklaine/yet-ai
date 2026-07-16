@@ -258,6 +258,96 @@ pub(super) trait ProviderOAuthAdapter: Send + Sync {
     ) -> AdapterFuture<'a, Result<Option<ProviderOAuthChatAuthSnapshot>, ProviderOAuthAdapterError>>;
 }
 
+pub(super) struct ProviderOAuthAdapterDispatch<'a> {
+    adapters: Vec<&'a dyn ProviderOAuthAdapter>,
+}
+
+impl<'a> ProviderOAuthAdapterDispatch<'a> {
+    pub(super) fn single(adapter: &'a dyn ProviderOAuthAdapter) -> Self {
+        Self {
+            adapters: vec![adapter],
+        }
+    }
+
+    #[cfg(test)]
+    fn new(adapters: Vec<&'a dyn ProviderOAuthAdapter>) -> Self {
+        Self { adapters }
+    }
+
+    fn select(
+        &self,
+        provider: &str,
+    ) -> Result<&'a dyn ProviderOAuthAdapter, ProviderOAuthAdapterError> {
+        self.adapters
+            .iter()
+            .copied()
+            .find(|adapter| adapter.provider_id().as_str() == provider)
+            .ok_or(ProviderOAuthAdapterError::UnsupportedMode)
+    }
+
+    pub(super) async fn status(
+        &self,
+        provider: &str,
+    ) -> Result<ProviderOAuthStatusView, ProviderOAuthAdapterError> {
+        self.select(provider)?.status().await
+    }
+
+    pub(super) async fn start_session(
+        &self,
+        provider: &str,
+        request: ProviderOAuthStartSessionRequest,
+    ) -> Result<ProviderOAuthStartSession, ProviderOAuthAdapterError> {
+        self.select(provider)?.start_session(request).await
+    }
+
+    pub(super) async fn exchange_code(
+        &self,
+        provider: &str,
+        request: ProviderOAuthExchangeCodeRequest,
+    ) -> Result<ProviderOAuthStatusView, ProviderOAuthAdapterError> {
+        self.select(provider)?.exchange_code(request).await
+    }
+
+    pub(super) async fn callback_exchange(
+        &self,
+        provider: &str,
+        request: ProviderOAuthCallbackExchangeRequest,
+    ) -> Result<ProviderOAuthStatusView, ProviderOAuthAdapterError> {
+        self.select(provider)?.callback_exchange(request).await
+    }
+
+    pub(super) async fn callback_error(
+        &self,
+        provider: &str,
+        request: ProviderOAuthCallbackErrorRequest,
+    ) -> Result<(), ProviderOAuthAdapterError> {
+        self.select(provider)?.callback_error(request).await
+    }
+
+    pub(super) async fn callback_state_pending(
+        &self,
+        provider: &str,
+        request: ProviderOAuthCallbackStateRequest,
+    ) -> Result<bool, ProviderOAuthAdapterError> {
+        self.select(provider)?.callback_state_pending(request).await
+    }
+
+    pub(super) async fn refresh(
+        &self,
+        provider: &str,
+        request: ProviderOAuthRefreshRequest,
+    ) -> Result<ProviderOAuthRefreshOutcome, ProviderOAuthAdapterError> {
+        self.select(provider)?.refresh(request).await
+    }
+
+    pub(super) async fn chat_auth_snapshot(
+        &self,
+        provider: &str,
+    ) -> Result<Option<ProviderOAuthChatAuthSnapshot>, ProviderOAuthAdapterError> {
+        self.select(provider)?.chat_auth_snapshot().await
+    }
+}
+
 pub(in crate::provider_auth) mod openai_codex {
     use std::path::{Path, PathBuf};
 
@@ -662,6 +752,7 @@ pub(in crate::provider_auth) mod openai_codex {
             Box::pin(async move {
                 let response = match self.status_response().await.map_err(|error| match error {
                     ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                    ProviderAuthError::InvalidRequest => ProviderOAuthAdapterError::PolicyBlocked,
                     ProviderAuthError::TokenExchange => ProviderOAuthAdapterError::ExchangeFailed,
                     _ => ProviderOAuthAdapterError::ProviderRejected,
                 })? {
@@ -1592,6 +1683,7 @@ mod tests {
         ));
         let _ = std::fs::remove_dir_all(&dir);
         let adapter = DeviceFlowProofAdapter::new(dir.clone());
+        let dispatch = ProviderOAuthAdapterDispatch::new(vec![&adapter]);
         let capabilities = adapter.capabilities();
 
         assert_eq!(adapter.provider_id().as_str(), "openai-compatible");
@@ -1599,13 +1691,16 @@ mod tests {
         assert!(!capabilities.supports_mode(ProviderOAuthAuthMode::BrowserPkce));
         assert!(capabilities.login_allowed());
 
-        let start = adapter
-            .start_session(ProviderOAuthStartSessionRequest {
-                mode: ProviderOAuthAuthMode::DeviceCode,
-                ttl_seconds: Some(600),
-                token_endpoint_url: None,
-                chat_endpoint_url: None,
-            })
+        let start = dispatch
+            .start_session(
+                "openai-compatible",
+                ProviderOAuthStartSessionRequest {
+                    mode: ProviderOAuthAuthMode::DeviceCode,
+                    ttl_seconds: Some(600),
+                    token_endpoint_url: None,
+                    chat_endpoint_url: None,
+                },
+            )
             .await
             .unwrap();
         let pending_response = start.status.to_response();
@@ -1635,18 +1730,24 @@ mod tests {
             crate::provider_auth::session_registry::ProviderAuthPendingMode::Device
         );
 
-        assert!(adapter
-            .callback_state_pending(ProviderOAuthCallbackStateRequest {
-                state: "mock-device-state".to_string(),
-            })
+        assert!(dispatch
+            .callback_state_pending(
+                "openai-compatible",
+                ProviderOAuthCallbackStateRequest {
+                    state: "mock-device-state".to_string(),
+                },
+            )
             .await
             .unwrap());
-        let connected = adapter
-            .exchange_code(ProviderOAuthExchangeCodeRequest {
-                session_id: "mock-device-session".to_string(),
-                state: "mock-device-state".to_string(),
-                code: "device-approved-code".to_string(),
-            })
+        let connected = dispatch
+            .exchange_code(
+                "openai-compatible",
+                ProviderOAuthExchangeCodeRequest {
+                    session_id: "mock-device-session".to_string(),
+                    state: "mock-device-state".to_string(),
+                    code: "device-approved-code".to_string(),
+                },
+            )
             .await
             .unwrap()
             .to_response();

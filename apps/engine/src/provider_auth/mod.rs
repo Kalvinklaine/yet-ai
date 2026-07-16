@@ -74,7 +74,7 @@ pub use types::{
 };
 
 use adapters::openai_codex::OpenAiCodexOAuthAdapter;
-use adapters::ProviderOAuthAdapter;
+use adapters::ProviderOAuthAdapterDispatch;
 use session_registry::{
     ProviderAuthPendingMode, ProviderAuthPendingRetention, ProviderAuthPendingSession,
 };
@@ -93,13 +93,22 @@ fn openai_codex_adapter(config_dir: &Path) -> OpenAiCodexOAuthAdapter {
     OpenAiCodexOAuthAdapter::new(config_dir, "openai")
 }
 
+fn openai_codex_dispatch(adapter: &OpenAiCodexOAuthAdapter) -> ProviderOAuthAdapterDispatch<'_> {
+    ProviderOAuthAdapterDispatch::single(adapter)
+}
+
 pub async fn status(
     config_dir: &Path,
     provider: &str,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let provider = normalize_supported_provider(provider)?;
     if provider == "openai" {
-        if let Some(response) = openai_codex_adapter(config_dir).status_response().await? {
+        let adapter = openai_codex_adapter(config_dir);
+        let response = openai_codex_dispatch(&adapter)
+            .status(provider)
+            .await
+            .map(|status| status.to_response())?;
+        if response.status != "login_unavailable" || response.configured {
             return Ok(response);
         }
     }
@@ -144,13 +153,17 @@ pub async fn start(
         return Ok(mock_pending_response(provider, &session, Some(true)));
     }
     if request.experimental_codex_like && provider == "openai" {
-        return openai_codex_adapter(config_dir)
-            .start_session(adapters::ProviderOAuthStartSessionRequest {
-                mode: adapters::ProviderOAuthAuthMode::BrowserPkce,
-                ttl_seconds: request.ttl_seconds,
-                token_endpoint_url: request.token_endpoint_url,
-                chat_endpoint_url: request.chat_endpoint_url,
-            })
+        let adapter = openai_codex_adapter(config_dir);
+        return openai_codex_dispatch(&adapter)
+            .start_session(
+                provider,
+                adapters::ProviderOAuthStartSessionRequest {
+                    mode: adapters::ProviderOAuthAuthMode::BrowserPkce,
+                    ttl_seconds: request.ttl_seconds,
+                    token_endpoint_url: request.token_endpoint_url,
+                    chat_endpoint_url: request.chat_endpoint_url,
+                },
+            )
             .await
             .map(|session| session.status.to_response())
             .map_err(Into::into);
@@ -204,17 +217,19 @@ pub async fn exchange(
     let state_value = required_value(request.state, PROVIDER_AUTH_STATE_MAX_CHARS)?;
     let code = required_value(request.code, PROVIDER_AUTH_CODE_MAX_CHARS)?;
     if provider == "openai" && !code.starts_with("mock-code-") {
-        return ProviderOAuthAdapter::exchange_code(
-            &openai_codex_adapter(config_dir),
-            adapters::ProviderOAuthExchangeCodeRequest {
-                session_id,
-                state: state_value,
-                code,
-            },
-        )
-        .await
-        .map(|status| status.to_response())
-        .map_err(Into::into);
+        let adapter = openai_codex_adapter(config_dir);
+        return openai_codex_dispatch(&adapter)
+            .exchange_code(
+                provider,
+                adapters::ProviderOAuthExchangeCodeRequest {
+                    session_id,
+                    state: state_value,
+                    code,
+                },
+            )
+            .await
+            .map(|status| status.to_response())
+            .map_err(Into::into);
     }
     if !code.starts_with("mock-code-") {
         return Err(ProviderAuthError::InvalidRequest);
@@ -521,28 +536,32 @@ pub(crate) async fn codex_callback_exchange(
     state_value: String,
     code: String,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
-    ProviderOAuthAdapter::callback_exchange(
-        &openai_codex_adapter(config_dir),
-        adapters::ProviderOAuthCallbackExchangeRequest {
-            state: state_value,
-            code,
-        },
-    )
-    .await
-    .map(|status| status.to_response())
-    .map_err(Into::into)
+    let adapter = openai_codex_adapter(config_dir);
+    openai_codex_dispatch(&adapter)
+        .callback_exchange(
+            "openai",
+            adapters::ProviderOAuthCallbackExchangeRequest {
+                state: state_value,
+                code,
+            },
+        )
+        .await
+        .map(|status| status.to_response())
+        .map_err(Into::into)
 }
 
 pub(crate) async fn codex_callback_error(
     config_dir: &Path,
     state_value: String,
 ) -> Result<(), ProviderAuthError> {
-    ProviderOAuthAdapter::callback_error(
-        &openai_codex_adapter(config_dir),
-        adapters::ProviderOAuthCallbackErrorRequest { state: state_value },
-    )
-    .await
-    .map_err(Into::into)
+    let adapter = openai_codex_adapter(config_dir);
+    openai_codex_dispatch(&adapter)
+        .callback_error(
+            "openai",
+            adapters::ProviderOAuthCallbackErrorRequest { state: state_value },
+        )
+        .await
+        .map_err(Into::into)
 }
 
 pub(super) async fn codex_callback_error_impl(
@@ -1181,7 +1200,9 @@ async fn codex_connected_status(
 pub async fn experimental_codex_chat_auth(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    ProviderOAuthAdapter::chat_auth_snapshot(&openai_codex_adapter(config_dir))
+    let adapter = openai_codex_adapter(config_dir);
+    openai_codex_dispatch(&adapter)
+        .chat_auth_snapshot("openai")
         .await
         .map(|snapshot| {
             snapshot.map(|snapshot| ExperimentalCodexChatAuth {
@@ -1235,47 +1256,51 @@ pub async fn refresh_experimental_codex_chat_auth_after_rejection(
     config_dir: &Path,
     rejected_access_token: &str,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    ProviderOAuthAdapter::refresh(
-        &openai_codex_adapter(config_dir),
-        adapters::ProviderOAuthRefreshRequest {
-            rejected_access_token: Some(rejected_access_token.to_string()),
-        },
-    )
-    .await
-    .map(|outcome| {
-        outcome
-            .chat_auth_snapshot
-            .map(|snapshot| ExperimentalCodexChatAuth {
-                access_token: snapshot.access_token,
-                chatgpt_account_id: snapshot.account_id,
-                base_url: snapshot.base_url,
-                model: snapshot.model,
-            })
-    })
-    .map_err(Into::into)
+    let adapter = openai_codex_adapter(config_dir);
+    openai_codex_dispatch(&adapter)
+        .refresh(
+            "openai",
+            adapters::ProviderOAuthRefreshRequest {
+                rejected_access_token: Some(rejected_access_token.to_string()),
+            },
+        )
+        .await
+        .map(|outcome| {
+            outcome
+                .chat_auth_snapshot
+                .map(|snapshot| ExperimentalCodexChatAuth {
+                    access_token: snapshot.access_token,
+                    chatgpt_account_id: snapshot.account_id,
+                    base_url: snapshot.base_url,
+                    model: snapshot.model,
+                })
+        })
+        .map_err(Into::into)
 }
 
 pub async fn refresh_experimental_codex_chat_auth_if_needed(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    ProviderOAuthAdapter::refresh(
-        &openai_codex_adapter(config_dir),
-        adapters::ProviderOAuthRefreshRequest {
-            rejected_access_token: None,
-        },
-    )
-    .await
-    .map(|outcome| {
-        outcome
-            .chat_auth_snapshot
-            .map(|snapshot| ExperimentalCodexChatAuth {
-                access_token: snapshot.access_token,
-                chatgpt_account_id: snapshot.account_id,
-                base_url: snapshot.base_url,
-                model: snapshot.model,
-            })
-    })
-    .map_err(Into::into)
+    let adapter = openai_codex_adapter(config_dir);
+    openai_codex_dispatch(&adapter)
+        .refresh(
+            "openai",
+            adapters::ProviderOAuthRefreshRequest {
+                rejected_access_token: None,
+            },
+        )
+        .await
+        .map(|outcome| {
+            outcome
+                .chat_auth_snapshot
+                .map(|snapshot| ExperimentalCodexChatAuth {
+                    access_token: snapshot.access_token,
+                    chatgpt_account_id: snapshot.account_id,
+                    base_url: snapshot.base_url,
+                    model: snapshot.model,
+                })
+        })
+        .map_err(Into::into)
 }
 
 pub(super) async fn refresh_experimental_codex_chat_auth_impl(
@@ -1783,7 +1808,6 @@ async fn retain_registry_after_exchange_failure(
     registry.retain_after_exchange_failure(session_id, retention, Utc::now())?;
     write_session_registry(config_dir, provider, &registry).await
 }
-
 pub(super) async fn complete_codex_registry_session(
     config_dir: &Path,
     provider: &str,
@@ -1802,14 +1826,16 @@ pub(crate) async fn codex_callback_state_is_pending(
     config_dir: &Path,
     state_value: &str,
 ) -> Result<bool, ProviderAuthError> {
-    ProviderOAuthAdapter::callback_state_pending(
-        &openai_codex_adapter(config_dir),
-        adapters::ProviderOAuthCallbackStateRequest {
-            state: state_value.to_string(),
-        },
-    )
-    .await
-    .map_err(Into::into)
+    let adapter = openai_codex_adapter(config_dir);
+    openai_codex_dispatch(&adapter)
+        .callback_state_pending(
+            "openai",
+            adapters::ProviderOAuthCallbackStateRequest {
+                state: state_value.to_string(),
+            },
+        )
+        .await
+        .map_err(Into::into)
 }
 
 pub(super) async fn codex_callback_state_is_pending_impl(
