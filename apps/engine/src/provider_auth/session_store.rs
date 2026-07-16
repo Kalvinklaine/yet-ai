@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use chrono::Utc;
@@ -31,19 +29,6 @@ pub(super) async fn write_session_registry(
     )
     .await
 }
-
-pub(super) async fn prune_session_registry(
-    config_dir: &Path,
-    provider: &str,
-) -> Result<usize, ProviderAuthError> {
-    let mut registry = read_session_registry(config_dir, provider).await?;
-    let expired = registry.prune_expired(Utc::now())?;
-    if !expired.is_empty() {
-        write_session_registry(config_dir, provider, &registry).await?;
-    }
-    Ok(expired.len())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

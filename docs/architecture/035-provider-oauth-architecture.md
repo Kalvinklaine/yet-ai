@@ -4,6 +4,8 @@ Status: approved architecture direction for future migration work; implementatio
 
 This ADR defines the target Yet AI provider OAuth framework before further code migration. It uses the inspected reference implementation behavior as architectural signal only. No source, assets, public copy, provider identifiers beyond required protocol facts, or storage paths are copied into Yet AI.
 
+Implementation status: the current engine has crossed from ADR-only design into a framework-oriented implementation for the existing provider-auth routes. `provider_auth/mod.rs` remains the compatibility façade for `/v1/provider-auth/...`, request validation, legacy mock-test harness compatibility, hardened local state helpers, and Codex-like token/storage primitives. `provider_auth/adapters/mod.rs` owns the adapter SPI, dispatch selector, sanitized status projection, and the current `openai` Codex-like adapter. `provider_auth/session_registry.rs` and `provider_auth/session_store.rs` own the persisted pending-session registry used by loopback callback state checks and test-only device-flow proof coverage.
+
 Task traceability: LT-1 / G1 requested a reference-shaped provider OAuth ADR; this public tracked document intentionally describes that requirement as a reference-informed Yet AI architecture to satisfy publication hygiene while still comparing against the inspected source patterns.
 
 ## Context
@@ -119,6 +121,38 @@ Additive fields may be introduced only after contract/schema updates and GUI han
 7. Add GUI state rendering for all framework states and recovery copy.
 8. Run mock-only smokes for start/status/exchange/disconnect, refresh/expiry/revocation, callback failure, and no-secret responses.
 9. Only after an official provider-supported flow is approved, enable any production/default account-login adapter through a separate policy decision.
+
+## Current implementation and runbook
+
+Current production-facing provider-auth behavior is intentionally narrower than the target framework:
+
+- Supported provider ids are `openai` and `openai-compatible`. The production/default login path still reports API-key fallback or unavailable status unless the request explicitly opts into test/mock or experimental modes.
+- The `openai` experimental Codex-like path is routed through the adapter dispatch path. It supports browser PKCE/manual-code exchange, loopback callback completion, sanitized status, disconnect cleanup, chat-auth snapshots, and refresh of stored unexpired credentials.
+- The `openai-compatible` device-flow adapter remains test-only proof coverage. It validates the SPI and shared registry shape without making `openai-compatible` a production OAuth provider.
+- Mock OAuth remains a local test harness for compatibility and smoke coverage. It is not a production adapter and cannot coexist with active Codex-like OpenAI pending/secrets state.
+- Adapter internal terminal states `ProviderError`, `ExchangeFailed`, and `StorageError` project to the existing public `error` status until a versioned GUI contract extends the wire vocabulary.
+
+Debug callback/login failures in this order:
+
+1. Confirm the safe/default API-key fallback first: `GET /v1/provider-auth/openai/status` should report `api_key_configured` when an API-key provider exists, or `login_unavailable` when no explicit experimental login is active.
+2. For experimental Codex-like login, `POST /v1/provider-auth/openai/start` must include `{ "experimentalCodexLike": true }`; otherwise the engine must not start a real provider login.
+3. Check whether the loopback listener can bind `127.0.0.1:1455`. A bind failure maps to sanitized callback-unavailable behavior; do not move callback ownership into GUI or IDE code.
+4. Inspect only sanitized state: pending sessions live under the engine provider-auth session registry and Codex-like pending state. Do not paste raw authorization URLs, codes, tokens, callback query strings, or private paths into reports.
+5. If callback receipt succeeds but status stays pending, separate token-exchange failure from storage failure. Retryable exchange failure may preserve the pending session until expiry; session mismatch, expiry, callback error, and successful exchange remove the mapping.
+6. If chat fallback fails after connected status, check refresh behavior and model discovery using loopback mocks first. Refresh-token reuse can clear OAuth secrets; API-key provider configuration must remain untouched.
+7. Use `disconnect` to clear OAuth pending state and OAuth secret bundles. It must preserve unrelated API-key provider configs and report sanitized storage errors if cleanup cannot be trusted.
+
+Final cutover verification for provider-auth changes is:
+
+```sh
+cargo test -p yet-lsp provider_auth
+cargo test -p yet-lsp --test runtime
+npm run smoke:local
+npm run check
+cd apps/gui && npm test && npm run typecheck
+```
+
+Use `cargo check -p yet-lsp` before the Rust test commands when doing code changes, because it catches type drift quickly. Use `git diff --check` before handoff for whitespace hygiene.
 
 ## Rollback plan
 

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
@@ -152,26 +150,6 @@ impl ProviderAuthSessionRegistry {
             }
         }
     }
-
-    pub(super) fn prune_expired(
-        &mut self,
-        now: DateTime<Utc>,
-    ) -> Result<Vec<ProviderAuthPendingSession>, ProviderAuthError> {
-        let mut expired = Vec::new();
-        let mut expired_ids = Vec::new();
-        for session in self.sessions.values() {
-            if !session.is_unexpired_at(now)? {
-                expired_ids.push(session.session_id.clone());
-            }
-        }
-        for session_id in expired_ids {
-            if let Some(session) = self.sessions.remove(&session_id) {
-                self.states.remove(&session.state);
-                expired.push(session);
-            }
-        }
-        Ok(expired)
-    }
 }
 
 #[cfg(test)]
@@ -248,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn expired_sessions_are_pruned_on_rehydration_and_explicit_cleanup() {
+    fn expired_sessions_are_pruned_on_rehydration_and_lookup() {
         let now = Utc::now();
         let state = ProviderAuthSessionRegistryState {
             pending: vec![
@@ -256,7 +234,7 @@ mod tests {
                 session("openai", "fresh", "new", 60),
             ],
         };
-        let mut registry = ProviderAuthSessionRegistry::from_state(state, now).unwrap();
+        let registry = ProviderAuthSessionRegistry::from_state(state, now).unwrap();
 
         assert!(registry
             .lookup_by_state("openai", "old", now)
@@ -266,12 +244,8 @@ mod tests {
             .lookup_by_state("openai", "new", now)
             .unwrap()
             .is_some());
-
-        let later = now + chrono::Duration::seconds(120);
-        let expired = registry.prune_expired(later).unwrap();
-        assert_eq!(expired.len(), 1);
         assert!(registry
-            .lookup_by_state("openai", "new", later)
+            .lookup_by_state("openai", "new", now + chrono::Duration::seconds(120))
             .unwrap()
             .is_none());
     }

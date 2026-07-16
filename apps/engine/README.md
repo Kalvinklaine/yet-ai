@@ -68,6 +68,8 @@ A local mock OAuth/PKCE harness exists for tests only. `POST /v1/provider-auth/{
 
 Provider-auth flows remain engine-owned. For safe/default provider use, configure an API key or project key through the local runtime. For any supported account-style flow, including the explicit-risk experimental Codex-like path, the engine owns the sensitive state:
 
+The current provider-auth framework is adapter-oriented even though the public route envelope remains the existing `/v1/provider-auth/{provider}/...` compatibility API. `provider_auth/mod.rs` coordinates provider validation, request validation, API-key fallback checks, mock-test compatibility, and hardened local state helpers; provider-specific login work is dispatched through `provider_auth/adapters/mod.rs`. The current production-visible adapter is the explicit-risk `openai` Codex-like adapter. The adapter SPI declares provider id, display label, auth modes, policy gates, sanitized status projection, browser callback hooks, refresh, disconnect, and chat-auth snapshot support. A shared session registry stores pending session id/state/mode/expiry/callback-owner metadata for callback validation and retry/terminal cleanup. The test-only device-flow proof uses the same adapter dispatch and registry shape without enabling production `openai-compatible` OAuth login.
+
 - start browser/device login and hold pending PKCE/session state locally;
 - store pending provider-auth state in hardened local engine storage with provider id validation, path confinement, private permissions where supported, symlink rejection, atomic replacement, and sanitized corrupt-state handling;
 - receive loopback callback or exchange/polling requests;
@@ -106,6 +108,15 @@ npm run smoke:gui-agent-progress
 ```
 
 `npm run smoke:local` is a local-only cross-subsystem smoke test. It starts the engine on a free loopback port through Cargo, starts mock OpenAI-compatible, experimental token, and experimental chat endpoints, configures a fake provider key, sends chat commands, reads SSE streams, checks provider Authorization internally, verifies local chat history persistence/snapshot hydration/delete behavior, exercises provider-auth default status plus the local mock OAuth start/exchange/status/disconnect flow, and covers the approved experimental Codex-like start, engine-owned `localhost:1455/auth/callback` capture, manual exchange fallback, and chat fallback through loopback mocks only. It asserts fake API keys, OAuth access tokens, refresh tokens, Authorization headers, cookies, PKCE verifier values, mock auth codes, Codex credential-file paths, raw callback query markers, callback state/code values, and local history responses/events do not expose client-visible secrets. It requires Cargo on `PATH` and does not require real provider credentials, external network access, or hosted Yet AI services. Real experimental OpenAI/ChatGPT account testing remains manual, high-risk, and outside CI; the API-key fallback remains the safe/default real-provider path.
+
+Provider-auth cutover/debug runbook:
+
+1. Run `cargo check -p yet-lsp` after provider-auth code edits.
+2. Run `cargo test -p yet-lsp provider_auth` for adapter, registry, callback, refresh, storage, and no-secret regressions.
+3. Run `cargo test -p yet-lsp --test runtime` for route/runtime integration coverage.
+4. Run `npm run smoke:local` for loopback callback, mock provider-auth lifecycle, manual exchange fallback, and chat fallback evidence.
+5. Run `npm run check` and `cd apps/gui && npm test && npm run typecheck` before handoff when GUI/docs contracts are touched.
+6. For login failures, first verify API-key fallback status, then confirm experimental start was explicitly requested, then check fixed loopback callback ownership on `localhost:1455`, pending session registry state, token endpoint result category, and secret-store cleanup/refresh behavior. Keep reports sanitized: no raw callback URL with code/state, authorization header, token, cookie, PKCE verifier, provider body, account id, or private path.
 
 `npm run smoke:provider-errors` is the focused loopback smoke for provider chat error taxonomy. It exercises unauthorized, rate-limit/quota, context-window, invalid-request, upstream, malformed stream, and OpenAI-style stream error-frame paths with fake local providers, then checks stable SSE error codes/messages, sanitized persisted chat history, and no raw fake keys, provider bodies, bearer strings, cookies, request-body markers, auth codes, or private paths in client-visible output. Run it when changing provider failure classification, chat SSE error handling, GUI-facing error messages, or persisted error history.
 
