@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
 import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
+import { getProviderAuthStatus } from "./services/providerAuthClient";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 import { GUI_BRIDGE_VERSION } from "./bridge/bridgeAdapter";
 import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
@@ -2317,6 +2318,93 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain(copy);
     expect(container?.textContent).toContain(recoveryCopy);
     expect(container?.textContent).toContain("Login/chat only. No workspace execution.");
+  });
+
+  it.each(["provider_error", "exchange_failed", "storage_error"])("normalizes legacy terminal provider auth status %s to safe error UI", async (legacyStatus) => {
+    mockRuntimeResponses({
+      authResponse: {
+        ...providerAuthResponse("error"),
+        status: legacyStatus as ProviderAuthStatus,
+        lastError: "Legacy terminal status failed safely.",
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    const state = container?.querySelector<HTMLElement>("[data-testid='provider-auth-state']");
+    expect(state?.dataset.providerAuthStatus).toBe("error");
+    expect(container?.textContent).toContain("Provider login needs attention");
+    expect(container?.textContent).toContain("Provider account login reported a sanitized error.");
+    expect(container?.textContent).toContain("Sanitized login error: Legacy terminal status failed safely.");
+    expect(container?.textContent).not.toContain(legacyStatus);
+  });
+
+  it("normalizes legacy terminal provider auth statuses at the client boundary", async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      if (String(input).endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse({
+          ...providerAuthResponse("error"),
+          status: "exchange_failed",
+          lastError: "Exchange failed with sanitized detail.",
+        }));
+      }
+      return Promise.resolve(jsonResponse({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await getProviderAuthStatus({ baseUrl: "http://127.0.0.1:8001", token: "", runtimeAccess: "direct" }, "openai");
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.status).toBe("error");
+      expect(result.data.lastError).toBe("Exchange failed with sanitized detail.");
+    }
+  });
+
+  it("covers device pending verification URL polling without manual authorization-code UI", async () => {
+    vi.useFakeTimers();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    let statusResponse: ProviderAuthResponse = {
+      ...pendingExperimentalAuthResponse(),
+      authSource: "device",
+      authorizationUrl: undefined,
+      verificationUrl: "https://device.example.test/activate",
+      sessionId: "device-session-001",
+      pollIntervalSeconds: 1,
+      message: "Device verification is pending.",
+    };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(statusResponse));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: statusResponse });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Device verification is pending.");
+    expect(container?.textContent).toContain("Browser or device verification is pending.");
+    expect(container?.textContent).toContain("Suggested refresh interval: 1 seconds");
+    expect(container?.textContent).not.toContain("Manual authorization-code exchange");
+    expect(authCodeInputOptional()).toBeUndefined();
+    expect(browserStorageDump()).not.toContain("device-session-001");
+
+    const statusCallsBeforePoll = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+    statusResponse = connectedExperimentalAuthResponse();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length).toBeGreaterThan(statusCallsBeforePoll);
+    expect(container?.textContent).toContain("Provider account connected");
+    expect(container?.textContent).not.toContain("Manual authorization-code exchange");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("device-session-001");
   });
 
   it("enables disconnect for connected account login", async () => {

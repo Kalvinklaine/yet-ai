@@ -329,11 +329,11 @@
           "type": "string"
         },
         {
-          "pattern": "[Aa][Cc][Cc][Ee][Ss][Ss][_-]?[Tt][Oo][Kk][Ee][Nn]",
+          "pattern": "[Aa][Cc][Cc][Ee][Ss][Ss][\\s_-]?[Tt][Oo][Kk][Ee][Nn]",
           "type": "string"
         },
         {
-          "pattern": "[Rr][Ee][Ff][Rr][Ee][Ss][Hh][_-]?[Tt][Oo][Kk][Ee][Nn]",
+          "pattern": "[Rr][Ee][Ff][Rr][Ee][Ss][Hh][\\s_-]?[Tt][Oo][Kk][Ee][Nn]",
           "type": "string"
         },
         {

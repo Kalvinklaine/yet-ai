@@ -217,22 +217,15 @@ fn callback_error_should_forget_mapping(
 async fn registered_config_dir_for_state(
     state_value: &str,
 ) -> Result<Option<PathBuf>, provider_auth::ProviderAuthError> {
-    if let Some(config_dir) = CALLBACK_STATE
-        .lock()
-        .map_err(|_| provider_auth::ProviderAuthError::Storage)?
-        .pending_states
-        .get(state_value)
-        .cloned()
-    {
-        return Ok(Some(config_dir));
-    }
-    let config_dirs = CALLBACK_STATE
-        .lock()
-        .map_err(|_| provider_auth::ProviderAuthError::Storage)?
-        .known_config_dirs
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>();
+    let (cached_config_dir, config_dirs) = {
+        let state = CALLBACK_STATE
+            .lock()
+            .map_err(|_| provider_auth::ProviderAuthError::Storage)?;
+        (
+            state.pending_states.get(state_value).cloned(),
+            state.known_config_dirs.iter().cloned().collect::<Vec<_>>(),
+        )
+    };
     let mut matched = None;
     for config_dir in config_dirs {
         if provider_auth::codex_callback_state_is_pending(&config_dir, state_value).await? {
@@ -247,7 +240,7 @@ async fn registered_config_dir_for_state(
             .map_err(|_| provider_auth::ProviderAuthError::CallbackUnavailable)?;
         return Ok(Some(config_dir));
     }
-    Ok(None)
+    Ok(cached_config_dir)
 }
 
 #[cfg(test)]
@@ -615,6 +608,44 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(text, CALLBACK_FAILURE_TEXT);
         assert!(directly_registered_config_dir_for_test(&duplicate_state).is_none());
+    }
+
+    #[tokio::test]
+    async fn cached_callback_mapping_fails_closed_when_another_config_dir_matches_state() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_registered_states_for_test();
+        let first = callback_test_dir("cached-duplicate-first");
+        let second = callback_test_dir("cached-duplicate-second");
+        let first_start =
+            start_codex_pending(&first, &codex_token_endpoint(StatusCode::OK).await).await;
+        let duplicate_state =
+            reqwest::Url::parse(first_start.authorization_url.as_deref().unwrap())
+                .unwrap()
+                .query_pairs()
+                .find(|(key, _)| key == "state")
+                .unwrap()
+                .1
+                .into_owned();
+        let second_start =
+            start_codex_pending(&second, &codex_token_endpoint(StatusCode::OK).await).await;
+        let second_state = reqwest::Url::parse(second_start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        rewrite_registry_state(&second, &second_state, &duplicate_state);
+        register_pending_state(&duplicate_state, &first).unwrap();
+
+        let (status, text) = callback_response("GET", &callback_query(&duplicate_state)).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert_eq!(
+            directly_registered_config_dir_for_test(&duplicate_state),
+            Some(first)
+        );
     }
 
     #[tokio::test]

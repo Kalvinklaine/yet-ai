@@ -1,0 +1,10 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "error",
+  "authSource": "none",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "cloudRequired": false,
+  "lastError": "access token was rejected upstream"
+}

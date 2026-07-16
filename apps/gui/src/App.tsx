@@ -2045,7 +2045,7 @@ export function App() {
       window.clearTimeout(providerAuthPollTimerRef.current);
       providerAuthPollTimerRef.current = null;
     }
-    if (activeProviderAuthStatus?.status !== "pending" || activeProviderAuthStatus.authSource !== "oauth") {
+    if (activeProviderAuthStatus?.status !== "pending" || !isProviderAuthPollingSource(activeProviderAuthStatus.authSource)) {
       return;
     }
     const targetSettings = settingsRef.current;
@@ -6667,6 +6667,10 @@ function normalizeProviderAuthPollIntervalSeconds(value: number | undefined): nu
     return providerAuthPendingPollFallbackSeconds;
   }
   return Math.min(providerAuthPendingPollMaxSeconds, Math.max(providerAuthPendingPollMinSeconds, value));
+}
+
+function isProviderAuthPollingSource(source: ProviderAuthResponse["authSource"]): boolean {
+  return source === "oauth" || source === "device" || source === "browser";
 }
 
 function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: string; error?: string } {

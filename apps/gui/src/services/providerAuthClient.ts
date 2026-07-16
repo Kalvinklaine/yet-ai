@@ -11,6 +11,10 @@ export type ProviderAuthStatus =
   | "revoked"
   | "error";
 
+type LegacyProviderAuthStatus = "provider_error" | "exchange_failed" | "storage_error";
+
+type RawProviderAuthStatus = ProviderAuthStatus | LegacyProviderAuthStatus;
+
 export type ProviderAuthSource = "none" | "api_key" | "oauth" | "device" | "browser";
 
 export type ProviderAuthResponse = {
@@ -51,13 +55,48 @@ export type ProviderAuthDisconnectResponse = ProviderAuthResponse & {
   success: boolean;
 };
 
+type RawProviderAuthResponse = Omit<ProviderAuthResponse, "status"> & {
+  status: RawProviderAuthStatus;
+};
+
+type RawProviderAuthStartResponse = RawProviderAuthResponse & {
+  success: boolean;
+};
+
+type RawProviderAuthExchangeResponse = RawProviderAuthResponse & {
+  success: boolean;
+};
+
+type RawProviderAuthDisconnectResponse = RawProviderAuthResponse & {
+  success: boolean;
+};
+
+function normalizeProviderAuthStatus(status: RawProviderAuthStatus): ProviderAuthStatus {
+  if (status === "provider_error" || status === "exchange_failed" || status === "storage_error") {
+    return "error";
+  }
+  return status;
+}
+
+function normalizeProviderAuthResponse<T extends RawProviderAuthResponse>(response: T): Omit<T, "status"> & { status: ProviderAuthStatus } {
+  return { ...response, status: normalizeProviderAuthStatus(response.status) };
+}
+
+async function normalizeProviderAuthResult<T extends RawProviderAuthResponse>(result: Promise<RuntimeResult<T>>): Promise<RuntimeResult<Omit<T, "status"> & { status: ProviderAuthStatus }>> {
+  const response = await result;
+  if (!response.ok) {
+    return response;
+  }
+  return { ok: true, data: normalizeProviderAuthResponse(response.data) };
+}
+
 export function getProviderAuthStatus(
   settings: RuntimeSettings,
   provider: string,
   sessionId?: string,
 ): Promise<RuntimeResult<ProviderAuthResponse>> {
   const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
-  return runtimeFetch<ProviderAuthResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/status${query}`);
+  return normalizeProviderAuthResult(runtimeFetch<RawProviderAuthResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/status${query}`));
 }
 
 export function startProviderAuth(
@@ -65,10 +104,10 @@ export function startProviderAuth(
   provider: string,
   request: ProviderAuthStartRequest = {},
 ): Promise<RuntimeResult<ProviderAuthStartResponse>> {
-  return runtimeFetch<ProviderAuthStartResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/start`, {
+  return normalizeProviderAuthResult(runtimeFetch<RawProviderAuthStartResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/start`, {
     method: "POST",
     body: JSON.stringify(request),
-  });
+  }));
 }
 
 export function exchangeProviderAuth(
@@ -78,18 +117,18 @@ export function exchangeProviderAuth(
   code?: string,
   state?: string,
 ): Promise<RuntimeResult<ProviderAuthExchangeResponse>> {
-  return runtimeFetch<ProviderAuthExchangeResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/exchange`, {
+  return normalizeProviderAuthResult(runtimeFetch<RawProviderAuthExchangeResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/exchange`, {
     method: "POST",
     body: JSON.stringify({ sessionId, code, state }),
-  });
+  }));
 }
 
 export function disconnectProviderAuth(
   settings: RuntimeSettings,
   provider: string,
 ): Promise<RuntimeResult<ProviderAuthDisconnectResponse>> {
-  return runtimeFetch<ProviderAuthDisconnectResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/disconnect`, {
+  return normalizeProviderAuthResult(runtimeFetch<RawProviderAuthDisconnectResponse>(settings, `/v1/provider-auth/${encodeURIComponent(provider)}/disconnect`, {
     method: "POST",
     body: JSON.stringify({}),
-  });
+  }));
 }
