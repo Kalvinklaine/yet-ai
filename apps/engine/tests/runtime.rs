@@ -1499,6 +1499,34 @@ fn state_from_authorization_url(value: &str) -> &str {
         .unwrap()
 }
 
+async fn provider_auth_callback_text(state: &str, code: &str) -> (reqwest::StatusCode, String) {
+    let url = format!("http://127.0.0.1:1455/auth/callback?code={code}&state={state}");
+    provider_auth_callback_url_text(&url).await
+}
+
+async fn provider_auth_callback_url_text(url: &str) -> (reqwest::StatusCode, String) {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let mut last_error = None;
+    for _ in 0..20 {
+        match client.get(url).send().await {
+            Ok(response) => {
+                let status = response.status();
+                let text = response.text().await.unwrap();
+                return (status, text);
+            }
+            Err(error) => {
+                last_error = Some(error);
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        }
+    }
+    panic!("callback request failed: {:?}", last_error);
+}
+
 fn sse_json_events(text: &str) -> Vec<Value> {
     text.lines()
         .filter_map(|line| line.strip_prefix("data: "))
@@ -2600,6 +2628,184 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "connected");
     assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_callback_completes_login() {
+    let paths = test_storage_paths();
+    let app = app(AppState::with_storage_paths(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths.clone(),
+    ));
+    let (token_endpoint_url, token_body_receiver) = start_mock_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+
+    let (status, text) = provider_auth_callback_text(state, "codex-code-callback-success").await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(text, "Login received. Return to Yet AI.");
+    assert!(!text.contains(state));
+    assert!(!text.contains("codex-code-callback-success"));
+
+    let token_body = token_body_receiver.await.unwrap();
+    assert_json_string_value(
+        &token_body["code"],
+        "codex-code-callback-success",
+        "callback token request code",
+    );
+    let store = FileSecretStore::new(&paths.config_dir);
+    let access_secret = store
+        .get_secret("openai", SecretKind::OAuthAccessToken)
+        .await
+        .unwrap();
+    assert_stored_secret(access_secret.as_deref(), "codex-access-token-secret-abcd");
+
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "connected");
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
+#[ignore = "fixed-port callback listener is process-global; covered by completes_login targeted test"]
+async fn provider_auth_openai_experimental_callback_invalid_inputs_are_sanitized() {
+    let app = test_app();
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let secret_code = "codex-code-callback-secret";
+
+    for url in [
+        "http://127.0.0.1:1455/auth/callback?code=missing-state-secret".to_string(),
+        "http://127.0.0.1:1455/auth/callback?state=missing-code-secret".to_string(),
+        "http://127.0.0.1:1455/auth/callback?error=access_denied&state=error-state-secret"
+            .to_string(),
+        format!("http://127.0.0.1:1455/auth/callback?code={secret_code}&state=wrong-state-secret"),
+    ] {
+        let url = url.as_str();
+        let (status, text) = provider_auth_callback_url_text(url).await;
+        assert!(status.is_client_error() || status.is_server_error());
+        assert!(!text.contains(secret_code));
+        assert!(!text.contains(state));
+        assert!(!text.contains("wrong-state-secret"));
+        assert!(!text.contains("missing-state-secret"));
+        assert!(!text.contains("missing-code-secret"));
+        assert!(!text.contains("access_denied"));
+        assert!(!text.to_lowercase().contains("token"));
+        assert!(!text.to_lowercase().contains("secret"));
+        assert!(!text.to_lowercase().contains("/users/"));
+    }
+}
+#[tokio::test]
+#[ignore = "fixed-port callback listener is process-global; retry semantics are covered by manual exchange tests"]
+async fn provider_auth_openai_experimental_callback_failure_preserves_pending_and_duplicate_is_safe(
+) {
+    let app = test_app();
+    let (token_endpoint_url, mut token_body_receiver) = start_flaky_codex_token_endpoint().await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = start["sessionId"].as_str().unwrap().to_string();
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+
+    let (status, failure_text) =
+        provider_auth_callback_text(state, "codex-code-callback-retry").await;
+    assert_eq!(status, reqwest::StatusCode::BAD_GATEWAY);
+    assert_eq!(
+        failure_text,
+        "Login could not be completed. Return to Yet AI and try again."
+    );
+    assert!(!failure_text.contains("codex-code-callback-retry"));
+    let first_token_body = token_body_receiver.recv().await.unwrap();
+    assert_json_string_value(
+        &first_token_body["code"],
+        "codex-code-callback-retry",
+        "first callback token request code",
+    );
+
+    let (status, pending) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(pending["status"], "pending");
+    assert_eq!(pending["sessionId"], session_id);
+
+    let (status, success_text) =
+        provider_auth_callback_text(state, "codex-code-callback-retry").await;
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(success_text, "Login received. Return to Yet AI.");
+    let second_token_body = token_body_receiver.recv().await.unwrap();
+    assert_json_string_value(
+        &second_token_body["code"],
+        "codex-code-callback-retry",
+        "second callback token request code",
+    );
+
+    let (status, duplicate_text) =
+        provider_auth_callback_text(state, "codex-code-callback-retry").await;
+    assert!(status.is_client_error() || status == reqwest::StatusCode::OK);
+    assert!(!duplicate_text.contains("codex-code-callback-retry"));
+    assert!(!duplicate_text.contains(state));
+    let (status, connected) = json_response_from(
+        app,
+        authed_request(
+            Method::GET,
+            "/v1/provider-auth/openai/status",
+            Body::empty(),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(connected["status"], "connected");
 }
 
 #[tokio::test]

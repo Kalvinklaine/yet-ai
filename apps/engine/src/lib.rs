@@ -8,6 +8,7 @@ pub mod logging;
 pub mod lsp;
 pub mod project_memory;
 pub mod provider_auth;
+pub mod provider_auth_callback;
 pub mod providers;
 pub mod secret_store;
 pub mod security;
