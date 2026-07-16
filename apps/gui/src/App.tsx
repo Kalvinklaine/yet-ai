@@ -72,6 +72,9 @@ import type { AgentRunInput } from "./services/agentRunState";
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
 const preHostRuntimeRefreshRetryCooldownMs = 1500;
+const providerAuthPendingPollFallbackSeconds = 3;
+const providerAuthPendingPollMinSeconds = 1;
+const providerAuthPendingPollMaxSeconds = 30;
 
 type InitialRuntimeConfig = {
   runtimeAccess?: "same_origin_proxy";
@@ -132,7 +135,7 @@ const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
   api_key_configured: "OpenAI API-key fallback is configured as safe/default. Codex dogfood remains discoverable.",
   login_available: "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.",
   login_unavailable: "Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.",
-  pending: "Experimental OpenAI account login is pending. Finish the browser/device step, then exchange the code or refresh status; use API-key fallback for the default path.",
+  pending: "Experimental OpenAI account login is pending. Finish the browser step; the local callback should update this page automatically. Paste a code only if the callback did not complete, or use API-key fallback for the default path.",
   connected: "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.",
   expired: "Experimental OpenAI account login expired. Reconnect only if you accept the risk, or use the API-key fallback.",
   revoked: "Experimental OpenAI account login was revoked or disconnected. Reconnect only if you accept the risk, or use the API-key fallback.",
@@ -480,6 +483,7 @@ export function App() {
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
   const providerAuthExchangeInFlightRef = useRef(false);
+  const providerAuthPollTimerRef = useRef<number | null>(null);
   const chatHistoryAttemptRef = useRef(0);
   const [providerAuthMutation, setProviderAuthMutation] = useState<"start" | "exchange" | "disconnect" | null>(null);
   const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
@@ -1999,6 +2003,29 @@ export function App() {
       setProviderAuthDataRevision(revision);
     }
   }, [isCurrentRefresh]);
+
+  useEffect(() => {
+    if (providerAuthPollTimerRef.current !== null) {
+      window.clearTimeout(providerAuthPollTimerRef.current);
+      providerAuthPollTimerRef.current = null;
+    }
+    if (activeProviderAuthStatus?.status !== "pending" || activeProviderAuthStatus.authSource !== "oauth") {
+      return;
+    }
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    const delaySeconds = normalizeProviderAuthPollIntervalSeconds(activeProviderAuthStatus.pollIntervalSeconds);
+    providerAuthPollTimerRef.current = window.setTimeout(() => {
+      providerAuthPollTimerRef.current = null;
+      void refreshProviderAuthStatus(targetSettings, targetRevision);
+    }, delaySeconds * 1000);
+    return () => {
+      if (providerAuthPollTimerRef.current !== null) {
+        window.clearTimeout(providerAuthPollTimerRef.current);
+        providerAuthPollTimerRef.current = null;
+      }
+    };
+  }, [activeProviderAuthStatus?.authSource, activeProviderAuthStatus?.pollIntervalSeconds, activeProviderAuthStatus?.sessionId, activeProviderAuthStatus?.status, refreshProviderAuthStatus, settingsRevision]);
 
   useEffect(() => {
     if (activeProviderAuthStatus?.status === "pending") {
@@ -6434,7 +6461,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       {status.status === "pending" && status.authSource === "oauth" && status.sessionId && (
         <form className="manual-exchange-card stack" onSubmit={onExchange}>
           <strong>Manual authorization-code exchange</strong>
-          <span className="subtle">Finish the browser step before the pending session expires. If the browser redirect is not captured, paste only the authorization code here. The code is sent once to the local runtime and then cleared.</span>
+          <span className="subtle">Finish the browser step before the pending session expires. The browser callback is captured locally by the runtime and this page checks status automatically. Paste only the authorization code here if the callback did not complete. The code is sent once to the local runtime and then cleared.</span>
           <span className="subtle">Session is tracked locally by the runtime and hidden here; refresh status, reconnect, cancel, or disconnect if the browser step stalls.</span>
           {pendingState.error && <div className="error">{pendingState.error}</div>}
           {exchangeError && <div className="error">{sanitizeDisplayText(exchangeError)}</div>}
@@ -6596,6 +6623,13 @@ function isSafeProviderAuthExchangeValue(value: string, maxLength: number): bool
     lowered.includes("\\users\\") ||
     lowered.includes("openai_api_key")
   );
+}
+
+function normalizeProviderAuthPollIntervalSeconds(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return providerAuthPendingPollFallbackSeconds;
+  }
+  return Math.min(providerAuthPendingPollMaxSeconds, Math.max(providerAuthPendingPollMinSeconds, value));
 }
 
 function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: string; error?: string } {

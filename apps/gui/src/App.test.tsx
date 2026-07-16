@@ -34,6 +34,7 @@ let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
 afterEach(() => {
+  vi.useRealTimers();
   if (root) {
     act(() => root?.unmount());
   }
@@ -2301,7 +2302,7 @@ describe("provider secret boundary", () => {
     ["login_available", "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.", "Account login is available only as an explicit experimental path."],
     ["login_unavailable", "Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.", "Production login unavailable. Use API-key fallback, Demo Mode, or GPT/Codex dogfood"],
     ["api_key_configured", "OpenAI API-key fallback is configured as safe/default. Codex dogfood remains discoverable.", "The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login."],
-    ["pending", "Experimental OpenAI account login is pending. Finish the browser/device step, then exchange the code or refresh status; use API-key fallback for the default path.", "Complete browser verification, paste only the authorization code if needed"],
+    ["pending", "Experimental OpenAI account login is pending. Finish the browser step; the local callback should update this page automatically. Paste a code only if the callback did not complete, or use API-key fallback for the default path.", "Complete browser verification, paste only the authorization code if needed"],
     ["connected", "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.", "API-key providers and Demo Mode still take precedence for chat when ready"],
     ["expired", "Experimental OpenAI account login expired. Reconnect only if you accept the risk, or use the API-key fallback.", "The session can no longer power chat."],
     ["revoked", "Experimental OpenAI account login was revoked or disconnected. Reconnect only if you accept the risk, or use the API-key fallback.", "The runtime reports the account path as revoked or disconnected."],
@@ -2518,6 +2519,156 @@ describe("provider secret boundary", () => {
     expect(text).not.toContain(code);
     expect(localSetItem).not.toHaveBeenCalled();
     expect(browserStorageDump()).not.toContain(code);
+  });
+
+  it("pending oauth starts polling login status and uses the response interval", async () => {
+    vi.useFakeTimers();
+    let statusResponse: ProviderAuthResponse = { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(statusResponse));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: statusResponse });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    const statusCallsBeforePoll = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+    expect(container?.textContent).toContain("Experimental OpenAI account login is pending");
+
+    await act(async () => {
+      vi.advanceTimersByTime(999);
+      await Promise.resolve();
+    });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(statusCallsBeforePoll);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length).toBeGreaterThan(statusCallsBeforePoll);
+  });
+
+  it("pending oauth poll result updates connected UI automatically", async () => {
+    vi.useFakeTimers();
+    let statusResponse: ProviderAuthResponse = { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(statusResponse));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: statusResponse });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Manual authorization-code exchange");
+    statusResponse = connectedExperimentalAuthResponse();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("OpenAI account connected");
+    expect(container?.textContent).toContain("Experimental OpenAI account login is connected through the local runtime");
+    expect(container?.textContent).not.toContain("Manual authorization-code exchange");
+  });
+
+  it("polling stops after terminal provider auth state", async () => {
+    vi.useFakeTimers();
+    let statusResponse: ProviderAuthResponse = { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 };
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(statusResponse));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: statusResponse });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    statusResponse = connectedExperimentalAuthResponse();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+    const callsAfterConnected = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(callsAfterConnected);
+  });
+
+  it("ignores stale provider auth polling results after runtime settings change", async () => {
+    vi.useFakeTimers();
+    const oldStatus = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8001/v1/provider-auth/openai/status") {
+        return oldStatus.promise;
+      }
+      if (url === "http://127.0.0.1:8765/v1/provider-auth/openai/status") {
+        return Promise.resolve(jsonResponse(providerAuthResponse("login_unavailable")));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
+    });
+    oldStatus.resolve(jsonResponse(connectedExperimentalAuthResponse()));
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("OpenAI account connected");
+    expect(container?.textContent).not.toContain("Experimental OpenAI account fallback / gpt-5-codex");
+    expect(container?.textContent).not.toContain("user@example.test");
+  });
+
+  it("pending callback polling and fallback copy avoid raw callback code token storage leaks", async () => {
+    vi.useFakeTimers();
+    const rawCode = "callback-code-secret";
+    const rawToken = "access_token=" + "c".repeat(64);
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    mockRuntimeResponses({
+      authResponse: {
+        ...pendingExperimentalAuthResponse(),
+        authorizationUrl: `https://auth.openai.com/oauth/authorize?client_id=yet-ai-local&state=codex-state-001&code=${rawCode}&${rawToken}`,
+        message: `Pending browser callback ${rawToken}`,
+        pollIntervalSeconds: 1,
+      },
+    });
+    renderApp();
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("browser callback is captured locally by the runtime");
+    expect(text).toContain("Paste only the authorization code here if the callback did not complete");
+    expect(text).not.toContain(rawCode);
+    expect(text).not.toContain("access_token");
+    expect(text).not.toContain("c".repeat(64));
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain(rawCode);
+    expect(browserStorageDump()).not.toContain("access_token");
   });
 
   it("sanitizes token-like provider auth last errors before display", async () => {
