@@ -111,7 +111,7 @@ async fn accept_loop(listener: TcpListener) {
         let Ok((stream, _)) = listener.accept().await else {
             continue;
         };
-        handle_stream(stream).await;
+        tokio::spawn(handle_stream(stream));
     }
 }
 

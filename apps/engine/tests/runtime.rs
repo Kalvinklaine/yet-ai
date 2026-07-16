@@ -1500,31 +1500,69 @@ fn state_from_authorization_url(value: &str) -> &str {
 }
 
 async fn provider_auth_callback_text(state: &str, code: &str) -> (reqwest::StatusCode, String) {
-    let url = format!("http://localhost:1455/auth/callback?code={code}&state={state}");
-    provider_auth_callback_url_text(&url).await
+    let path = format!("/auth/callback?code={code}&state={state}");
+    provider_auth_callback_path_text(&path).await
+}
+
+async fn provider_auth_callback_path_text(path_and_query: &str) -> (reqwest::StatusCode, String) {
+    let urls = [
+        format!("http://localhost:1455{path_and_query}"),
+        format!("http://127.0.0.1:1455{path_and_query}"),
+        format!("http://[::1]:1455{path_and_query}"),
+    ];
+    provider_auth_callback_urls_text(&urls).await
 }
 
 async fn provider_auth_callback_url_text(url: &str) -> (reqwest::StatusCode, String) {
+    provider_auth_callback_urls_text(&[url.to_string()]).await
+}
+
+async fn provider_auth_callback_urls_text(urls: &[String]) -> (reqwest::StatusCode, String) {
     let client = reqwest::Client::builder()
         .no_proxy()
-        .timeout(std::time::Duration::from_secs(5))
+        .timeout(std::time::Duration::from_millis(750))
         .build()
         .unwrap();
-    let mut last_error = None;
-    for _ in 0..20 {
-        match client.get(url).send().await {
-            Ok(response) => {
-                let status = response.status();
-                let text = response.text().await.unwrap();
-                return (status, text);
-            }
-            Err(error) => {
-                last_error = Some(error);
-                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    let mut errors = Vec::new();
+    for attempt in 0..20 {
+        for url in urls {
+            match client.get(url).send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    let text = response.text().await.unwrap();
+                    return (status, text);
+                }
+                Err(error) => {
+                    let redacted_url = reqwest::Url::parse(url)
+                        .ok()
+                        .map(|parsed| {
+                            format!(
+                                "{}://{}{}",
+                                parsed.scheme(),
+                                parsed.host_str().unwrap_or("<host>"),
+                                parsed
+                                    .port()
+                                    .map(|port| format!(":{port}"))
+                                    .unwrap_or_default()
+                            )
+                        })
+                        .unwrap_or_else(|| "<invalid callback url>".to_string());
+                    errors.push(format!(
+                        "attempt {} {}: timeout={}, connect={}",
+                        attempt + 1,
+                        redacted_url,
+                        error.is_timeout(),
+                        error.is_connect()
+                    ));
+                }
             }
         }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
-    panic!("callback request failed: {:?}", last_error);
+    panic!(
+        "callback request failed after loopback attempts: {}",
+        errors.join(" | ")
+    );
 }
 
 fn sse_json_events(text: &str) -> Vec<Value> {

@@ -920,10 +920,7 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
     failures.push(`Hosted compact OpenAI login smoke expected pending to survive ordinary refresh, got ${String(statusAfterPendingRefresh)}.`);
   }
   providerAuthCompletionReady = true;
-  await openProviderDetailsForAuthControl(providerDetails, providerSummary, refreshLoginButton);
-  await clickControlWithActionability(refreshLoginButton, "Refresh OpenAI login status for completion", { assertHitTest: true });
-  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 })
-    .catch(() => failures.push("Hosted compact OpenAI login smoke did not observe connected state after explicit completion refresh."));
+  await completeProviderAuthByAutoPollOrRefresh(page, frameLocator, providerDetails, providerSummary, refreshLoginButton, "completion");
   const disconnectButton = frameLocator.locator("[data-testid='provider-auth-state']").getByRole("button", { name: "Disconnect login", exact: true }).first();
   await openProviderDetailsForAuthControl(providerDetails, providerSummary, disconnectButton);
   await clickControlWithActionability(disconnectButton, "Disconnect OpenAI login", { assertHitTest: true });
@@ -946,10 +943,20 @@ async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
   if (providerAuthStartCount !== 2) {
     failures.push(`Hosted compact OpenAI login smoke expected two provider-auth start requests after relogin, observed ${providerAuthStartCount}.`);
   }
-  await openProviderDetailsForAuthControl(providerDetails, providerSummary, refreshLoginButton);
-  await clickControlWithActionability(refreshLoginButton, "Refresh OpenAI login status after reconnect", { assertHitTest: true });
-  await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 })
-    .catch(() => failures.push("Hosted compact OpenAI login smoke did not reconnect after explicit completion refresh."));
+  await completeProviderAuthByAutoPollOrRefresh(page, frameLocator, providerDetails, providerSummary, refreshLoginButton, "reconnect");
+}
+
+async function completeProviderAuthByAutoPollOrRefresh(page, frameLocator, providerDetails, providerSummary, refreshLoginButton, label) {
+  const connectedState = frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first();
+  const connectedBeforeClick = await connectedState.waitFor({ state: "attached", timeout: 1000 }).then(() => true).catch(() => false);
+  if (!connectedBeforeClick) {
+    await openProviderDetailsForAuthControl(providerDetails, providerSummary, refreshLoginButton).catch(() => undefined);
+    if (await refreshLoginButton.isVisible().catch(() => false)) {
+      await clickControlWithActionability(refreshLoginButton, `Refresh OpenAI login status for ${label}`, { assertHitTest: true });
+    }
+  }
+  await connectedState.waitFor({ state: "attached", timeout: 5000 })
+    .catch(() => failures.push(`Hosted compact OpenAI login smoke did not observe connected state after ${label} refresh or auto-poll.`));
 }
 
 async function assertStopResponseUsability(page, frameLocator) {
