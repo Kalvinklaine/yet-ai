@@ -600,7 +600,6 @@ export function App() {
   const activeProviders = providerDataCurrent ? providers : [];
   const activeDemoMode = demoModeDataCurrent ? demoMode : null;
   const activeDemoModeError = demoModeDataCurrent ? demoModeError : null;
-  const activeProviderAuthStatus = providerAuthDataCurrent ? providerAuthStatus : null;
   const activeProviderAuthError = providerAuthDataCurrent ? providerAuthError : null;
   const activeChatSummaries = chatHistoryCurrent ? chatSummaries : [];
   const activeRuntimeLifecycle = runtimeLifecycle?.settingsRevision === settingsRevision ? runtimeLifecycle.diagnostics : null;
@@ -608,6 +607,7 @@ export function App() {
   const activeChatIndex = activeChatSummaries.findIndex((item) => item.chatId === chatId);
   const runtimeConnected = activePing?.ready === true && !activeConnectionError;
   const runtimeAuthMismatchError = runtimeAuthMismatch(activeConnectionError, activeModelError, activeProviderAuthError);
+  const activeProviderAuthStatus = runtimeAuthMismatchError ? null : providerAuthDataCurrent ? providerAuthStatus : null;
   const connectionStatus = activeConnectionError ? "error" : activePing?.ready ? "connected" : "not checked";
   const hostedRuntimeConnection = bridgeHost !== "browser" || runtimeConnectionSource === "host.ready";
   const enabledProviders = useMemo(() => activeProviders.filter((provider) => provider.enabled), [activeProviders]);
@@ -2446,6 +2446,13 @@ export function App() {
   };
 
   const startOpenAiLogin = async () => {
+    if (runtimeAuthMismatchError) {
+      setProviderAuthError(null);
+      setProviderAuthUrlWarning(null);
+      setProviderAuthExchangeError(null);
+      setProviderAuthExchangeCode("");
+      return;
+    }
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
     const attempt = beginProviderAuthMutation("start");
@@ -3952,7 +3959,7 @@ export function App() {
           </div>
           {providerAuthError && <ProviderAuthStartErrorRecovery error={providerAuthError} onRefresh={() => void refreshProviderAuthStatus()} onLogin={() => void startOpenAiLogin()} onApiKeyFallback={applyOpenAiApiPreset} />}
           {providerAuthUrlWarning && <div className="error">{providerAuthUrlWarning}</div>}
-          {runtimeAuthMismatchError && !activeProviderAuthStatus && <BlockedProviderAuthJourney host={bridgeHost} hostedRuntimeConnection={hostedRuntimeConnection} onRefresh={() => void connect()} onApiKeyFallback={applyOpenAiApiPreset} />}
+          {runtimeAuthMismatchError && <BlockedProviderAuthJourney host={bridgeHost} hostedRuntimeConnection={hostedRuntimeConnection} onRefresh={() => void connect()} onApiKeyFallback={applyOpenAiApiPreset} />}
           {activeProviderAuthStatus ? (
             <ProviderAuthJourney
               status={activeProviderAuthStatus}

@@ -2033,6 +2033,46 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("access_token");
   });
 
+  it("blocks cached healthy provider auth when runtime transitions to session-token mismatch", async () => {
+    mockRuntimeResponses({ authResponse: providerAuthResponse("api_key_configured") });
+    renderApp();
+
+    await flushAsync();
+
+    const healthyLoginButton = findButton("Connect OpenAI account (experimental)");
+    expect(healthyLoginButton.disabled).toBe(false);
+    expect(container?.textContent).toContain("OpenAI API-key fallback is configured as safe/default");
+
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/models")) {
+        return Promise.resolve(jsonResponse({ error: "session token mismatch" }, 401));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(providerAuthResponse("api_key_configured")));
+      }
+      return mockRuntimeResponse(input, init, { authResponse: providerAuthResponse("api_key_configured") });
+    });
+
+    await act(async () => {
+      findButton("Refresh runtime").click();
+    });
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Local runtime session token mismatch");
+    expect(text).toContain("Experimental GPT/OpenAI login is blocked by runtime auth");
+    expect(text).toContain("Blocked prerequisite");
+    expect(text).not.toContain("The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login.");
+
+    const blockedLoginButton = findButton("Connect OpenAI account (experimental)");
+    expect(blockedLoginButton.disabled).toBe(true);
+    await act(async () => {
+      blockedLoginButton.click();
+    });
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/start") && init?.method === "POST")).toHaveLength(0);
+  });
+
   it("keeps API-key fallback visible under runtime 401 without claiming it fixes runtime auth", async () => {
     mockRuntimeResponses({ authStatusCode: 401, modelsFailure: true });
     renderApp();
