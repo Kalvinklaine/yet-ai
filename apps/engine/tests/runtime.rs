@@ -2818,7 +2818,7 @@ async fn provider_auth_openai_experimental_callback_completes_login() {
 }
 
 #[tokio::test]
-#[ignore = "fixed-port callback listener is process-global; covered by completes_login targeted test"]
+#[ignore = "fixed-port callback listener is process-global; active route/listener semantics are covered by provider_auth_callback::tests::real_loopback_callback_route_reaches_listener and sanitized parsing is covered below the live listener"]
 async fn provider_auth_openai_experimental_callback_invalid_inputs_are_sanitized() {
     let app = test_app();
     let (token_endpoint_url, _) = start_mock_codex_token_endpoint().await;
@@ -2860,7 +2860,7 @@ async fn provider_auth_openai_experimental_callback_invalid_inputs_are_sanitized
     }
 }
 #[tokio::test]
-#[ignore = "fixed-port callback listener is process-global; retry semantics are covered by manual exchange tests"]
+#[ignore = "fixed-port callback listener is process-global; retry and duplicate semantics are covered by deterministic manual exchange and provider_auth_callback tests while active route/listener semantics stay live below the full runtime suite"]
 async fn provider_auth_openai_experimental_callback_failure_preserves_pending_and_duplicate_is_safe(
 ) {
     let app = test_app();
