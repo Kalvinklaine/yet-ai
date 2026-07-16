@@ -1442,7 +1442,10 @@ export function App() {
           appendTrace({ family: "controlledAgent.verificationBundleResult", title: "Controlled verification bundle result received", status: acceptedBundle.status === "succeeded" ? "succeeded" : acceptedBundle.status === "running" ? "in_progress" : "failed", summary: "Sanitized sequence-aware verification bundle metadata accepted.", requestId, details: correlation.details });
           if (oneStepPendingBundle) {
             setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: verificationBundleToOneStepMetadata(current, acceptedBundle) }));
-            setControlledTaskExecutionState((currentState) => acceptedBundle.status === "succeeded" ? reduceControlledTaskExecution(currentState, { type: "completed", runId: current.runId, verificationBundleId: current.bundleId }) : reduceControlledTaskExecution(currentState, { type: "blocked", runId: current.runId, proposalId: currentState.lineage.proposalId, verificationBundleId: current.bundleId, lastError: "Verification bundle result accepted." }));
+            setControlledTaskExecutionState((currentState) => {
+              const executionRunId = currentState.lineage.runId ?? current.runId;
+              return acceptedBundle.status === "succeeded" ? reduceControlledTaskExecution(currentState, { type: "completed", runId: executionRunId, verificationBundleId: current.bundleId }) : reduceControlledTaskExecution(currentState, { type: "blocked", runId: executionRunId, proposalId: currentState.lineage.proposalId, verificationBundleId: current.bundleId, lastError: "Verification bundle result accepted." });
+            });
           }
           return;
         }

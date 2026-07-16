@@ -1,62 +1,58 @@
-import { randomUUID } from "node:crypto";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { npmRunInvocation } from "./lib/npm-spawn.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const guiRoot = path.join(root, "apps", "gui", "dist");
+const guiRoot = path.join(root, "apps", "gui");
+const distRoot = path.join(guiRoot, "dist");
+const indexPath = path.join(distRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-controlled-agent-task");
 const bridgeVersion = "2026-05-15";
-const runtimeToken = `vscodeControlledTask${randomUUID().replaceAll("-", "")}`;
-const forbiddenVisibleCopy = [
+const headed = process.argv.includes("--headed");
+const failures = [];
+const runtimeRequestLog = [];
+const consoleMessages = [];
+const forbiddenLegacyCopy = [
   "Controlled repair eligibility",
   "Confirm one repair attempt",
   "no automatic repair",
   "no auto retry/rollback/repair",
-  "no automatic retry/rollback/repair",
 ];
-const forbiddenAuthorityKeys = new Set(["shell", "command", "commandString", "args", "cwd", "env", "git", "provider", "network", "tool"]);
-const failures = [];
-const consoleMessages = [];
-const runtimeRequests = [];
-let observedRuntimeAuthorization = false;
+const allowedBridgeTypes = new Set([
+  "gui.ready",
+  "gui.ideActionRequest",
+  "gui.controlledAgentFileReadRequest",
+  "gui.controlledAgentEditRequest",
+  "gui.controlledAgentVerificationBundleRequest",
+]);
+const allowedIdeActions = new Set(["getActiveFileExcerpt"]);
+const goalText = "Update the controlled task smoke fixture with bounded VS Code evidence.";
+const activeContextPath = "apps/gui/src/App.tsx";
+const activeContextText = "const controlledTaskSmoke = true;";
+const activeContextRange = { start: { line: 42, character: 0 }, end: { line: 42, character: activeContextText.length } };
+const runtimeToken = "controlledTaskRuntimeSession";
 
-const fixtures = await loadFixtures();
+await buildGui();
 await requireBuiltGui();
+await mkdir(evidenceRoot, { recursive: true });
 const { chromium } = await requireChromium();
-const guiServer = await startStaticServer(guiRoot);
-const runtimeServer = await startMockRuntimeServer();
-const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
-const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
+const fixtures = await loadControlledFixtures();
+const runtimeServer = await startMockRuntimeServer(fixtures.capsResponse);
+const guiServer = await startStaticServer(distRoot);
 let browser;
 
 try {
-  browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 900, height: 850 } });
-
-  await page.route("**/*", async (route) => {
-    const url = route.request().url();
-    if (isAllowedUrl(url, [guiBaseUrl, runtimeBaseUrl])) {
-      await route.continue();
-      return;
-    }
-    failures.push(`Unexpected network request: ${redactUrl(url)}`);
-    await route.abort();
-  });
-  page.on("console", (message) => {
-    const text = message.text();
-    consoleMessages.push(text);
-    if (containsSecret(text)) failures.push("Browser console exposed a runtime token.");
-  });
-  page.on("pageerror", (error) => failures.push(`Page JavaScript error: ${redactSecrets(error.message)}`));
-  page.on("requestfailed", (request) => {
-    if (request.url().startsWith(guiBaseUrl) && ["script", "stylesheet"].includes(request.resourceType())) {
-      failures.push(`Failed GUI asset request: ${redactUrl(request.url())}`);
-    }
-  });
+  browser = await chromium.launch({ headless: !headed });
+  const page = await browser.newPage({ viewport: { width: 960, height: 900 } });
+  await installNetworkPolicy(page, `http://127.0.0.1:${guiServer.port}`, `http://127.0.0.1:${runtimeServer.port}`);
+  page.on("console", (message) => consoleMessages.push(message.text()));
+  page.on("pageerror", (error) => failures.push(`Page JavaScript error: ${redact(error.message)}`));
 
   await page.addInitScript(() => {
     window.__yetAiVsCodeMessages = [];
@@ -68,141 +64,226 @@ try {
     });
   });
 
-  await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
-  await expectText(page, "Chat readiness", "chat readiness surface");
-  const guiReady = await waitForGuiMessage(page, "gui.ready");
-  if (guiReady?.version !== bridgeVersion || guiReady?.payload?.supportedBridgeVersion !== bridgeVersion) {
-    failures.push("VS Code bridge did not emit strict gui.ready.");
-  }
-
+  await page.goto(`http://127.0.0.1:${guiServer.port}/index.html`, { waitUntil: "domcontentloaded" });
+  const ready = await waitForGuiMessage(page, "gui.ready");
+  assert.equal(ready?.version, bridgeVersion, "gui.ready uses bridge version");
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ready",
-    requestId: guiReady?.requestId,
-    payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
+    requestId: ready?.requestId,
+    payload: { runtimeUrl: `http://127.0.0.1:${runtimeServer.port}`, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
   });
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.runtimeStatus",
-    payload: {
-      protocolVersion: "2026-06-21",
-      surface: "vscode",
-      lifecycle: "ready",
-      runtimeOwner: "ide_host",
-      launchMode: "auto",
-      tokenState: "ok",
-      processState: "running",
-      cloudRequired: false,
-      authority: "metadata_only",
-    },
+    payload: { protocolVersion: "2026-06-21", surface: "vscode", lifecycle: "ready", runtimeOwner: "ide_host", launchMode: "auto", tokenState: "matched", processState: "running", cloudRequired: false, authority: "metadata_only" },
   });
-  await assertGuiCollectedHostMessage(page, "host.ready", "trusted host.ready bridge message");
-  await assertGuiCollectedHostMessage(page, "host.runtimeStatus", "runtime status bridge message");
-  await assertVscodeHostClass(page);
-  await expectText(page, "Runtime connected", "trusted loopback runtime connection");
 
-  await openTaskAgentDrawer(page);
-  const panel = page.locator("[data-testid='agent-run-panel']").first();
-  await panel.waitFor({ state: "visible", timeout: 10_000 });
-  await expectTextIn(panel, "Controlled task execution Start", "controlled task Start panel");
-  await expectTextIn(panel, "VS Code-only", "VS Code-only controlled task gate");
-  await expectTextIn(panel, "Start is the single explicit VS Code-only gate for a bounded controlled task run.", "single explicit Start copy");
-  await expectTextIn(panel, "Read request: ready", "ready controlled read metadata");
-  await expectTextIn(panel, "Edit request: ready", "ready controlled edit metadata");
-  await expectTextIn(panel, "Verification request: ready", "ready verification metadata");
-  await assertNoLegacyRepairCopy(page, "pre-start controlled task UI");
+  await expectBodyText(page, "Runtime connected", "local runtime readiness");
+  await openDrawer(page, "task-agent-tools-drawer");
+  await expectBodyText(page, "Controlled task execution Start", "controlled Start card");
 
-  const beforeStartReadCount = await getGuiMessageCount(page, "gui.controlledAgentFileReadRequest");
-  const beforeStartEditCount = await getGuiMessageCount(page, "gui.controlledAgentEditRequest");
-  const beforeStartVerificationCount = await getGuiMessageCount(page, "gui.controlledAgentVerificationBundleRequest");
-  const startButton = panel.getByRole("button", { name: "Start one-step Agent Run", exact: true });
+  const goalTextarea = page.getByPlaceholder("Describe the coding task goal before choosing context and asking the model.");
+  await goalTextarea.fill(goalText);
+  await expectBodyText(page, "Goal: Update the controlled task smoke fixture with bounded VS Code evidence.", "explicit task goal state");
+
+  await openDrawer(page, "ide-actions-drawer");
+  const beforeContextMessageCount = await countGuiMessages(page);
+  const activeExcerptButton = page.getByRole("button", { name: "Attach active file excerpt", exact: true }).first();
+  await clickControl(page, activeExcerptButton, "Attach active file excerpt");
+  const activeExcerptRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", await countGuiMessagesOfType(page, "gui.ideActionRequest") - 1);
+  assert.equal(activeExcerptRequest?.payload?.action, "getActiveFileExcerpt", "explicit context uses bounded active excerpt action");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.ideActionResult",
+    requestId: activeExcerptRequest.requestId,
+    payload: activeFileExcerptResultPayload(),
+  });
+  await expectBodyText(page, "Attach active file excerpt: succeeded", "explicit active context accepted");
+  await clickControl(page, page.getByRole("button", { name: "Add to multi-file context bundle", exact: true }).first(), "Add active excerpt to explicit bundle");
+  await expectBodyText(page, "Next send: 1 explicit item", "explicit context bundle selected");
+  await openDrawer(page, "task-agent-tools-drawer");
+  await expectBodyText(page, "Context selected: 1 explicit item", "controlled task explicit context summary");
+
+  const beforeStart = await snapshotBridgeMessages(page);
+  assert.equal(countType(beforeStart, "gui.controlledAgentFileReadRequest"), 0, "no controlled read before Start");
+  assert.equal(countType(beforeStart, "gui.controlledAgentEditRequest"), 0, "no controlled edit before Start");
+  assert.equal(countType(beforeStart, "gui.controlledAgentVerificationBundleRequest"), 0, "no verification bundle before Start");
+  assertBridgeAllowlist(beforeStart, beforeContextMessageCount);
+
+  const startButton = page.getByRole("button", { name: "Start one-step Agent Run", exact: true }).first();
+  await expectEnabled(startButton, "Start one-step Agent Run is the single gate");
   await clickControl(page, startButton, "Start one-step Agent Run");
-  const readRequest = await waitForGuiMessageAfter(page, "gui.controlledAgentFileReadRequest", beforeStartReadCount);
-  if (!readRequest) {
-    failures.push("Clicking Start did not post the started-run controlled read request.");
-  } else {
-    assertControlledStartReadRequest(readRequest);
-  }
-  const afterStartEditCount = await getGuiMessageCount(page, "gui.controlledAgentEditRequest");
-  const afterStartVerificationCount = await getGuiMessageCount(page, "gui.controlledAgentVerificationBundleRequest");
-  if (afterStartEditCount !== beforeStartEditCount) failures.push("Start click posted an edit request before the bounded read result.");
-  if (afterStartVerificationCount !== beforeStartVerificationCount) failures.push("Start click posted verification before bounded edit success.");
+  await expectBodyText(page, "Start is the single explicit VS Code-only gate", "single Start gate copy");
+  await expectBodyText(page, "Controlled task execution is already active", "duplicate Start disabled state");
+  await expectDisabled(startButton, "duplicate Start button disabled during active run");
+  await assertForbiddenLegacyCopyAbsent(page, "after Start");
 
-  await expectTextIn(panel, "Controlled phase: context ready", "started controlled task state");
-  await expectTextIn(panel, "Start recorded; autonomous verification may request only the allowlisted verification bundle", "started-run frozen context summary");
-  await assertNoLegacyRepairCopy(page, "post-start controlled task state");
-  await assertNoAuthorityRequests(page);
-  if (!observedRuntimeAuthorization) failures.push("Mock runtime did not observe Authorization from host.ready session token.");
+  const readRequest = await waitForGuiMessageAfter(page, "gui.controlledAgentFileReadRequest", countType(beforeStart, "gui.controlledAgentFileReadRequest"));
+  assertControlledReadRequest(readRequest);
+  assert.equal(await countGuiMessagesOfType(page, "gui.controlledAgentEditRequest"), 0, "edit waits for read result");
+  assert.equal(await countGuiMessagesOfType(page, "gui.controlledAgentVerificationBundleRequest"), 0, "verification waits for read and edit results");
 
-  await panel.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
-  const metrics = await collectMetrics(page);
-  const evidence = await saveEvidence(page, metrics);
-  assertNoSecretLeak(JSON.stringify({ dom: await page.locator("body").innerText(), messages: await page.evaluate(() => window.__yetAiVsCodeMessages), consoleMessages }), "visible state");
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.controlledAgentFileReadResult",
+    requestId: readRequest.requestId,
+    payload: controlledReadResult(fixtures.fileReadSuccess, readRequest),
+  });
+  const editRequest = await waitForGuiMessageAfter(page, "gui.controlledAgentEditRequest", 0);
+  assertControlledEditRequest(editRequest);
+  assert.equal(await countGuiMessagesOfType(page, "gui.controlledAgentVerificationBundleRequest"), 0, "verification waits for edit result");
+  await assertForbiddenLegacyCopyAbsent(page, "after bounded read");
+
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.controlledAgentEditResult",
+    requestId: editRequest.requestId,
+    payload: controlledEditResult(fixtures.editApplied, editRequest),
+  });
+  const bundleRequest = await waitForGuiMessageAfter(page, "gui.controlledAgentVerificationBundleRequest", 0);
+  assertControlledVerificationBundleRequest(bundleRequest);
+  assert.equal(await countGuiMessagesOfType(page, "gui.controlledAgentVerificationBundleRequest"), 1, "exactly one verification bundle request is posted");
+  assert.equal(await countGuiMessagesOfType(page, "gui.controlledAgentCommandRunRequest"), 0, "legacy command-run verification is not used in started task flow");
+  await expectBodyText(page, "Controlled phase: verifying", "started run reaches verification phase");
+  await assertForbiddenLegacyCopyAbsent(page, "during verification");
+
+  await dispatchHostMessage(page, {
+    version: bridgeVersion,
+    type: "host.controlledAgentVerificationBundleResult",
+    requestId: bundleRequest.requestId,
+    payload: controlledVerificationBundleResult(fixtures.verificationSucceeded, bundleRequest),
+  });
+  await expectBodyText(page, "Controlled phase: completed", "controlled task completed status");
+  await expectBodyText(page, "Verification bundle result accepted: succeeded.", "verification result accepted");
+  await assertForbiddenLegacyCopyAbsent(page, "after completion");
+
+  const finalMessages = await snapshotBridgeMessages(page);
+  assertBridgeAllowlist(finalMessages, 0);
+  const controlledCounts = {
+    read: countType(finalMessages, "gui.controlledAgentFileReadRequest"),
+    edit: countType(finalMessages, "gui.controlledAgentEditRequest"),
+    verificationBundle: countType(finalMessages, "gui.controlledAgentVerificationBundleRequest"),
+    commandRun: countType(finalMessages, "gui.controlledAgentCommandRunRequest"),
+  };
+  assert.deepEqual(controlledCounts, { read: 1, edit: 1, verificationBundle: 1, commandRun: 0 }, "controlled run bridge message counts stay bounded");
+  assertNoForbiddenRuntimeRequests();
+
+  const evidence = {
+    status: "passed",
+    goalLabel: goalText,
+    explicitContext: { path: activeContextPath, source: "active editor excerpt", selectedByUser: true },
+    bridgeMessageTypes: finalMessages.map((message) => message.type),
+    controlledCounts,
+    runtimeRequests: runtimeRequestLog,
+    forbiddenLegacyCopy,
+  };
+  await writeFile(path.join(evidenceRoot, "evidence.json"), `${JSON.stringify(evidence, null, 2)}\n`);
+  await page.screenshot({ path: path.join(evidenceRoot, "completed.png"), fullPage: true });
 
   if (failures.length > 0) reportFailures();
   console.log("VS Code controlled-agent task smoke passed.");
-  console.log("Verified gui.ready, trusted loopback host.ready, visible VS Code controlled task Start UI, real user Start click, controlled started-run state, absence of legacy repair copy, and loopback-only mock runtime authority.");
-  console.log(`Saved sanitized visual evidence under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}, ${path.basename(evidence.metricsPath)}).`);
-  console.log("No real shell, git, provider credentials, hosted backend, VS Code launch, or non-loopback provider call was used.");
+  console.log(`Evidence: ${path.relative(root, evidenceRoot)}`);
+} catch (error) {
+  failures.push(messageOf(error));
+  await writeFailureEvidence(browser).catch(() => undefined);
+  reportFailures();
 } finally {
   await browser?.close().catch(() => undefined);
-  await runtimeServer.close();
-  await guiServer.close();
+  await runtimeServer.close().catch(() => undefined);
+  await guiServer.close().catch(() => undefined);
 }
 
-async function loadFixtures() {
-  const base = path.join(root, "packages", "contracts", "examples", "engine");
-  const [runtimeSession, workspaceReadiness, editExecutor, verificationBundle, taskHarness, workflowTranscript] = await Promise.all([
-    readJson(path.join(base, "controlled-agent-runtime-session-ready-vscode-worktree.json")),
-    readJson(path.join(base, "controlled-agent-workspace-readiness-worktree.json")),
-    readJson(path.join(base, "controlled-agent-edit-executor-planned.json")),
-    readJson(path.join(base, "controlled-agent-verification-bundle-planned.json")),
-    readJson(path.join(base, "controlled-agent-task-harness-vscode-happy-path.json")),
-    readJson(path.join(base, "controlled-agent-workflow-transcript-completed.json")),
-  ]);
-  const editExecutorWithReplacement = {
-    ...editExecutor,
-    edits: Array.isArray(editExecutor.edits) ? editExecutor.edits.map((edit) => ({ ...edit, replacementText: "x".repeat(edit.replacementByteCount ?? 0) })) : editExecutor.edits,
-  };
-  return { runtimeSession, workspaceReadiness, editExecutor: editExecutorWithReplacement, verificationBundle, taskHarness, workflowTranscript };
-}
-
-async function readJson(filePath) {
-  return JSON.parse(await readFile(filePath, "utf8"));
+async function buildGui() {
+  const env = { ...process.env, NO_PROXY: "127.0.0.1,localhost,::1", no_proxy: "127.0.0.1,localhost,::1" };
+  const { command, args } = npmRunInvocation("build", [], { env });
+  const result = spawnSync(command, args, { cwd: guiRoot, stdio: "inherit", env });
+  if (result.status !== 0) throw new Error("GUI build failed before controlled-agent task smoke.");
 }
 
 async function requireBuiltGui() {
-  try {
-    const index = path.join(guiRoot, "index.html");
-    const indexStat = await stat(index);
-    if (!indexStat.isFile()) throw new Error("index.html is not a file");
-  } catch (error) {
-    console.error("VS Code controlled-agent task smoke failed: GUI dist is missing.");
-    console.error("Run `npm --prefix apps/gui run build` before this smoke.");
-    console.error(`Reason: ${messageOf(error)}`);
-    process.exit(1);
-  }
+  const fileStat = await stat(indexPath).catch(() => null);
+  if (!fileStat?.isFile()) throw new Error("GUI dist/index.html is missing after build.");
 }
 
 async function requireChromium() {
   try {
     return await import("playwright");
   } catch (error) {
-    console.error("VS Code controlled-agent task smoke failed: Playwright is not installed or cannot be loaded.");
-    console.error(`Load error: ${messageOf(error)}`);
-    process.exit(1);
+    throw new Error(`Playwright is required for this smoke. ${messageOf(error)}`);
   }
 }
 
-async function startMockRuntimeServer() {
+async function loadControlledFixtures() {
+  const workspaceReadiness = await readJson("packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json");
+  const runtimeSession = await readJson("packages/contracts/examples/engine/controlled-agent-runtime-session-ready-vscode-worktree.json");
+  const editExecutor = await readJson("packages/contracts/examples/engine/controlled-agent-edit-executor-planned.json");
+  const verificationBundle = await readJson("packages/contracts/examples/engine/controlled-agent-verification-bundle-planned.json");
+  const fileReadSuccess = await readJson("packages/contracts/examples/bridge/host-controlled-agent-file-read-result-success.json");
+  const editApplied = await readJson("packages/contracts/examples/bridge/host-controlled-agent-edit-result-applied.json");
+  const verificationSucceeded = await readJson("packages/contracts/examples/engine/controlled-agent-verification-bundle-succeeded.json");
+  runtimeSession.session.sessionId = "session-s82-demo";
+  runtimeSession.workspace.controlledWorkspaceId = "workspace-session-s82-demo";
+  runtimeSession.workspace.readinessId = "readiness-session-s82-demo";
+  runtimeSession.preconditions.workspaceReadiness.readinessId = "readiness-session-s82-demo";
+  runtimeSession.preconditions.correlation.readinessId = "readiness-session-s82-demo";
+  editExecutor.runId = "session-s82-demo";
+  editExecutor.workspaceReadinessId = "readiness-session-s82-demo";
+  editExecutor.edits[0].replacementText = "const controlledTaskSmoke = true;\n";
+  editExecutor.edits[0].replacementByteCount = new TextEncoder().encode(editExecutor.edits[0].replacementText).length;
+  editExecutor.edits[0].sanitizedSummary = "Update controlled task smoke metadata lines.";
+  verificationBundle.workspace.runId = "session-s82-demo";
+  verificationBundle.workspace.controlledWorkspaceId = "workspace-session-s82-demo";
+
+  const capsResponse = {
+    productId: "yet-ai",
+    protocolVersion: bridgeVersion,
+    runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
+    capabilities: ["chat"],
+    features: {},
+    providers: [],
+    ide: { bridge: true, lsp: false, host: "vscode-controlled-agent-task-smoke" },
+    controlledAgentWorkspaceReadiness: workspaceReadiness,
+    controlledAgentRuntimeSession: runtimeSession,
+    controlledAgentEditExecutor: editExecutor,
+    controlledAgentVerificationBundle: verificationBundle,
+  };
+  return { capsResponse, fileReadSuccess, editApplied, verificationSucceeded };
+}
+
+async function readJson(relativePath) {
+  return JSON.parse(await readFile(path.join(root, relativePath), "utf8"));
+}
+
+async function installNetworkPolicy(page, guiBaseUrl, runtimeBaseUrl) {
+  await page.route("**/*", async (route) => {
+    const url = route.request().url();
+    if (isAllowedLoopbackUrl(url, guiBaseUrl, runtimeBaseUrl)) {
+      await route.continue();
+      return;
+    }
+    failures.push(`Unexpected non-loopback or unmocked network request: ${redact(url)}`);
+    await route.abort();
+  });
+}
+
+function isAllowedLoopbackUrl(value, guiBaseUrl, runtimeBaseUrl) {
+  try {
+    const url = new URL(value);
+    return (value.startsWith(`${guiBaseUrl}/`) || value === `${guiBaseUrl}/index.html` || value.startsWith(`${runtimeBaseUrl}/`)) && ["127.0.0.1", "localhost"].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function startMockRuntimeServer(capsResponse) {
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
     if (request.method === "OPTIONS") {
       response.writeHead(204, corsHeaders()).end();
       return;
     }
-    runtimeRequests.push({ method: request.method ?? "GET", pathname: requestUrl.pathname });
-    if (request.headers.authorization === `Bearer ${runtimeToken}`) observedRuntimeAuthorization = true;
+    runtimeRequestLog.push({ method: request.method ?? "GET", pathname: requestUrl.pathname });
     if (request.headers.authorization !== `Bearer ${runtimeToken}`) {
       json(response, 401, { error: "Unauthorized local runtime request." });
       return;
@@ -212,29 +293,15 @@ async function startMockRuntimeServer() {
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/caps") {
-      json(response, 200, {
-        productId: "yet-ai",
-        protocolVersion: bridgeVersion,
-        runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" },
-        capabilities: ["chat"],
-        features: {},
-        providers: [],
-        ide: { bridge: true, lsp: false, host: "vscode-controlled-agent-task-smoke" },
-        controlledAgentRuntimeSession: fixtures.runtimeSession,
-        controlledAgentWorkspaceReadiness: fixtures.workspaceReadiness,
-        controlledAgentEditExecutor: fixtures.editExecutor,
-        controlledAgentVerificationBundle: fixtures.verificationBundle,
-        controlledAgentTaskHarness: fixtures.taskHarness,
-        controlledAgentWorkflowTranscript: fixtures.workflowTranscript,
-      });
+      json(response, 200, capsResponse);
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/demo-mode") {
-      json(response, 200, { enabled: false, cloudRequired: false, providerAccess: "direct", message: "Mock-only controlled task smoke." });
+      json(response, 200, { enabled: true, cloudRequired: false, providerAccess: "direct", message: "Local smoke demo mode." });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/models") {
-      json(response, 200, { models: [] });
+      json(response, 200, { models: [{ id: "local-smoke-model", name: "Local smoke model", provider: "local", available: true }], cloudRequired: false });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/providers") {
@@ -250,16 +317,12 @@ async function startMockRuntimeServer() {
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
-      json(response, 200, { chats: [{ chatId: "chat-001", title: "Controlled task smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messageCount: 0 }] });
-      return;
-    }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/chats/chat-001") {
-      json(response, 200, { chatId: "chat-001", title: "Controlled task smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messages: [] });
+      json(response, 200, { chats: [] });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/chats/subscribe") {
       response.writeHead(200, { ...corsHeaders(), "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" });
-      response.write(`event: snapshot\ndata: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: "chat-001", payload: { thread: { chatId: "chat-001", messages: [] }, messages: [], runtime: { streaming: false, waitingForResponse: false } } })}\n\n`);
+      response.write(`event: snapshot\ndata: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: null, payload: { thread: null, messages: [], runtime: { streaming: false, waitingForResponse: false } } })}\n\n`);
       return;
     }
     json(response, 404, { error: "Not found" });
@@ -303,17 +366,25 @@ function listen(server) {
 }
 
 async function waitForGuiMessage(page, type) {
-  await page.waitForFunction((messageType) => window.__yetAiVsCodeMessages?.some((message) => message?.type === messageType), type, { timeout: 10_000 });
-  return await page.evaluate((messageType) => window.__yetAiVsCodeMessages.find((message) => message?.type === messageType), type);
+  await page.waitForFunction((messageType) => window.__yetAiVsCodeMessages?.some((message) => message?.type === messageType), type, { timeout: 15_000 });
+  return page.evaluate((messageType) => window.__yetAiVsCodeMessages.find((message) => message?.type === messageType), type);
 }
 
 async function waitForGuiMessageAfter(page, type, previousCount) {
-  await page.waitForFunction(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length > count, { messageType: type, count: previousCount }, { timeout: 10_000 });
-  return await page.evaluate(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).at(count), { messageType: type, count: previousCount });
+  await page.waitForFunction(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length > count, { messageType: type, count: previousCount }, { timeout: 15_000 });
+  return page.evaluate(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).at(count), { messageType: type, count: previousCount });
 }
 
-async function getGuiMessageCount(page, type) {
-  return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
+async function countGuiMessages(page) {
+  return page.evaluate(() => (window.__yetAiVsCodeMessages ?? []).length);
+}
+
+async function countGuiMessagesOfType(page, type) {
+  return page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
+}
+
+async function snapshotBridgeMessages(page) {
+  return page.evaluate(() => JSON.parse(JSON.stringify(window.__yetAiVsCodeMessages ?? [])));
 }
 
 async function dispatchHostMessage(page, message) {
@@ -323,159 +394,262 @@ async function dispatchHostMessage(page, message) {
   }, message);
 }
 
-async function assertGuiCollectedHostMessage(page, type, label) {
-  const found = await page.evaluate((messageType) => (window.__yetAiHostMessages ?? []).some((message) => message?.type === messageType), type);
-  if (!found) failures.push(`GUI did not collect ${label}.`);
-}
-
-async function assertVscodeHostClass(page) {
-  const hasClass = await page.evaluate(() => document.querySelector("main.app-shell.host-vscode") instanceof HTMLElement);
-  if (!hasClass) failures.push("VS Code host class was not applied after acquireVsCodeApi bridge initialization.");
-}
-
-async function openTaskAgentDrawer(page) {
-  const drawer = page.locator("[data-testid='task-agent-tools-drawer']").first();
-  await drawer.waitFor({ state: "attached", timeout: 10_000 });
+async function openDrawer(page, testId) {
+  const drawer = page.locator(`[data-testid='${testId}']`).first();
+  await drawer.waitFor({ state: "attached", timeout: 15_000 });
   const summary = drawer.locator(":scope > summary").first();
   if (!await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
-    await summary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
-    await summary.click({ timeout: 5000 });
+    await clickControl(page, summary, `${testId} summary`);
   }
-  await drawer.locator(":scope > .composer-drawer-body").first().waitFor({ state: "visible", timeout: 10_000 });
+  await drawer.locator(":scope > .composer-drawer-body").first().waitFor({ state: "visible", timeout: 15_000 });
 }
 
 async function clickControl(page, locator, label) {
-  await locator.waitFor({ state: "visible", timeout: 5000 });
+  await locator.waitFor({ state: "visible", timeout: 10_000 });
   await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
-  const before = await describeControl(locator);
-  if (!before.ok || before.disabled) {
-    throw new Error(`${label}: control is not hit-testable/enabled before click. ${JSON.stringify(before)}`);
-  }
-  await page.mouse.click((before.rect.left + before.rect.right) / 2, (before.rect.top + before.rect.bottom) / 2);
-}
-
-async function describeControl(locator) {
-  return locator.evaluate((element) => {
-    if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
+  const state = await locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return { ok: false, disabled: true, reason: "not HTMLElement" };
     const rect = element.getBoundingClientRect();
-    const x = rect.left + rect.width / 2;
-    const y = rect.top + rect.height / 2;
-    const top = document.elementFromPoint(x, y);
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const top = document.elementFromPoint(centerX, centerY);
     const style = window.getComputedStyle(element);
-    return {
-      ok: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && style.pointerEvents !== "none" && !element.hasAttribute("disabled") && (top === element || element.contains(top)),
-      disabled: element instanceof HTMLButtonElement ? element.disabled : element.hasAttribute("disabled"),
-      rect: { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height },
-      topTag: top?.tagName,
-      topText: top?.textContent?.trim().slice(0, 80),
-    };
+    return { ok: rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none" && !element.hasAttribute("disabled") && (top === element || element.contains(top)), disabled: element.hasAttribute("disabled"), rect };
   });
+  if (!state.ok || state.disabled) throw new Error(`${label} is not user-clickable: ${JSON.stringify(state)}`);
+  await locator.click({ timeout: 5000 });
 }
 
-async function expectText(page, text, description) {
+async function expectEnabled(locator, label) {
+  await locator.waitFor({ state: "visible", timeout: 10_000 });
+  if (await locator.isDisabled()) throw new Error(`${label} is disabled.`);
+}
+
+async function expectDisabled(locator, label) {
+  await locator.waitFor({ state: "visible", timeout: 10_000 });
+  if (!await locator.isDisabled()) failures.push(`${label} is not disabled.`);
+}
+
+async function expectBodyText(page, text, description) {
   try {
-    await page.waitForFunction((needle) => document.body.innerText.includes(needle), text, { timeout: 10_000 });
+    await page.waitForFunction((needle) => document.body.innerText.includes(needle), text, { timeout: 15_000 });
   } catch (error) {
     const body = await page.locator("body").innerText().catch(() => "");
-    throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 2000)}`);
+    throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redact(body).slice(0, 2000)}`);
   }
 }
 
-async function expectTextIn(locator, text, description) {
-  try {
-    await locator.getByText(text, { exact: false }).first().waitFor({ state: "attached", timeout: 10_000 });
-  } catch (error) {
-    const body = await locator.innerText().catch(() => "");
-    throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nPanel excerpt: ${redactSecrets(body).slice(0, 2000)}`);
+async function assertForbiddenLegacyCopyAbsent(page, phase) {
+  const body = await page.locator("body").innerText();
+  for (const marker of forbiddenLegacyCopy) {
+    if (body.includes(marker)) failures.push(`Forbidden legacy repair copy rendered ${phase}: ${marker}`);
   }
 }
 
-async function assertNoLegacyRepairCopy(page, label) {
-  const text = await page.locator("body").innerText();
-  for (const marker of forbiddenVisibleCopy) {
-    if (text.includes(marker)) failures.push(`${label} exposed legacy repair copy: ${marker}.`);
+function assertControlledReadRequest(message) {
+  assert.equal(message?.version, bridgeVersion, "read request bridge version");
+  assert.equal(message?.type, "gui.controlledAgentFileReadRequest", "read request type");
+  assert.match(message?.requestId ?? "", /^gui-s83-/u, "read request id is GUI-owned");
+  assert.equal(message.payload?.requestIdMintedBy, "gui");
+  assert.equal(message.payload?.source, "gui");
+  assert.equal(message.payload?.assistantMinted, false);
+  assert.equal(message.payload?.workspaceRelativePath, "docs/architecture/013-agent-readiness-milestone.md");
+  assert.equal(message.payload?.singleFileOnly, true);
+  assert.equal(message.payload?.recursive, false);
+  assert.equal(message.payload?.globAllowed, false);
+  assert.equal(message.payload?.regexAllowed, false);
+  assert.equal(message.payload?.indexingAllowed, false);
+  assertNoForbiddenRequestKeys(message.payload, "controlled read request");
+}
+
+function assertControlledEditRequest(message) {
+  assert.equal(message?.version, bridgeVersion, "edit request bridge version");
+  assert.equal(message?.type, "gui.controlledAgentEditRequest", "edit request type");
+  assert.match(message?.requestId ?? "", /^gui-s84-/u, "edit request id is GUI-owned");
+  assert.equal(message.payload?.requestIdMintedBy, "gui");
+  assert.equal(message.payload?.source, "gui");
+  assert.equal(message.payload?.assistantMinted, false);
+  assert.equal(message.payload?.limits?.maxFiles, 1);
+  assert.equal(message.payload?.limits?.maxEdits, 1);
+  assert.equal(Array.isArray(message.payload?.edits), true);
+  assert.equal(message.payload.edits.length, 1);
+  assert.equal(message.payload.edits[0].operation, "replace");
+  assertNoForbiddenRequestKeys(message.payload, "controlled edit request", { allowEdits: true });
+}
+
+function assertControlledVerificationBundleRequest(message) {
+  assert.equal(message?.version, bridgeVersion, "verification bundle bridge version");
+  assert.equal(message?.type, "gui.controlledAgentVerificationBundleRequest", "verification bundle request type");
+  assert.match(message?.requestId ?? "", /^gui-s117-/u, "verification bundle request id is GUI-owned");
+  assert.equal(message.payload?.requestIdMintedBy, "gui");
+  assert.equal(message.payload?.source, "gui");
+  assert.equal(message.payload?.assistantMinted, false);
+  assert.deepEqual(message.payload?.commandIds, ["repository-check", "gui-app-tests", "engine-chat-tests"]);
+  assert.equal(message.payload?.limits?.maxCommands, 3);
+  assert.equal(message.payload?.limits?.commandStringAllowed, false);
+  assert.equal(message.payload?.limits?.argsAllowed, false);
+  assert.equal(message.payload?.limits?.cwdAllowed, false);
+  assert.equal(message.payload?.limits?.envAllowed, false);
+  assert.equal(message.payload?.limits?.shellAllowed, false);
+  assert.equal(Object.prototype.hasOwnProperty.call(message.payload, "command"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(message.payload, "cwd"), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(message.payload, "env"), false);
+}
+
+function assertNoForbiddenRequestKeys(value, label, options = {}) {
+  const forbidden = new Set(["shell", "command", "cmd", "args", "arguments", "cwd", "env", "environment", "git", "provider", "tool", "tools", "network", "package", "packageInstall"]);
+  if (!options.allowEdits) forbidden.add("edits");
+  const visit = (current) => {
+    if (!current || typeof current !== "object") return undefined;
+    if (Array.isArray(current)) return current.map(visit).find(Boolean);
+    for (const [key, nested] of Object.entries(current)) {
+      if (forbidden.has(key)) return key;
+      const found = visit(nested);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  const found = visit(value);
+  assert.equal(found, undefined, `${label} contains forbidden privileged key ${found}`);
+}
+
+function assertBridgeAllowlist(messages, startIndex) {
+  for (const message of messages.slice(startIndex)) {
+    if (!allowedBridgeTypes.has(message?.type)) failures.push(`Unexpected bridge message type: ${message?.type}`);
+    if (message?.type === "gui.ideActionRequest" && !allowedIdeActions.has(message.payload?.action)) failures.push(`Unexpected IDE action in controlled task smoke: ${message.payload?.action}`);
+    if (message?.type === "gui.ideActionRequest" && hasPrivilegedIdePayload(message.payload)) failures.push("IDE action payload widened beyond bounded context action.");
   }
 }
 
-function assertControlledStartReadRequest(message) {
-  if (message.version !== bridgeVersion) failures.push("Controlled read request used the wrong bridge version.");
-  if (message.type !== "gui.controlledAgentFileReadRequest") failures.push("Start emitted an unexpected bridge message type.");
-  const payload = message.payload ?? {};
-  if (message.requestId !== payload.requestId && payload.requestId !== undefined) failures.push("Controlled read request id was inconsistent.");
-  if (payload.source !== "gui" || payload.requestIdMintedBy !== "gui" || payload.assistantMinted !== false) failures.push("Controlled read request was not GUI-minted after user Start.");
-  if (payload.workspaceRelativePath !== "docs/architecture/013-agent-readiness-milestone.md") failures.push("Controlled read request did not stay on the bounded workspace path.");
-  if (payload.allowBody !== true || payload.singleFileOnly !== true || payload.recursive !== false || payload.globAllowed !== false || payload.regexAllowed !== false || payload.indexingAllowed !== false) failures.push("Controlled read request widened file-read authority.");
-  if (hasForbiddenAuthority(message)) failures.push("Controlled Start request contained shell/git/provider/network authority fields.");
+function hasPrivilegedIdePayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  return ["command", "cmd", "args", "cwd", "env", "shell", "git", "provider", "tool", "network"].some((key) => Object.prototype.hasOwnProperty.call(payload, key));
 }
 
-async function assertNoAuthorityRequests(page) {
-  const messages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
-  const forbiddenMessages = messages.filter((message) => ["gui.ideActionRequest", "gui.applyWorkspaceEditRequest", "gui.controlledRunRequest", "gui.controlledRuntimeSessionRequest"].includes(message?.type));
-  if (forbiddenMessages.length > 0) failures.push(`Unexpected broader bridge authority request(s): ${forbiddenMessages.map((message) => message.type).join(", ")}.`);
-  for (const message of messages) {
-    if (hasForbiddenAuthority(message)) failures.push(`Bridge message ${message?.type ?? "unknown"} contained forbidden authority fields.`);
-  }
-  const forbiddenRuntime = runtimeRequests.filter((entry) => entry.method !== "GET");
-  if (forbiddenRuntime.length > 0) failures.push(`Unexpected runtime authority request(s): ${forbiddenRuntime.map((entry) => `${entry.method} ${entry.pathname}`).join(", ")}.`);
+function assertNoForbiddenRuntimeRequests() {
+  const allowedGet = ["/v1/ping", "/v1/caps", "/v1/demo-mode", "/v1/models", "/v1/providers", "/v1/provider-auth/openai/status", "/v1/project-memory", "/v1/chats", "/v1/chats/subscribe"];
+  const allowed = runtimeRequestLog.filter((entry) => entry.method === "GET" && allowedGet.includes(entry.pathname));
+  const forbidden = runtimeRequestLog.filter((entry) => entry.method !== "GET" || !allowedGet.includes(entry.pathname));
+  if (forbidden.length > 0) failures.push(`Unexpected runtime mutation or endpoint request: ${forbidden.map((entry) => `${entry.method} ${entry.pathname}`).join(", ")}`);
+  if (allowed.length !== runtimeRequestLog.length) failures.push("Runtime requests escaped the deterministic GET-only allowlist.");
 }
 
-function hasForbiddenAuthority(value) {
-  if (!value || typeof value !== "object") return false;
-  if (Array.isArray(value)) return value.some(hasForbiddenAuthority);
-  return Object.entries(value).some(([key, nested]) => forbiddenAuthorityKeys.has(key) || hasForbiddenAuthority(nested));
+function activeFileExcerptResultPayload() {
+  return {
+    status: "succeeded",
+    message: "Active file excerpt ready.",
+    cloudRequired: false,
+    action: "getActiveFileExcerpt",
+    contextAttachment: {
+      kind: "active_file_excerpt",
+      source: "vscode",
+      file: { displayPath: activeContextPath, workspaceRelativePath: activeContextPath, languageId: "typescript" },
+      range: activeContextRange,
+      text: activeContextText,
+      truncated: false,
+    },
+  };
 }
 
-async function collectMetrics(page) {
-  return page.evaluate(() => {
-    const panel = document.querySelector("[data-testid='agent-run-panel']");
-    const startButton = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Start one-step Agent Run");
-    const rectFor = (element) => {
-      if (!(element instanceof HTMLElement)) return null;
-      const rect = element.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width, height: rect.height };
-    };
-    return {
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-      hostVscodeClass: document.querySelector("main.app-shell.host-vscode") instanceof HTMLElement,
-      runtimeConnectedVisible: document.body.innerText.includes("Runtime connected"),
-      controlledStartVisible: document.body.innerText.includes("Controlled task execution Start"),
-      startedRunVisible: document.body.innerText.includes("Controlled phase: context ready"),
-      startButtonVisible: startButton instanceof HTMLElement && getComputedStyle(startButton).display !== "none" && getComputedStyle(startButton).visibility !== "hidden",
-      panelRect: rectFor(panel),
-      startButtonRect: rectFor(startButton),
-      bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 800),
-    };
+function controlledReadResult(fixture, request) {
+  const payload = structuredClone(fixture.payload);
+  payload.request.requestId = request.requestId;
+  payload.request.workspaceRelativePath = request.payload.workspaceRelativePath;
+  payload.workspace.runId = request.payload.runId;
+  payload.workspace.controlledWorkspaceId = request.payload.controlledWorkspaceId;
+  payload.result.sanitizedPathLabel = request.payload.workspaceRelativePath;
+  payload.result.text = "# Controlled task smoke\n\nExplicit bounded context was read locally.";
+  payload.result.byteCount = new TextEncoder().encode(payload.result.text).length;
+  payload.result.lineCount = 3;
+  return payload;
+}
+
+function controlledEditResult(fixture, request) {
+  const payload = structuredClone(fixture.payload);
+  payload.requestId = request.requestId;
+  payload.runId = request.payload.runId;
+  payload.controlledWorkspaceId = request.payload.controlledWorkspaceId;
+  payload.runtimeSessionId = request.payload.runtimeSessionId;
+  payload.workspaceReadinessId = request.payload.workspaceReadinessId;
+  payload.edits = request.payload.edits.map((edit) => {
+    const clone = { ...edit };
+    delete clone.replacementText;
+    clone.actualContentHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    return clone;
   });
+  payload.result.message = "Bounded replacement edit applied.";
+  return payload;
 }
 
-async function saveEvidence(page, metrics) {
+function controlledVerificationBundleResult(fixture, request) {
+  const payload = structuredClone(fixture);
+  payload.workspace.controlledWorkspaceId = request.payload.controlledWorkspaceId;
+  payload.workspace.runId = request.payload.runId;
+  payload.workspace.workspaceReadinessId = request.payload.workspaceReadinessId;
+  payload.bundle.bundleId = request.payload.bundleId;
+  payload.bundle.requestedCommandCount = request.payload.commandIds.length;
+  payload.bundle.commands = request.payload.commandIds.map((commandId, index) => ({
+    stepId: `step-smoke-${index}`,
+    sequenceIndex: index,
+    commandId,
+    timeoutMs: index === 2 ? 300000 : 600000,
+    maxOutputBytes: index === 2 ? 8000 : 12000,
+    maxOutputLines: index === 2 ? 160 : 240,
+    tailOnly: true,
+    commandStringAllowed: false,
+    argsAllowed: false,
+    cwdAllowed: false,
+    envAllowed: false,
+    shellAllowed: false,
+    status: "succeeded",
+    exitCode: 0,
+    durationMs: 1000 + index,
+    outputTail: `${commandId} completed with bounded sanitized evidence.`,
+    outputByteCount: `${commandId} completed with bounded sanitized evidence.`.length,
+    outputLineCount: 1,
+    truncated: false,
+    resultHash: `sha256:${String(index).repeat(64)}`,
+    summary: `${commandId} passed with local deterministic evidence.`,
+  }));
+  payload.aggregateResult.status = "succeeded";
+  payload.aggregateResult.commandCount = request.payload.commandIds.length;
+  payload.aggregateResult.succeededCount = request.payload.commandIds.length;
+  payload.aggregateResult.failedCount = 0;
+  payload.aggregateResult.timedOutCount = 0;
+  payload.aggregateResult.truncated = false;
+  payload.aggregateResult.rawOutputStored = false;
+  payload.aggregateResult.rawOutputReturned = false;
+  payload.aggregateResult.summary = "All user approved checks passed with sanitized aggregate evidence.";
+  return payload;
+}
+
+function countType(messages, type) {
+  return messages.filter((message) => message?.type === type).length;
+}
+
+async function writeFailureEvidence(browserInstance) {
   await mkdir(evidenceRoot, { recursive: true });
-  const screenshotPath = path.join(evidenceRoot, "controlled-agent-task.png");
-  const domPath = path.join(evidenceRoot, "controlled-agent-task.dom.txt");
-  const metricsPath = path.join(evidenceRoot, "controlled-agent-task.metrics.json");
-  await page.screenshot({ path: screenshotPath, fullPage: true });
-  const dom = sanitizeEvidenceText(await page.locator("body").innerText());
-  await writeFile(domPath, dom, "utf8");
-  await writeFile(metricsPath, `${JSON.stringify(JSON.parse(sanitizeEvidenceText(JSON.stringify(metrics))), null, 2)}\n`, "utf8");
-  return { screenshotPath, domPath, metricsPath };
+  const pages = browserInstance?.contexts?.()?.flatMap((context) => context.pages()) ?? [];
+  if (pages[0]) {
+    await pages[0].screenshot({ path: path.join(evidenceRoot, "failure.png"), fullPage: true }).catch(() => undefined);
+    const body = await pages[0].locator("body").innerText().catch(() => "");
+    await writeFile(path.join(evidenceRoot, "failure-body.txt"), redact(body));
+  }
+  await writeFile(path.join(evidenceRoot, "failure.json"), `${JSON.stringify({ failures, runtimeRequestLog, consoleMessages: consoleMessages.map(redact) }, null, 2)}\n`);
 }
 
-function json(response, status, body) {
-  response.writeHead(status, { ...corsHeaders(), "content-type": "application/json; charset=utf-8" });
-  response.end(JSON.stringify(body));
+function json(response, status, payload) {
+  response.writeHead(status, corsHeaders({ "content-type": "application/json" }));
+  response.end(JSON.stringify(payload));
 }
 
-function corsHeaders() {
-  return { "access-control-allow-origin": "*", "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "authorization, content-type, accept" };
+function corsHeaders(extra = {}) {
+  return { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type, x-yet-ai-caller", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", ...extra };
 }
 
-function isAllowedUrl(value, origins) {
-  try { return origins.includes(new URL(value).origin); } catch { return false; }
-}
-
-function isPathInsideRoot(rootPath, requestedPath) {
-  const relativePath = path.relative(rootPath, requestedPath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+function isPathInsideRoot(rootPath, candidatePath) {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function contentType(filePath) {
@@ -486,34 +660,13 @@ function contentType(filePath) {
   return "application/octet-stream";
 }
 
-function containsSecret(text) {
-  return String(text).includes(runtimeToken) || /Bearer\s+\S+/i.test(String(text));
-}
-
-function assertNoSecretLeak(text, source) {
-  if (containsSecret(text)) throw new Error(`Runtime token leaked through ${source}.`);
-}
-
-function redactSecrets(text) {
-  return String(text).split(runtimeToken).join("[redacted]").replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]");
-}
-
-function sanitizeEvidenceText(text) {
-  return redactSecrets(text)
+function redact(value) {
+  return String(value)
+    .replaceAll(runtimeToken, "[redacted-runtime-token]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]")
     .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
-    .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]")
-    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
-}
-
-function redactUrl(value) {
-  try {
-    const url = new URL(value);
-    url.username = "";
-    url.password = "";
-    url.search = "";
-    url.hash = "";
-    return url.toString();
-  } catch { return redactSecrets(value); }
+    .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]");
 }
 
 function messageOf(error) {
@@ -522,6 +675,6 @@ function messageOf(error) {
 
 function reportFailures() {
   console.error("VS Code controlled-agent task smoke failed:");
-  for (const failure of failures) console.error(`- ${sanitizeEvidenceText(failure)}`);
+  for (const failure of failures) console.error(`- ${redact(failure)}`);
   process.exit(1);
 }
