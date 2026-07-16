@@ -12,6 +12,16 @@ const indexPath = path.join(distRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "plugin-layout");
 const runtimeSessionValue = `pl-${randomUUID()}`;
 const failures = [];
+const LAYOUT_CONTRACT_VERSION = "T-772-plugin-layout-thresholds";
+const LAYOUT_THRESHOLDS = Object.freeze({
+  maxContextHeight: 112,
+  maxComposerScrollGap: 32,
+  hosts: Object.freeze({
+    vscode: Object.freeze({ minComposerLowerOffset: 0, maxComposerScrollOverlap: 1 }),
+    jetbrains: Object.freeze({ minComposerLowerOffset: -16, maxComposerScrollOverlap: 316 }),
+  }),
+});
+const LAYOUT_CONTRACT = Object.freeze({ version: LAYOUT_CONTRACT_VERSION, thresholds: LAYOUT_THRESHOLDS });
 let guiServer;
 let runtimeServer;
 let browser;
@@ -26,6 +36,7 @@ try {
   runtimeServer = await startRuntimeServer();
   browser = await chromium.launch({ headless: true });
 
+  console.log(`Plugin layout smoke contract: ${LAYOUT_CONTRACT_VERSION} ${JSON.stringify(LAYOUT_THRESHOLDS)}`);
   const evidence = [];
   evidence.push(await exercisePluginViewport({ chromium: browser, width: 790, height: 540, name: "vscode-790x540", host: "vscode" }));
   evidence.push(await exercisePluginViewport({ chromium: browser, width: 600, height: 500, name: "vscode-600x500", host: "vscode" }));
@@ -117,13 +128,15 @@ function assertLayoutMetrics(metrics, label, height, host) {
   assert(metrics.composerHeight <= 240, `${label} composer too tall: ${metrics.composerHeight}`);
   assert(metrics.composerBottom <= height + 1, `${label} composer extends below viewport: ${metrics.composerBottom} > ${height}`);
   assert(metrics.contextDetailsOpen === false || metrics.contextDetailsOpen === null, `${label} active editor context details should be collapsed`);
-  const maxContextHeight = 112;
+  const maxContextHeight = LAYOUT_THRESHOLDS.maxContextHeight;
   assert(metrics.contextHeight <= maxContextHeight, `${label} active editor context dominates composer: ${metrics.contextHeight}, maxContextHeight=${maxContextHeight}`);
   assert(metrics.composerAfterScroll, `${label} composer does not follow chat scroll region in DOM order`);
-  const minComposerLowerOffset = host === "jetbrains" ? -16 : 0;
+  const hostThresholds = LAYOUT_THRESHOLDS.hosts[host];
+  assert(hostThresholds, `${label} has no layout thresholds for host: ${host}`);
+  const minComposerLowerOffset = hostThresholds.minComposerLowerOffset;
   assert(metrics.composerTop - metrics.scrollTop > minComposerLowerOffset, `${label} composer is not placed in the lower chat area: scrollTop=${metrics.scrollTop}, scrollHeight=${metrics.chatScrollHeight}, composerTop=${metrics.composerTop}, minComposerLowerOffset=${minComposerLowerOffset}`);
-  const maxComposerScrollGap = 32;
-  const maxComposerScrollOverlap = host === "jetbrains" ? 316 : 1;
+  const maxComposerScrollGap = LAYOUT_THRESHOLDS.maxComposerScrollGap;
+  const maxComposerScrollOverlap = hostThresholds.maxComposerScrollOverlap;
   assert(metrics.composerScrollGap <= maxComposerScrollGap, `${label} composer detached from chat scroll region: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollGap=${metrics.composerScrollGap}, maxComposerScrollGap=${maxComposerScrollGap}`);
   assert(metrics.composerScrollOverlap <= maxComposerScrollOverlap, `${label} composer overlaps chat scroll region too deeply: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollOverlap=${metrics.composerScrollOverlap}, maxComposerScrollOverlap=${maxComposerScrollOverlap}`);
 }
@@ -445,7 +458,7 @@ async function saveEvidence(page, name, metrics) {
   await page.screenshot({ path: screenshotPath, fullPage: true });
   const dom = await page.evaluate(() => document.body.innerText).then(sanitizeEvidenceText);
   await writeFile(domPath, dom, "utf8");
-  await writeFile(metricsPath, `${JSON.stringify(metrics, null, 2)}\n`, "utf8");
+  await writeFile(metricsPath, `${JSON.stringify({ ...metrics, layoutContract: LAYOUT_CONTRACT }, null, 2)}\n`, "utf8");
   return { screenshotPath, domPath, metricsPath };
 }
 
