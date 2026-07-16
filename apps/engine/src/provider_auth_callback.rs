@@ -48,7 +48,7 @@ pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStar
     }
 
     let listeners = bind_loopback_listeners().await?;
-    serve_listeners_in_threads(listeners)?;
+    serve_listeners_in_owner_thread(listeners)?;
 
     let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
     state.started = true;
@@ -72,36 +72,38 @@ pub(crate) fn forget_pending_state(state_value: &str) {
     }
 }
 
-async fn bind_loopback_listeners() -> Result<Vec<TcpListener>, CallbackStartError> {
+struct LoopbackListeners {
+    ipv4: TcpListener,
+    ipv6: TcpListener,
+}
+
+async fn bind_loopback_listeners() -> Result<LoopbackListeners, CallbackStartError> {
     let ipv4 = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, CALLBACK_PORT)))
         .await
         .map_err(|_| CallbackStartError)?;
     let ipv6 = TcpListener::bind(SocketAddr::from((Ipv6Addr::LOCALHOST, CALLBACK_PORT)))
         .await
         .map_err(|_| CallbackStartError)?;
-    Ok(vec![ipv4, ipv6])
+    Ok(LoopbackListeners { ipv4, ipv6 })
 }
 
-fn serve_listeners_in_threads(listeners: Vec<TcpListener>) -> Result<(), CallbackStartError> {
-    for listener in listeners {
-        serve_listener_in_thread(listener)?;
-    }
-    Ok(())
-}
-
-fn serve_listener_in_thread(listener: TcpListener) -> Result<(), CallbackStartError> {
+fn serve_listeners_in_owner_thread(listeners: LoopbackListeners) -> Result<(), CallbackStartError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| CallbackStartError)?;
     std::thread::Builder::new()
         .name("yet-provider-auth-callback".to_string())
         .spawn(move || {
-            if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                runtime.block_on(accept_loop(listener));
-            }
+            runtime.block_on(serve_loopback_listeners(listeners));
         })
         .map(|_| ())
         .map_err(|_| CallbackStartError)
+}
+
+async fn serve_loopback_listeners(listeners: LoopbackListeners) {
+    let LoopbackListeners { ipv4, ipv6 } = listeners;
+    tokio::join!(accept_loop(ipv4), accept_loop(ipv6));
 }
 
 async fn accept_loop(listener: TcpListener) {
