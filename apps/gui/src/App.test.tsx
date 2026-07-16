@@ -1473,15 +1473,12 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("Experimental account login (non-default)");
-    expect(container?.textContent).toContain("Prod login off");
-    expect(container?.textContent).toContain("Codex dogfood can start");
+    expect(container?.textContent).toContain("Production OpenAI login unavailable");
+    expect(container?.textContent).toContain("GPT/Codex login is experimental dogfood");
+    expect(container?.textContent).toContain("API-key fallback is safe/default");
     expect(container?.textContent).toContain("Create an API key in the provider console");
 
     await act(async () => {
-      findButton("Use OpenAI API key fallback").click();
-    });
-
-    expect(findInputValue("openai-api")).toBeDefined();    await act(async () => {
       findButton("Use OpenAI API key fallback").click();
     });
     await flushAsync();
@@ -1492,7 +1489,6 @@ describe("provider secret boundary", () => {
     expect(findDetails("provider-setup-details").open).toBe(true);
     expect(document.activeElement).toBe(apiKeyInput());
     expect(container?.textContent).toContain("OpenAI API-key setup opened");
-    expect(container?.textContent).toContain("Paste your provider API key, save or update the provider, test provider, then refresh runtime/model readiness before sending.");
     expect(container?.textContent).toContain("Paste your provider API key, save or update the provider, test provider, then refresh runtime/model readiness before sending.");
   });
 
@@ -1653,9 +1649,9 @@ describe("provider secret boundary", () => {
     expect(loginButton).toBeDefined();
     expect(loginButton?.textContent).toBe("Connect OpenAI account (experimental)");
     expect(loginButton?.disabled).toBe(false);
-    expect(container?.textContent).toContain("Prod login off");
-    expect(container?.textContent).toContain("Codex dogfood can start");
-    expect(container?.textContent).toContain("API-key default");
+    expect(container?.textContent).toContain("Production OpenAI login unavailable");
+    expect(container?.textContent).toContain("GPT/Codex login is experimental dogfood");
+    expect(container?.textContent).toContain("API-key fallback is safe/default");
     expect(container?.textContent).not.toContain("Experimental login unavailable");
   });
 
@@ -2033,15 +2029,15 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("access_token");
   });
 
-  it("blocks cached healthy provider auth when runtime transitions to session-token mismatch", async () => {
-    mockRuntimeResponses({ authResponse: providerAuthResponse("api_key_configured") });
+  it.each(["api_key_configured", "login_unavailable"] satisfies ProviderAuthStatus[])("blocks cached enabled provider auth %s when runtime transitions to session-token mismatch", async (status) => {
+    mockRuntimeResponses({ authResponse: providerAuthResponse(status) });
     renderApp();
 
     await flushAsync();
 
     const healthyLoginButton = findButton("Connect OpenAI account (experimental)");
     expect(healthyLoginButton.disabled).toBe(false);
-    expect(container?.textContent).toContain("OpenAI API-key fallback is configured as safe/default");
+    expect(container?.textContent).toContain(status === "api_key_configured" ? "OpenAI API-key fallback is configured as safe/default" : "Production OpenAI login unavailable");
 
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -2049,9 +2045,9 @@ describe("provider secret boundary", () => {
         return Promise.resolve(jsonResponse({ error: "session token mismatch" }, 401));
       }
       if (url.endsWith("/v1/provider-auth/openai/status")) {
-        return Promise.resolve(jsonResponse(providerAuthResponse("api_key_configured")));
+        return Promise.resolve(jsonResponse(providerAuthResponse(status)));
       }
-      return mockRuntimeResponse(input, init, { authResponse: providerAuthResponse("api_key_configured") });
+      return mockRuntimeResponse(input, init, { authResponse: providerAuthResponse(status) });
     });
 
     await act(async () => {
@@ -2064,6 +2060,7 @@ describe("provider secret boundary", () => {
     expect(text).toContain("Experimental GPT/OpenAI login is blocked by runtime auth");
     expect(text).toContain("Blocked prerequisite");
     expect(text).not.toContain("The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login.");
+    expect(text).not.toContain("Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.");
 
     const blockedLoginButton = findButton("Connect OpenAI account (experimental)");
     expect(blockedLoginButton.disabled).toBe(true);
@@ -2302,7 +2299,7 @@ describe("provider secret boundary", () => {
   it.each([
     ["not_configured", "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path; the experimental account path is optional and high-risk.", "Safe next step"],
     ["login_available", "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.", "Account login is available only as an explicit experimental path."],
-    ["login_unavailable", "Prod login off; Codex dogfood can start; API-key default.", "Prod login off. Use API-key fallback, Demo Mode, or Codex dogfood"],
+    ["login_unavailable", "Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.", "Production login unavailable. Use API-key fallback, Demo Mode, or GPT/Codex dogfood"],
     ["api_key_configured", "OpenAI API-key fallback is configured as safe/default. Codex dogfood remains discoverable.", "The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login."],
     ["pending", "Experimental OpenAI account login is pending. Finish the browser/device step, then exchange the code or refresh status; use API-key fallback for the default path.", "Complete browser verification, paste only the authorization code if needed"],
     ["connected", "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.", "API-key providers and Demo Mode still take precedence for chat when ready"],

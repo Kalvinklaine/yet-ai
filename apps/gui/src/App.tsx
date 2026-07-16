@@ -131,7 +131,7 @@ const providerAuthStatusCopy: Record<ProviderAuthStatus, string> = {
   not_configured: "No production OpenAI account login is configured. Use the OpenAI API-key fallback as the safe/default real-provider path; the experimental account path is optional and high-risk.",
   api_key_configured: "OpenAI API-key fallback is configured as safe/default. Codex dogfood remains discoverable.",
   login_available: "OpenAI account login is exposed by the local runtime, but it is experimental/non-default until official production support is approved.",
-  login_unavailable: "Prod login off; Codex dogfood can start; API-key default.",
+  login_unavailable: "Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.",
   pending: "Experimental OpenAI account login is pending. Finish the browser/device step, then exchange the code or refresh status; use API-key fallback for the default path.",
   connected: "Experimental OpenAI account login is connected through the local runtime, but API-key fallback remains the default real-provider path.",
   expired: "Experimental OpenAI account login expired. Reconnect only if you accept the risk, or use the API-key fallback.",
@@ -6461,7 +6461,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
 
 function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
   if (status.status === "login_unavailable") {
-    return <span className="subtle">Prod login off here. Start Codex dogfood intentionally, or use API-key fallback: paste key once, save, test, refresh, send. GUI clears the key.</span>;
+    return <span className="subtle">Production login unavailable. Use API-key fallback, or start GPT/Codex dogfood.</span>;
   }
   if (status.status === "pending") {
     return (
@@ -6524,7 +6524,7 @@ function providerAuthRecoveryCopy(status: ProviderAuthResponse): string {
     case "api_key_configured":
       return "The safe/default API-key path is available locally. Keep it unless intentionally starting experimental Codex dogfood login.";
     case "login_unavailable":
-      return "Prod login off. Use API-key fallback, Demo Mode, or Codex dogfood; local-first setup is not blocked.";
+      return "Production login unavailable. Use API-key fallback, Demo Mode, or GPT/Codex dogfood; local setup is not blocked.";
     case "login_available":
       return "Account login is available only as an explicit experimental path. Prefer API-key fallback for real-provider setup unless dogfooding this risk path.";
     default:
