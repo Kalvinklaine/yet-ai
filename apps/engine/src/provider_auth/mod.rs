@@ -7,16 +7,14 @@ use base64::Engine;
 use chrono::{Duration, Utc};
 use futures_util::StreamExt;
 use http::StatusCode;
-use serde::de::{DeserializeOwned, Error as DeError};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::provider_auth_callback;
 use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
-use crate::secret_store::{
-    provider_secret_store, ProviderSecretStore, SecretKind, SecretStoreError,
-};
+use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
 
 const LOGIN_UNAVAILABLE_MESSAGE: &str = "OpenAI account login is not available for this local provider path. Create an API key in the provider console and paste it once into Yet AI.";
 const API_KEY_CONFIGURED_MESSAGE: &str = "API-key authentication is configured locally.";
@@ -63,241 +61,24 @@ static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
 static CODEX_REFRESH_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-struct CodexExchangeGuard {
-    key: String,
-}
+mod status;
+mod types;
+mod validation;
 
-impl Drop for CodexExchangeGuard {
-    fn drop(&mut self) {
-        if let Ok(mut keys) = CODEX_EXCHANGE_IN_FLIGHT.lock() {
-            keys.remove(&self.key);
-        }
-    }
-}
+pub use types::{
+    ExperimentalCodexChatAuth, ProviderAuthDisconnectRequest, ProviderAuthError,
+    ProviderAuthExchangeRequest, ProviderAuthResponse, ProviderAuthStartRequest,
+};
 
-#[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProviderAuthStartRequest {
-    #[serde(default)]
-    pub mock: bool,
-    #[serde(default)]
-    pub experimental_codex_like: bool,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
-    pub ttl_seconds: Option<i64>,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
-    pub token_endpoint_url: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
-    pub chat_endpoint_url: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProviderAuthExchangeRequest {
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
-    pub session_id: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
-    pub state: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
-    pub code: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum NonNullField<T> {
-    Value(T),
-}
-
-fn deserialize_optional_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    match Option::<NonNullField<T>>::deserialize(deserializer)? {
-        Some(NonNullField::Value(value)) => Ok(Some(value)),
-        None => Err(D::Error::custom("null is not allowed")),
-    }
-}
-
-#[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProviderAuthDisconnectRequest {}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderAuthResponse {
-    pub provider: String,
-    pub configured: bool,
-    pub status: &'static str,
-    pub auth_source: &'static str,
-    pub supports_login: bool,
-    pub supports_api_key: bool,
-    pub cloud_required: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub success: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub account_label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub redacted: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub authorization_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub verification_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub session_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub scopes: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub poll_interval_seconds: Option<u64>,
-    pub message: String,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum ProviderAuthError {
-    #[error("invalid provider id")]
-    InvalidProvider,
-    #[error("provider auth is not supported for this provider")]
-    UnsupportedProvider,
-    #[error("invalid provider auth request")]
-    InvalidRequest,
-    #[error("provider auth session was not found")]
-    SessionNotFound,
-    #[error("provider auth session expired")]
-    SessionExpired,
-    #[error("provider auth session mismatch")]
-    SessionMismatch,
-    #[error("provider storage error")]
-    Provider(#[from] providers::ProviderError),
-    #[error("provider auth storage error")]
-    Storage,
-    #[error("provider auth token exchange failed")]
-    TokenExchange,
-    #[error("provider auth callback listener is unavailable")]
-    CallbackUnavailable,
-}
-
-impl ProviderAuthError {
-    pub fn status(&self) -> StatusCode {
-        match self {
-            Self::InvalidProvider | Self::InvalidRequest | Self::SessionMismatch => {
-                StatusCode::BAD_REQUEST
-            }
-            Self::UnsupportedProvider | Self::SessionNotFound => StatusCode::NOT_FOUND,
-            Self::SessionExpired => StatusCode::GONE,
-            Self::Provider(error) => error.status(),
-            Self::Storage => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::TokenExchange => StatusCode::BAD_GATEWAY,
-            Self::CallbackUnavailable => StatusCode::SERVICE_UNAVAILABLE,
-        }
-    }
-}
-
-impl From<SecretStoreError> for ProviderAuthError {
-    fn from(_: SecretStoreError) -> Self {
-        Self::Storage
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct MockOAuthState {
-    pending: Option<MockOAuthSession>,
-    connected: Option<MockOAuthConnection>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct MockOAuthSession {
-    provider: String,
-    session_id: String,
-    state: String,
-    verifier: String,
-    challenge: String,
-    expires_at: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct MockOAuthConnection {
-    provider: String,
-    account_label: String,
-    scopes: Vec<String>,
-    expires_at: String,
-    access_token: String,
-    refresh_token: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct CodexOAuthState {
-    pending: Option<CodexOAuthSession>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct CodexOAuthSession {
-    provider: String,
-    session_id: String,
-    state: String,
-    verifier: String,
-    challenge: String,
-    expires_at: String,
-    scopes: Vec<String>,
-    token_endpoint_url: String,
-    chat_base_url: String,
-    chat_model: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexAuthMetadata {
-    provider: String,
-    account_label: String,
-    scopes: Vec<String>,
-    expires_at: String,
-    redacted: String,
-    chatgpt_account_id: String,
-    chat_base_url: String,
-    chat_model: String,
-    token_endpoint_url: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ExperimentalCodexChatAuth {
-    pub access_token: String,
-    pub chatgpt_account_id: String,
-    pub base_url: String,
-    pub model: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-struct CodexTokenResponse {
-    access_token: String,
-    #[serde(default)]
-    refresh_token: Option<String>,
-    #[serde(default)]
-    expires_in: Option<i64>,
-    #[serde(default)]
-    scope: Option<String>,
-    #[serde(default)]
-    id_token: Option<String>,
-    #[serde(default)]
-    account_label: Option<String>,
-}
-
-#[derive(Debug)]
-enum CodexTokenEndpointError {
-    Failed,
-    RefreshTokenReused,
-}
-
-impl From<CodexTokenEndpointError> for ProviderAuthError {
-    fn from(_: CodexTokenEndpointError) -> Self {
-        ProviderAuthError::TokenExchange
-    }
-}
+use status::{
+    codex_connected_response, codex_expired_response, codex_pending_response,
+    mock_connected_response, mock_pending_response, status_response,
+};
+use types::{
+    CodexAuthMetadata, CodexExchangeGuard, CodexOAuthSession, CodexOAuthState,
+    CodexTokenEndpointError, CodexTokenResponse, MockOAuthConnection, MockOAuthSession,
+    MockOAuthState,
+};
 
 pub async fn status(
     config_dir: &Path,
@@ -309,7 +90,12 @@ pub async fn status(
         if let Some(session) = codex.pending {
             if parse_time(&session.expires_at)? > Utc::now() {
                 ensure_codex_pending_callback_state(config_dir, &session).await?;
-                return Ok(codex_pending_response(provider, &session, None));
+                return Ok(codex_pending_response(
+                    provider,
+                    &session,
+                    codex_authorization_url(&session),
+                    None,
+                ));
             }
             provider_auth_callback::forget_pending_state(&session.state);
             write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
@@ -382,7 +168,12 @@ pub async fn start(
         .await?;
         provider_auth_callback::register_pending_state(&session.state, config_dir)
             .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
-        return Ok(codex_pending_response(provider, &session, Some(true)));
+        return Ok(codex_pending_response(
+            provider,
+            &session,
+            codex_authorization_url(&session),
+            Some(true),
+        ));
     }
     Ok(status_response(
         provider,
@@ -551,134 +342,6 @@ fn supports_provider_config(config: &StoredProviderConfig, provider: &str) -> bo
     }
 }
 
-fn status_response(
-    provider: &str,
-    redacted: Option<String>,
-    success: Option<bool>,
-) -> ProviderAuthResponse {
-    match redacted {
-        Some(redacted) => ProviderAuthResponse {
-            provider: provider.to_string(),
-            configured: true,
-            status: "api_key_configured",
-            auth_source: "api_key",
-            supports_login: false,
-            supports_api_key: true,
-            cloud_required: false,
-            success,
-            account_label: None,
-            redacted: Some(redacted),
-            authorization_url: None,
-            verification_url: None,
-            session_id: None,
-            expires_at: None,
-            scopes: None,
-            poll_interval_seconds: None,
-            message: API_KEY_CONFIGURED_MESSAGE.to_string(),
-        },
-        None => ProviderAuthResponse {
-            provider: provider.to_string(),
-            configured: false,
-            status: "login_unavailable",
-            auth_source: "none",
-            supports_login: false,
-            supports_api_key: true,
-            cloud_required: false,
-            success,
-            account_label: None,
-            redacted: None,
-            authorization_url: None,
-            verification_url: None,
-            session_id: None,
-            expires_at: None,
-            scopes: None,
-            poll_interval_seconds: None,
-            message: LOGIN_UNAVAILABLE_MESSAGE.to_string(),
-        },
-    }
-}
-
-fn mock_pending_response(
-    provider: &str,
-    session: &MockOAuthSession,
-    success: Option<bool>,
-) -> ProviderAuthResponse {
-    ProviderAuthResponse {
-        provider: provider.to_string(),
-        configured: false,
-        status: "pending",
-        auth_source: "oauth",
-        supports_login: true,
-        supports_api_key: true,
-        cloud_required: false,
-        success,
-        account_label: None,
-        redacted: None,
-        authorization_url: Some(format!(
-            "http://127.0.0.1/mock-oauth/authorize?provider={provider}&state={}&code_challenge={}",
-            session.state, session.challenge
-        )),
-        verification_url: Some("http://127.0.0.1/mock-oauth/verify".to_string()),
-        session_id: Some(session.session_id.clone()),
-        expires_at: Some(session.expires_at.clone()),
-        scopes: Some(vec!["mock:chat".to_string(), "mock:profile".to_string()]),
-        poll_interval_seconds: Some(1),
-        message: MOCK_PENDING_MESSAGE.to_string(),
-    }
-}
-
-fn mock_connected_response(
-    provider: &str,
-    scopes: Vec<String>,
-    success: Option<bool>,
-) -> ProviderAuthResponse {
-    ProviderAuthResponse {
-        provider: provider.to_string(),
-        configured: true,
-        status: "connected",
-        auth_source: "oauth",
-        supports_login: true,
-        supports_api_key: true,
-        cloud_required: false,
-        success,
-        account_label: Some("Mock OAuth Account".to_string()),
-        redacted: Some("mock-oauth-...connected".to_string()),
-        authorization_url: None,
-        verification_url: None,
-        session_id: None,
-        expires_at: Some((Utc::now() + Duration::hours(1)).to_rfc3339()),
-        scopes: Some(scopes),
-        poll_interval_seconds: None,
-        message: MOCK_CONNECTED_MESSAGE.to_string(),
-    }
-}
-
-fn codex_pending_response(
-    provider: &str,
-    session: &CodexOAuthSession,
-    success: Option<bool>,
-) -> ProviderAuthResponse {
-    ProviderAuthResponse {
-        provider: provider.to_string(),
-        configured: false,
-        status: "pending",
-        auth_source: "oauth",
-        supports_login: true,
-        supports_api_key: true,
-        cloud_required: false,
-        success,
-        account_label: None,
-        redacted: None,
-        authorization_url: Some(codex_authorization_url(session)),
-        verification_url: None,
-        session_id: Some(session.session_id.clone()),
-        expires_at: Some(session.expires_at.clone()),
-        scopes: Some(session.scopes.clone()),
-        poll_interval_seconds: Some(3),
-        message: CODEX_PENDING_MESSAGE.to_string(),
-    }
-}
-
 fn new_mock_session(provider: &str, ttl_seconds: i64) -> MockOAuthSession {
     let id = MOCK_COUNTER.fetch_add(1, Ordering::Relaxed);
     let now = Utc::now();
@@ -693,54 +356,6 @@ fn new_mock_session(provider: &str, ttl_seconds: i64) -> MockOAuthSession {
         verifier,
         challenge,
         expires_at: (now + Duration::seconds(ttl_seconds)).to_rfc3339(),
-    }
-}
-
-fn codex_connected_response(
-    provider: &str,
-    metadata: CodexAuthMetadata,
-    success: Option<bool>,
-) -> ProviderAuthResponse {
-    ProviderAuthResponse {
-        provider: provider.to_string(),
-        configured: true,
-        status: "connected",
-        auth_source: "oauth",
-        supports_login: true,
-        supports_api_key: true,
-        cloud_required: false,
-        success,
-        account_label: Some(metadata.account_label),
-        redacted: Some(metadata.redacted),
-        authorization_url: None,
-        verification_url: None,
-        session_id: None,
-        expires_at: Some(metadata.expires_at),
-        scopes: Some(metadata.scopes),
-        poll_interval_seconds: None,
-        message: CODEX_CONNECTED_MESSAGE.to_string(),
-    }
-}
-
-fn codex_expired_response(provider: &str, metadata: CodexAuthMetadata) -> ProviderAuthResponse {
-    ProviderAuthResponse {
-        provider: provider.to_string(),
-        configured: false,
-        status: "expired",
-        auth_source: "oauth",
-        supports_login: true,
-        supports_api_key: true,
-        cloud_required: false,
-        success: None,
-        account_label: Some(metadata.account_label),
-        redacted: Some(metadata.redacted),
-        authorization_url: None,
-        verification_url: None,
-        session_id: None,
-        expires_at: Some(metadata.expires_at),
-        scopes: Some(metadata.scopes),
-        poll_interval_seconds: None,
-        message: CODEX_EXPIRED_MESSAGE.to_string(),
     }
 }
 
@@ -1964,7 +1579,12 @@ async fn prepare_codex_start(
     let codex = read_codex_state(config_dir, provider).await?;
     if let Some(session) = codex.pending {
         if parse_time(&session.expires_at)? > Utc::now() {
-            return Ok(Some(codex_pending_response(provider, &session, Some(true))));
+            return Ok(Some(codex_pending_response(
+                provider,
+                &session,
+                codex_authorization_url(&session),
+                Some(true),
+            )));
         }
         provider_auth_callback::forget_pending_state(&session.state);
         write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
