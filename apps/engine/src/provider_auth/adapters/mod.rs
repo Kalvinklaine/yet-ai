@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::future::Future;
 use std::pin::Pin;
 
@@ -20,6 +18,7 @@ impl ProviderOAuthProviderId {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProviderOAuthAuthMode {
     BrowserPkce,
@@ -30,6 +29,7 @@ pub(super) enum ProviderOAuthAuthMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProviderOAuthStatusKind {
     Unavailable,
+    ApiKeyConfigured,
     LoginAvailable,
     Pending,
     Connected,
@@ -44,6 +44,7 @@ impl ProviderOAuthStatusKind {
     pub(super) const fn wire_status(self) -> &'static str {
         match self {
             Self::Unavailable => "login_unavailable",
+            Self::ApiKeyConfigured => "api_key_configured",
             Self::LoginAvailable => "login_available",
             Self::Pending => "pending",
             Self::Connected => "connected",
@@ -56,6 +57,7 @@ impl ProviderOAuthStatusKind {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProviderOAuthPolicyGate {
     pub(super) name: &'static str,
@@ -63,6 +65,7 @@ pub(super) struct ProviderOAuthPolicyGate {
     pub(super) message: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProviderOAuthCapabilities {
     pub(super) provider_id: ProviderOAuthProviderId,
@@ -74,6 +77,7 @@ pub(super) struct ProviderOAuthCapabilities {
     pub(super) supports_chat_auth_snapshot: bool,
 }
 
+#[allow(dead_code)]
 impl ProviderOAuthCapabilities {
     pub(super) fn supports_mode(&self, mode: ProviderOAuthAuthMode) -> bool {
         self.auth_modes.contains(&mode)
@@ -133,6 +137,8 @@ impl ProviderOAuthStatusView {
 pub(super) struct ProviderOAuthStartSessionRequest {
     pub(super) mode: ProviderOAuthAuthMode,
     pub(super) ttl_seconds: Option<i64>,
+    pub(super) token_endpoint_url: Option<String>,
+    pub(super) chat_endpoint_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +146,7 @@ pub(super) struct ProviderOAuthStartSession {
     pub(super) status: ProviderOAuthStatusView,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProviderOAuthExchangeCodeRequest {
     pub(super) session_id: String,
@@ -148,16 +155,35 @@ pub(super) struct ProviderOAuthExchangeCodeRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProviderOAuthCallbackExchangeRequest {
+    pub(super) state: String,
+    pub(super) code: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProviderOAuthCallbackErrorRequest {
+    pub(super) state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProviderOAuthCallbackStateRequest {
+    pub(super) state: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProviderOAuthRefreshRequest {
     pub(super) rejected_access_token: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProviderOAuthRefreshOutcome {
     pub(super) status: ProviderOAuthStatusView,
     pub(super) chat_auth_snapshot: Option<ProviderOAuthChatAuthSnapshot>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProviderOAuthChatAuthSnapshot {
     pub(super) access_token: String,
@@ -180,7 +206,7 @@ pub(super) enum ProviderOAuthAdapterError {
 impl From<ProviderOAuthAdapterError> for ProviderAuthError {
     fn from(error: ProviderOAuthAdapterError) -> Self {
         match error {
-            ProviderOAuthAdapterError::UnsupportedMode => ProviderAuthError::UnsupportedProvider,
+            ProviderOAuthAdapterError::UnsupportedMode => ProviderAuthError::InvalidRequest,
             ProviderOAuthAdapterError::PolicyBlocked => ProviderAuthError::InvalidRequest,
             ProviderOAuthAdapterError::ProviderRejected => ProviderAuthError::TokenExchange,
             ProviderOAuthAdapterError::InvalidSession => ProviderAuthError::SessionMismatch,
@@ -191,6 +217,7 @@ impl From<ProviderOAuthAdapterError> for ProviderAuthError {
     }
 }
 
+#[allow(dead_code)]
 pub(super) trait ProviderOAuthAdapter: Send + Sync {
     fn provider_id(&self) -> ProviderOAuthProviderId;
     fn display_label(&self) -> &'static str;
@@ -206,6 +233,18 @@ pub(super) trait ProviderOAuthAdapter: Send + Sync {
         &'a self,
         request: ProviderOAuthExchangeCodeRequest,
     ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>>;
+    fn callback_exchange<'a>(
+        &'a self,
+        request: ProviderOAuthCallbackExchangeRequest,
+    ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>>;
+    fn callback_error<'a>(
+        &'a self,
+        request: ProviderOAuthCallbackErrorRequest,
+    ) -> AdapterFuture<'a, Result<(), ProviderOAuthAdapterError>>;
+    fn callback_state_pending<'a>(
+        &'a self,
+        request: ProviderOAuthCallbackStateRequest,
+    ) -> AdapterFuture<'a, Result<bool, ProviderOAuthAdapterError>>;
     fn refresh<'a>(
         &'a self,
         request: ProviderOAuthRefreshRequest,
@@ -223,10 +262,11 @@ pub(in crate::provider_auth) mod openai_codex {
 
     use super::{
         AdapterFuture, ProviderOAuthAdapter, ProviderOAuthAdapterError, ProviderOAuthAuthMode,
-        ProviderOAuthCapabilities, ProviderOAuthChatAuthSnapshot, ProviderOAuthExchangeCodeRequest,
-        ProviderOAuthPolicyGate, ProviderOAuthProviderId, ProviderOAuthRefreshOutcome,
-        ProviderOAuthRefreshRequest, ProviderOAuthStartSession, ProviderOAuthStartSessionRequest,
-        ProviderOAuthStatusKind, ProviderOAuthStatusView,
+        ProviderOAuthCallbackErrorRequest, ProviderOAuthCallbackExchangeRequest,
+        ProviderOAuthCallbackStateRequest, ProviderOAuthCapabilities, ProviderOAuthChatAuthSnapshot,
+        ProviderOAuthExchangeCodeRequest, ProviderOAuthPolicyGate, ProviderOAuthProviderId,
+        ProviderOAuthRefreshOutcome, ProviderOAuthRefreshRequest, ProviderOAuthStartSession,
+        ProviderOAuthStartSessionRequest, ProviderOAuthStatusKind, ProviderOAuthStatusView,
     };
     use crate::provider_auth::types::{
         ExperimentalCodexChatAuth, ProviderAuthError, ProviderAuthResponse,
@@ -368,6 +408,18 @@ pub(in crate::provider_auth) mod openai_codex {
                 .await
         }
 
+        pub(in crate::provider_auth) async fn callback_state_pending(
+            &self,
+            state: String,
+        ) -> Result<bool, ProviderAuthError> {
+            crate::provider_auth::codex_callback_state_is_pending_impl(
+                &self.config_dir,
+                self.provider,
+                &state,
+            )
+            .await
+        }
+
         pub(in crate::provider_auth) async fn disconnect_cleanup(
             &self,
         ) -> Result<bool, ProviderAuthError> {
@@ -447,7 +499,11 @@ pub(in crate::provider_auth) mod openai_codex {
                 "connected" => ProviderOAuthStatusKind::Connected,
                 "expired" => ProviderOAuthStatusKind::Expired,
                 "revoked" => ProviderOAuthStatusKind::Revoked,
-                "api_key_configured" => ProviderOAuthStatusKind::Unavailable,
+                "api_key_configured" => ProviderOAuthStatusKind::ApiKeyConfigured,
+                "provider_error" => ProviderOAuthStatusKind::ProviderError,
+                "exchange_failed" => ProviderOAuthStatusKind::ExchangeFailed,
+                "storage_error" => ProviderOAuthStatusKind::StorageError,
+                "login_available" => ProviderOAuthStatusKind::LoginAvailable,
                 _ => ProviderOAuthStatusKind::Unavailable,
             };
             ProviderOAuthStatusView {
@@ -504,19 +560,20 @@ pub(in crate::provider_auth) mod openai_codex {
             &'a self,
         ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
             Box::pin(async move {
-                let response = self
-                    .status_response()
-                    .await
-                    .map_err(|error| match error {
-                        ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
-                        ProviderAuthError::TokenExchange => {
-                            ProviderOAuthAdapterError::ExchangeFailed
-                        }
-                        _ => ProviderOAuthAdapterError::ProviderRejected,
-                    })?
-                    .unwrap_or_else(|| {
-                        crate::provider_auth::status::status_response(self.provider, None, None)
-                    });
+                let response = match self.status_response().await.map_err(|error| match error {
+                    ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                    ProviderAuthError::TokenExchange => ProviderOAuthAdapterError::ExchangeFailed,
+                    _ => ProviderOAuthAdapterError::ProviderRejected,
+                })? {
+                    Some(response) => response,
+                    None => crate::provider_auth::status::status_response(
+                        self.provider,
+                        crate::provider_auth::configured_api_key(&self.config_dir, self.provider)
+                            .await
+                            .map_err(|_| ProviderOAuthAdapterError::Storage)?,
+                        None,
+                    ),
+                };
                 Ok(Self::status_view_from_response(response))
             })
         }
@@ -534,7 +591,11 @@ pub(in crate::provider_auth) mod openai_codex {
                     return Err(ProviderOAuthAdapterError::UnsupportedMode);
                 }
                 let status = self
-                    .start_response(request.ttl_seconds, None, None)
+                    .start_response(
+                        request.ttl_seconds,
+                        request.token_endpoint_url.as_deref(),
+                        request.chat_endpoint_url.as_deref(),
+                    )
                     .await
                     .map_err(|error| match error {
                         ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
@@ -568,6 +629,59 @@ pub(in crate::provider_auth) mod openai_codex {
                         _ => ProviderOAuthAdapterError::ExchangeFailed,
                     })?;
                 Ok(Self::status_view_from_response(response))
+            })
+        }
+
+        fn callback_exchange<'a>(
+            &'a self,
+            request: ProviderOAuthCallbackExchangeRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                let response = self
+                    .callback_exchange(request.state, request.code)
+                    .await
+                    .map_err(|error| match error {
+                        ProviderAuthError::SessionExpired => {
+                            ProviderOAuthAdapterError::SessionExpired
+                        }
+                        ProviderAuthError::SessionMismatch | ProviderAuthError::SessionNotFound => {
+                            ProviderOAuthAdapterError::InvalidSession
+                        }
+                        ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                        _ => ProviderOAuthAdapterError::ExchangeFailed,
+                    })?;
+                Ok(Self::status_view_from_response(response))
+            })
+        }
+
+        fn callback_error<'a>(
+            &'a self,
+            request: ProviderOAuthCallbackErrorRequest,
+        ) -> AdapterFuture<'a, Result<(), ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                self.callback_error(request.state)
+                    .await
+                    .map_err(|error| match error {
+                        ProviderAuthError::SessionExpired => {
+                            ProviderOAuthAdapterError::SessionExpired
+                        }
+                        ProviderAuthError::SessionMismatch | ProviderAuthError::SessionNotFound => {
+                            ProviderOAuthAdapterError::InvalidSession
+                        }
+                        ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
+                        _ => ProviderOAuthAdapterError::ProviderRejected,
+                    })
+            })
+        }
+
+        fn callback_state_pending<'a>(
+            &'a self,
+            request: ProviderOAuthCallbackStateRequest,
+        ) -> AdapterFuture<'a, Result<bool, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                self.callback_state_pending(request.state)
+                    .await
+                    .map_err(|_| ProviderOAuthAdapterError::Storage)
             })
         }
 
@@ -769,6 +883,41 @@ mod tests {
             })
         }
 
+        fn callback_exchange<'a>(
+            &'a self,
+            request: ProviderOAuthCallbackExchangeRequest,
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                if request.state != "safe-state" {
+                    return Err(ProviderOAuthAdapterError::InvalidSession);
+                }
+                if request.code.contains("secret") {
+                    return Err(ProviderOAuthAdapterError::ExchangeFailed);
+                }
+                Ok(Self::connected_status(Some(true)))
+            })
+        }
+
+        fn callback_error<'a>(
+            &'a self,
+            request: ProviderOAuthCallbackErrorRequest,
+        ) -> AdapterFuture<'a, Result<(), ProviderOAuthAdapterError>> {
+            Box::pin(async move {
+                if request.state == "safe-state" {
+                    Ok(())
+                } else {
+                    Err(ProviderOAuthAdapterError::InvalidSession)
+                }
+            })
+        }
+
+        fn callback_state_pending<'a>(
+            &'a self,
+            request: ProviderOAuthCallbackStateRequest,
+        ) -> AdapterFuture<'a, Result<bool, ProviderOAuthAdapterError>> {
+            Box::pin(async move { Ok(request.state == "safe-state") })
+        }
+
         fn refresh<'a>(
             &'a self,
             request: ProviderOAuthRefreshRequest,
@@ -898,6 +1047,8 @@ mod tests {
             .start_session(ProviderOAuthStartSessionRequest {
                 mode: ProviderOAuthAuthMode::BrowserPkce,
                 ttl_seconds: Some(600),
+                token_endpoint_url: None,
+                chat_endpoint_url: None,
             })
             .await
             .unwrap();
@@ -932,6 +1083,61 @@ mod tests {
         assert_response_has_no_secret(&response);
     }
 
+    #[test]
+    fn adapter_status_projection_preserves_api_key_configured_wire_status() {
+        let response = ProviderOAuthStatusView {
+            provider_id: TEST_PROVIDER,
+            kind: ProviderOAuthStatusKind::ApiKeyConfigured,
+            configured: true,
+            auth_source: "api_key",
+            supports_login: false,
+            supports_api_key: true,
+            cloud_required: false,
+            success: None,
+            account_label: None,
+            redacted: Some("sk-...redacted".to_string()),
+            authorization_url: None,
+            verification_url: None,
+            session_id: None,
+            expires_at: None,
+            scopes: None,
+            poll_interval_seconds: None,
+            message: "API-key authentication is configured locally.".to_string(),
+        }
+        .to_response();
+
+        assert_eq!(response.status, "api_key_configured");
+        assert!(response.configured);
+        assert_eq!(response.auth_source, "api_key");
+    }
+
+    #[tokio::test]
+    async fn adapter_callback_hooks_are_part_of_lifecycle_contract() {
+        let adapter = TestAdapter;
+
+        assert!(adapter
+            .callback_state_pending(ProviderOAuthCallbackStateRequest {
+                state: "safe-state".to_string(),
+            })
+            .await
+            .unwrap());
+        adapter
+            .callback_error(ProviderOAuthCallbackErrorRequest {
+                state: "safe-state".to_string(),
+            })
+            .await
+            .unwrap();
+        let status = adapter
+            .callback_exchange(ProviderOAuthCallbackExchangeRequest {
+                state: "safe-state".to_string(),
+                code: "authorization-code".to_string(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(status.to_response().status, "connected");
+    }
+
     #[tokio::test]
     async fn unsupported_adapter_mode_maps_to_existing_provider_auth_error() {
         let adapter = TestAdapter;
@@ -939,14 +1145,13 @@ mod tests {
             .start_session(ProviderOAuthStartSessionRequest {
                 mode: ProviderOAuthAuthMode::ManualCode,
                 ttl_seconds: None,
+                token_endpoint_url: None,
+                chat_endpoint_url: None,
             })
             .await
             .unwrap_err();
         let public_error: ProviderAuthError = error.into();
 
-        assert!(matches!(
-            public_error,
-            ProviderAuthError::UnsupportedProvider
-        ));
+        assert!(matches!(public_error, ProviderAuthError::InvalidRequest));
     }
 }

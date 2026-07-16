@@ -74,6 +74,7 @@ pub use types::{
 };
 
 use adapters::openai_codex::OpenAiCodexOAuthAdapter;
+use adapters::ProviderOAuthAdapter;
 use session_registry::{
     ProviderAuthPendingMode, ProviderAuthPendingRetention, ProviderAuthPendingSession,
 };
@@ -144,12 +145,15 @@ pub async fn start(
     }
     if request.experimental_codex_like && provider == "openai" {
         return openai_codex_adapter(config_dir)
-            .start_response(
-                request.ttl_seconds,
-                request.token_endpoint_url.as_deref(),
-                request.chat_endpoint_url.as_deref(),
-            )
-            .await;
+            .start_session(adapters::ProviderOAuthStartSessionRequest {
+                mode: adapters::ProviderOAuthAuthMode::BrowserPkce,
+                ttl_seconds: request.ttl_seconds,
+                token_endpoint_url: request.token_endpoint_url,
+                chat_endpoint_url: request.chat_endpoint_url,
+            })
+            .await
+            .map(|session| session.status.to_response())
+            .map_err(Into::into);
     }
     Ok(status_response(
         provider,
@@ -544,18 +548,28 @@ pub(crate) async fn codex_callback_exchange(
     state_value: String,
     code: String,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
-    openai_codex_adapter(config_dir)
-        .callback_exchange(state_value, code)
-        .await
+    ProviderOAuthAdapter::callback_exchange(
+        &openai_codex_adapter(config_dir),
+        adapters::ProviderOAuthCallbackExchangeRequest {
+            state: state_value,
+            code,
+        },
+    )
+    .await
+    .map(|status| status.to_response())
+    .map_err(Into::into)
 }
 
 pub(crate) async fn codex_callback_error(
     config_dir: &Path,
     state_value: String,
 ) -> Result<(), ProviderAuthError> {
-    openai_codex_adapter(config_dir)
-        .callback_error(state_value)
-        .await
+    ProviderOAuthAdapter::callback_error(
+        &openai_codex_adapter(config_dir),
+        adapters::ProviderOAuthCallbackErrorRequest { state: state_value },
+    )
+    .await
+    .map_err(Into::into)
 }
 
 pub(super) async fn codex_callback_error_impl(
@@ -1666,9 +1680,25 @@ pub(crate) async fn codex_callback_state_is_pending(
     config_dir: &Path,
     state_value: &str,
 ) -> Result<bool, ProviderAuthError> {
+    ProviderOAuthAdapter::callback_state_pending(
+        &openai_codex_adapter(config_dir),
+        adapters::ProviderOAuthCallbackStateRequest {
+            state: state_value.to_string(),
+        },
+    )
+    .await
+    .map_err(Into::into)
+}
+
+pub(super) async fn codex_callback_state_is_pending_impl(
+    config_dir: &Path,
+    provider: &str,
+    state_value: &str,
+) -> Result<bool, ProviderAuthError> {
     Ok(
-        lookup_codex_registry_session_by_state(config_dir, state_value)
+        read_session_registry(config_dir, provider)
             .await?
+            .lookup_by_state(provider, state_value, Utc::now())?
             .is_some(),
     )
 }
@@ -2200,7 +2230,7 @@ async fn sync_parent_directory(_path: &Path) -> Result<(), ProviderAuthError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CodexOAuthState, ProviderAuthError};
+    use super::{adapters::ProviderOAuthAdapter, CodexOAuthState, ProviderAuthError};
     use crate::secret_store::{ProviderSecretStore, SecretKind, SecretStoreError};
     use base64::Engine;
 
@@ -3006,6 +3036,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openai_adapter_status_projects_api_key_configured_without_drift() {
+        let dir = temp_dir();
+        create_openai_api_key_provider(&dir).await;
+
+        let response = super::openai_codex_adapter(&dir)
+            .status()
+            .await
+            .unwrap()
+            .to_response();
+
+        assert_eq!(response.status, "api_key_configured");
+        assert!(response.configured);
+        assert_eq!(response.auth_source, "api_key");
+        assert!(!response.supports_login);
+        assert_response_sanitized(&response, &["sk-test-api-key-secret"]);
+    }
+
+    #[tokio::test]
     async fn empty_exchange_returns_codex_pending_status_with_success_false() {
         let dir = temp_dir();
         let pending = create_codex_pending_state(&dir).await;
@@ -3135,6 +3183,40 @@ mod tests {
         .unwrap();
         assert_eq!(allowed.status, "pending");
         assert_eq!(allowed.success, Some(true));
+    }
+
+    #[tokio::test]
+    async fn codex_start_adapter_preserves_endpoint_overrides_in_pending_session() {
+        let dir = temp_dir();
+
+        let response = super::start(
+            &dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ttl_seconds: Some(120),
+                token_endpoint_url: Some("http://127.0.0.1:3457/token".to_string()),
+                chat_endpoint_url: Some("http://127.0.0.1:3457/backend-api/codex".to_string()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let pending = super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .unwrap();
+
+        assert_eq!(response.status, "pending");
+        assert_eq!(
+            pending.token_endpoint_url,
+            "http://127.0.0.1:3457/token"
+        );
+        assert_eq!(
+            pending.chat_base_url,
+            "http://127.0.0.1:3457/backend-api/codex"
+        );
     }
 
     #[tokio::test]
