@@ -61,6 +61,7 @@ static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
 static CODEX_REFRESH_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+mod adapters;
 mod session_registry;
 mod session_store;
 mod status;
