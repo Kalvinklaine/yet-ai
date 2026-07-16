@@ -88,7 +88,8 @@ async fn bind_loopback_listeners() -> Result<LoopbackListeners, CallbackStartErr
 }
 
 fn serve_listeners_in_owner_thread(listeners: LoopbackListeners) -> Result<(), CallbackStartError> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .map_err(|_| CallbackStartError)?;
@@ -594,6 +595,59 @@ mod tests {
 
         assert_eq!(status.status, "login_unavailable");
         assert!(registered_config_dir_for_state(&state).is_none());
+    }
+
+    async fn raw_loopback_callback(
+        address: std::net::SocketAddr,
+        path_and_query: &str,
+    ) -> (StatusCode, String) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let mut stream = TcpStream::connect(address).await.unwrap();
+        let request = format!(
+            "GET {path_and_query} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n"
+        );
+        stream.write_all(request.as_bytes()).await.unwrap();
+        stream.shutdown().await.unwrap();
+        let mut bytes = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut bytes),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let response = String::from_utf8(bytes).unwrap();
+        let (head, body) = response.split_once("\r\n\r\n").unwrap();
+        let status = head
+            .lines()
+            .next()
+            .and_then(|line| line.split_whitespace().nth(1))
+            .and_then(|value| value.parse::<u16>().ok())
+            .and_then(|value| StatusCode::from_u16(value).ok())
+            .unwrap();
+        (status, body.to_string())
+    }
+
+    #[tokio::test]
+    async fn real_loopback_callback_route_reaches_listener() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_registered_states_for_test();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(accept_loop(listener));
+
+        let (status, text) = raw_loopback_callback(
+            address,
+            "/auth/callback?code=codex-code-real-loopback&state=real-loopback-state",
+        )
+        .await;
+
+        server.abort();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
+        assert!(!text.contains("codex-code-real-loopback"));
+        assert!(!text.contains("real-loopback-state"));
     }
 
     #[tokio::test]
