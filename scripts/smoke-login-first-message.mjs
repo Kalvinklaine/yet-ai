@@ -16,6 +16,9 @@ const fakeAccessToken = `mock-access-token-${randomUUID()}`;
 const fakeRefreshToken = `mock-refresh-token-${randomUUID()}`;
 const fakeCookie = `mock-cookie-${randomUUID()}`;
 const fakeApiKey = `sk-login-smoke-${randomUUID()}`;
+const fakePkceVerifier = `mock-pkce-verifier-${randomUUID()}`;
+const fakePrivatePath = `/Users/login-smoke/private/${randomUUID()}/auth.json`;
+const fakeHostedAuthUrl = `https://auth.openai.example/login?code=mock-hosted-code-${randomUUID()}&access_token=mock-hosted-token-${randomUUID()}`;
 const chatId = "login-smoke-chat";
 const firstPrompt = "Login-shaped first message smoke prompt.";
 const assistantAnswer = "Mock login-shaped GPT first-message answer from local loopback runtime; no provider call was made.";
@@ -40,7 +43,7 @@ const subscribers = new Map();
 const chatEventSeq = new Map();
 const runtimeApiRequests = [];
 
-const staticSecretMarkers = [runtimeToken, fakeAuthCode, fakeAccessToken, fakeRefreshToken, fakeCookie, fakeApiKey, `Bearer ${runtimeToken}`, `Bearer ${fakeAccessToken}`];
+const staticSecretMarkers = [runtimeToken, fakeAuthCode, fakeAccessToken, fakeRefreshToken, fakeCookie, fakeApiKey, fakePkceVerifier, fakePrivatePath, fakeHostedAuthUrl, `Bearer ${runtimeToken}`, `Bearer ${fakeAccessToken}`];
 
 await requireBuiltGui();
 const { chromium } = await requireChromium();
@@ -80,11 +83,12 @@ try {
   await waitForProviderAuthStatusResponse();
   assertDefaultLikeInitialProviderAuthStatus(providerAuthStatusResponses[0]);
   await expectVisibleText(page, "Experimental account login (non-default)", "experimental login section");
-  await expectVisibleText(page, "Prod login off", "login_unavailable state");
-  await expectVisibleText(page, "Codex dogfood can start", "Codex dogfood discoverability copy");
-  await expectVisibleText(page, "API-key default", "API-key default copy");
+  await expectVisibleText(page, "Production OpenAI login unavailable; GPT/Codex login is experimental dogfood; API-key fallback is safe/default.", "login_unavailable contract copy");
+  await expectVisibleText(page, "Production login unavailable. Use API-key fallback, or start GPT/Codex dogfood.", "login_unavailable state body");
+  await expectVisibleText(page, "Production login unavailable. Use API-key fallback, Demo Mode, or GPT/Codex dogfood; local setup is not blocked.", "login_unavailable recovery guidance");
   await expectVisibleText(page, "Use OpenAI API key fallback", "API-key fallback button");
   await expectVisibleText(page, "Provider required for first message", "no-provider readiness");
+  await assertNoDomSecretLeak(page, "DOM at login_unavailable");
   await expectSendDisabled(page, "no provider before login");
 
   const experimentalLoginButton = page.getByRole("button", { name: "Connect OpenAI account (experimental)" });
@@ -99,7 +103,7 @@ try {
   assert(chatCommandCount === 0, `pending state sent an unexpected command, observed ${chatCommandCount}`);
   assert(providerAuthUrls.length > 0, "expected an auth URL after provider-auth start");
   for (const authUrl of providerAuthUrls) assertSafeRecordedAuthUrl(authUrl);
-  assertNoSecretLeak(await page.locator("body").innerText(), "DOM after provider-auth start");
+  await assertNoDomSecretLeak(page, "DOM after provider-auth start");
   assertNoRawSecretLeak(requests.join("\n"), "browser request list after provider-auth start");
   await assertNoVisibleText(page, sessionId ?? "provider-login-session", "raw provider-auth session id");
 
@@ -120,7 +124,7 @@ try {
   await expectVisibleText(page, "Use OpenAI API key fallback", "API-key fallback preserved after login");
   await expectVisibleText(page, "OpenAI API-key fallback remains the safe/default setup", "API-key fallback safe/default copy");
   await expectSendEnabled(page, "experimental connected without API-key or Demo Mode");
-  assertNoSecretLeak(await page.locator("body").innerText(), "DOM after provider-auth exchange");
+  await assertNoDomSecretLeak(page, "DOM after provider-auth exchange");
   assertNoRawSecretLeak(requests.join("\n"), "browser request list after provider-auth exchange");
 
   await openDetailsBySummary(page, "Advanced chat controls", page.getByLabel("Chat id"));
@@ -158,11 +162,7 @@ try {
   await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "Demo Mode precedence lifecycle");
   await expectSendEnabled(page, "Demo Mode precedence over experimental connected");
 
-  const pageState = await page.evaluate(() => JSON.stringify({
-    body: document.body.innerText,
-    localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => [localStorage.key(index) ?? "", localStorage.getItem(localStorage.key(index) ?? "")])) ,
-    sessionStorage: Object.fromEntries(Array.from({ length: sessionStorage.length }, (_, index) => [sessionStorage.key(index) ?? "", sessionStorage.getItem(sessionStorage.key(index) ?? "")])) ,
-  }));
+  const pageState = await pageStateSnapshot(page);
   assertNoSecretLeak(pageState, "DOM or browser storage");
   assertNoSecretLeak(JSON.stringify(browserVisible), "browser console/page errors");
   assertNoRawSecretLeak(requests.join("\n"), "browser request list");
@@ -178,6 +178,8 @@ try {
   assert(internalProviderSecrets?.refreshToken === fakeRefreshToken, "fake refresh token sentinel was not stored server-side after exchange");
   assert(internalProviderSecrets?.cookie === fakeCookie, "fake cookie sentinel was not stored server-side after exchange");
   assert(internalProviderSecrets?.apiKey === fakeApiKey, "fake API-key sentinel was not stored server-side after exchange");
+  assert(internalProviderSecrets?.pkceVerifier === fakePkceVerifier, "fake PKCE sentinel was not stored server-side after exchange");
+  assert(internalProviderSecrets?.privatePath === fakePrivatePath, "fake private-path sentinel was not stored server-side after exchange");
 
   const evidence = await saveVisualEvidence(page);
   if (failures.length > 0) throw new Error(`Login first-message smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
@@ -218,8 +220,21 @@ async function saveVisualEvidence(page) {
   const domPath = path.join(evidenceRoot, "login-first-message.dom.txt");
   await page.screenshot({ path: screenshotPath, fullPage: true });
   const sanitizedText = await page.evaluate(() => document.body.innerText).then((text) => redactSecrets(text));
+  assertNoSecretLeak(await pageStateSnapshot(page), "saved DOM evidence source");
   await writeFile(domPath, sanitizedText, "utf8");
   return { dir: evidenceRoot, screenshotPath, domPath };
+}
+async function pageStateSnapshot(page) {
+  return page.evaluate(() => JSON.stringify({
+    visibleText: document.body.innerText,
+    html: document.body.innerHTML,
+    attributes: Array.from(document.body.querySelectorAll("*")).flatMap((element) => Array.from(element.attributes).filter((attribute) => /^(href|src|data-|aria-)/i.test(attribute.name)).map((attribute) => ({ tag: element.tagName.toLowerCase(), name: attribute.name, value: attribute.value }))),
+    localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => [localStorage.key(index) ?? "", localStorage.getItem(localStorage.key(index) ?? "")])),
+    sessionStorage: Object.fromEntries(Array.from({ length: sessionStorage.length }, (_, index) => [sessionStorage.key(index) ?? "", sessionStorage.getItem(sessionStorage.key(index) ?? "")])),
+  }));
+}
+async function assertNoDomSecretLeak(page, source) {
+  assertNoSecretLeak(await pageStateSnapshot(page), source);
 }
 async function startRuntimeServer() {
   const server = http.createServer(async (request, response) => {
@@ -263,7 +278,7 @@ async function startRuntimeServer() {
       if (body === undefined) return;
       if (body.sessionId !== sessionId || body.code !== fakeAuthCode || body.state !== authState) return json(response, 400, { error: "mock exchange rejected sanitized invalid code" });
       loginStatus = "connected";
-      internalProviderSecrets = { accessToken: fakeAccessToken, refreshToken: fakeRefreshToken, cookie: fakeCookie, apiKey: fakeApiKey };
+      internalProviderSecrets = { accessToken: fakeAccessToken, refreshToken: fakeRefreshToken, cookie: fakeCookie, apiKey: fakeApiKey, pkceVerifier: fakePkceVerifier, privatePath: fakePrivatePath };
       return json(response, 200, providerAuthResponse());
     }
     if (request.method === "POST" && url.pathname === "/v1/provider-auth/openai/disconnect") {
@@ -441,12 +456,13 @@ async function assertAssistantAnswerCount(page, text, expected, label) { await p
 function secretMarkers() { return [...staticSecretMarkers, sessionId, authState].filter(Boolean); }
 function rawSecretMarkers() { return staticSecretMarkers.filter(Boolean); }
 function assertDefaultLikeInitialProviderAuthStatus(response) { assert(JSON.stringify(response) === JSON.stringify({ provider: "openai", supportsApiKey: true, cloudRequired: false, message: "Mock-only experimental/non-default account login state from loopback smoke runtime. Not production official login.", supportsLogin: false, configured: false, status: "login_unavailable", authSource: "none" }), "expected first provider-auth status response to be exactly default-like login_unavailable/supportsLogin:false/authSource:none/configured:false"); }
-function assertNoSecretLeak(text, source) { assertNoRawSecretLeak(text, source); const value = String(text); const lower = value.toLowerCase(); for (const marker of secretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Secret marker leaked through ${source}.`); } if (/mock-(session|state)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); if (/(?:codex|provider-login)-(?:session|state)-[A-Za-z0-9-]+/i.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); }
-function assertNoRawSecretLeak(text, source) { const value = String(text); const lower = value.toLowerCase(); for (const marker of rawSecretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Raw secret marker leaked through ${source}.`); } if (/sk-[A-Za-z0-9._-]{8,}/.test(value)) throw new Error(`API-key-like marker leaked through ${source}.`); if (/mock-(auth-code|access-token|refresh-token|cookie)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth secret marker leaked through ${source}.`); }
+function assertNoSecretLeak(text, source) { assertNoRawSecretLeak(text, source); assertNoHostedAuthUrlLeak(text, source); const value = String(text); const lower = value.toLowerCase(); for (const marker of secretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Secret marker leaked through ${source}.`); } if (/mock-(session|state)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); if (/(?:codex|provider-login)-(?:session|state)-[A-Za-z0-9-]+/i.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); }
+function assertNoRawSecretLeak(text, source) { const value = String(text); const lower = value.toLowerCase(); for (const marker of rawSecretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Raw secret marker leaked through ${source}.`); } if (/sk-(?:proj-|live-|test-|login-smoke-)[A-Za-z0-9][A-Za-z0-9._-]{20,}/.test(value)) throw new Error(`API-key-like marker leaked through ${source}.`); if (/mock-(auth-code|access-token|refresh-token|cookie|pkce-verifier)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth secret marker leaked through ${source}.`); if (/(?:access_token|refresh_token|id_token|openai_api_key|api[_-]?key|auth[_-]?code|authorization_code|pkce|code_verifier|code_challenge|cookie|set-cookie)\s*[=:]/i.test(value)) throw new Error(`Raw auth marker leaked through ${source}.`); if (/\/(?:Users|home)\/[^\s"'<>]+\/(?:\.codex\/)?auth\.json/i.test(value)) throw new Error(`Private auth path leaked through ${source}.`); }
 function assertNoRuntimeRequestUrlSecretFragments(value, source) { try { const url = new URL(value); if (!url.pathname.startsWith("/v1/")) return; assertNoUrlSecretFragments(url, source); } catch { assertNoRawSecretLeak(value, source); } }
 function assertSafeRecordedAuthUrl(value) { assert(value, "expected provider-auth start to return an auth URL"); const url = new URL(value); assert(isLoopbackUrl(value), "provider-auth URL must be loopback-only in smoke"); assertNoUrlSecretFragments(url, "provider-auth URL"); assertNoRawSecretLeak(value, "provider-auth URL"); }
-function assertNoUrlSecretFragments(url, source) { for (const [key, part] of [...url.searchParams.entries(), ["hash", url.hash]]) { if (/(access_token|refresh_token|id_token|token|cookie|secret|api_?key|auth_?code|code)/i.test(key) && part) throw new Error(`URL secret fragment leaked through ${source}.`); if (/(access_token|refresh_token|id_token|bearer|cookie|sk-|auth.json|openai_api_key)/i.test(String(part))) throw new Error(`URL secret fragment leaked through ${source}.`); } }
-function redactSecrets(text) { let redacted = String(text); for (const marker of secretMarkers()) if (marker) redacted = redacted.split(marker).join("[redacted]"); return redacted.replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9._-]{8,}/g, "[redacted-api-key]").replace(/mock-(auth-code|access-token|refresh-token|cookie|session|state)-[A-Za-z0-9-]+/g, "mock-$1-[redacted]").replace(/(?:codex|provider-login)-(session|state)-[A-Za-z0-9-]+/gi, "$1-[redacted]").replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
+function assertNoHostedAuthUrlLeak(value, source) { const text = String(value); const urls = text.match(/https?:\/\/[^\s"'<>\\)]+/gi) ?? []; for (const item of urls) { if (/mock-auth|oauth|authorize|login|provider-auth|openai/i.test(item) && !isLoopbackUrl(item)) throw new Error(`Hosted auth URL leaked through ${source}.`); } }
+function assertNoUrlSecretFragments(url, source) { for (const [key, part] of [...url.searchParams.entries(), ["hash", url.hash]]) { if (/(access_token|refresh_token|id_token|token|cookie|secret|api_?key|auth_?code|code|pkce|code_verifier|code_challenge)/i.test(key) && part) throw new Error(`URL secret fragment leaked through ${source}.`); if (/(access_token|refresh_token|id_token|bearer|cookie|sk-|auth\.json|openai_api_key|pkce|code_verifier|code_challenge)/i.test(String(part))) throw new Error(`URL secret fragment leaked through ${source}.`); } }
+function redactSecrets(text) { let redacted = String(text); for (const marker of secretMarkers()) if (marker) redacted = redacted.split(marker).join("[redacted]"); return redacted.replace(/Bearer\s+[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=%-]+/gi, "Bearer [redacted]").replace(/sk-(?:proj-|live-|test-|login-smoke-)[A-Za-z0-9][A-Za-z0-9._-]{20,}/g, "[redacted-api-key]").replace(/mock-(auth-code|access-token|refresh-token|cookie|pkce-verifier|session|state)-[A-Za-z0-9-]+/g, "mock-$1-[redacted]").replace(/(?:codex|provider-login)-(session|state)-[A-Za-z0-9-]+/gi, "$1-[redacted]").replace(/https?:\/\/[^\s"'<>\)]+/gi, (item) => (/mock-auth|oauth|authorize|login|provider-auth|openai/i.test(item) && !isLoopbackUrl(item) ? "[redacted-auth-url]" : item)).replace(/\/(?:Users|home)\/[^\s"'<>]+/g, "[redacted-absolute-path]").replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]"); }
 function isExpectedFetchConsoleError(text) { return /^Failed to load resource: (net::ERR_CONNECTION_REFUSED|the server responded with a status of 401 \(Unauthorized\)|the server responded with a status of 404 \(Not Found\))$/.test(text); }
 function isLoopbackUrl(value) { try { const url = new URL(value); return (url.protocol === "http:" || url.protocol === "ws:") && ["127.0.0.1", "localhost", "[::1]", "::1"].includes(url.hostname); } catch { return false; } }
 function redactUrl(value) { try { const url = new URL(value); url.username = ""; url.password = ""; url.search = ""; url.hash = ""; return url.toString(); } catch { return redactSecrets(value); } }
