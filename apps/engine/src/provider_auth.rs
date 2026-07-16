@@ -361,6 +361,7 @@ pub async fn start(
             .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
         reject_codex_mock_coexistence(config_dir, provider).await?;
         if let Some(response) = prepare_codex_start(config_dir, provider).await? {
+            register_codex_pending_callback_state(config_dir, provider).await?;
             return Ok(response);
         }
         let session = new_codex_session(
@@ -376,6 +377,8 @@ pub async fn start(
             },
         )
         .await?;
+        provider_auth_callback::register_pending_state(&session.state, config_dir)
+            .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
         return Ok(codex_pending_response(provider, &session, Some(true)));
     }
     Ok(status_response(
@@ -482,6 +485,9 @@ pub async fn disconnect(
     let mut had_codex = false;
     if provider == "openai" {
         let codex = read_codex_state(config_dir, provider).await?;
+        if let Some(session) = codex.pending.as_ref() {
+            provider_auth_callback::forget_pending_state(&session.state);
+        }
         had_codex = codex.pending.is_some() || codex_has_secrets(config_dir, provider).await?;
         if had_codex {
             write_codex_state(config_dir, provider, &CodexOAuthState::default()).await?;
@@ -902,6 +908,7 @@ async fn codex_exchange(
         delete_codex_secrets(config_dir, provider).await?;
         return Err(ProviderAuthError::Storage);
     }
+    provider_auth_callback::forget_pending_state(&state_value);
     Ok(codex_connected_response(provider, metadata, Some(true)))
 }
 
@@ -918,16 +925,6 @@ pub(crate) async fn codex_callback_exchange(
         return Err(ProviderAuthError::SessionMismatch);
     }
     codex_exchange(config_dir, "openai", session.session_id, state_value, code).await
-}
-
-pub(crate) async fn codex_pending_session_matches_state(
-    config_dir: &Path,
-    state_value: &str,
-) -> Result<bool, ProviderAuthError> {
-    let codex = read_codex_state(config_dir, "openai").await?;
-    Ok(codex
-        .pending
-        .is_some_and(|session| session.state == state_value))
 }
 
 async fn exchange_codex_token(
@@ -1906,6 +1903,22 @@ async fn reject_codex_mock_coexistence(
     let mock = read_mock_state(config_dir, provider).await?;
     if mock.pending.is_some() || mock.connected.is_some() {
         return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(())
+}
+
+async fn register_codex_pending_callback_state(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<(), ProviderAuthError> {
+    let codex = read_codex_state(config_dir, provider).await?;
+    if let Some(session) = codex.pending {
+        if parse_time(&session.expires_at)? > Utc::now() {
+            provider_auth_callback::register_pending_state(&session.state, config_dir)
+                .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
+        } else {
+            provider_auth_callback::forget_pending_state(&session.state);
+        }
     }
     Ok(())
 }
