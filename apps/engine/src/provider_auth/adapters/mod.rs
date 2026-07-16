@@ -26,6 +26,7 @@ pub(super) enum ProviderOAuthAuthMode {
     ManualCode,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ProviderOAuthStatusKind {
     Unavailable,
@@ -50,9 +51,7 @@ impl ProviderOAuthStatusKind {
             Self::Connected => "connected",
             Self::Expired => "expired",
             Self::Revoked => "revoked",
-            Self::ProviderError => "provider_error",
-            Self::ExchangeFailed => "exchange_failed",
-            Self::StorageError => "storage_error",
+            Self::ProviderError | Self::ExchangeFailed | Self::StorageError => "error",
         }
     }
 }
@@ -603,9 +602,7 @@ pub(in crate::provider_auth) mod openai_codex {
                 "expired" => ProviderOAuthStatusKind::Expired,
                 "revoked" => ProviderOAuthStatusKind::Revoked,
                 "api_key_configured" => ProviderOAuthStatusKind::ApiKeyConfigured,
-                "provider_error" => ProviderOAuthStatusKind::ProviderError,
-                "exchange_failed" => ProviderOAuthStatusKind::ExchangeFailed,
-                "storage_error" => ProviderOAuthStatusKind::StorageError,
+                "error" => ProviderOAuthStatusKind::ProviderError,
                 "login_available" => ProviderOAuthStatusKind::LoginAvailable,
                 _ => ProviderOAuthStatusKind::Unavailable,
             };
@@ -1222,6 +1219,40 @@ mod tests {
         assert_eq!(response.status, "api_key_configured");
         assert!(response.configured);
         assert_eq!(response.auth_source, "api_key");
+    }
+
+    #[test]
+    fn adapter_internal_terminal_states_map_to_public_error_wire_status() {
+        for kind in [
+            ProviderOAuthStatusKind::ProviderError,
+            ProviderOAuthStatusKind::ExchangeFailed,
+            ProviderOAuthStatusKind::StorageError,
+        ] {
+            let response = ProviderOAuthStatusView {
+                provider_id: TEST_PROVIDER,
+                kind,
+                configured: false,
+                auth_source: "none",
+                supports_login: true,
+                supports_api_key: true,
+                cloud_required: false,
+                success: Some(false),
+                account_label: None,
+                redacted: None,
+                authorization_url: None,
+                verification_url: None,
+                session_id: None,
+                expires_at: None,
+                scopes: None,
+                poll_interval_seconds: None,
+                message: "Mock adapter login failed safely.".to_string(),
+            }
+            .to_response();
+
+            assert_eq!(response.status, "error");
+            assert!(!response.configured);
+            assert_eq!(response.auth_source, "none");
+        }
     }
 
     #[tokio::test]

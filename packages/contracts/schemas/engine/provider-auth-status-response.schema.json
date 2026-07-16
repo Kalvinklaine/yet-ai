@@ -91,7 +91,10 @@
         "connected",
         "expired",
         "revoked",
-        "error"
+        "error",
+        "provider_error",
+        "exchange_failed",
+        "storage_error"
       ]
     },
     "authSource": {

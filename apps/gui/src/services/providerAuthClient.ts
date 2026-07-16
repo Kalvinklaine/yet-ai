@@ -33,6 +33,8 @@ export type ProviderAuthResponse = {
   pollIntervalSeconds?: number;
 };
 
+export type ProviderAuthFlow = Extract<ProviderAuthSource, "oauth" | "device" | "browser">;
+
 export type ProviderAuthStartRequest = {
   experimentalCodexLike?: boolean;
 };

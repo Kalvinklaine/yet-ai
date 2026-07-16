@@ -998,6 +998,7 @@ const invalidMappings = [
     ["provider-auth-status-redacted-sk-key.json", "provider-auth-status-response.schema.json"],
     ["provider-auth-status-scopes-access-token.json", "provider-auth-status-response.schema.json"],
     ["provider-auth-status-session-jwt.json", "provider-auth-status-response.schema.json"],
+    ["provider-auth-status-last-error-refresh-token.json", "provider-auth-status-response.schema.json"],
     ["provider-auth-exchange-message-cookie.json", "provider-auth-exchange-response.schema.json"],
     ["provider-auth-exchange-last-error-client-secret.json", "provider-auth-exchange-response.schema.json"],
     ["provider-auth-start-authorization-url-token-query.json", "provider-auth-start-response.schema.json"],
