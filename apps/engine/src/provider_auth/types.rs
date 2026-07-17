@@ -76,6 +76,8 @@ pub struct ProviderAuthResponse {
     pub scopes: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub poll_interval_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
     pub message: String,
 }
 
@@ -173,6 +175,8 @@ pub(super) struct CodexOAuthSession {
     pub(super) token_endpoint_url: String,
     pub(super) chat_base_url: String,
     pub(super) chat_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

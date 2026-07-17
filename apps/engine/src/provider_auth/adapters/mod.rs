@@ -105,6 +105,7 @@ pub(super) struct ProviderOAuthStatusView {
     pub(super) expires_at: Option<String>,
     pub(super) scopes: Option<Vec<String>>,
     pub(super) poll_interval_seconds: Option<u64>,
+    pub(super) last_error: Option<String>,
     pub(super) message: String,
 }
 
@@ -127,6 +128,7 @@ impl ProviderOAuthStatusView {
             expires_at: self.expires_at.clone(),
             scopes: self.scopes.clone(),
             poll_interval_seconds: self.poll_interval_seconds,
+            last_error: self.last_error.clone(),
             message: self.message.clone(),
         }
     }
@@ -713,6 +715,7 @@ pub(in crate::provider_auth) mod openai_codex {
                 expires_at: response.expires_at,
                 scopes: response.scopes,
                 poll_interval_seconds: response.poll_interval_seconds,
+                last_error: response.last_error,
                 message: response.message,
             }
         }
@@ -838,8 +841,9 @@ pub(in crate::provider_auth) mod openai_codex {
                         ProviderAuthError::SessionExpired => {
                             ProviderOAuthAdapterError::SessionExpired
                         }
-                        ProviderAuthError::SessionMismatch | ProviderAuthError::SessionNotFound => {
-                            ProviderOAuthAdapterError::InvalidSession
+                        ProviderAuthError::SessionMismatch => ProviderOAuthAdapterError::InvalidSession,
+                        ProviderAuthError::SessionNotFound => {
+                            ProviderOAuthAdapterError::SessionNotFound
                         }
                         ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
                         _ => ProviderOAuthAdapterError::ExchangeFailed,
@@ -859,8 +863,9 @@ pub(in crate::provider_auth) mod openai_codex {
                         ProviderAuthError::SessionExpired => {
                             ProviderOAuthAdapterError::SessionExpired
                         }
-                        ProviderAuthError::SessionMismatch | ProviderAuthError::SessionNotFound => {
-                            ProviderOAuthAdapterError::InvalidSession
+                        ProviderAuthError::SessionMismatch => ProviderOAuthAdapterError::InvalidSession,
+                        ProviderAuthError::SessionNotFound => {
+                            ProviderOAuthAdapterError::SessionNotFound
                         }
                         ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
                         _ => ProviderOAuthAdapterError::ProviderRejected,
@@ -942,6 +947,7 @@ pub(in crate::provider_auth) mod openai_codex {
                     expires_at: None,
                     scopes: None,
                     poll_interval_seconds: None,
+                    last_error: None,
                     message: crate::provider_auth::DISCONNECT_MESSAGE.to_string(),
                 })
             })
@@ -1015,6 +1021,7 @@ mod tests {
                 expires_at: Some(session.expires_at.clone()),
                 scopes: Some(vec!["mock:device".to_string()]),
                 poll_interval_seconds: Some(5),
+                last_error: None,
                 message: "Mock device login is pending.".to_string(),
             }
         }
@@ -1037,6 +1044,7 @@ mod tests {
                 expires_at: Some(Self::expires_at()),
                 scopes: Some(vec!["mock:device".to_string()]),
                 poll_interval_seconds: None,
+                last_error: None,
                 message: "Mock device login is connected.".to_string(),
             }
         }
@@ -1104,6 +1112,7 @@ mod tests {
                     expires_at: None,
                     scopes: None,
                     poll_interval_seconds: None,
+                    last_error: None,
                     message: "Mock device login is available.".to_string(),
                 })
             })
@@ -1264,6 +1273,7 @@ mod tests {
                     expires_at: None,
                     scopes: None,
                     poll_interval_seconds: None,
+                    last_error: None,
                     message: "Mock device login was disconnected.".to_string(),
                 })
             })
@@ -1298,6 +1308,7 @@ mod tests {
                 expires_at: Some("2030-01-01T00:00:00Z".to_string()),
                 scopes: Some(vec!["mock:chat".to_string()]),
                 poll_interval_seconds: Some(1),
+                last_error: None,
                 message: "Mock adapter login is pending.".to_string(),
             }
         }
@@ -1320,6 +1331,7 @@ mod tests {
                 expires_at: Some("2030-01-01T00:00:00Z".to_string()),
                 scopes: Some(vec!["mock:chat".to_string()]),
                 poll_interval_seconds: None,
+                last_error: None,
                 message: "Mock adapter login is connected.".to_string(),
             }
         }
@@ -1464,6 +1476,7 @@ mod tests {
                     expires_at: None,
                     scopes: None,
                     poll_interval_seconds: None,
+                    last_error: None,
                     message: "Mock adapter login was disconnected.".to_string(),
                 })
             })
@@ -1605,6 +1618,7 @@ mod tests {
             expires_at: None,
             scopes: None,
             poll_interval_seconds: None,
+            last_error: None,
             message: "API-key authentication is configured locally.".to_string(),
         }
         .to_response();
@@ -1638,6 +1652,7 @@ mod tests {
                 expires_at: None,
                 scopes: None,
                 poll_interval_seconds: None,
+                last_error: None,
                 message: "Mock adapter login failed safely.".to_string(),
             }
             .to_response();

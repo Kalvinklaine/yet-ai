@@ -29,6 +29,7 @@ pub(super) fn status_response(
             expires_at: None,
             scopes: None,
             poll_interval_seconds: None,
+            last_error: None,
             message: API_KEY_CONFIGURED_MESSAGE.to_string(),
         },
         None => ProviderAuthResponse {
@@ -48,6 +49,7 @@ pub(super) fn status_response(
             expires_at: None,
             scopes: None,
             poll_interval_seconds: None,
+            last_error: None,
             message: LOGIN_UNAVAILABLE_MESSAGE.to_string(),
         },
     }
@@ -78,6 +80,7 @@ pub(super) fn mock_pending_response(
         expires_at: Some(session.expires_at.clone()),
         scopes: Some(vec!["mock:chat".to_string(), "mock:profile".to_string()]),
         poll_interval_seconds: Some(1),
+        last_error: None,
         message: MOCK_PENDING_MESSAGE.to_string(),
     }
 }
@@ -104,6 +107,7 @@ pub(super) fn mock_connected_response(
         expires_at: Some((Utc::now() + Duration::hours(1)).to_rfc3339()),
         scopes: Some(scopes),
         poll_interval_seconds: None,
+        last_error: None,
         message: MOCK_CONNECTED_MESSAGE.to_string(),
     }
 }
@@ -131,6 +135,7 @@ pub(super) fn codex_pending_response(
         expires_at: Some(session.expires_at.clone()),
         scopes: Some(session.scopes.clone()),
         poll_interval_seconds: Some(3),
+        last_error: session.last_error.clone(),
         message: super::CODEX_PENDING_MESSAGE.to_string(),
     }
 }
@@ -157,6 +162,7 @@ pub(super) fn codex_connected_response(
         expires_at: Some(metadata.expires_at),
         scopes: Some(metadata.scopes),
         poll_interval_seconds: None,
+        last_error: None,
         message: CODEX_CONNECTED_MESSAGE.to_string(),
     }
 }
@@ -182,6 +188,7 @@ pub(super) fn codex_expired_response(
         expires_at: Some(metadata.expires_at),
         scopes: Some(metadata.scopes),
         poll_interval_seconds: None,
+        last_error: None,
         message: CODEX_EXPIRED_MESSAGE.to_string(),
     }
 }

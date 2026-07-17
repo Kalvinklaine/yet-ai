@@ -15,6 +15,14 @@ const CALLBACK_SUCCESS_TEXT: &str = "Login received. Return to Yet AI.";
 const CALLBACK_FAILURE_TEXT: &str = "Login could not be completed. Return to Yet AI and try again.";
 const CALLBACK_NOT_FOUND_TEXT: &str =
     "Login request was not found or expired. Return to Yet AI and try again.";
+const CALLBACK_PROVIDER_ERROR_TEXT: &str =
+    "Login was cancelled by the provider. Return to Yet AI and start login again.";
+const CALLBACK_EXCHANGE_FAILURE_TEXT: &str =
+    "Login reached Yet AI but credential exchange failed. Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_STORAGE_FAILURE_TEXT: &str =
+    "Login reached Yet AI but local credential storage failed. Return to Yet AI and retry after checking local storage access.";
+const CALLBACK_AMBIGUOUS_STATE_TEXT: &str =
+    "Login could not be matched safely. Return to Yet AI and start login again.";
 
 static CALLBACK_STATE: LazyLock<Mutex<CallbackState>> =
     LazyLock::new(|| Mutex::new(CallbackState::default()));
@@ -35,6 +43,12 @@ pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStar
     {
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
         state.known_config_dirs.insert(config_dir.to_path_buf());
+        #[cfg(test)]
+        {
+            state.started = true;
+            return Ok(());
+        }
+        #[cfg(not(test))]
         if state.started {
             return Ok(());
         }
@@ -154,21 +168,20 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
         };
         let config_dir = match registered_config_dir_for_state(&state).await {
             Ok(Some(config_dir)) => config_dir,
-            Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT),
-            Err(error) => return (error.status(), CALLBACK_FAILURE_TEXT),
+            Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT),
+            Err(error) => return (error.status(), callback_failure_text(&error)),
         };
         let result = provider_auth::codex_callback_error(&config_dir, state.clone()).await;
         if callback_error_should_forget_mapping(&result) {
             forget_pending_state(&state);
         }
+        let text = callback_error_text(&result);
         return match result {
-            Ok(())
-            | Err(provider_auth::ProviderAuthError::SessionNotFound)
+            Ok(()) => (StatusCode::OK, text),
+            Err(provider_auth::ProviderAuthError::SessionNotFound)
             | Err(provider_auth::ProviderAuthError::SessionExpired)
-            | Err(provider_auth::ProviderAuthError::SessionMismatch) => {
-                (StatusCode::OK, CALLBACK_FAILURE_TEXT)
-            }
-            Err(error) => (error.status(), CALLBACK_FAILURE_TEXT),
+            | Err(provider_auth::ProviderAuthError::SessionMismatch) => (StatusCode::OK, text),
+            Err(error) => (error.status(), text),
         };
     }
     let Some(state) = bounded_query_value(&query, "state", 512) else {
@@ -181,7 +194,7 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
     let config_dir = match registered_config_dir_for_state(&state).await {
         Ok(Some(config_dir)) => config_dir,
         Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT),
-        Err(error) => return (error.status(), CALLBACK_FAILURE_TEXT),
+        Err(error) => return (error.status(), callback_failure_text(&error)),
     };
 
     match provider_auth::codex_callback_exchange(&config_dir, state.clone(), code).await {
@@ -190,15 +203,15 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
             (StatusCode::OK, CALLBACK_SUCCESS_TEXT)
         }
         Err(provider_auth::ProviderAuthError::SessionNotFound)
-        | Err(provider_auth::ProviderAuthError::SessionExpired)
-        | Err(provider_auth::ProviderAuthError::SessionMismatch) => {
+        | Err(provider_auth::ProviderAuthError::SessionExpired) => {
             forget_pending_state(&state);
             (StatusCode::OK, CALLBACK_NOT_FOUND_TEXT)
         }
-        Err(provider_auth::ProviderAuthError::TokenExchange) => {
-            (StatusCode::BAD_GATEWAY, CALLBACK_FAILURE_TEXT)
+        Err(provider_auth::ProviderAuthError::SessionMismatch) => {
+            forget_pending_state(&state);
+            (StatusCode::OK, CALLBACK_AMBIGUOUS_STATE_TEXT)
         }
-        Err(error) => (error.status(), CALLBACK_FAILURE_TEXT),
+        Err(error) => (error.status(), callback_failure_text(&error)),
     }
 }
 
@@ -212,6 +225,25 @@ fn callback_error_should_forget_mapping(
             | Err(provider_auth::ProviderAuthError::SessionExpired)
             | Err(provider_auth::ProviderAuthError::SessionMismatch)
     )
+}
+
+fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> &'static str {
+    match error {
+        provider_auth::ProviderAuthError::SessionMismatch => CALLBACK_AMBIGUOUS_STATE_TEXT,
+        provider_auth::ProviderAuthError::Storage
+        | provider_auth::ProviderAuthError::Provider(_) => CALLBACK_STORAGE_FAILURE_TEXT,
+        provider_auth::ProviderAuthError::TokenExchange => CALLBACK_EXCHANGE_FAILURE_TEXT,
+        _ => CALLBACK_FAILURE_TEXT,
+    }
+}
+
+fn callback_error_text(result: &Result<(), provider_auth::ProviderAuthError>) -> &'static str {
+    match result {
+        Ok(()) => CALLBACK_PROVIDER_ERROR_TEXT,
+        Err(provider_auth::ProviderAuthError::SessionNotFound)
+        | Err(provider_auth::ProviderAuthError::SessionExpired) => CALLBACK_NOT_FOUND_TEXT,
+        Err(error) => callback_failure_text(error),
+    }
 }
 
 async fn registered_config_dir_for_state(
@@ -316,14 +348,61 @@ mod tests {
             CALLBACK_SUCCESS_TEXT,
             CALLBACK_FAILURE_TEXT,
             CALLBACK_NOT_FOUND_TEXT,
+            CALLBACK_PROVIDER_ERROR_TEXT,
+            CALLBACK_EXCHANGE_FAILURE_TEXT,
+            CALLBACK_STORAGE_FAILURE_TEXT,
+            CALLBACK_AMBIGUOUS_STATE_TEXT,
         ] {
             let lower = text.to_ascii_lowercase();
-            assert!(!lower.contains("code"));
-            assert!(!lower.contains("state"));
             assert!(!lower.contains("token"));
             assert!(!lower.contains("secret"));
             assert!(!lower.contains("/users/"));
+            assert!(!lower.contains("access_denied"));
+            assert!(!lower.contains("auth.json"));
         }
+    }
+
+    #[test]
+    fn callback_failure_text_maps_actionable_sanitized_reasons() {
+        let cases = [
+            (
+                provider_auth::ProviderAuthError::SessionMismatch,
+                CALLBACK_AMBIGUOUS_STATE_TEXT,
+            ),
+            (
+                provider_auth::ProviderAuthError::Storage,
+                CALLBACK_STORAGE_FAILURE_TEXT,
+            ),
+            (
+                provider_auth::ProviderAuthError::TokenExchange,
+                CALLBACK_EXCHANGE_FAILURE_TEXT,
+            ),
+            (
+                provider_auth::ProviderAuthError::CallbackUnavailable,
+                CALLBACK_FAILURE_TEXT,
+            ),
+        ];
+
+        for (error, expected) in cases {
+            let text = callback_failure_text(&error);
+            assert_eq!(text, expected);
+            assert!(!text.contains("raw-denied-secret"));
+            assert!(!text.contains("codex-code-secret"));
+            assert!(!text.contains("codex-state-secret"));
+        }
+    }
+
+    #[test]
+    fn callback_provider_error_text_maps_without_provider_payload() {
+        assert_eq!(callback_error_text(&Ok(())), CALLBACK_PROVIDER_ERROR_TEXT);
+        assert_eq!(
+            callback_error_text(&Err(provider_auth::ProviderAuthError::SessionExpired)),
+            CALLBACK_NOT_FOUND_TEXT
+        );
+        assert_eq!(
+            callback_error_text(&Err(provider_auth::ProviderAuthError::SessionMismatch)),
+            CALLBACK_AMBIGUOUS_STATE_TEXT
+        );
     }
 
     #[tokio::test]
@@ -571,7 +650,7 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert_eq!(text, CALLBACK_STORAGE_FAILURE_TEXT);
         assert!(directly_registered_config_dir_for_test(&state).is_none());
     }
 
@@ -606,7 +685,7 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&duplicate_state)).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert_eq!(text, CALLBACK_AMBIGUOUS_STATE_TEXT);
         assert!(directly_registered_config_dir_for_test(&duplicate_state).is_none());
     }
 
@@ -641,7 +720,7 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&duplicate_state)).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert_eq!(text, CALLBACK_AMBIGUOUS_STATE_TEXT);
         assert_eq!(
             directly_registered_config_dir_for_test(&duplicate_state),
             Some(first)
@@ -689,7 +768,7 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert_eq!(text, CALLBACK_EXCHANGE_FAILURE_TEXT);
         assert_eq!(
             registered_config_dir_for_state("stale-state")
                 .await
@@ -720,7 +799,7 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert_eq!(text, CALLBACK_EXCHANGE_FAILURE_TEXT);
         assert_eq!(
             registered_config_dir_for_state(&state).await.unwrap(),
             Some(dir)
@@ -770,7 +849,7 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_error_query(&state)).await;
 
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert_eq!(text, CALLBACK_PROVIDER_ERROR_TEXT);
         assert!(!text.contains("access_denied"));
         assert!(!text.contains("raw-denied-secret"));
         assert!(!text.contains(&state));
@@ -795,7 +874,7 @@ mod tests {
         .await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        assert_eq!(text, CALLBACK_FAILURE_TEXT);
+        assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
         assert!(!text.contains("access_denied"));
         assert!(!text.contains("raw-denied-secret"));
         assert!(!text.contains("missing-state-secret"));

@@ -27,9 +27,9 @@ const CODEX_PENDING_MESSAGE: &str = "Experimental Codex-like OpenAI login is pen
 const MOCK_TTL_SECONDS: i64 = 600;
 const CODEX_TTL_SECONDS: i64 = 600;
 const MAX_PROVIDER_AUTH_TTL_SECONDS: i64 = 3600;
-const CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS: u64 = 2;
+const CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS: u64 = 20;
 const CODEX_TOKEN_ERROR_BODY_LIMIT_BYTES: usize = 4096;
-const CODEX_REFRESH_FILE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const CODEX_REFRESH_FILE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 const CODEX_REFRESH_FILE_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(10);
 const CODEX_TOKEN_REFRESH_SKEW_SECONDS: i64 = 60;
 const CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS: i64 = 3600;
@@ -396,6 +396,7 @@ fn new_codex_session(
         token_endpoint_url,
         chat_base_url: chat_base_url.trim_end_matches('/').to_string(),
         chat_model: CODEX_CHAT_MODEL.to_string(),
+        last_error: None,
     })
 }
 
@@ -482,6 +483,10 @@ pub(super) async fn codex_exchange(
         || session.session_id != session_id
         || session.state != state_value
     {
+        let mut session = session;
+        session.last_error = Some(sanitized_provider_auth_last_error(
+            &ProviderAuthError::SessionMismatch,
+        ));
         codex.pending = Some(session);
         write_codex_state(config_dir, provider, &codex).await?;
         return Err(ProviderAuthError::SessionMismatch);
@@ -502,6 +507,8 @@ pub(super) async fn codex_exchange(
     let token = match exchange_codex_token(&session, &code).await {
         Ok(token) => token,
         Err(error) => {
+            let mut session = session;
+            session.last_error = Some(sanitized_provider_auth_last_error(&error));
             codex.pending = Some(session);
             write_codex_state(config_dir, provider, &codex).await?;
             retain_registry_after_exchange_failure(
@@ -515,6 +522,10 @@ pub(super) async fn codex_exchange(
         }
     };
     if sanitized_optional_token(token.refresh_token.as_deref()).is_none() {
+        let mut session = session;
+        session.last_error = Some(sanitized_provider_auth_last_error(
+            &ProviderAuthError::TokenExchange,
+        ));
         codex.pending = Some(session);
         write_codex_state(config_dir, provider, &codex).await?;
         retain_registry_after_exchange_failure(
@@ -578,6 +589,10 @@ pub(super) async fn codex_callback_error_impl(
         return Err(ProviderAuthError::SessionNotFound);
     };
     if session.state != state_value {
+        let mut session = session;
+        session.last_error = Some(sanitized_provider_auth_last_error(
+            &ProviderAuthError::SessionMismatch,
+        ));
         codex.pending = Some(session);
         write_codex_state(config_dir, provider, &codex).await?;
         return Err(ProviderAuthError::SessionMismatch);
@@ -790,6 +805,32 @@ fn sanitized_optional_token(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+fn sanitized_provider_auth_last_error(error: &ProviderAuthError) -> String {
+    match error {
+        ProviderAuthError::SessionNotFound => {
+            "Login request was not found or expired. Start login again.".to_string()
+        }
+        ProviderAuthError::SessionExpired => "Login request expired. Start login again.".to_string(),
+        ProviderAuthError::SessionMismatch => {
+            "Login callback could not be matched safely. Start login again.".to_string()
+        }
+        ProviderAuthError::Storage | ProviderAuthError::Provider(_) => {
+            "Login reached Yet AI but local credential storage failed. Check local storage access and retry login.".to_string()
+        }
+        ProviderAuthError::TokenExchange => {
+            "Login reached Yet AI but token exchange failed. Retry login or use the API-key fallback.".to_string()
+        }
+        ProviderAuthError::CallbackUnavailable => {
+            "Login callback listener is unavailable. Restart the local runtime and retry login.".to_string()
+        }
+        ProviderAuthError::InvalidProvider
+        | ProviderAuthError::UnsupportedProvider
+        | ProviderAuthError::InvalidRequest => {
+            "Login request was invalid. Start login again.".to_string()
+        }
+    }
 }
 
 pub(in crate::provider_auth) fn extract_codex_account_id(
@@ -2881,7 +2922,7 @@ mod tests {
     fn codex_refresh_file_lock_timeout_has_persistence_budget() {
         assert_eq!(
             super::CODEX_REFRESH_FILE_LOCK_TIMEOUT,
-            std::time::Duration::from_secs(10)
+            std::time::Duration::from_secs(25)
         );
         assert!(
             super::CODEX_REFRESH_FILE_LOCK_TIMEOUT
