@@ -1331,12 +1331,6 @@ pre,
   box-shadow: 0 -6px 18px rgba(28, 40, 72, 0.06);
 }
 
-.host-jetbrains .chat-composer {
-  position: sticky;
-  bottom: 8px;
-  z-index: 2;
-}
-
 .host-vscode .composer-tools,
 .host-jetbrains .composer-tools {
   flex: 0 1 auto;

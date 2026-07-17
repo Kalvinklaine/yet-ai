@@ -1746,6 +1746,7 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
       top: Number.parseFloat(composerStyle.paddingTop) || 0,
       bottom: Number.parseFloat(composerStyle.paddingBottom) || 0,
     } : { top: 0, bottom: 0 };
+    const composerPositionAfterInnerScroll = composerStyle?.position ?? "";
     const composerViewportGapsAfterInnerScroll = composerRectAfterInnerScroll ? {
       top: composerRectAfterInnerScroll.top,
       bottom: viewport.height - composerRectAfterInnerScroll.bottom,
@@ -1808,6 +1809,7 @@ async function collectJetBrainsIframeLayoutMetrics(frameLocator) {
       chatScrollRectAfterInnerScroll,
       inputAreaRectAfterInnerScroll,
       composerToolsRectAfterInnerScroll,
+      composerPositionAfterInnerScroll,
       composerPadding,
       composerViewportGapsAfterInnerScroll,
       inputComposerGapsAfterInnerScroll,
@@ -1837,6 +1839,7 @@ function assertJetBrainsHostedLayout(metrics, label) {
   if (metrics.chatScrollHeight < 280) failures.push(`${label}: chat message region is too small for compact hosted chat (${metrics.chatScrollHeight}).`);
   if (metrics.composerHeight > 248) failures.push(`${label}: composer is too tall for compact hosted chat (${metrics.composerHeight}).`);
   if (metrics.composerToolsHeight > 100) failures.push(`${label}: composer tools area is too tall for compact hosted chat (${metrics.composerToolsHeight}).`);
+  if (metrics.composerPositionAfterInnerScroll === "sticky") failures.push(`${label}: composer computed position is sticky in JetBrains hosted mode after inner scrolling.`);
   if (metrics.composerPadding.top < 10 || metrics.composerPadding.bottom < 10) failures.push(`${label}: composer internal padding is too tight after tool-region scrolling (${JSON.stringify(metrics.composerPadding)}).`);
   if (metrics.composerViewportGapsAfterInnerScroll.top < 0 || metrics.composerViewportGapsAfterInnerScroll.bottom < 6) failures.push(`${label}: composer is not fully visible with bottom breathing room after tool-region scrolling (${JSON.stringify(metrics.composerViewportGapsAfterInnerScroll)}).`);
   if (metrics.inputComposerGapsAfterInnerScroll.top < 10 || metrics.inputComposerGapsAfterInnerScroll.bottom < 10) failures.push(`${label}: composer input/action area is not padded inside the composer after tool-region scrolling (${JSON.stringify(metrics.inputComposerGapsAfterInnerScroll)}).`);
