@@ -3079,12 +3079,13 @@ async fn provider_auth_openai_experimental_token_expires_in_invalid_values_are_r
 }
 
 #[tokio::test]
-async fn provider_auth_openai_experimental_exchange_rejects_missing_refresh_token() {
+async fn provider_auth_openai_experimental_exchange_accepts_missing_refresh_token() {
     for response in [
         json!({
             "access_token": "codex-access-token-secret-abcd",
             "expires_in": 1800,
             "scope": "openid profile email offline_access",
+            "id_token": test_jwt_with_payload(json!({ "chatgpt_account_id": "acct-test" })),
             "account_label": "mock-user@example.test"
         }),
         json!({
@@ -3092,6 +3093,7 @@ async fn provider_auth_openai_experimental_exchange_rejects_missing_refresh_toke
             "refresh_token": "   ",
             "expires_in": 1800,
             "scope": "openid profile email offline_access",
+            "id_token": test_jwt_with_payload(json!({ "chatgpt_account_id": "acct-test" })),
             "account_label": "mock-user@example.test"
         }),
     ] {
@@ -3133,8 +3135,8 @@ async fn provider_auth_openai_experimental_exchange_rejects_missing_refresh_toke
             ),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert_eq!(body["error"], "provider auth token exchange failed");
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["status"], "connected");
         assert_provider_auth_response_has_no_codex_secrets(&body);
         assert!(!body.to_string().contains("codex-code-empty-refresh-secret"));
         let token_body = token_body_receiver.recv().await.unwrap();
@@ -3148,8 +3150,9 @@ async fn provider_auth_openai_experimental_exchange_rejects_missing_refresh_toke
             store
                 .get_secret("openai", SecretKind::OAuthAccessToken)
                 .await
-                .unwrap(),
-            None
+                .unwrap()
+                .as_deref(),
+            Some("codex-access-token-secret-abcd")
         );
         assert_eq!(
             store
@@ -3158,14 +3161,12 @@ async fn provider_auth_openai_experimental_exchange_rejects_missing_refresh_toke
                 .unwrap(),
             None
         );
-        assert_eq!(
-            store
-                .get_secret("openai", SecretKind::AuthMetadata)
-                .await
-                .unwrap(),
-            None
-        );
-        let (status, pending) = json_response_from(
+        assert!(store
+            .get_secret("openai", SecretKind::AuthMetadata)
+            .await
+            .unwrap()
+            .is_some());
+        let (status, connected) = json_response_from(
             app,
             authed_request(
                 Method::GET,
@@ -3175,9 +3176,8 @@ async fn provider_auth_openai_experimental_exchange_rejects_missing_refresh_toke
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(pending["status"], "pending");
-        assert_eq!(pending["sessionId"], session_id);
-        assert_provider_auth_response_has_no_codex_secrets(&pending);
+        assert_eq!(connected["status"], "connected");
+        assert_provider_auth_response_has_no_codex_secrets(&connected);
     }
 }
 

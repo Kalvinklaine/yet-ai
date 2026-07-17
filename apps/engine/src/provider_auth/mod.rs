@@ -523,22 +523,6 @@ pub(super) async fn codex_exchange(
             return Err(error);
         }
     };
-    if sanitized_optional_token(token.refresh_token.as_deref()).is_none() {
-        let mut session = session;
-        session.last_error = Some(sanitized_provider_auth_last_error(
-            &ProviderAuthError::TokenExchange,
-        ));
-        codex.pending = Some(session);
-        write_codex_state(config_dir, provider, &codex).await?;
-        retain_registry_after_exchange_failure(
-            config_dir,
-            provider,
-            &session_id,
-            ProviderAuthPendingRetention::Retryable,
-        )
-        .await?;
-        return Err(ProviderAuthError::TokenExchange);
-    }
     openai_codex_adapter(config_dir)
         .complete_exchange_with_token(session, &session_id, &state_value, token)
         .await
@@ -1105,14 +1089,16 @@ pub(in crate::provider_auth) async fn store_codex_connection(
     let store = provider_secret_store(config_dir);
     let metadata = serde_json::to_string(metadata).map_err(|_| ProviderAuthError::Storage)?;
     let result = async {
-        store
-            .put_secret(provider, SecretKind::OAuthAccessToken, &token.access_token)
-            .await?;
-        let refresh_token = sanitized_optional_token(token.refresh_token.as_deref())
+        let access_token = sanitized_optional_token(Some(&token.access_token))
             .ok_or(ProviderAuthError::TokenExchange)?;
         store
-            .put_secret(provider, SecretKind::OAuthRefreshToken, &refresh_token)
+            .put_secret(provider, SecretKind::OAuthAccessToken, &access_token)
             .await?;
+        if let Some(refresh_token) = sanitized_optional_token(token.refresh_token.as_deref()) {
+            store
+                .put_secret(provider, SecretKind::OAuthRefreshToken, &refresh_token)
+                .await?;
+        }
         store
             .put_secret(provider, SecretKind::AuthMetadata, &metadata)
             .await?;
@@ -1241,13 +1227,6 @@ async fn codex_connected_status(
     else {
         return Ok(None);
     };
-    let Some(_) = store
-        .get_secret(provider, SecretKind::OAuthRefreshToken)
-        .await?
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(None);
-    };
     let metadata = sanitize_codex_response_metadata(metadata, Some(&access_token));
     if parse_time(&metadata.expires_at)? <= Utc::now() {
         return Ok(Some(codex_expired_response(provider, metadata)));
@@ -1290,13 +1269,6 @@ pub(super) async fn experimental_codex_chat_auth_impl(
     }
     let Some(access_token) = store
         .get_secret(provider, SecretKind::OAuthAccessToken)
-        .await?
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    let Some(_) = store
-        .get_secret(provider, SecretKind::OAuthRefreshToken)
         .await?
         .filter(|value| !value.trim().is_empty())
     else {
@@ -1474,6 +1446,12 @@ async fn codex_pending_session_is_unexpired(
     Ok(parse_time(&session.expires_at)? > Utc::now())
 }
 
+struct CodexAccessAuthSnapshot {
+    access_token: String,
+    metadata: CodexAuthMetadata,
+    auth: ExperimentalCodexChatAuth,
+}
+
 struct CodexChatAuthSnapshot {
     access_token: String,
     refresh_token: String,
@@ -1481,10 +1459,10 @@ struct CodexChatAuthSnapshot {
     auth: ExperimentalCodexChatAuth,
 }
 
-async fn read_codex_chat_auth_snapshot(
+async fn read_codex_access_auth_snapshot(
     config_dir: &Path,
     provider: &str,
-) -> Result<Option<CodexChatAuthSnapshot>, ProviderAuthError> {
+) -> Result<Option<CodexAccessAuthSnapshot>, ProviderAuthError> {
     let store = provider_secret_store(config_dir);
     let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
         return Ok(None);
@@ -1492,15 +1470,11 @@ async fn read_codex_chat_auth_snapshot(
     let metadata: CodexAuthMetadata =
         serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
     validate_codex_metadata(provider, &metadata)?;
+    if parse_time(&metadata.expires_at)? <= Utc::now() {
+        return Ok(None);
+    }
     let Some(access_token) = store
         .get_secret(provider, SecretKind::OAuthAccessToken)
-        .await?
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    let Some(refresh_token) = store
-        .get_secret(provider, SecretKind::OAuthRefreshToken)
         .await?
         .filter(|value| !value.trim().is_empty())
     else {
@@ -1512,11 +1486,33 @@ async fn read_codex_chat_auth_snapshot(
         base_url: metadata.chat_base_url.clone(),
         model: metadata.chat_model.clone(),
     };
-    Ok(Some(CodexChatAuthSnapshot {
+    Ok(Some(CodexAccessAuthSnapshot {
         access_token,
-        refresh_token,
         metadata,
         auth,
+    }))
+}
+
+async fn read_codex_chat_auth_snapshot(
+    config_dir: &Path,
+    provider: &str,
+) -> Result<Option<CodexChatAuthSnapshot>, ProviderAuthError> {
+    let Some(access_snapshot) = read_codex_access_auth_snapshot(config_dir, provider).await? else {
+        return Ok(None);
+    };
+    let store = provider_secret_store(config_dir);
+    let Some(refresh_token) = store
+        .get_secret(provider, SecretKind::OAuthRefreshToken)
+        .await?
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(CodexChatAuthSnapshot {
+        access_token: access_snapshot.access_token,
+        refresh_token,
+        metadata: access_snapshot.metadata,
+        auth: access_snapshot.auth,
     }))
 }
 
@@ -3624,6 +3620,73 @@ mod tests {
                 "codex-exchange-refresh-token-secret",
             ],
         );
+    }
+
+    #[tokio::test]
+    async fn codex_exchange_without_refresh_token_completes_like_refact_and_requires_reconnect_on_expiry(
+    ) {
+        let dir = temp_dir();
+        let (token_endpoint_url, request_receiver) = raw_recording_token_endpoint(serde_json::json!({
+            "access_token": "codex-access-token-secret-no-refresh",
+            "expires_in": 3600,
+            "scope": "openid profile email offline_access",
+            "id_token": test_jwt_with_payload(serde_json::json!({ "chatgpt_account_id": "acct-no-refresh" })),
+            "account_label": "Codex No Refresh Account"
+        }))
+        .await;
+        let pending =
+            create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+
+        let response = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(pending.session_id.clone()),
+                state: Some(pending.state.clone()),
+                code: Some("codex-auth-code-no-refresh".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        let request = request_receiver.await.unwrap();
+
+        assert_eq!(response.status, "connected");
+        assert_eq!(response.success, Some(true));
+        assert_eq!(
+            response.account_label.as_deref(),
+            Some("Codex No Refresh Account")
+        );
+        assert!(super::read_codex_state(&dir, "openai")
+            .await
+            .unwrap()
+            .pending
+            .is_none());
+        let auth = super::experimental_codex_chat_auth(&dir)
+            .await
+            .unwrap()
+            .expect("access-token auth should be available until expiry without refresh token");
+        assert_eq!(auth.access_token, "codex-access-token-secret-no-refresh");
+        assert_eq!(auth.chatgpt_account_id, "acct-no-refresh");
+        let (_, refresh_token, _) = codex_secret_values(&dir).await;
+        assert!(refresh_token.is_none());
+        assert!(super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap()
+            .is_none());
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "connected");
+        assert_response_sanitized(
+            &status,
+            &[
+                "codex-access-token-secret-no-refresh",
+                "codex-auth-code-no-refresh",
+                pending.state.as_str(),
+                pending.verifier.as_str(),
+                "acct-no-refresh",
+            ],
+        );
+        assert!(request.contains("grant_type=authorization_code"));
+        assert!(request.contains("code_verifier="));
     }
 
     #[tokio::test]

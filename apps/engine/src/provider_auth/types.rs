@@ -204,6 +204,7 @@ pub struct ExperimentalCodexChatAuth {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) struct CodexTokenResponse {
+    #[serde(default)]
     pub(super) access_token: String,
     #[serde(default)]
     pub(super) refresh_token: Option<String>,
