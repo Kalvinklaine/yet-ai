@@ -28,6 +28,8 @@ const MOCK_TTL_SECONDS: i64 = 600;
 const CODEX_TTL_SECONDS: i64 = 600;
 const MAX_PROVIDER_AUTH_TTL_SECONDS: i64 = 3600;
 const CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS: u64 = 20;
+const CODEX_TOKEN_EXCHANGE_TIMEOUT_OVERRIDE_MS_ENV: &str =
+    "YET_AI_CODEX_TOKEN_EXCHANGE_TIMEOUT_OVERRIDE_MS";
 const CODEX_TOKEN_ERROR_BODY_LIMIT_BYTES: usize = 4096;
 const CODEX_REFRESH_FILE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 const CODEX_REFRESH_FILE_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(10);
@@ -629,15 +631,36 @@ async fn post_codex_token(
         .map_err(Into::into)
 }
 
+fn codex_token_exchange_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS)
+}
+
+fn codex_http_timeout_for_url(value: &str) -> std::time::Duration {
+    reqwest::Url::parse(value)
+        .ok()
+        .as_ref()
+        .map(codex_token_exchange_timeout_for_url)
+        .unwrap_or_else(codex_token_exchange_timeout)
+}
+
+fn codex_token_exchange_timeout_for_url(url: &reqwest::Url) -> std::time::Duration {
+    if !is_allowed_loopback_host(url) || !url.path().contains("__timeout_override") {
+        return codex_token_exchange_timeout();
+    }
+    std::env::var(CODEX_TOKEN_EXCHANGE_TIMEOUT_OVERRIDE_MS_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| (100..=5_000).contains(value))
+        .map(std::time::Duration::from_millis)
+        .unwrap_or_else(codex_token_exchange_timeout)
+}
+
 async fn post_codex_token_raw(
     token_endpoint_url: &str,
     body: &[(&str, &str)],
 ) -> Result<CodexTokenResponse, CodexTokenEndpointError> {
-    let builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(
-            CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
-        ))
-        .no_proxy();
+    let timeout = codex_http_timeout_for_url(token_endpoint_url);
+    let builder = reqwest::Client::builder().timeout(timeout).no_proxy();
     let client = builder
         .build()
         .map_err(|_| CodexTokenEndpointError::Failed)?;
@@ -677,6 +700,7 @@ async fn refresh_codex_token(
 }
 
 async fn bounded_codex_token_error_body(response: reqwest::Response) -> Vec<u8> {
+    let timeout = codex_token_exchange_timeout_for_url(response.url());
     let read = async move {
         let mut body = Vec::new();
         let mut stream = response.bytes_stream();
@@ -693,12 +717,7 @@ async fn bounded_codex_token_error_body(response: reqwest::Response) -> Vec<u8> 
         }
         Ok::<Vec<u8>, ()>(body)
     };
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS),
-        read,
-    )
-    .await
-    {
+    match tokio::time::timeout(timeout, read).await {
         Ok(Ok(body)) => body,
         _ => Vec::new(),
     }
@@ -729,9 +748,7 @@ pub(in crate::provider_auth) async fn discover_codex_model(
     validate_codex_account_id(account_id)?;
     let url = codex_models_url(chat_base_url)?;
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(
-            CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
-        ))
+        .timeout(codex_token_exchange_timeout_for_url(&url))
         .no_proxy()
         .build()
         .map_err(|_| ProviderAuthError::TokenExchange)?;

@@ -14,6 +14,8 @@ use yet_lsp::secret_store::{FileSecretStore, ProviderSecretStore, SecretKind};
 use yet_lsp::storage::{resolve_storage_paths, StoragePaths};
 use yet_lsp::{app, default_bind_addr, AppState, AuthToken};
 const TEST_TOKEN: &str = "test-token";
+const CODEX_TOKEN_EXCHANGE_TIMEOUT_OVERRIDE_MS_ENV: &str =
+    "YET_AI_CODEX_TOKEN_EXCHANGE_TIMEOUT_OVERRIDE_MS";
 static TEST_STORAGE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn test_storage_paths() -> StoragePaths {
@@ -1223,11 +1225,17 @@ async fn start_hanging_codex_token_endpoint() -> (String, oneshot::Receiver<Valu
             }
         };
         let app = axum::Router::new()
-            .route("/oauth/token", axum::routing::post(handler))
+            .route(
+                "/oauth/__timeout_override/token",
+                axum::routing::post(handler),
+            )
             .merge(codex_models_route());
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://{address}/oauth/token"), body_receiver)
+    (
+        format!("http://{address}/oauth/__timeout_override/token"),
+        body_receiver,
+    )
 }
 
 async fn start_delayed_codex_token_endpoint() -> (String, mpsc::Receiver<Value>) {
@@ -3859,6 +3867,7 @@ async fn provider_auth_exchange_rejects_empty_and_oversized_strings_safely() {
 
 #[tokio::test]
 async fn provider_auth_openai_experimental_token_exchange_timeout_is_bounded_and_sanitized() {
+    std::env::set_var(CODEX_TOKEN_EXCHANGE_TIMEOUT_OVERRIDE_MS_ENV, "500");
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
         ProductIdentity::load().unwrap(),
@@ -3898,6 +3907,7 @@ async fn provider_auth_openai_experimental_token_exchange_timeout_is_bounded_and
         ),
     )
     .await;
+    std::env::remove_var(CODEX_TOKEN_EXCHANGE_TIMEOUT_OVERRIDE_MS_ENV);
     let (status, failure) = result.expect("token exchange should be bounded");
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert_eq!(failure["error"], "provider auth token exchange failed");
