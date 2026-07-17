@@ -3623,7 +3623,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn codex_exchange_without_refresh_token_completes_like_refact_and_requires_reconnect_on_expiry(
+    async fn codex_exchange_without_refresh_token_completes_like_reference_behavior_and_requires_reconnect_on_expiry(
     ) {
         let dir = temp_dir();
         let (token_endpoint_url, request_receiver) = raw_recording_token_endpoint(serde_json::json!({
