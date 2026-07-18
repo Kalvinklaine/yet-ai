@@ -23,6 +23,12 @@ const CALLBACK_EXCHANGE_FAILURE_TEXT: &str =
     "Login reached Yet AI but credential exchange failed (token_http_status). Return to Yet AI and retry login or use API-key fallback.";
 const CALLBACK_EXCHANGE_HTTP_FAILED_TEXT: &str =
     "Login reached Yet AI but credential exchange failed (token_http_failed_or_timeout). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_PROVIDER_REJECTED_TEXT: &str =
+    "Login reached Yet AI but the provider rejected credential exchange (provider_rejected). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_REFRESH_REJECTED_TEXT: &str =
+    "Login reached Yet AI but the refresh token was reused (refresh_token_reused). Return to Yet AI and reconnect login or use API-key fallback.";
+const CALLBACK_EXCHANGE_ADAPTER_FAILURE_TEXT: &str =
+    "Login reached Yet AI but the provider adapter failed (adapter_failure). Return to Yet AI and retry login or use API-key fallback.";
 const CALLBACK_EXCHANGE_JSON_INVALID_TEXT: &str =
     "Login reached Yet AI but credential exchange failed (token_json_invalid). Return to Yet AI and retry login or use API-key fallback.";
 const CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT: &str =
@@ -39,6 +45,8 @@ const CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT: &str =
     "Login reached Yet AI but credential exchange used a safe model discovery fallback (model_discovery_fallback). Return to Yet AI.";
 const CALLBACK_STORAGE_FAILURE_TEXT: &str =
     "Login reached Yet AI but local credential storage failed. Return to Yet AI and retry after checking local storage access.";
+const CALLBACK_UNAVAILABLE_TEXT: &str =
+    "Login callback listener is unavailable. Return to Yet AI, restart the local runtime, and retry login.";
 const CALLBACK_AMBIGUOUS_STATE_TEXT: &str =
     "Login could not be matched safely. Return to Yet AI and start login again.";
 
@@ -266,10 +274,18 @@ fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> String {
         | provider_auth::ProviderAuthError::Provider(_) => {
             CALLBACK_STORAGE_FAILURE_TEXT.to_string()
         }
+        provider_auth::ProviderAuthError::CallbackUnavailable => {
+            CALLBACK_UNAVAILABLE_TEXT.to_string()
+        }
         provider_auth::ProviderAuthError::TokenExchange(category, detail) => {
             let category = category.as_str();
             match category.as_str() {
                 "token_http_failed_or_timeout" => CALLBACK_EXCHANGE_HTTP_FAILED_TEXT.to_string(),
+                "provider_rejected" => CALLBACK_EXCHANGE_PROVIDER_REJECTED_TEXT.to_string(),
+                "refresh_token_reused" => {
+                    CALLBACK_EXCHANGE_REFRESH_REJECTED_TEXT.to_string()
+                }
+                "adapter_failure" => CALLBACK_EXCHANGE_ADAPTER_FAILURE_TEXT.to_string(),
                 "token_json_invalid" => CALLBACK_EXCHANGE_JSON_INVALID_TEXT.to_string(),
                 "token_access_missing" => CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT.to_string(),
                 "account_id_missing" => CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT.to_string(),
@@ -408,6 +424,9 @@ mod tests {
             CALLBACK_PROVIDER_ERROR_TEXT,
             CALLBACK_EXCHANGE_FAILURE_TEXT,
             CALLBACK_EXCHANGE_HTTP_FAILED_TEXT,
+            CALLBACK_EXCHANGE_PROVIDER_REJECTED_TEXT,
+            CALLBACK_EXCHANGE_REFRESH_REJECTED_TEXT,
+            CALLBACK_EXCHANGE_ADAPTER_FAILURE_TEXT,
             CALLBACK_EXCHANGE_JSON_INVALID_TEXT,
             CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT,
             CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT,
@@ -416,11 +435,12 @@ mod tests {
             CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT,
             CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT,
             CALLBACK_STORAGE_FAILURE_TEXT,
+            CALLBACK_UNAVAILABLE_TEXT,
             CALLBACK_AMBIGUOUS_STATE_TEXT,
         ] {
             let lower = text.to_ascii_lowercase();
             assert!(!lower.contains("access_token"));
-            assert!(!lower.contains("refresh_token"));
+            assert!(!lower.contains("refresh_token="));
             assert!(!lower.contains("secret"));
             assert!(!lower.contains("/users/"));
             assert!(!lower.contains("access_denied"));
@@ -447,7 +467,7 @@ mod tests {
             ),
             (
                 provider_auth::ProviderAuthError::CallbackUnavailable,
-                CALLBACK_FAILURE_TEXT,
+                CALLBACK_UNAVAILABLE_TEXT,
             ),
         ];
 
@@ -457,6 +477,44 @@ mod tests {
             assert!(!text.contains("raw-denied-secret"));
             assert!(!text.contains("codex-code-secret"));
             assert!(!text.contains("codex-state-secret"));
+        }
+    }
+
+    #[test]
+    fn callback_failure_taxonomy_never_fabricates_http_status_zero() {
+        let cases = [
+            (
+                crate::provider_auth::CodexTokenExchangeCategory::ProviderRejected,
+                None,
+                "provider_rejected",
+            ),
+            (
+                crate::provider_auth::CodexTokenExchangeCategory::RefreshTokenReused,
+                None,
+                "refresh_token_reused",
+            ),
+            (
+                crate::provider_auth::CodexTokenExchangeCategory::AdapterFailure,
+                None,
+                "adapter_failure",
+            ),
+            (
+                crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus(503),
+                Some("http_status=503"),
+                "token_http_status_503; http_status=503",
+            ),
+        ];
+
+        for (category, detail, expected) in cases {
+            let error = match detail {
+                Some(detail) => provider_auth::ProviderAuthError::token_exchange_with_detail(
+                    category,
+                    detail.to_string(),
+                ),
+                None => provider_auth::ProviderAuthError::token_exchange(category),
+            };
+            let text = callback_failure_text(&error);
+            assert!(text.contains(expected), "{text}");
         }
     }
 
@@ -495,7 +553,7 @@ mod tests {
             (Err(provider_auth::ProviderAuthError::Storage), false),
             (
                 Err(provider_auth::ProviderAuthError::token_exchange(
-                    crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus(0),
+                    crate::provider_auth::CodexTokenExchangeCategory::AdapterFailure,
                 )),
                 false,
             ),

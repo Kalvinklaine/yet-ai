@@ -85,6 +85,9 @@ pub struct ProviderAuthResponse {
 pub enum CodexTokenExchangeCategory {
     TokenHttpFailedOrTimeout,
     TokenHttpStatus(u16),
+    ProviderRejected,
+    RefreshTokenReused,
+    AdapterFailure,
     TokenJsonInvalid,
     TokenAccessMissing,
     AccountIdMissing,
@@ -99,6 +102,9 @@ impl CodexTokenExchangeCategory {
         match self {
             Self::TokenHttpFailedOrTimeout => "token_http_failed_or_timeout".to_string(),
             Self::TokenHttpStatus(status) => format!("token_http_status_{status}"),
+            Self::ProviderRejected => "provider_rejected".to_string(),
+            Self::RefreshTokenReused => "refresh_token_reused".to_string(),
+            Self::AdapterFailure => "adapter_failure".to_string(),
             Self::TokenJsonInvalid => "token_json_invalid".to_string(),
             Self::TokenAccessMissing => "token_access_missing".to_string(),
             Self::AccountIdMissing => "account_id_missing".to_string(),
@@ -301,9 +307,9 @@ impl From<CodexTokenEndpointError> for ProviderAuthError {
             CodexTokenEndpointError::FailedWithDetail(category, detail) => {
                 ProviderAuthError::token_exchange_with_detail(category, detail)
             }
-            CodexTokenEndpointError::RefreshTokenReused => {
-                ProviderAuthError::token_exchange(CodexTokenExchangeCategory::TokenHttpStatus(401))
-            }
+            CodexTokenEndpointError::RefreshTokenReused => ProviderAuthError::token_exchange(
+                CodexTokenExchangeCategory::RefreshTokenReused,
+            ),
         }
     }
 }

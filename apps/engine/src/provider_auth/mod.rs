@@ -1507,7 +1507,7 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
                 }
                 clear_codex_auth_after_refresh_token_reuse(config_dir, provider).await?;
                 return Err(ProviderAuthError::token_exchange(
-                    CodexTokenExchangeCategory::TokenHttpStatus(0),
+                    CodexTokenExchangeCategory::RefreshTokenReused,
                 ));
             }
             Err(CodexTokenEndpointError::Failed(category)) => {
@@ -4631,7 +4631,13 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(error, ProviderAuthError::TokenExchange(_, _)));
+        assert!(matches!(
+            &error,
+            ProviderAuthError::TokenExchange(
+                super::CodexTokenExchangeCategory::RefreshTokenReused,
+                None
+            )
+        ));
         let message = error.to_string();
         assert_eq!(message, "provider auth token exchange failed");
         assert!(!message.contains("codex-access-token-secret"));
