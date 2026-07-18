@@ -741,59 +741,58 @@ fn codex_token_error_is_refresh_token_reused(body: &[u8]) -> bool {
 #[derive(Debug, Deserialize)]
 struct CodexSafeOAuthErrorBody {
     error: Option<serde_json::Value>,
-    error_description: Option<serde_json::Value>,
 }
 
 fn sanitized_codex_token_http_detail(status: StatusCode, body: &[u8]) -> String {
     let mut parts = vec![format!("http_status={}", status.as_u16())];
     if let Ok(parsed) = serde_json::from_slice::<CodexSafeOAuthErrorBody>(body) {
-        if let Some(error) = sanitized_oauth_error_field(parsed.error.as_ref(), 64) {
+        if let Some(error) = safe_oauth_error_code(parsed.error.as_ref()) {
             parts.push(format!("oauth_error={error}"));
-        }
-        if let Some(description) =
-            sanitized_oauth_error_field(parsed.error_description.as_ref(), 160)
-        {
-            parts.push(format!("oauth_error_description={description}"));
         }
     }
     parts.join("; ")
 }
 
-fn sanitized_oauth_error_field(
-    value: Option<&serde_json::Value>,
-    max_chars: usize,
+fn safe_oauth_error_code(value: Option<&serde_json::Value>) -> Option<&'static str> {
+    match value?.as_str()? {
+        "invalid_grant" => Some("invalid_grant"),
+        "invalid_client" => Some("invalid_client"),
+        "invalid_request" => Some("invalid_request"),
+        "unauthorized_client" => Some("unauthorized_client"),
+        "unsupported_grant_type" => Some("unsupported_grant_type"),
+        "invalid_scope" => Some("invalid_scope"),
+        "access_denied" => Some("access_denied"),
+        "temporarily_unavailable" => Some("temporarily_unavailable"),
+        "server_error" => Some("server_error"),
+        "slow_down" => Some("slow_down"),
+        _ => None,
+    }
+}
+
+fn safe_provider_auth_detail(
+    category: CodexTokenExchangeCategory,
+    detail: Option<&str>,
 ) -> Option<String> {
-    let value = value?.as_str()?.trim();
-    if value.is_empty() {
+    let CodexTokenExchangeCategory::TokenHttpStatus(expected_status) = category else {
+        return None;
+    };
+    let mut parts = detail?.split("; ");
+    if parts.next()? != format!("http_status={expected_status}") {
         return None;
     }
-    let value = value
-        .chars()
-        .map(|value| if value.is_control() { ' ' } else { value })
-        .collect::<String>()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    let lower = value.to_ascii_lowercase();
-    if value.is_empty()
-        || lower.contains("access_token")
-        || lower.contains("refresh_token")
-        || lower.contains("code_verifier")
-        || lower.contains("client_secret")
-        || lower.contains("authorization_code")
-        || lower.contains("bearer")
-        || lower.contains("cookie")
-        || lower.contains("auth.json")
-        || lower.contains("/users/")
-        || lower.contains("/home/")
-        || lower.contains("sk-")
-        || lower.contains("codex-")
-        || looks_like_jwt(&value)
-        || looks_like_path(&value)
-    {
+    let mut safe = vec![format!("http_status={expected_status}")];
+    if let Some(error) = parts.next() {
+        let value = error.strip_prefix("oauth_error=")?;
+        let json = serde_json::Value::String(value.to_string());
+        safe.push(format!(
+            "oauth_error={}",
+            safe_oauth_error_code(Some(&json))?
+        ));
+    }
+    if parts.next().is_some() {
         return None;
     }
-    Some(value.chars().take(max_chars).collect())
+    Some(safe.join("; "))
 }
 
 #[derive(Debug, Deserialize)]
@@ -911,8 +910,9 @@ fn sanitized_provider_auth_last_error(error: &ProviderAuthError) -> String {
             "Login reached Yet AI but local credential storage failed. Check local storage access and retry login.".to_string()
         }
         ProviderAuthError::TokenExchange(category, detail) => {
+            let safe_detail = safe_provider_auth_detail(*category, detail.as_deref());
             let category = category.as_str();
-            match detail {
+            match safe_detail {
                 Some(detail) => format!(
                     "Login reached Yet AI but token exchange failed ({category}; {detail}). Retry login or use the API-key fallback."
                 ),
@@ -3121,6 +3121,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn oauth_status_detail_uses_strict_allowlist() {
+        for error in [
+            "invalid_grant",
+            "invalid_client",
+            "invalid_request",
+            "unauthorized_client",
+            "unsupported_grant_type",
+            "invalid_scope",
+            "access_denied",
+            "temporarily_unavailable",
+            "server_error",
+            "slow_down",
+        ] {
+            let body = serde_json::json!({
+                "error": error,
+                "error_description": "provider detail must never be retained"
+            })
+            .to_string();
+            assert_eq!(
+                super::sanitized_codex_token_http_detail(
+                    http::StatusCode::BAD_REQUEST,
+                    body.as_bytes()
+                ),
+                format!("http_status=400; oauth_error={error}")
+            );
+        }
+
+        let sensitive = [
+            "code=authorization-secret",
+            "state=callback-state",
+            "id_token=header.payload.signature",
+            "account_id=acct-private",
+            "code_verifier=pkce-private",
+            "pkce_challenge=private",
+            "http://localhost:1455/auth/callback?code=private&state=private",
+            "/Users/alice/.config/yet-ai/auth.json",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhY2NvdW50In0.signature1",
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-opaque-value",
+            "access_token=private",
+            "refresh_token=private",
+            "Bearer private",
+            "cookie=session-private",
+            "authorization=Basic private",
+        ];
+        for value in sensitive {
+            let body = serde_json::json!({
+                "error": value,
+                "error_description": value
+            })
+            .to_string();
+            assert_eq!(
+                super::sanitized_codex_token_http_detail(
+                    http::StatusCode::BAD_REQUEST,
+                    body.as_bytes()
+                ),
+                "http_status=400",
+                "retained sensitive value: {value}"
+            );
+            let message = super::sanitized_provider_auth_last_error(
+                &ProviderAuthError::token_exchange_with_detail(
+                    super::CodexTokenExchangeCategory::TokenHttpStatus(400),
+                    format!("http_status=400; oauth_error={value}"),
+                ),
+            );
+            assert!(!message.contains(value), "status leaked {value}: {message}");
+            assert!(message.contains("token_http_status_400"));
+        }
+    }
+
     #[tokio::test]
     async fn codex_secret_bundle_cleanup_attempts_all_deletes_after_first_failure() {
         let store = DeleteRecordingSecretStore::default();
@@ -3893,7 +3963,6 @@ mod tests {
                     "token_http_status_400",
                     "http_status=400",
                     "oauth_error=invalid_grant",
-                    "oauth_error_description=Authorization code is invalid or expired",
                 ],
                 vec!["codex-access-token-secret", "refresh_token", "client_secret"],
             ),

@@ -277,7 +277,7 @@ fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> String {
         provider_auth::ProviderAuthError::CallbackUnavailable => {
             CALLBACK_UNAVAILABLE_TEXT.to_string()
         }
-        provider_auth::ProviderAuthError::TokenExchange(category, detail) => {
+        provider_auth::ProviderAuthError::TokenExchange(category, _) => {
             let category = category.as_str();
             match category.as_str() {
                 "token_http_failed_or_timeout" => CALLBACK_EXCHANGE_HTTP_FAILED_TEXT.to_string(),
@@ -293,14 +293,9 @@ fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> String {
                 "scopes_invalid" => CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT.to_string(),
                 "storage_failed" => CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT.to_string(),
                 "model_discovery_fallback" => CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT.to_string(),
-                _ if category.starts_with("token_http_status_") => match detail {
-                    Some(detail) => format!(
-                        "Login reached Yet AI but credential exchange failed ({category}; {detail}). Return to Yet AI and retry login or use API-key fallback."
-                    ),
-                    None => format!(
-                        "Login reached Yet AI but credential exchange failed ({category}). Return to Yet AI and retry login or use API-key fallback."
-                    ),
-                },
+                _ if category.starts_with("token_http_status_") => format!(
+                    "Login reached Yet AI but credential exchange failed ({category}). Return to Yet AI and retry login or use API-key fallback."
+                ),
                 _ => CALLBACK_EXCHANGE_FAILURE_TEXT.to_string(),
             }
         }
@@ -501,7 +496,7 @@ mod tests {
             (
                 crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus(503),
                 Some("http_status=503"),
-                "token_http_status_503; http_status=503",
+                "token_http_status_503",
             ),
         ];
 
@@ -516,6 +511,49 @@ mod tests {
             let text = callback_failure_text(&error);
             assert!(text.contains(expected), "{text}");
         }
+    }
+
+    #[test]
+    fn callback_failure_never_renders_exchange_detail() {
+        let sensitive = [
+            "code=authorization-secret",
+            "state=callback-state",
+            "id_token=header.payload.signature",
+            "account_id=acct-private",
+            "code_verifier=pkce-private",
+            "pkce_challenge=private",
+            "http://localhost:1455/auth/callback?code=private&state=private",
+            "/Users/alice/.config/yet-ai/auth.json",
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhY2NvdW50In0.signature1",
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-opaque-value",
+            "access_token=private",
+            "refresh_token=private",
+            "Bearer private",
+            "cookie=session-private",
+            "authorization=Basic private",
+            "<script>alert('private')</script>",
+        ];
+        for detail in sensitive {
+            let text = callback_failure_text(
+                &provider_auth::ProviderAuthError::token_exchange_with_detail(
+                    crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus(400),
+                    detail.to_string(),
+                ),
+            );
+            assert_eq!(
+                text,
+                "Login reached Yet AI but credential exchange failed (token_http_status_400). Return to Yet AI and retry login or use API-key fallback."
+            );
+            assert!(!text.contains(detail));
+        }
+    }
+
+    #[test]
+    fn callback_html_escaping_covers_active_markup() {
+        assert_eq!(
+            html_escape("<script src='private'>&\"</script>"),
+            "&lt;script src=&#39;private&#39;&gt;&amp;&quot;&lt;/script&gt;"
+        );
     }
 
     #[test]
@@ -788,7 +826,7 @@ mod tests {
     #[tokio::test]
     async fn callback_fails_closed_when_multiple_config_dirs_match_state() {
         let _guard = CALLBACK_TEST_LOCK.lock().await;
-        clear_registered_states_for_test();
+        clear_all_registered_state_for_test();
         let first = callback_test_dir("duplicate-first");
         let second = callback_test_dir("duplicate-second");
         let first_start =
@@ -823,7 +861,7 @@ mod tests {
     #[tokio::test]
     async fn cached_callback_mapping_fails_closed_when_another_config_dir_matches_state() {
         let _guard = CALLBACK_TEST_LOCK.lock().await;
-        clear_registered_states_for_test();
+        clear_all_registered_state_for_test();
         let first = callback_test_dir("cached-duplicate-first");
         let second = callback_test_dir("cached-duplicate-second");
         let first_start =
@@ -947,11 +985,9 @@ mod tests {
 
             assert_eq!(status, StatusCode::BAD_GATEWAY);
             assert!(text.contains("token_http_status_400"));
-            assert!(text.contains("http_status=400"));
-            assert!(text.contains("oauth_error=invalid_grant"));
-            assert!(
-                text.contains("oauth_error_description=Authorization code is invalid or expired")
-            );
+            assert!(!text.contains("http_status=400"));
+            assert!(!text.contains("oauth_error=invalid_grant"));
+            assert!(!text.contains("Authorization code is invalid or expired"));
             assert!(!text.contains("codex-code-callback-test"));
             assert!(!text.contains(&state));
         }
