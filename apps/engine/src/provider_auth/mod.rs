@@ -678,14 +678,14 @@ async fn post_codex_token_raw(
         })?;
     let status = response.status();
     if !status.is_success() {
-        if status == StatusCode::UNAUTHORIZED {
-            let body = bounded_codex_token_error_body(response).await;
-            if codex_token_error_is_refresh_token_reused(&body) {
-                return Err(CodexTokenEndpointError::RefreshTokenReused);
-            }
+        let body = bounded_codex_token_error_body(response).await;
+        if status == StatusCode::UNAUTHORIZED && codex_token_error_is_refresh_token_reused(&body) {
+            return Err(CodexTokenEndpointError::RefreshTokenReused);
         }
-        return Err(CodexTokenEndpointError::Failed(
-            CodexTokenExchangeCategory::TokenHttpStatus,
+        let detail = sanitized_codex_token_http_detail(status, &body);
+        return Err(CodexTokenEndpointError::FailedWithDetail(
+            CodexTokenExchangeCategory::TokenHttpStatus(status.as_u16()),
+            detail,
         ));
     }
     response
@@ -735,6 +735,64 @@ fn codex_token_error_is_refresh_token_reused(body: &[u8]) -> bool {
     let text = String::from_utf8_lossy(body).to_ascii_lowercase();
     text.contains("refresh_token_reused")
         || (text.contains("refresh token") && text.contains("already been used"))
+}
+
+#[derive(Debug, Deserialize)]
+struct CodexSafeOAuthErrorBody {
+    error: Option<serde_json::Value>,
+    error_description: Option<serde_json::Value>,
+}
+
+fn sanitized_codex_token_http_detail(status: StatusCode, body: &[u8]) -> String {
+    let mut parts = vec![format!("http_status={}", status.as_u16())];
+    if let Ok(parsed) = serde_json::from_slice::<CodexSafeOAuthErrorBody>(body) {
+        if let Some(error) = sanitized_oauth_error_field(parsed.error.as_ref(), 64) {
+            parts.push(format!("oauth_error={error}"));
+        }
+        if let Some(description) =
+            sanitized_oauth_error_field(parsed.error_description.as_ref(), 160)
+        {
+            parts.push(format!("oauth_error_description={description}"));
+        }
+    }
+    parts.join("; ")
+}
+
+fn sanitized_oauth_error_field(
+    value: Option<&serde_json::Value>,
+    max_chars: usize,
+) -> Option<String> {
+    let value = value?.as_str()?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let value = value
+        .chars()
+        .map(|value| if value.is_control() { ' ' } else { value })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let lower = value.to_ascii_lowercase();
+    if value.is_empty()
+        || lower.contains("access_token")
+        || lower.contains("refresh_token")
+        || lower.contains("code_verifier")
+        || lower.contains("client_secret")
+        || lower.contains("authorization_code")
+        || lower.contains("bearer")
+        || lower.contains("cookie")
+        || lower.contains("auth.json")
+        || lower.contains("/users/")
+        || lower.contains("/home/")
+        || lower.contains("sk-")
+        || lower.contains("codex-")
+        || looks_like_jwt(&value)
+        || looks_like_path(&value)
+    {
+        return None;
+    }
+    Some(value.chars().take(max_chars).collect())
 }
 
 #[derive(Debug, Deserialize)]
@@ -851,11 +909,16 @@ fn sanitized_provider_auth_last_error(error: &ProviderAuthError) -> String {
         ProviderAuthError::Storage | ProviderAuthError::Provider(_) => {
             "Login reached Yet AI but local credential storage failed. Check local storage access and retry login.".to_string()
         }
-        ProviderAuthError::TokenExchange(category) => {
-            format!(
-                "Login reached Yet AI but token exchange failed ({category}). Retry login or use the API-key fallback.",
-                category = category.as_str()
-            )
+        ProviderAuthError::TokenExchange(category, detail) => {
+            let category = category.as_str();
+            match detail {
+                Some(detail) => format!(
+                    "Login reached Yet AI but token exchange failed ({category}; {detail}). Retry login or use the API-key fallback."
+                ),
+                None => format!(
+                    "Login reached Yet AI but token exchange failed ({category}). Retry login or use the API-key fallback."
+                ),
+            }
         }
         ProviderAuthError::CallbackUnavailable => {
             "Login callback listener is unavailable. Restart the local runtime and retry login.".to_string()
@@ -1417,11 +1480,16 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
                 }
                 clear_codex_auth_after_refresh_token_reuse(config_dir, provider).await?;
                 return Err(ProviderAuthError::token_exchange(
-                    CodexTokenExchangeCategory::TokenHttpStatus,
+                    CodexTokenExchangeCategory::TokenHttpStatus(0),
                 ));
             }
             Err(CodexTokenEndpointError::Failed(category)) => {
                 return Err(ProviderAuthError::token_exchange(category));
+            }
+            Err(CodexTokenEndpointError::FailedWithDetail(category, detail)) => {
+                return Err(ProviderAuthError::token_exchange_with_detail(
+                    category, detail,
+                ));
             }
         };
     let returned_refresh_token = sanitized_optional_token(token.refresh_token.as_deref());
@@ -3649,6 +3717,71 @@ mod tests {
 
     #[tokio::test]
     async fn codex_exchange_failure_categories_are_stored_as_sanitized_last_error() {
+        let detail_cases: &[(http::StatusCode, String, &[&str], Vec<&str>)] = &[
+            (
+                http::StatusCode::BAD_REQUEST,
+                serde_json::json!({
+                    "error": "invalid_grant",
+                    "error_description": "Authorization code is invalid or expired"
+                })
+                .to_string(),
+                &[
+                    "token_http_status_400",
+                    "http_status=400",
+                    "oauth_error=invalid_grant",
+                    "oauth_error_description=Authorization code is invalid or expired",
+                ],
+                vec!["codex-access-token-secret", "refresh_token", "client_secret"],
+            ),
+            (
+                http::StatusCode::UNAUTHORIZED,
+                serde_json::json!({
+                    "error": "invalid_client",
+                    "error_description": "Bearer codex-access-token-secret /Users/alice/auth.json client_secret=hidden"
+                })
+                .to_string(),
+                &[
+                    "token_http_status_401",
+                    "http_status=401",
+                    "oauth_error=invalid_client",
+                    "Login reached Yet AI but token exchange failed",
+                ],
+                vec![
+                    "codex-access-token-secret",
+                    "/Users/alice/auth.json",
+                    "client_secret",
+                    "Bearer",
+                ],
+            ),
+        ];
+
+        for (status_code, body, expected, forbidden) in detail_cases {
+            let dir = temp_dir();
+            let token_endpoint_url = raw_codex_token_endpoint(*status_code, body.clone()).await;
+            let pending =
+                create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+
+            let error = super::exchange(
+                &dir,
+                "openai",
+                super::ProviderAuthExchangeRequest {
+                    session_id: Some(pending.session_id.clone()),
+                    state: Some(pending.state.clone()),
+                    code: Some("codex-code-http-detail-secret".to_string()),
+                },
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(error, ProviderAuthError::TokenExchange(_, _)));
+            let status = super::status(&dir, "openai").await.unwrap();
+            let last_error = status.last_error.as_deref().unwrap();
+            for value in *expected {
+                assert!(last_error.contains(value), "{value}: {last_error}");
+            }
+            assert_response_sanitized(&status, &forbidden);
+        }
+
         let cases = [
             (
                 "missing-access",
@@ -3707,7 +3840,7 @@ mod tests {
                     "error": "temporary codex-access-token-secret-abcd codex-code-category-secret"
                 })
                 .to_string(),
-                "token_http_status",
+                "token_http_status_502",
             ),
             (
                 "bad-json",
@@ -3736,7 +3869,7 @@ mod tests {
             .await
             .unwrap_err();
 
-            assert!(matches!(error, ProviderAuthError::TokenExchange(_)));
+            assert!(matches!(error, ProviderAuthError::TokenExchange(_, _)));
             let status = super::status(&dir, "openai").await.unwrap();
             assert_eq!(status.status, "pending");
             let last_error = status.last_error.as_deref().unwrap();
@@ -4218,7 +4351,7 @@ mod tests {
             let error = super::codex_token_scopes(token.scope.as_deref(), &super::codex_scopes())
                 .unwrap_err();
 
-            assert!(matches!(error, ProviderAuthError::TokenExchange(_)));
+            assert!(matches!(error, ProviderAuthError::TokenExchange(_, _)));
             let message = error.to_string();
             assert_eq!(message, "provider auth token exchange failed");
             assert!(!message.contains("codex-access-token-secret-abcd"));
@@ -4330,7 +4463,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(error, ProviderAuthError::TokenExchange(_)));
+        assert!(matches!(error, ProviderAuthError::TokenExchange(_, _)));
         let message = error.to_string();
         assert_eq!(message, "provider auth token exchange failed");
         assert!(!message.contains("codex-access-token-secret"));

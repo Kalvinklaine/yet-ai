@@ -178,24 +178,27 @@ async fn handle_stream(mut stream: TcpStream) {
     write_response(&mut stream, status, text).await;
 }
 
-async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &'static str) {
+async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, String) {
     if method != "GET" {
-        return (StatusCode::METHOD_NOT_ALLOWED, CALLBACK_FAILURE_TEXT);
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            CALLBACK_FAILURE_TEXT.to_string(),
+        );
     }
     let Ok(parsed) = reqwest::Url::parse(&format!("http://localhost{path_and_query}")) else {
-        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
+        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT.to_string());
     };
     if parsed.path() != "/auth/callback" {
-        return (StatusCode::NOT_FOUND, CALLBACK_NOT_FOUND_TEXT);
+        return (StatusCode::NOT_FOUND, CALLBACK_NOT_FOUND_TEXT.to_string());
     }
     let query: HashMap<String, String> = parsed.query_pairs().into_owned().collect();
     if query.contains_key("error") {
         let Some(state) = bounded_query_value(&query, "state", 512) else {
-            return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
+            return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT.to_string());
         };
         let config_dir = match registered_config_dir_for_state(&state).await {
             Ok(Some(config_dir)) => config_dir,
-            Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT),
+            Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT.to_string()),
             Err(error) => return (error.status(), callback_failure_text(&error)),
         };
         let result = provider_auth::codex_callback_error(&config_dir, state.clone()).await;
@@ -212,31 +215,31 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, &
         };
     }
     let Some(state) = bounded_query_value(&query, "state", 512) else {
-        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
+        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT.to_string());
     };
     let Some(code) = bounded_query_value(&query, "code", 4096) else {
-        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT);
+        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT.to_string());
     };
 
     let config_dir = match registered_config_dir_for_state(&state).await {
         Ok(Some(config_dir)) => config_dir,
-        Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT),
+        Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT.to_string()),
         Err(error) => return (error.status(), callback_failure_text(&error)),
     };
 
     match provider_auth::codex_callback_exchange(&config_dir, state.clone(), code).await {
         Ok(_) => {
             forget_pending_state(&state);
-            (StatusCode::OK, CALLBACK_SUCCESS_TEXT)
+            (StatusCode::OK, CALLBACK_SUCCESS_TEXT.to_string())
         }
         Err(provider_auth::ProviderAuthError::SessionNotFound)
         | Err(provider_auth::ProviderAuthError::SessionExpired) => {
             forget_pending_state(&state);
-            (StatusCode::OK, CALLBACK_NOT_FOUND_TEXT)
+            (StatusCode::OK, CALLBACK_NOT_FOUND_TEXT.to_string())
         }
         Err(provider_auth::ProviderAuthError::SessionMismatch) => {
             forget_pending_state(&state);
-            (StatusCode::OK, CALLBACK_AMBIGUOUS_STATE_TEXT)
+            (StatusCode::OK, CALLBACK_AMBIGUOUS_STATE_TEXT.to_string())
         }
         Err(error) => (error.status(), callback_failure_text(&error)),
     }
@@ -254,31 +257,48 @@ fn callback_error_should_forget_mapping(
     )
 }
 
-fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> &'static str {
+fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> String {
     match error {
-        provider_auth::ProviderAuthError::SessionMismatch => CALLBACK_AMBIGUOUS_STATE_TEXT,
+        provider_auth::ProviderAuthError::SessionMismatch => {
+            CALLBACK_AMBIGUOUS_STATE_TEXT.to_string()
+        }
         provider_auth::ProviderAuthError::Storage
-        | provider_auth::ProviderAuthError::Provider(_) => CALLBACK_STORAGE_FAILURE_TEXT,
-        provider_auth::ProviderAuthError::TokenExchange(category) => match category.as_str() {
-            "token_http_failed_or_timeout" => CALLBACK_EXCHANGE_HTTP_FAILED_TEXT,
-            "token_json_invalid" => CALLBACK_EXCHANGE_JSON_INVALID_TEXT,
-            "token_access_missing" => CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT,
-            "account_id_missing" => CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT,
-            "expires_invalid" => CALLBACK_EXCHANGE_EXPIRES_INVALID_TEXT,
-            "scopes_invalid" => CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT,
-            "storage_failed" => CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT,
-            "model_discovery_fallback" => CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT,
-            _ => CALLBACK_EXCHANGE_FAILURE_TEXT,
-        },
-        _ => CALLBACK_FAILURE_TEXT,
+        | provider_auth::ProviderAuthError::Provider(_) => {
+            CALLBACK_STORAGE_FAILURE_TEXT.to_string()
+        }
+        provider_auth::ProviderAuthError::TokenExchange(category, detail) => {
+            let category = category.as_str();
+            match category.as_str() {
+                "token_http_failed_or_timeout" => CALLBACK_EXCHANGE_HTTP_FAILED_TEXT.to_string(),
+                "token_json_invalid" => CALLBACK_EXCHANGE_JSON_INVALID_TEXT.to_string(),
+                "token_access_missing" => CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT.to_string(),
+                "account_id_missing" => CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT.to_string(),
+                "expires_invalid" => CALLBACK_EXCHANGE_EXPIRES_INVALID_TEXT.to_string(),
+                "scopes_invalid" => CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT.to_string(),
+                "storage_failed" => CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT.to_string(),
+                "model_discovery_fallback" => CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT.to_string(),
+                _ if category.starts_with("token_http_status_") => match detail {
+                    Some(detail) => format!(
+                        "Login reached Yet AI but credential exchange failed ({category}; {detail}). Return to Yet AI and retry login or use API-key fallback."
+                    ),
+                    None => format!(
+                        "Login reached Yet AI but credential exchange failed ({category}). Return to Yet AI and retry login or use API-key fallback."
+                    ),
+                },
+                _ => CALLBACK_EXCHANGE_FAILURE_TEXT.to_string(),
+            }
+        }
+        _ => CALLBACK_FAILURE_TEXT.to_string(),
     }
 }
 
-fn callback_error_text(result: &Result<(), provider_auth::ProviderAuthError>) -> &'static str {
+fn callback_error_text(result: &Result<(), provider_auth::ProviderAuthError>) -> String {
     match result {
-        Ok(()) => CALLBACK_PROVIDER_ERROR_TEXT,
+        Ok(()) => CALLBACK_PROVIDER_ERROR_TEXT.to_string(),
         Err(provider_auth::ProviderAuthError::SessionNotFound)
-        | Err(provider_auth::ProviderAuthError::SessionExpired) => CALLBACK_NOT_FOUND_TEXT,
+        | Err(provider_auth::ProviderAuthError::SessionExpired) => {
+            CALLBACK_NOT_FOUND_TEXT.to_string()
+        }
         Err(error) => callback_failure_text(error),
     }
 }
@@ -353,8 +373,8 @@ fn bounded_query_value(
     Some(value.to_string())
 }
 
-async fn write_response(stream: &mut TcpStream, status: StatusCode, text: &'static str) {
-    let body = html_escape(text);
+async fn write_response(stream: &mut TcpStream, status: StatusCode, text: String) {
+    let body = html_escape(&text);
     let response = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Security-Policy: default-src 'none'\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         status.as_u16(),
@@ -421,9 +441,9 @@ mod tests {
             ),
             (
                 provider_auth::ProviderAuthError::token_exchange(
-                    crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus,
+                    crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus(400),
                 ),
-                CALLBACK_EXCHANGE_FAILURE_TEXT,
+                "Login reached Yet AI but credential exchange failed (token_http_status_400). Return to Yet AI and retry login or use API-key fallback.",
             ),
             (
                 provider_auth::ProviderAuthError::CallbackUnavailable,
@@ -475,7 +495,7 @@ mod tests {
             (Err(provider_auth::ProviderAuthError::Storage), false),
             (
                 Err(provider_auth::ProviderAuthError::token_exchange(
-                    crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus,
+                    crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus(0),
                 )),
                 false,
             ),
@@ -821,7 +841,7 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert_eq!(text, CALLBACK_EXCHANGE_FAILURE_TEXT);
+        assert!(text.contains("token_http_status_502"), "{text}");
         assert_eq!(
             registered_config_dir_for_state("stale-state")
                 .await
@@ -836,6 +856,48 @@ mod tests {
 
     #[tokio::test]
     async fn callback_mapping_is_retained_on_retryable_exchange_failure() {
+        {
+            let _guard = CALLBACK_TEST_LOCK.lock().await;
+            clear_all_registered_state_for_test();
+            let dir = callback_test_dir("http-detail");
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let token_endpoint_url = format!("http://{}/token", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                if let Ok((mut stream, _)) = listener.accept().await {
+                    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                    let mut buffer = [0_u8; 2048];
+                    let _ = stream.read(&mut buffer).await;
+                    let body = r#"{"error":"invalid_grant","error_description":"Authorization code is invalid or expired"}"#;
+                    let response = format!(
+                        "HTTP/1.1 400 Bad Request\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    );
+                    let _ = stream.write_all(response.as_bytes()).await;
+                }
+            });
+            let start = start_codex_pending(&dir, &token_endpoint_url).await;
+            let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+                .unwrap()
+                .query_pairs()
+                .find(|(key, _)| key == "state")
+                .unwrap()
+                .1
+                .into_owned();
+
+            let (status, text) = callback_response("GET", &callback_query(&state)).await;
+
+            assert_eq!(status, StatusCode::BAD_GATEWAY);
+            assert!(text.contains("token_http_status_400"));
+            assert!(text.contains("http_status=400"));
+            assert!(text.contains("oauth_error=invalid_grant"));
+            assert!(
+                text.contains("oauth_error_description=Authorization code is invalid or expired")
+            );
+            assert!(!text.contains("codex-code-callback-test"));
+            assert!(!text.contains(&state));
+        }
+
         let _guard = CALLBACK_TEST_LOCK.lock().await;
         clear_all_registered_state_for_test();
         let dir = callback_test_dir("retry");
@@ -852,7 +914,7 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert_eq!(text, CALLBACK_EXCHANGE_FAILURE_TEXT);
+        assert!(text.contains("token_http_status_502"), "{text}");
         assert_eq!(
             registered_config_dir_for_state(&state).await.unwrap(),
             Some(dir)
