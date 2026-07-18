@@ -2048,6 +2048,25 @@ pub(crate) async fn codex_callback_state_is_pending(
         .map_err(Into::into)
 }
 
+pub(crate) async fn resolve_codex_callback_config_dir(
+    state_value: &str,
+    config_dirs: impl IntoIterator<Item = PathBuf>,
+) -> Result<Option<PathBuf>, ProviderAuthError> {
+    let mut config_dirs = config_dirs.into_iter().collect::<Vec<_>>();
+    config_dirs.sort();
+    config_dirs.dedup();
+    let mut matched = None;
+    for config_dir in config_dirs {
+        if codex_callback_state_is_pending(&config_dir, state_value).await? {
+            if matched.is_some() {
+                return Err(ProviderAuthError::SessionMismatch);
+            }
+            matched = Some(config_dir);
+        }
+    }
+    Ok(matched)
+}
+
 pub(super) async fn codex_callback_state_is_pending_impl(
     config_dir: &Path,
     provider: &str,

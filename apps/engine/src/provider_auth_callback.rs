@@ -317,30 +317,32 @@ fn callback_error_text(result: &Result<(), provider_auth::ProviderAuthError>) ->
 async fn registered_config_dir_for_state(
     state_value: &str,
 ) -> Result<Option<PathBuf>, provider_auth::ProviderAuthError> {
-    let (cached_config_dir, config_dirs) = {
+    let config_dirs = {
         let state = CALLBACK_STATE
             .lock()
             .map_err(|_| provider_auth::ProviderAuthError::Storage)?;
-        (
-            state.pending_states.get(state_value).cloned(),
-            state.known_config_dirs.iter().cloned().collect::<Vec<_>>(),
-        )
-    };
-    let mut matched = None;
-    for config_dir in config_dirs {
-        if provider_auth::codex_callback_state_is_pending(&config_dir, state_value).await? {
-            if matched.is_some() {
-                return Err(provider_auth::ProviderAuthError::SessionMismatch);
-            }
-            matched = Some(config_dir);
+        let mut config_dirs = state.known_config_dirs.iter().cloned().collect::<Vec<_>>();
+        if let Some(config_dir) = state.pending_states.get(state_value) {
+            config_dirs.push(config_dir.clone());
         }
+        config_dirs
+    };
+    match provider_auth::resolve_codex_callback_config_dir(state_value, config_dirs).await {
+        Ok(Some(config_dir)) => {
+            register_pending_state(state_value, &config_dir)
+                .map_err(|_| provider_auth::ProviderAuthError::CallbackUnavailable)?;
+            Ok(Some(config_dir))
+        }
+        Ok(None) => {
+            forget_pending_state(state_value);
+            Ok(None)
+        }
+        Err(provider_auth::ProviderAuthError::SessionMismatch) => {
+            forget_pending_state(state_value);
+            Err(provider_auth::ProviderAuthError::SessionMismatch)
+        }
+        Err(error) => Err(error),
     }
-    if let Some(config_dir) = matched {
-        register_pending_state(state_value, &config_dir)
-            .map_err(|_| provider_auth::ProviderAuthError::CallbackUnavailable)?;
-        return Ok(Some(config_dir));
-    }
-    Ok(cached_config_dir)
 }
 
 #[cfg(test)]
@@ -890,10 +892,30 @@ mod tests {
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(text, CALLBACK_AMBIGUOUS_STATE_TEXT);
-        assert_eq!(
-            directly_registered_config_dir_for_test(&duplicate_state),
-            Some(first)
-        );
+        assert!(directly_registered_config_dir_for_test(&duplicate_state).is_none());
+    }
+
+    #[tokio::test]
+    async fn stale_cached_callback_mapping_cannot_bypass_registry() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_all_registered_state_for_test();
+        let dir = callback_test_dir("stale-cache");
+        let start = start_codex_pending(&dir, &codex_token_endpoint(StatusCode::OK).await).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        register_pending_state(&state, &dir).unwrap();
+        rewrite_registry_state(&dir, &state, "replacement-state");
+
+        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
+        assert!(directly_registered_config_dir_for_test(&state).is_none());
     }
 
     #[tokio::test]
@@ -905,7 +927,7 @@ mod tests {
 
         let (status, text) = callback_response("GET", &callback_query("missing-state")).await;
 
-        assert_eq!(status, StatusCode::OK);
+        assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
         assert_ne!(text, CALLBACK_SUCCESS_TEXT);
         assert!(registered_config_dir_for_state("missing-state")
@@ -938,12 +960,10 @@ mod tests {
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert!(text.contains("token_http_status_502"), "{text}");
-        assert_eq!(
-            registered_config_dir_for_state("stale-state")
-                .await
-                .unwrap(),
-            Some(stale)
-        );
+        assert!(registered_config_dir_for_state("stale-state")
+            .await
+            .unwrap()
+            .is_none());
         assert_eq!(
             registered_config_dir_for_state(&state).await.unwrap(),
             Some(valid)
