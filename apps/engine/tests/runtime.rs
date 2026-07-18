@@ -13309,7 +13309,7 @@ async fn unsafe_stored_oauth_gui_metadata_is_sanitized_and_not_used_for_chat_rou
 
 #[tokio::test]
 async fn incomplete_experimental_openai_oauth_metadata_does_not_route_chat() {
-    for missing_kind in [SecretKind::OAuthAccessToken, SecretKind::OAuthRefreshToken] {
+    for missing_kind in [SecretKind::OAuthAccessToken, SecretKind::AuthMetadata] {
         let paths = test_storage_paths();
         let app = app(AppState::with_storage_paths(
             ProductIdentity::load().unwrap(),
@@ -13529,6 +13529,11 @@ async fn expired_experimental_openai_oauth_without_refresh_falls_back_to_provide
         .delete_secret("openai", SecretKind::OAuthRefreshToken)
         .await
         .unwrap();
+    mutate_experimental_openai_oauth_metadata(&paths, |metadata| {
+        metadata["expiresAt"] =
+            json!((chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339());
+    })
+    .await;
 
     let (status, auth_status) = json_response_from(
         app.clone(),
@@ -13540,7 +13545,12 @@ async fn expired_experimental_openai_oauth_without_refresh_falls_back_to_provide
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(auth_status["status"], "login_unavailable");
+    assert_eq!(auth_status["status"], "expired");
+    assert_eq!(auth_status["configured"], false);
+    assert!(auth_status["message"]
+        .as_str()
+        .unwrap()
+        .contains("Reconnect"));
     assert_provider_auth_response_has_no_codex_secrets(&auth_status);
 
     send_user_message(app.clone(), "chat-expired-oauth-missing-refresh").await;

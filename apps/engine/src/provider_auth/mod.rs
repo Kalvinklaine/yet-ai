@@ -89,6 +89,7 @@ use status::{
 };
 use types::{
     CodexAuthMetadata, CodexExchangeGuard, CodexOAuthSession, CodexOAuthState,
+    CodexStoredAccessSnapshot, CodexStoredAuthState, CodexStoredRefreshSnapshot,
     CodexTokenEndpointError, CodexTokenResponse, MockOAuthConnection, MockOAuthSession,
     MockOAuthState,
 };
@@ -1317,25 +1318,31 @@ async fn codex_connected_status(
     config_dir: &Path,
     provider: &str,
 ) -> Result<Option<ProviderAuthResponse>, ProviderAuthError> {
-    let store = provider_secret_store(config_dir);
-    let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
-        return Ok(None);
-    };
-    let metadata: CodexAuthMetadata =
-        serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
-    validate_codex_metadata(provider, &metadata)?;
-    let Some(access_token) = store
-        .get_secret(provider, SecretKind::OAuthAccessToken)
-        .await?
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(None);
-    };
+    let (metadata, access_token, expired) =
+        match classify_codex_stored_auth(config_dir, provider).await? {
+            CodexStoredAuthState::Missing => return Ok(None),
+            CodexStoredAuthState::ReadyAccessOnly(snapshot) => {
+                (snapshot.metadata, snapshot.access_token, false)
+            }
+            CodexStoredAuthState::ReadyRefreshable(snapshot)
+            | CodexStoredAuthState::NeedsRefresh(snapshot) => {
+                (snapshot.metadata, snapshot.access_token, false)
+            }
+            CodexStoredAuthState::ExpiredRefreshable(snapshot) => {
+                (snapshot.metadata, snapshot.access_token, true)
+            }
+            CodexStoredAuthState::ExpiredWithoutRefresh(snapshot) => {
+                (snapshot.metadata, snapshot.access_token, true)
+            }
+            CodexStoredAuthState::Incomplete => return Ok(None),
+            CodexStoredAuthState::InvalidMetadata(error) => return Err(error),
+        };
     let metadata = sanitize_codex_response_metadata(metadata, Some(&access_token));
-    if parse_time(&metadata.expires_at)? <= Utc::now() {
-        return Ok(Some(codex_expired_response(provider, metadata)));
-    }
-    Ok(Some(codex_connected_response(provider, metadata, None)))
+    Ok(Some(if expired {
+        codex_expired_response(provider, metadata)
+    } else {
+        codex_connected_response(provider, metadata, None)
+    }))
 }
 
 pub async fn experimental_codex_chat_auth(
@@ -1360,30 +1367,16 @@ pub(super) async fn experimental_codex_chat_auth_impl(
     config_dir: &Path,
     provider: &str,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    let store = provider_secret_store(config_dir);
-    let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
-        return Ok(None);
-    };
-    let metadata: CodexAuthMetadata =
-        serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
-    if validate_codex_metadata(provider, &metadata).is_err()
-        || parse_time(&metadata.expires_at)? <= Utc::now()
-    {
-        return Ok(None);
+    match classify_codex_stored_auth(config_dir, provider).await? {
+        CodexStoredAuthState::ReadyAccessOnly(snapshot) => Ok(Some(access_snapshot_auth(snapshot))),
+        CodexStoredAuthState::ReadyRefreshable(snapshot)
+        | CodexStoredAuthState::NeedsRefresh(snapshot) => Ok(Some(refresh_snapshot_auth(snapshot))),
+        CodexStoredAuthState::Missing
+        | CodexStoredAuthState::ExpiredRefreshable(_)
+        | CodexStoredAuthState::ExpiredWithoutRefresh(_)
+        | CodexStoredAuthState::Incomplete
+        | CodexStoredAuthState::InvalidMetadata(_) => Ok(None),
     }
-    let Some(access_token) = store
-        .get_secret(provider, SecretKind::OAuthAccessToken)
-        .await?
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    Ok(Some(ExperimentalCodexChatAuth {
-        access_token,
-        chatgpt_account_id: metadata.chatgpt_account_id,
-        base_url: metadata.chat_base_url,
-        model: metadata.chat_model,
-    }))
 }
 
 pub async fn refresh_experimental_codex_chat_auth_after_rejection(
@@ -1437,6 +1430,27 @@ pub async fn refresh_experimental_codex_chat_auth_if_needed(
         .map_err(Into::into)
 }
 
+pub async fn select_experimental_codex_chat_auth(
+    config_dir: &Path,
+) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+    if codex_pending_session_is_unexpired(config_dir, "openai").await? {
+        return Ok(None);
+    }
+    match classify_codex_stored_auth(config_dir, "openai").await? {
+        CodexStoredAuthState::ReadyAccessOnly(snapshot) => Ok(Some(access_snapshot_auth(snapshot))),
+        CodexStoredAuthState::ReadyRefreshable(snapshot) => {
+            Ok(Some(refresh_snapshot_auth(snapshot)))
+        }
+        CodexStoredAuthState::NeedsRefresh(_) | CodexStoredAuthState::ExpiredRefreshable(_) => {
+            refresh_experimental_codex_chat_auth_if_needed(config_dir).await
+        }
+        CodexStoredAuthState::Missing
+        | CodexStoredAuthState::ExpiredWithoutRefresh(_)
+        | CodexStoredAuthState::Incomplete => Ok(None),
+        CodexStoredAuthState::InvalidMetadata(error) => Err(error),
+    }
+}
+
 pub(super) async fn refresh_experimental_codex_chat_auth_impl(
     config_dir: &Path,
     provider: &str,
@@ -1451,15 +1465,28 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
     if codex_pending_session_is_unexpired(config_dir, provider).await? {
         return Ok(None);
     }
-    let Some(current) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
-        return Ok(None);
+    let (current, needs_refresh) = match classify_codex_stored_auth(config_dir, provider).await? {
+        CodexStoredAuthState::Missing
+        | CodexStoredAuthState::ExpiredWithoutRefresh(_)
+        | CodexStoredAuthState::Incomplete => return Ok(None),
+        CodexStoredAuthState::ReadyAccessOnly(snapshot) => {
+            if let Some(rejected) = rejected_access_token {
+                if rejected == snapshot.access_token {
+                    return Ok(None);
+                }
+            }
+            return Ok(Some(access_snapshot_auth(snapshot)));
+        }
+        CodexStoredAuthState::ReadyRefreshable(snapshot) => (snapshot, false),
+        CodexStoredAuthState::NeedsRefresh(snapshot)
+        | CodexStoredAuthState::ExpiredRefreshable(snapshot) => (snapshot, true),
+        CodexStoredAuthState::InvalidMetadata(error) => return Err(error),
     };
-    let needs_refresh = metadata_needs_refresh(&current.metadata)?;
     if rejected_access_token.is_some_and(|token| token != current.access_token) && !needs_refresh {
-        return Ok(Some(current.auth));
+        return Ok(Some(refresh_snapshot_auth(current)));
     }
     if rejected_access_token.is_none() && !needs_refresh {
-        return Ok(Some(current.auth));
+        return Ok(Some(refresh_snapshot_auth(current)));
     }
     let refresh_token = current.refresh_token;
     let previous_metadata =
@@ -1561,74 +1588,88 @@ async fn codex_pending_session_is_unexpired(
     Ok(parse_time(&session.expires_at)? > Utc::now())
 }
 
-struct CodexAccessAuthSnapshot {
-    access_token: String,
-    metadata: CodexAuthMetadata,
-    auth: ExperimentalCodexChatAuth,
-}
-
-struct CodexChatAuthSnapshot {
-    access_token: String,
-    refresh_token: String,
-    metadata: CodexAuthMetadata,
-    auth: ExperimentalCodexChatAuth,
-}
-
-async fn read_codex_access_auth_snapshot(
+async fn classify_codex_stored_auth(
     config_dir: &Path,
     provider: &str,
-) -> Result<Option<CodexAccessAuthSnapshot>, ProviderAuthError> {
+) -> Result<CodexStoredAuthState, ProviderAuthError> {
     let store = provider_secret_store(config_dir);
-    let Some(metadata) = store.get_secret(provider, SecretKind::AuthMetadata).await? else {
-        return Ok(None);
-    };
-    let metadata: CodexAuthMetadata =
-        serde_json::from_str(&metadata).map_err(|_| ProviderAuthError::Storage)?;
-    validate_codex_metadata(provider, &metadata)?;
-    if parse_time(&metadata.expires_at)? <= Utc::now() {
-        return Ok(None);
-    }
-    let Some(access_token) = store
+    let access_token = store
         .get_secret(provider, SecretKind::OAuthAccessToken)
-        .await?
-        .filter(|value| !value.trim().is_empty())
+        .await?;
+    let refresh_token = store
+        .get_secret(provider, SecretKind::OAuthRefreshToken)
+        .await?;
+    let metadata = store.get_secret(provider, SecretKind::AuthMetadata).await?;
+    if access_token.is_none() && refresh_token.is_none() && metadata.is_none() {
+        return Ok(CodexStoredAuthState::Missing);
+    }
+    let Some(access_token) = access_token.and_then(|value| sanitized_optional_token(Some(&value)))
     else {
-        return Ok(None);
+        return Ok(CodexStoredAuthState::Incomplete);
     };
-    let auth = ExperimentalCodexChatAuth {
-        access_token: access_token.clone(),
-        chatgpt_account_id: metadata.chatgpt_account_id.clone(),
-        base_url: metadata.chat_base_url.clone(),
-        model: metadata.chat_model.clone(),
+    let refresh_token = refresh_token.and_then(|value| sanitized_optional_token(Some(&value)));
+    let Some(metadata) = metadata else {
+        return Ok(CodexStoredAuthState::Incomplete);
     };
-    Ok(Some(CodexAccessAuthSnapshot {
-        access_token,
-        metadata,
-        auth,
-    }))
+    let Ok(metadata) = serde_json::from_str::<CodexAuthMetadata>(&metadata) else {
+        return Ok(CodexStoredAuthState::InvalidMetadata(
+            ProviderAuthError::Storage,
+        ));
+    };
+    if let Err(error) = validate_codex_metadata(provider, &metadata) {
+        return Ok(CodexStoredAuthState::InvalidMetadata(error));
+    }
+    let Ok(expires_at) = parse_time(&metadata.expires_at) else {
+        return Ok(CodexStoredAuthState::InvalidMetadata(
+            ProviderAuthError::Storage,
+        ));
+    };
+    let now = Utc::now();
+    match refresh_token {
+        Some(refresh_token) => {
+            let snapshot = CodexStoredRefreshSnapshot {
+                access_token,
+                refresh_token,
+                metadata,
+            };
+            if expires_at <= now {
+                Ok(CodexStoredAuthState::ExpiredRefreshable(snapshot))
+            } else if expires_at <= now + Duration::seconds(CODEX_TOKEN_REFRESH_SKEW_SECONDS) {
+                Ok(CodexStoredAuthState::NeedsRefresh(snapshot))
+            } else {
+                Ok(CodexStoredAuthState::ReadyRefreshable(snapshot))
+            }
+        }
+        None => {
+            let snapshot = CodexStoredAccessSnapshot {
+                access_token,
+                metadata,
+            };
+            if expires_at <= now {
+                Ok(CodexStoredAuthState::ExpiredWithoutRefresh(snapshot))
+            } else {
+                Ok(CodexStoredAuthState::ReadyAccessOnly(snapshot))
+            }
+        }
+    }
 }
 
-async fn read_codex_chat_auth_snapshot(
-    config_dir: &Path,
-    provider: &str,
-) -> Result<Option<CodexChatAuthSnapshot>, ProviderAuthError> {
-    let Some(access_snapshot) = read_codex_access_auth_snapshot(config_dir, provider).await? else {
-        return Ok(None);
-    };
-    let store = provider_secret_store(config_dir);
-    let Some(refresh_token) = store
-        .get_secret(provider, SecretKind::OAuthRefreshToken)
-        .await?
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    Ok(Some(CodexChatAuthSnapshot {
-        access_token: access_snapshot.access_token,
-        refresh_token,
-        metadata: access_snapshot.metadata,
-        auth: access_snapshot.auth,
-    }))
+fn access_snapshot_auth(snapshot: CodexStoredAccessSnapshot) -> ExperimentalCodexChatAuth {
+    ExperimentalCodexChatAuth {
+        access_token: snapshot.access_token,
+        chatgpt_account_id: snapshot.metadata.chatgpt_account_id,
+        base_url: snapshot.metadata.chat_base_url,
+        model: snapshot.metadata.chat_model,
+    }
+}
+
+fn refresh_snapshot_auth(snapshot: CodexStoredRefreshSnapshot) -> ExperimentalCodexChatAuth {
+    ExperimentalCodexChatAuth {
+        access_token: snapshot.access_token,
+        chatgpt_account_id: snapshot.metadata.chatgpt_account_id,
+        base_url: snapshot.metadata.chat_base_url,
+        model: snapshot.metadata.chat_model,
+    }
 }
 
 async fn read_newer_codex_chat_auth(
@@ -1636,19 +1677,19 @@ async fn read_newer_codex_chat_auth(
     provider: &str,
     old_access_token: &str,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-    let Some(snapshot) = read_codex_chat_auth_snapshot(config_dir, provider).await? else {
-        return Ok(None);
-    };
-    if snapshot.access_token != old_access_token && !metadata_needs_refresh(&snapshot.metadata)? {
-        Ok(Some(snapshot.auth))
-    } else {
-        Ok(None)
+    match classify_codex_stored_auth(config_dir, provider).await? {
+        CodexStoredAuthState::ReadyRefreshable(snapshot)
+            if snapshot.access_token != old_access_token =>
+        {
+            Ok(Some(refresh_snapshot_auth(snapshot)))
+        }
+        CodexStoredAuthState::ReadyAccessOnly(snapshot)
+            if snapshot.access_token != old_access_token =>
+        {
+            Ok(Some(access_snapshot_auth(snapshot)))
+        }
+        _ => Ok(None),
     }
-}
-
-fn metadata_needs_refresh(metadata: &CodexAuthMetadata) -> Result<bool, ProviderAuthError> {
-    Ok(parse_time(&metadata.expires_at)?
-        <= Utc::now() + Duration::seconds(CODEX_TOKEN_REFRESH_SKEW_SECONDS))
 }
 
 fn codex_refresh_lock(
@@ -3100,6 +3141,129 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stored_codex_auth_classifier_covers_routing_and_refresh_states() {
+        use super::types::CodexStoredAuthState;
+
+        let missing = temp_dir();
+        assert!(matches!(
+            super::classify_codex_stored_auth(&missing, "openai")
+                .await
+                .unwrap(),
+            CodexStoredAuthState::Missing
+        ));
+
+        let access_only = temp_dir();
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &access_only,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            |token, _| token.refresh_token = None,
+        )
+        .await;
+        assert!(matches!(
+            super::classify_codex_stored_auth(&access_only, "openai")
+                .await
+                .unwrap(),
+            CodexStoredAuthState::ReadyAccessOnly(_)
+        ));
+
+        let refreshable = temp_dir();
+        create_codex_oauth_connection(&refreshable).await;
+        assert!(matches!(
+            super::classify_codex_stored_auth(&refreshable, "openai")
+                .await
+                .unwrap(),
+            CodexStoredAuthState::ReadyRefreshable(_)
+        ));
+
+        let needs_refresh = temp_dir();
+        create_codex_oauth_connection_with_expiry(
+            &needs_refresh,
+            chrono::Utc::now() + chrono::Duration::seconds(30),
+        )
+        .await;
+        assert!(matches!(
+            super::classify_codex_stored_auth(&needs_refresh, "openai")
+                .await
+                .unwrap(),
+            CodexStoredAuthState::NeedsRefresh(_)
+        ));
+
+        let expired_refreshable = temp_dir();
+        create_expired_codex_oauth_connection(&expired_refreshable).await;
+        assert!(matches!(
+            super::classify_codex_stored_auth(&expired_refreshable, "openai")
+                .await
+                .unwrap(),
+            CodexStoredAuthState::ExpiredRefreshable(_)
+        ));
+
+        let expired_access_only = temp_dir();
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &expired_access_only,
+            chrono::Utc::now() - chrono::Duration::hours(1),
+            |token, _| token.refresh_token = None,
+        )
+        .await;
+        assert!(matches!(
+            super::classify_codex_stored_auth(&expired_access_only, "openai")
+                .await
+                .unwrap(),
+            CodexStoredAuthState::ExpiredWithoutRefresh(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn stored_codex_auth_classifier_rejects_incomplete_and_invalid_metadata() {
+        use super::types::CodexStoredAuthState;
+
+        let incomplete = temp_dir();
+        let store = crate::secret_store::provider_secret_store(&incomplete);
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthAccessToken,
+                "codex-incomplete-access-secret",
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            super::classify_codex_stored_auth(&incomplete, "openai")
+                .await
+                .unwrap(),
+            CodexStoredAuthState::Incomplete
+        ));
+
+        let invalid = temp_dir();
+        let store = crate::secret_store::provider_secret_store(&invalid);
+        store
+            .put_secret(
+                "openai",
+                SecretKind::OAuthAccessToken,
+                "codex-invalid-access-secret",
+            )
+            .await
+            .unwrap();
+        store
+            .put_secret(
+                "openai",
+                SecretKind::AuthMetadata,
+                r#"{"provider":"openai","expiresAt":"not-a-time"}"#,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            super::classify_codex_stored_auth(&invalid, "openai")
+                .await
+                .unwrap(),
+            CodexStoredAuthState::InvalidMetadata(_)
+        ));
+        assert!(super::experimental_codex_chat_auth(&invalid)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn default_start_without_test_flags_returns_login_unavailable_without_pending_state() {
         let dir = temp_dir();
 
@@ -3978,10 +4142,14 @@ mod tests {
         assert_eq!(auth.chatgpt_account_id, "acct-no-refresh");
         let (_, refresh_token, _) = codex_secret_values(&dir).await;
         assert!(refresh_token.is_none());
-        assert!(super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+        let selected = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
             .await
             .unwrap()
-            .is_none());
+            .expect("unexpired access-only auth should remain selectable");
+        assert_eq!(
+            selected.access_token,
+            "codex-access-token-secret-no-refresh"
+        );
         let status = super::status(&dir, "openai").await.unwrap();
         assert_eq!(status.status, "connected");
         assert_response_sanitized(
@@ -4733,6 +4901,62 @@ mod tests {
         assert_eq!(
             refresh_token.as_deref(),
             Some("codex-newer-refresh-token-secret")
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_access_only_token_reuses_newer_stored_token_but_not_current_token() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            |token, metadata| {
+                token.access_token = "codex-newer-access-only-secret".to_string();
+                token.refresh_token = None;
+                metadata.redacted = crate::secret_store::redact_secret(&token.access_token);
+            },
+        )
+        .await;
+
+        let newer = super::refresh_experimental_codex_chat_auth_after_rejection(
+            &dir,
+            "codex-stale-access-only-secret",
+        )
+        .await
+        .unwrap()
+        .expect("stale rejection should reuse newer access-only auth");
+        assert_eq!(newer.access_token, "codex-newer-access-only-secret");
+
+        let current = super::refresh_experimental_codex_chat_auth_after_rejection(
+            &dir,
+            "codex-newer-access-only-secret",
+        )
+        .await
+        .unwrap();
+        assert!(current.is_none());
+    }
+
+    #[tokio::test]
+    async fn expired_access_only_status_retains_reconnect_metadata_without_chat_auth() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &dir,
+            chrono::Utc::now() - chrono::Duration::hours(1),
+            |token, _| token.refresh_token = None,
+        )
+        .await;
+
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "expired");
+        assert_eq!(status.account_label.as_deref(), Some("Codex Test Account"));
+        assert!(status.expires_at.is_some());
+        assert!(super::select_experimental_codex_chat_auth(&dir)
+            .await
+            .unwrap()
+            .is_none());
+        assert_response_sanitized(
+            &status,
+            &["codex-access-token-secret", "codex-refresh-token-secret"],
         );
     }
 

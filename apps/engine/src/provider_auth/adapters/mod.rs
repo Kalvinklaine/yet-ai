@@ -672,27 +672,7 @@ pub(in crate::provider_auth) mod openai_codex {
         pub(in crate::provider_auth) async fn refresh_chat_auth_if_needed(
             &self,
         ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
-            if crate::provider_auth::codex_pending_session_is_unexpired(
-                &self.config_dir,
-                self.provider,
-            )
-            .await?
-            {
-                return Ok(None);
-            }
-            let Some(snapshot) = crate::provider_auth::read_codex_chat_auth_snapshot(
-                &self.config_dir,
-                self.provider,
-            )
-            .await?
-            else {
-                return Ok(None);
-            };
-            if crate::provider_auth::metadata_needs_refresh(&snapshot.metadata)? {
-                self.refresh_chat_auth(None).await
-            } else {
-                Ok(Some(snapshot.auth))
-            }
+            self.refresh_chat_auth(None).await
         }
 
         fn status_view_from_response(response: ProviderAuthResponse) -> ProviderOAuthStatusView {

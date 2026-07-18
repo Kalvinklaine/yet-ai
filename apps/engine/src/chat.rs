@@ -1127,7 +1127,7 @@ async fn select_chat_provider(config_dir: &std::path::Path) -> Result<ChatProvid
     {
         return Ok(ChatProvider::DemoLocal);
     }
-    match provider_auth::refresh_experimental_codex_chat_auth_if_needed(config_dir).await {
+    match provider_auth::select_experimental_codex_chat_auth(config_dir).await {
         Ok(Some(auth)) => return Ok(ChatProvider::ExperimentalCodex(auth)),
         Ok(None) | Err(provider_auth::ProviderAuthError::InvalidRequest) => {}
         Err(_) => return Err(ChatError::ProviderConfig),
@@ -3176,6 +3176,50 @@ mod tests {
             }
             _ => panic!("chat did not select experimental account auth as last fallback"),
         }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_uses_unexpired_access_only_experimental_auth() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await;
+        use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
+        provider_secret_store(&dir)
+            .delete_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap();
+
+        match select_chat_provider(&dir).await.unwrap() {
+            super::ChatProvider::ExperimentalCodex(auth) => {
+                assert_eq!(auth.access_token, "fake-codex-access-token");
+                assert_eq!(auth.base_url, "http://127.0.0.1:3456/chat");
+                assert_eq!(auth.model, "gpt-5-codex");
+            }
+            _ => panic!("chat did not select unexpired access-only auth"),
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_selection_refuses_expired_access_only_experimental_auth() {
+        let dir = temp_dir();
+        create_codex_oauth_connection_with_expiry(
+            &dir,
+            chrono::Utc::now() - chrono::Duration::hours(1),
+        )
+        .await;
+        use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
+        provider_secret_store(&dir)
+            .delete_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            select_chat_provider(&dir).await,
+            Err(super::ChatError::NoProvider)
+        ));
     }
 
     #[tokio::test]

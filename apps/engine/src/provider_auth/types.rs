@@ -235,6 +235,31 @@ pub(super) struct CodexAuthMetadata {
     pub(super) token_endpoint_url: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct CodexStoredAccessSnapshot {
+    pub(crate) access_token: String,
+    pub(crate) metadata: CodexAuthMetadata,
+}
+
+#[derive(Debug)]
+pub(crate) struct CodexStoredRefreshSnapshot {
+    pub(crate) access_token: String,
+    pub(crate) refresh_token: String,
+    pub(crate) metadata: CodexAuthMetadata,
+}
+
+#[derive(Debug)]
+pub(crate) enum CodexStoredAuthState {
+    Missing,
+    ReadyAccessOnly(CodexStoredAccessSnapshot),
+    ReadyRefreshable(CodexStoredRefreshSnapshot),
+    NeedsRefresh(CodexStoredRefreshSnapshot),
+    ExpiredRefreshable(CodexStoredRefreshSnapshot),
+    ExpiredWithoutRefresh(CodexStoredAccessSnapshot),
+    Incomplete,
+    InvalidMetadata(ProviderAuthError),
+}
+
 #[derive(Debug, Clone)]
 pub struct ExperimentalCodexChatAuth {
     pub access_token: String,
