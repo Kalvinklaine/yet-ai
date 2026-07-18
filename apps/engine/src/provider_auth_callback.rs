@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+#[cfg(not(test))]
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -9,6 +10,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::provider_auth;
 
+#[cfg(not(test))]
 const CALLBACK_PORT: u16 = 1455;
 const CALLBACK_READ_MAX_BYTES: usize = 8192;
 const CALLBACK_SUCCESS_TEXT: &str = "Login received. Return to Yet AI.";
@@ -42,6 +44,7 @@ const CALLBACK_AMBIGUOUS_STATE_TEXT: &str =
 
 static CALLBACK_STATE: LazyLock<Mutex<CallbackState>> =
     LazyLock::new(|| Mutex::new(CallbackState::default()));
+#[cfg(not(test))]
 static CALLBACK_START_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 
@@ -109,11 +112,13 @@ pub(crate) fn forget_pending_state(state_value: &str) {
     }
 }
 
+#[cfg(not(test))]
 struct LoopbackListeners {
     ipv4: TcpListener,
     ipv6: TcpListener,
 }
 
+#[cfg(not(test))]
 async fn bind_loopback_listeners() -> Result<LoopbackListeners, CallbackStartError> {
     let ipv4 = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, CALLBACK_PORT)))
         .await
@@ -124,6 +129,7 @@ async fn bind_loopback_listeners() -> Result<LoopbackListeners, CallbackStartErr
     Ok(LoopbackListeners { ipv4, ipv6 })
 }
 
+#[cfg(not(test))]
 fn serve_listeners_in_owner_thread(listeners: LoopbackListeners) -> Result<(), CallbackStartError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -139,6 +145,7 @@ fn serve_listeners_in_owner_thread(listeners: LoopbackListeners) -> Result<(), C
         .map_err(|_| CallbackStartError)
 }
 
+#[cfg(not(test))]
 async fn serve_loopback_listeners(listeners: LoopbackListeners) {
     let LoopbackListeners { ipv4, ipv6 } = listeners;
     tokio::join!(accept_loop(ipv4), accept_loop(ipv6));

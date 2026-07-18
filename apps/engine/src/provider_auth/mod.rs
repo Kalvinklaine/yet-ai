@@ -531,12 +531,6 @@ pub(super) async fn codex_exchange(
     match exchange {
         Ok(response) => Ok(response),
         Err(error) => {
-            let error = match error {
-                ProviderAuthError::Storage => {
-                    ProviderAuthError::token_exchange(CodexTokenExchangeCategory::StorageFailed)
-                }
-                other => other,
-            };
             let mut codex = read_codex_state(config_dir, provider).await?;
             let mut session = session;
             session.last_error = Some(sanitized_provider_auth_last_error(&error));
