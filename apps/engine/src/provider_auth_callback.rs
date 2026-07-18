@@ -18,7 +18,23 @@ const CALLBACK_NOT_FOUND_TEXT: &str =
 const CALLBACK_PROVIDER_ERROR_TEXT: &str =
     "Login was cancelled by the provider. Return to Yet AI and start login again.";
 const CALLBACK_EXCHANGE_FAILURE_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed. Return to Yet AI and retry login or use API-key fallback.";
+    "Login reached Yet AI but credential exchange failed (token_http_status). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_HTTP_FAILED_TEXT: &str =
+    "Login reached Yet AI but credential exchange failed (token_http_failed_or_timeout). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_JSON_INVALID_TEXT: &str =
+    "Login reached Yet AI but credential exchange failed (token_json_invalid). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT: &str =
+    "Login reached Yet AI but credential exchange failed (token_access_missing). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT: &str =
+    "Login reached Yet AI but credential exchange failed (account_id_missing). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_EXPIRES_INVALID_TEXT: &str =
+    "Login reached Yet AI but credential exchange failed (expires_invalid). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT: &str =
+    "Login reached Yet AI but credential exchange failed (scopes_invalid). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT: &str =
+    "Login reached Yet AI but credential exchange failed (storage_failed). Return to Yet AI and retry login or use API-key fallback.";
+const CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT: &str =
+    "Login reached Yet AI but credential exchange used a safe model discovery fallback (model_discovery_fallback). Return to Yet AI.";
 const CALLBACK_STORAGE_FAILURE_TEXT: &str =
     "Login reached Yet AI but local credential storage failed. Return to Yet AI and retry after checking local storage access.";
 const CALLBACK_AMBIGUOUS_STATE_TEXT: &str =
@@ -43,32 +59,36 @@ pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStar
     {
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
         state.known_config_dirs.insert(config_dir.to_path_buf());
-        #[cfg(test)]
-        {
-            state.started = true;
-            return Ok(());
-        }
-        #[cfg(not(test))]
         if state.started {
             return Ok(());
         }
     }
 
-    let _guard = CALLBACK_START_LOCK.lock().await;
+    #[cfg(test)]
     {
-        let state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
-        if state.started {
-            return Ok(());
-        }
+        let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
+        state.started = true;
+        return Ok(());
     }
 
-    let listeners = bind_loopback_listeners().await?;
-    serve_listeners_in_owner_thread(listeners)?;
+    #[cfg(not(test))]
+    {
+        let _guard = CALLBACK_START_LOCK.lock().await;
+        {
+            let state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
+            if state.started {
+                return Ok(());
+            }
+        }
 
-    let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
-    state.known_config_dirs.insert(config_dir.to_path_buf());
-    state.started = true;
-    Ok(())
+        let listeners = bind_loopback_listeners().await?;
+        serve_listeners_in_owner_thread(listeners)?;
+
+        let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
+        state.known_config_dirs.insert(config_dir.to_path_buf());
+        state.started = true;
+        Ok(())
+    }
 }
 
 pub(crate) fn register_pending_state(
@@ -232,7 +252,17 @@ fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> &'static s
         provider_auth::ProviderAuthError::SessionMismatch => CALLBACK_AMBIGUOUS_STATE_TEXT,
         provider_auth::ProviderAuthError::Storage
         | provider_auth::ProviderAuthError::Provider(_) => CALLBACK_STORAGE_FAILURE_TEXT,
-        provider_auth::ProviderAuthError::TokenExchange => CALLBACK_EXCHANGE_FAILURE_TEXT,
+        provider_auth::ProviderAuthError::TokenExchange(category) => match category.as_str() {
+            "token_http_failed_or_timeout" => CALLBACK_EXCHANGE_HTTP_FAILED_TEXT,
+            "token_json_invalid" => CALLBACK_EXCHANGE_JSON_INVALID_TEXT,
+            "token_access_missing" => CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT,
+            "account_id_missing" => CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT,
+            "expires_invalid" => CALLBACK_EXCHANGE_EXPIRES_INVALID_TEXT,
+            "scopes_invalid" => CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT,
+            "storage_failed" => CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT,
+            "model_discovery_fallback" => CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT,
+            _ => CALLBACK_EXCHANGE_FAILURE_TEXT,
+        },
         _ => CALLBACK_FAILURE_TEXT,
     }
 }
@@ -350,11 +380,20 @@ mod tests {
             CALLBACK_NOT_FOUND_TEXT,
             CALLBACK_PROVIDER_ERROR_TEXT,
             CALLBACK_EXCHANGE_FAILURE_TEXT,
+            CALLBACK_EXCHANGE_HTTP_FAILED_TEXT,
+            CALLBACK_EXCHANGE_JSON_INVALID_TEXT,
+            CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT,
+            CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT,
+            CALLBACK_EXCHANGE_EXPIRES_INVALID_TEXT,
+            CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT,
+            CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT,
+            CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT,
             CALLBACK_STORAGE_FAILURE_TEXT,
             CALLBACK_AMBIGUOUS_STATE_TEXT,
         ] {
             let lower = text.to_ascii_lowercase();
-            assert!(!lower.contains("token"));
+            assert!(!lower.contains("access_token"));
+            assert!(!lower.contains("refresh_token"));
             assert!(!lower.contains("secret"));
             assert!(!lower.contains("/users/"));
             assert!(!lower.contains("access_denied"));
@@ -374,7 +413,9 @@ mod tests {
                 CALLBACK_STORAGE_FAILURE_TEXT,
             ),
             (
-                provider_auth::ProviderAuthError::TokenExchange,
+                provider_auth::ProviderAuthError::token_exchange(
+                    crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus,
+                ),
                 CALLBACK_EXCHANGE_FAILURE_TEXT,
             ),
             (
@@ -425,7 +466,12 @@ mod tests {
             (Err(provider_auth::ProviderAuthError::SessionExpired), true),
             (Err(provider_auth::ProviderAuthError::SessionMismatch), true),
             (Err(provider_auth::ProviderAuthError::Storage), false),
-            (Err(provider_auth::ProviderAuthError::TokenExchange), false),
+            (
+                Err(provider_auth::ProviderAuthError::token_exchange(
+                    crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus,
+                )),
+                false,
+            ),
             (
                 Err(provider_auth::ProviderAuthError::CallbackUnavailable),
                 false,

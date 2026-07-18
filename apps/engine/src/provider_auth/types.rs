@@ -81,6 +81,35 @@ pub struct ProviderAuthResponse {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexTokenExchangeCategory {
+    TokenHttpFailedOrTimeout,
+    TokenHttpStatus,
+    TokenJsonInvalid,
+    TokenAccessMissing,
+    AccountIdMissing,
+    ExpiresInvalid,
+    ScopesInvalid,
+    StorageFailed,
+    ModelDiscoveryFallback,
+}
+
+impl CodexTokenExchangeCategory {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::TokenHttpFailedOrTimeout => "token_http_failed_or_timeout",
+            Self::TokenHttpStatus => "token_http_status",
+            Self::TokenJsonInvalid => "token_json_invalid",
+            Self::TokenAccessMissing => "token_access_missing",
+            Self::AccountIdMissing => "account_id_missing",
+            Self::ExpiresInvalid => "expires_invalid",
+            Self::ScopesInvalid => "scopes_invalid",
+            Self::StorageFailed => "storage_failed",
+            Self::ModelDiscoveryFallback => "model_discovery_fallback",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderAuthError {
     #[error("invalid provider id")]
@@ -100,7 +129,7 @@ pub enum ProviderAuthError {
     #[error("provider auth storage error")]
     Storage,
     #[error("provider auth token exchange failed")]
-    TokenExchange,
+    TokenExchange(CodexTokenExchangeCategory),
     #[error("provider auth callback listener is unavailable")]
     CallbackUnavailable,
 }
@@ -115,9 +144,15 @@ impl ProviderAuthError {
             Self::SessionExpired => StatusCode::GONE,
             Self::Provider(error) => error.status(),
             Self::Storage => StatusCode::INTERNAL_SERVER_ERROR,
-            Self::TokenExchange => StatusCode::BAD_GATEWAY,
+            Self::TokenExchange(_) => StatusCode::BAD_GATEWAY,
             Self::CallbackUnavailable => StatusCode::SERVICE_UNAVAILABLE,
         }
+    }
+}
+
+impl ProviderAuthError {
+    pub(crate) const fn token_exchange(category: CodexTokenExchangeCategory) -> Self {
+        Self::TokenExchange(category)
     }
 }
 
@@ -220,12 +255,19 @@ pub(super) struct CodexTokenResponse {
 
 #[derive(Debug)]
 pub(super) enum CodexTokenEndpointError {
-    Failed,
+    Failed(CodexTokenExchangeCategory),
     RefreshTokenReused,
 }
 
 impl From<CodexTokenEndpointError> for ProviderAuthError {
-    fn from(_: CodexTokenEndpointError) -> Self {
-        ProviderAuthError::TokenExchange
+    fn from(error: CodexTokenEndpointError) -> Self {
+        match error {
+            CodexTokenEndpointError::Failed(category) => {
+                ProviderAuthError::token_exchange(category)
+            }
+            CodexTokenEndpointError::RefreshTokenReused => {
+                ProviderAuthError::token_exchange(CodexTokenExchangeCategory::TokenHttpStatus)
+            }
+        }
     }
 }

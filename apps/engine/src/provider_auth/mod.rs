@@ -70,6 +70,8 @@ mod status;
 mod types;
 mod validation;
 
+pub(crate) use types::CodexTokenExchangeCategory;
+
 pub use types::{
     ExperimentalCodexChatAuth, ProviderAuthDisconnectRequest, ProviderAuthError,
     ProviderAuthExchangeRequest, ProviderAuthResponse, ProviderAuthStartRequest,
@@ -523,9 +525,33 @@ pub(super) async fn codex_exchange(
             return Err(error);
         }
     };
-    openai_codex_adapter(config_dir)
-        .complete_exchange_with_token(session, &session_id, &state_value, token)
-        .await
+    let exchange = openai_codex_adapter(config_dir)
+        .complete_exchange_with_token(session.clone(), &session_id, &state_value, token)
+        .await;
+    match exchange {
+        Ok(response) => Ok(response),
+        Err(error) => {
+            let error = match error {
+                ProviderAuthError::Storage => {
+                    ProviderAuthError::token_exchange(CodexTokenExchangeCategory::StorageFailed)
+                }
+                other => other,
+            };
+            let mut codex = read_codex_state(config_dir, provider).await?;
+            let mut session = session;
+            session.last_error = Some(sanitized_provider_auth_last_error(&error));
+            codex.pending = Some(session);
+            write_codex_state(config_dir, provider, &codex).await?;
+            retain_registry_after_exchange_failure(
+                config_dir,
+                provider,
+                &session_id,
+                ProviderAuthPendingRetention::Retryable,
+            )
+            .await?;
+            Err(error)
+        }
+    }
 }
 
 pub(crate) async fn codex_callback_exchange(
@@ -645,15 +671,17 @@ async fn post_codex_token_raw(
 ) -> Result<CodexTokenResponse, CodexTokenEndpointError> {
     let timeout = codex_http_timeout_for_url(token_endpoint_url);
     let builder = reqwest::Client::builder().timeout(timeout).no_proxy();
-    let client = builder
-        .build()
-        .map_err(|_| CodexTokenEndpointError::Failed)?;
+    let client = builder.build().map_err(|_| {
+        CodexTokenEndpointError::Failed(CodexTokenExchangeCategory::TokenHttpFailedOrTimeout)
+    })?;
     let response = client
         .post(token_endpoint_url)
         .form(body)
         .send()
         .await
-        .map_err(|_| CodexTokenEndpointError::Failed)?;
+        .map_err(|_| {
+            CodexTokenEndpointError::Failed(CodexTokenExchangeCategory::TokenHttpFailedOrTimeout)
+        })?;
     let status = response.status();
     if !status.is_success() {
         if status == StatusCode::UNAUTHORIZED {
@@ -662,12 +690,14 @@ async fn post_codex_token_raw(
                 return Err(CodexTokenEndpointError::RefreshTokenReused);
             }
         }
-        return Err(CodexTokenEndpointError::Failed);
+        return Err(CodexTokenEndpointError::Failed(
+            CodexTokenExchangeCategory::TokenHttpStatus,
+        ));
     }
     response
         .json::<CodexTokenResponse>()
         .await
-        .map_err(|_| CodexTokenEndpointError::Failed)
+        .map_err(|_| CodexTokenEndpointError::Failed(CodexTokenExchangeCategory::TokenJsonInvalid))
 }
 
 async fn refresh_codex_token(
@@ -735,21 +765,26 @@ pub(in crate::provider_auth) async fn discover_codex_model(
         .timeout(codex_token_exchange_timeout_for_url(&url))
         .no_proxy()
         .build()
-        .map_err(|_| ProviderAuthError::TokenExchange)?;
+        .map_err(|_| {
+            ProviderAuthError::token_exchange(CodexTokenExchangeCategory::ModelDiscoveryFallback)
+        })?;
     let response = client
         .get(url)
         .bearer_auth(access_token)
         .header("chatgpt-account-id", account_id)
         .send()
         .await
-        .map_err(|_| ProviderAuthError::TokenExchange)?;
+        .map_err(|_| {
+            ProviderAuthError::token_exchange(CodexTokenExchangeCategory::ModelDiscoveryFallback)
+        })?;
     if !response.status().is_success() {
-        return Err(ProviderAuthError::TokenExchange);
+        return Err(ProviderAuthError::token_exchange(
+            CodexTokenExchangeCategory::ModelDiscoveryFallback,
+        ));
     }
-    let models = response
-        .json::<CodexModelsResponse>()
-        .await
-        .map_err(|_| ProviderAuthError::TokenExchange)?;
+    let models = response.json::<CodexModelsResponse>().await.map_err(|_| {
+        ProviderAuthError::token_exchange(CodexTokenExchangeCategory::ModelDiscoveryFallback)
+    })?;
     select_codex_model(models.data.into_iter().map(|model| model.id))
 }
 
@@ -779,7 +814,9 @@ fn select_codex_model(
     }
     safe.into_iter()
         .next()
-        .ok_or(ProviderAuthError::TokenExchange)
+        .ok_or(ProviderAuthError::token_exchange(
+            CodexTokenExchangeCategory::ModelDiscoveryFallback,
+        ))
 }
 
 fn is_supported_codex_model(value: &str) -> bool {
@@ -820,8 +857,11 @@ fn sanitized_provider_auth_last_error(error: &ProviderAuthError) -> String {
         ProviderAuthError::Storage | ProviderAuthError::Provider(_) => {
             "Login reached Yet AI but local credential storage failed. Check local storage access and retry login.".to_string()
         }
-        ProviderAuthError::TokenExchange => {
-            "Login reached Yet AI but token exchange failed. Retry login or use the API-key fallback.".to_string()
+        ProviderAuthError::TokenExchange(category) => {
+            format!(
+                "Login reached Yet AI but token exchange failed ({category}). Retry login or use the API-key fallback.",
+                category = category.as_str()
+            )
         }
         ProviderAuthError::CallbackUnavailable => {
             "Login callback listener is unavailable. Restart the local runtime and retry login.".to_string()
@@ -843,7 +883,9 @@ pub(in crate::provider_auth) fn extract_codex_account_id(
         .and_then(extract_chatgpt_account_id_from_jwt)
         .or_else(|| extract_chatgpt_account_id_from_jwt(&token.access_token))
         .filter(|value| validate_codex_account_id(value).is_ok())
-        .ok_or(ProviderAuthError::TokenExchange)
+        .ok_or(ProviderAuthError::token_exchange(
+            CodexTokenExchangeCategory::AccountIdMissing,
+        ))
 }
 
 fn extract_chatgpt_account_id_from_jwt(jwt: &str) -> Option<String> {
@@ -923,7 +965,9 @@ pub(in crate::provider_auth) fn validate_codex_token_expires_in(
 ) -> Result<i64, ProviderAuthError> {
     let value = value.unwrap_or(CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS);
     if value <= 0 || value > MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS {
-        return Err(ProviderAuthError::TokenExchange);
+        return Err(ProviderAuthError::token_exchange(
+            CodexTokenExchangeCategory::ExpiresInvalid,
+        ));
     }
     Ok(value)
 }
@@ -932,8 +976,9 @@ pub(in crate::provider_auth) fn codex_token_scopes(
     token_scope: Option<&str>,
     default_scopes: &[String],
 ) -> Result<Vec<String>, ProviderAuthError> {
-    let defaults = validate_codex_scope_allowlist(default_scopes.to_vec())
-        .map_err(|_| ProviderAuthError::TokenExchange)?;
+    let defaults = validate_codex_scope_allowlist(default_scopes.to_vec()).map_err(|_| {
+        ProviderAuthError::token_exchange(CodexTokenExchangeCategory::ScopesInvalid)
+    })?;
     match token_scope {
         Some(value) => validate_codex_scope_subset(
             value.split_whitespace().map(str::to_string).collect(),
@@ -941,7 +986,7 @@ pub(in crate::provider_auth) fn codex_token_scopes(
         ),
         None => Ok(defaults),
     }
-    .map_err(|_| ProviderAuthError::TokenExchange)
+    .map_err(|_| ProviderAuthError::token_exchange(CodexTokenExchangeCategory::ScopesInvalid))
 }
 
 fn validate_codex_scopes(scopes: Vec<String>) -> Result<Vec<String>, ProviderAuthError> {
@@ -1089,8 +1134,9 @@ pub(in crate::provider_auth) async fn store_codex_connection(
     let store = provider_secret_store(config_dir);
     let metadata = serde_json::to_string(metadata).map_err(|_| ProviderAuthError::Storage)?;
     let result = async {
-        let access_token = sanitized_optional_token(Some(&token.access_token))
-            .ok_or(ProviderAuthError::TokenExchange)?;
+        let access_token = sanitized_optional_token(Some(&token.access_token)).ok_or(
+            ProviderAuthError::token_exchange(CodexTokenExchangeCategory::TokenAccessMissing),
+        )?;
         store
             .put_secret(provider, SecretKind::OAuthAccessToken, &access_token)
             .await?;
@@ -1152,8 +1198,9 @@ async fn store_codex_refresh_connection_in_store(
     let metadata = serde_json::to_string(metadata).map_err(|_| ProviderAuthError::Storage)?;
     let result = async {
         if previous.is_none() {
-            let refresh_token = sanitized_optional_token(token.refresh_token.as_deref())
-                .ok_or(ProviderAuthError::TokenExchange)?;
+            let refresh_token = sanitized_optional_token(token.refresh_token.as_deref()).ok_or(
+                ProviderAuthError::token_exchange(CodexTokenExchangeCategory::TokenAccessMissing),
+            )?;
             store
                 .put_secret(provider, SecretKind::OAuthRefreshToken, &refresh_token)
                 .await?;
@@ -1375,9 +1422,13 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
                     return Ok(Some(newer));
                 }
                 clear_codex_auth_after_refresh_token_reuse(config_dir, provider).await?;
-                return Err(ProviderAuthError::TokenExchange);
+                return Err(ProviderAuthError::token_exchange(
+                    CodexTokenExchangeCategory::TokenHttpStatus,
+                ));
             }
-            Err(CodexTokenEndpointError::Failed) => return Err(ProviderAuthError::TokenExchange),
+            Err(CodexTokenEndpointError::Failed(category)) => {
+                return Err(ProviderAuthError::token_exchange(category));
+            }
         };
     let returned_refresh_token = sanitized_optional_token(token.refresh_token.as_deref());
     let old_refresh_token_reused = returned_refresh_token
@@ -1388,7 +1439,9 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
         .unwrap_or_else(|_| current.metadata.chatgpt_account_id.clone());
     validate_codex_account_id(&account_id)?;
     if account_id != current.metadata.chatgpt_account_id {
-        return Err(ProviderAuthError::TokenExchange);
+        return Err(ProviderAuthError::token_exchange(
+            CodexTokenExchangeCategory::AccountIdMissing,
+        ));
     }
     validate_codex_chat_model(&current.metadata.chat_model)?;
     let chat_model = current.metadata.chat_model;
@@ -2775,6 +2828,27 @@ mod tests {
         });
         url
     }
+
+    async fn raw_codex_token_endpoint(status: http::StatusCode, body: String) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/token", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer).await;
+                let response = format!(
+                    "HTTP/1.1 {} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    status.as_u16(),
+                    status.canonical_reason().unwrap_or(""),
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        url
+    }
     async fn create_mock_connected_state(dir: &std::path::Path) {
         super::write_mock_state(
             dir,
@@ -3580,6 +3654,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_exchange_failure_categories_are_stored_as_sanitized_last_error() {
+        let cases = [
+            (
+                "missing-access",
+                http::StatusCode::OK,
+                serde_json::json!({
+                    "refresh_token": "codex-refresh-token-secret-wxyz",
+                    "expires_in": 3600,
+                    "scope": "openid profile email offline_access",
+                    "id_token": test_jwt_with_payload(serde_json::json!({ "chatgpt_account_id": "acct-test" }))
+                })
+                .to_string(),
+                "token_access_missing",
+            ),
+            (
+                "missing-account",
+                http::StatusCode::OK,
+                serde_json::json!({
+                    "access_token": "codex-access-token-secret-abcd",
+                    "refresh_token": "codex-refresh-token-secret-wxyz",
+                    "expires_in": 3600,
+                    "scope": "openid profile email offline_access"
+                })
+                .to_string(),
+                "account_id_missing",
+            ),
+            (
+                "invalid-expires",
+                http::StatusCode::OK,
+                serde_json::json!({
+                    "access_token": "codex-access-token-secret-abcd",
+                    "refresh_token": "codex-refresh-token-secret-wxyz",
+                    "expires_in": 86401,
+                    "scope": "openid profile email offline_access",
+                    "id_token": test_jwt_with_payload(serde_json::json!({ "chatgpt_account_id": "acct-test" }))
+                })
+                .to_string(),
+                "expires_invalid",
+            ),
+            (
+                "invalid-scope",
+                http::StatusCode::OK,
+                serde_json::json!({
+                    "access_token": "codex-access-token-secret-abcd",
+                    "refresh_token": "codex-refresh-token-secret-wxyz",
+                    "expires_in": 3600,
+                    "scope": "openid profile email admin_secret_scope",
+                    "id_token": test_jwt_with_payload(serde_json::json!({ "chatgpt_account_id": "acct-test" }))
+                })
+                .to_string(),
+                "scopes_invalid",
+            ),
+            (
+                "non-2xx",
+                http::StatusCode::BAD_GATEWAY,
+                serde_json::json!({
+                    "error": "temporary codex-access-token-secret-abcd codex-code-category-secret"
+                })
+                .to_string(),
+                "token_http_status",
+            ),
+            (
+                "bad-json",
+                http::StatusCode::OK,
+                "{not-json codex-access-token-secret-abcd".to_string(),
+                "token_json_invalid",
+            ),
+        ];
+
+        for (label, status, body, category) in cases {
+            let dir = temp_dir();
+            let token_endpoint_url = raw_codex_token_endpoint(status, body).await;
+            let pending =
+                create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+            let code = format!("codex-code-category-secret-{label}");
+
+            let error = super::exchange(
+                &dir,
+                "openai",
+                super::ProviderAuthExchangeRequest {
+                    session_id: Some(pending.session_id.clone()),
+                    state: Some(pending.state.clone()),
+                    code: Some(code.clone()),
+                },
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(error, ProviderAuthError::TokenExchange(_)));
+            let status = super::status(&dir, "openai").await.unwrap();
+            assert_eq!(status.status, "pending");
+            let last_error = status.last_error.as_deref().unwrap();
+            assert!(last_error.contains(category), "{last_error}");
+            assert_response_sanitized(
+                &status,
+                &[
+                    "codex-access-token-secret-abcd",
+                    "codex-refresh-token-secret-wxyz",
+                    "codex-code-category-secret",
+                    "admin_secret_scope",
+                    pending.verifier.as_str(),
+                    code.as_str(),
+                ],
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn codex_exchange_model_discovery_failure_still_completes_with_session_model() {
         let dir = temp_dir();
         let token_endpoint_url = successful_codex_token_endpoint_with_hook(|| {}).await;
@@ -4042,7 +4224,7 @@ mod tests {
             let error = super::codex_token_scopes(token.scope.as_deref(), &super::codex_scopes())
                 .unwrap_err();
 
-            assert!(matches!(error, ProviderAuthError::TokenExchange));
+            assert!(matches!(error, ProviderAuthError::TokenExchange(_)));
             let message = error.to_string();
             assert_eq!(message, "provider auth token exchange failed");
             assert!(!message.contains("codex-access-token-secret-abcd"));
@@ -4154,7 +4336,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(error, ProviderAuthError::TokenExchange));
+        assert!(matches!(error, ProviderAuthError::TokenExchange(_)));
         let message = error.to_string();
         assert_eq!(message, "provider auth token exchange failed");
         assert!(!message.contains("codex-access-token-secret"));
