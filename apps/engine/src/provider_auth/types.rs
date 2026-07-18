@@ -67,8 +67,6 @@ pub struct ProviderAuthResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub verification_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,

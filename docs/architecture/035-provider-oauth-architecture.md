@@ -59,7 +59,7 @@ These are adapter-internal states, not public statuses. The canonical public wir
 Each provider auth adapter should implement an engine-owned SPI with these responsibilities:
 
 - declare provider id, display-safe label, supported auth modes, scopes, callback requirements, policy gates, and fallback guidance;
-- for the target framework, start login by producing a pending session plus sanitized `authorizationUrl`, `verificationUrl`, future `userCode`, `expiresAt`, and `pollIntervalSeconds` fields as applicable; current public responses do not expose `userCode`;
+- for the target framework, start login by producing internal pending-session metadata for the adapter's mode; the current public response may expose sanitized browser `authorizationUrl`, `expiresAt`, and `pollIntervalSeconds`, while device verification URI and `userCode` fields remain internal/future contract work;
 - validate provider-specific host, redirect, scope, token endpoint, and enterprise/base URL inputs before secrets can be transmitted;
 - exchange authorization code, callback query, device token, or manual fallback input into engine-owned credential material;
 - refresh credentials when supported, including permanent failure classification and refresh-token reuse/invalid-token handling;
@@ -108,7 +108,7 @@ The compatibility layer maps the new state machine to the existing response enve
 - `Unavailable` maps to current `login_unavailable` with `supportsApiKey: true` when API-key fallback is valid.
 - `LoginAvailable` maps to a new or versioned login-available status without implying default production login.
 - `Pending`, `Connected`, `Expired`, and `Revoked` retain their current meanings.
-- `ProviderError`, `ExchangeFailed`, and `StorageError` map to sanitized HTTP errors and status responses without raw provider payloads.
+- Internal `ProviderError`, `ExchangeFailed`, and `StorageError` map to sanitized HTTP errors or the canonical public wire status `error`, without raw provider payloads or additional GUI status values.
 
 Additive fields may be introduced only after contract/schema updates and GUI handling exist. Existing mock and API-key fallback behavior must remain available until replacement tests cover the same local-first paths.
 
@@ -134,7 +134,7 @@ Implemented today means API-key fallback, mock OAuth test harness, explicit-risk
 - The `openai` experimental Codex-like path is routed through the adapter dispatch path. It supports browser PKCE/manual-code exchange, loopback callback completion, sanitized status, disconnect cleanup, chat-auth snapshots, and refresh of stored unexpired credentials.
 - The `openai-compatible` device-flow adapter remains test-only proof coverage. It validates the SPI and shared registry shape without making `openai-compatible` a production OAuth provider.
 - Mock OAuth remains a local test harness for compatibility and smoke coverage. It is not a production adapter and cannot coexist with active Codex-like OpenAI pending/secrets state.
-- Adapter internal terminal states `ProviderError`, `ExchangeFailed`, and `StorageError` project to the existing public `error` status until a versioned GUI contract extends the wire vocabulary.
+- Adapter internal terminal states `ProviderError`, `ExchangeFailed`, and `StorageError` project to the canonical public `error` status. They are not stable GUI vocabulary and do not imply a future public extension.
 
 Stored-auth behavior is canonical rather than inferred from route status:
 
@@ -179,7 +179,7 @@ Each migration step must be revertible:
 - keep API-key fallback and Demo Mode independent of OAuth adapters;
 - feature-gate new adapters and callback ownership changes by provider and mode;
 - preserve old secret bundles until migration has a verified read/write/delete path, then migrate with backup-safe metadata and rollback documentation;
-- on adapter failure, return `Unavailable`, `ProviderError`, `ExchangeFailed`, or `StorageError` without deleting unrelated API-key configuration;
+- on adapter failure, retain the internal `Unavailable`, `ProviderError`, `ExchangeFailed`, or `StorageError` distinction while returning only canonical public statuses and preserving unrelated API-key configuration;
 - allow disconnect to clear migrated OAuth bundles even if login is later disabled.
 
 ## Local-first, BYOK, and secret-custody boundaries
@@ -206,7 +206,7 @@ Default production OpenAI account login may be enabled only after a separate ADR
 
 ## Consequences
 
-This ADR lets future cards migrate provider auth incrementally without turning experimental login into a product claim. It also gives tests and GUI copy a stable vocabulary for pending, connected, expired, revoked, exchange-failed, provider-error, and storage-error states.
+This ADR lets future cards migrate provider auth incrementally without turning experimental login into a product claim. It gives tests and GUI copy the canonical public vocabulary `login_unavailable`, `api_key_configured`, `login_available`, `pending`, `connected`, `expired`, `revoked`, and `error`, while keeping provider, exchange, and storage distinctions internal.
 
 The tradeoff is additional framework code before new real-provider login value appears. That is intentional: small gates now prevent a sleepy little token dragon from nesting in GUI storage later.
 

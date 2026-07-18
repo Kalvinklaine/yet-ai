@@ -111,11 +111,16 @@ pub(super) struct ProviderOAuthStatusView {
 
 impl ProviderOAuthStatusView {
     pub(super) fn to_response(&self) -> ProviderAuthResponse {
+        let auth_source = match self.auth_source {
+            "api_key" => "api_key",
+            "oauth" => "oauth",
+            _ => "none",
+        };
         ProviderAuthResponse {
             provider: self.provider_id.as_str().to_string(),
             configured: self.configured,
             status: self.kind.wire_status(),
-            auth_source: self.auth_source,
+            auth_source,
             supports_login: self.supports_login,
             supports_api_key: self.supports_api_key,
             cloud_required: self.cloud_required,
@@ -123,7 +128,6 @@ impl ProviderOAuthStatusView {
             account_label: self.account_label.clone(),
             redacted: self.redacted.clone(),
             authorization_url: self.authorization_url.clone(),
-            verification_url: self.verification_url.clone(),
             session_id: self.session_id.clone(),
             expires_at: self.expires_at.clone(),
             scopes: self.scopes.clone(),
@@ -1046,6 +1050,9 @@ mod tests {
         assert_eq!(response.status, "pending");
         assert_eq!(response.auth_source, "oauth");
         assert_eq!(response.success, Some(true));
+        let json = serde_json::to_value(&response).unwrap();
+        assert!(json.get("verificationUrl").is_none());
+        assert_eq!(json["pollIntervalSeconds"], 1);
         assert_response_has_no_secret(&response);
     }
 
@@ -1098,6 +1105,38 @@ mod tests {
         assert_eq!(response.status, "api_key_configured");
         assert!(response.configured);
         assert_eq!(response.auth_source, "api_key");
+    }
+
+    #[test]
+    fn adapter_status_projection_rejects_internal_flow_sources() {
+        for auth_source in ["device", "browser"] {
+            let response = ProviderOAuthStatusView {
+                provider_id: TEST_PROVIDER,
+                kind: ProviderOAuthStatusKind::Pending,
+                configured: false,
+                auth_source,
+                supports_login: true,
+                supports_api_key: true,
+                cloud_required: false,
+                success: None,
+                account_label: None,
+                redacted: None,
+                authorization_url: None,
+                verification_url: Some("http://127.0.0.1/internal-verification".to_string()),
+                session_id: Some("safe-session".to_string()),
+                expires_at: Some("2030-01-01T00:00:00Z".to_string()),
+                scopes: None,
+                poll_interval_seconds: Some(5),
+                last_error: None,
+                message: "Mock adapter login is pending.".to_string(),
+            }
+            .to_response();
+            let json = serde_json::to_value(response).unwrap();
+
+            assert_eq!(json["authSource"], "none");
+            assert!(json.get("verificationUrl").is_none());
+            assert_eq!(json["pollIntervalSeconds"], 5);
+        }
     }
 
     #[test]
@@ -1190,14 +1229,12 @@ mod tests {
             )
             .await
             .unwrap();
-        let pending_response = start.status.to_response();
-
-        assert_eq!(pending_response.provider, "openai-compatible");
-        assert_eq!(pending_response.status, "pending");
-        assert_eq!(pending_response.auth_source, "device");
-        assert!(pending_response.authorization_url.is_none());
-        assert!(pending_response.verification_url.is_some());
-        assert_response_has_no_secret(&pending_response);
+        assert_eq!(start.status.provider_id.as_str(), "openai-compatible");
+        assert_eq!(start.status.kind, ProviderOAuthStatusKind::Pending);
+        assert_eq!(start.status.auth_source, "device");
+        assert!(start.status.authorization_url.is_none());
+        assert!(start.status.verification_url.is_some());
+        assert_eq!(start.status.poll_interval_seconds, Some(5));
 
         let registry =
             crate::provider_auth::session_store::read_session_registry(&dir, "openai-compatible")
@@ -1236,12 +1273,11 @@ mod tests {
                 },
             )
             .await
-            .unwrap()
-            .to_response();
+            .unwrap();
 
-        assert_eq!(connected.status, "connected");
+        assert_eq!(connected.kind, ProviderOAuthStatusKind::Connected);
         assert_eq!(connected.auth_source, "device");
-        assert_response_has_no_secret(&connected);
+        assert!(connected.verification_url.is_none());
         assert!(crate::provider_auth::session_store::read_session_registry(
             &dir,
             "openai-compatible",

@@ -8,7 +8,7 @@ afterEach(() => {
 });
 
 describe("providerAuthClient public projection", () => {
-  it("normalizes legacy status and omits non-public device fields", async () => {
+  it("normalizes legacy status and preserves browser polling metadata", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       provider: "openai",
       configured: false,
@@ -30,6 +30,7 @@ describe("providerAuthClient public projection", () => {
     if (result.ok) {
       expect(result.data.status).toBe("error");
       expect(result.data).not.toHaveProperty("verificationUrl");
+      expect(result.data.pollIntervalSeconds).toBe(1);
     }
   });
 

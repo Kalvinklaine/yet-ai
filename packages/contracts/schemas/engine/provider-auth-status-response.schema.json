@@ -80,7 +80,6 @@
     "authStatus": {
       "type": "string",
       "enum": [
-        "not_configured",
         "api_key_configured",
         "login_available",
         "login_unavailable",

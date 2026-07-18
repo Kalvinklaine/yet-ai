@@ -997,7 +997,11 @@ const invalidMappings = [
     ["provider-auth-status-verification-url.json", "provider-auth-status-response.schema.json"],
     ["provider-auth-start-device-source.json", "provider-auth-start-response.schema.json"],
     ["provider-auth-exchange-browser-source.json", "provider-auth-exchange-response.schema.json"],
-    ["provider-auth-disconnect-verification-url.json", "provider-auth-disconnect-response.schema.json"]
+    ["provider-auth-disconnect-verification-url.json", "provider-auth-disconnect-response.schema.json"],
+    ["provider-auth-status-not-configured.json", "provider-auth-status-response.schema.json"],
+    ["provider-auth-start-not-configured.json", "provider-auth-start-response.schema.json"],
+    ["provider-auth-exchange-not-configured.json", "provider-auth-exchange-response.schema.json"],
+    ["provider-auth-disconnect-not-configured.json", "provider-auth-disconnect-response.schema.json"]
   ].map(([fileName, schemaName]) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     `packages/contracts/schemas/engine/${schemaName}`

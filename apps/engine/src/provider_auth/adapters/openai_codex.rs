@@ -327,7 +327,7 @@ impl OpenAiCodexOAuthAdapter {
             account_label: response.account_label,
             redacted: response.redacted,
             authorization_url: response.authorization_url,
-            verification_url: response.verification_url,
+            verification_url: None,
             session_id: response.session_id,
             expires_at: response.expires_at,
             scopes: response.scopes,
