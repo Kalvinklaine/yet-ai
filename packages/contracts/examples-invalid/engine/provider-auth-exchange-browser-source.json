@@ -1,0 +1,10 @@
+{
+  "provider": "openai",
+  "configured": true,
+  "status": "connected",
+  "authSource": "browser",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "cloudRequired": false,
+  "success": true
+}

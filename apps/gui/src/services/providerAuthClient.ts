@@ -15,7 +15,7 @@ type LegacyProviderAuthStatus = "provider_error" | "exchange_failed" | "storage_
 
 type RawProviderAuthStatus = ProviderAuthStatus | LegacyProviderAuthStatus;
 
-export type ProviderAuthSource = "none" | "api_key" | "oauth" | "device" | "browser";
+export type ProviderAuthSource = "none" | "api_key" | "oauth";
 
 export type ProviderAuthResponse = {
   provider: string;
@@ -26,7 +26,6 @@ export type ProviderAuthResponse = {
   supportsApiKey: boolean;
   cloudRequired: false;
   authorizationUrl?: string;
-  verificationUrl?: string;
   sessionId?: string;
   accountLabel?: string;
   expiresAt?: string;
@@ -36,8 +35,6 @@ export type ProviderAuthResponse = {
   message?: string;
   pollIntervalSeconds?: number;
 };
-
-export type ProviderAuthFlow = Extract<ProviderAuthSource, "oauth" | "device" | "browser">;
 
 export type ProviderAuthStartRequest = {
   experimentalCodexLike?: boolean;
@@ -78,8 +75,8 @@ function normalizeProviderAuthStatus(status: RawProviderAuthStatus): ProviderAut
   return status;
 }
 
-function normalizeProviderAuthResponse<T extends RawProviderAuthResponse>(response: T): Omit<T, "status"> & { status: ProviderAuthStatus } {
-  return { ...response, status: normalizeProviderAuthStatus(response.status) };
+function isProviderAuthSource(source: unknown): source is ProviderAuthSource {
+  return source === "none" || source === "api_key" || source === "oauth";
 }
 
 async function normalizeProviderAuthResult<T extends RawProviderAuthResponse>(result: Promise<RuntimeResult<T>>): Promise<RuntimeResult<Omit<T, "status"> & { status: ProviderAuthStatus }>> {
@@ -87,7 +84,32 @@ async function normalizeProviderAuthResult<T extends RawProviderAuthResponse>(re
   if (!response.ok) {
     return response;
   }
-  return { ok: true, data: normalizeProviderAuthResponse(response.data) };
+  if (!isProviderAuthSource(response.data.authSource)) {
+    return { ok: false, error: { status: "protocol", message: "Provider auth response used an unsupported auth source." } };
+  }
+  const data = response.data;
+  return {
+    ok: true,
+    data: {
+      provider: data.provider,
+      configured: data.configured,
+      status: normalizeProviderAuthStatus(data.status),
+      authSource: data.authSource,
+      supportsLogin: data.supportsLogin,
+      supportsApiKey: data.supportsApiKey,
+      cloudRequired: data.cloudRequired,
+      authorizationUrl: data.authorizationUrl,
+      sessionId: data.sessionId,
+      accountLabel: data.accountLabel,
+      expiresAt: data.expiresAt,
+      scopes: data.scopes,
+      redacted: data.redacted,
+      lastError: data.lastError,
+      message: data.message,
+      pollIntervalSeconds: data.pollIntervalSeconds,
+      ...("success" in data ? { success: data.success } : {}),
+    } as Omit<T, "status"> & { status: ProviderAuthStatus },
+  };
 }
 
 export function getProviderAuthStatus(

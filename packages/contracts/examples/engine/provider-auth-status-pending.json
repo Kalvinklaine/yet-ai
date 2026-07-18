@@ -6,7 +6,6 @@
   "supportsLogin": true,
   "supportsApiKey": true,
   "authorizationUrl": "http://127.0.0.1/mock-oauth/authorize?provider=openai&state=provider-login-session-001&code_challenge=mock-challenge",
-  "verificationUrl": "http://127.0.0.1/mock-oauth/verify",
   "sessionId": "provider-login-session-001",
   "expiresAt": "2026-05-15T12:30:00Z",
   "scopes": ["mock:chat", "mock:profile"],

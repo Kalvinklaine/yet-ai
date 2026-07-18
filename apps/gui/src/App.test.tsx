@@ -1478,7 +1478,6 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("Provider account login is unavailable");
     expect(container?.textContent).toContain("Use API-key fallback, Demo Mode, or a local/BYOK provider path");
     expect(container?.textContent).toContain("API-key fallback as the safe/default real-provider path");
-    expect(container?.textContent).toContain("Create an API key in the provider console");
 
     await act(async () => {
       findButton("Use OpenAI API key fallback").click();
@@ -1694,7 +1693,6 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).toContain("Session is tracked locally by the runtime and hidden here");
     expect(container?.textContent).not.toContain("Session: provider-login-session-001");
     expect(container?.textContent).toContain("Expires: 2026-05-24T01:00:00Z");
-    expect(container?.textContent).toContain("Requested scopes: openid, profile, email, offline_access");
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
   });
 
@@ -1885,7 +1883,6 @@ describe("provider secret boundary", () => {
     });
 
     expect(container?.textContent).toContain("Provider account login is connected through the local runtime, but API-key fallback remains the default real-provider path.");
-    expect(container?.textContent).toContain("Account: user@example.test");
     expect(container?.textContent).not.toContain("manual-code-789");
     expect(container?.textContent).not.toContain("access_token");
   });
@@ -1898,8 +1895,6 @@ describe("provider secret boundary", () => {
 
     expect(container?.textContent).toContain("Provider account connected");
     expect(container?.textContent).toContain("Ready for chat through the local runtime");
-    expect(container?.textContent).toContain("Account: user@example.test");
-    expect(container?.textContent).toContain("Token hint: oauth-...test");
     expect(container?.textContent).toContain("Raw provider tokens, cookies, auth codes, provider API keys, and runtime Session token values are not shown here. Runtime Session token and provider credentials are separate secrets.");
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
     expect(container?.textContent).not.toContain("provider-login-session");
@@ -1982,7 +1977,6 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("Provider account connected");
-    expect(container?.textContent).toContain("[redacted]");
     expect(container?.textContent).not.toContain(rawSession);
     expect(container?.textContent).not.toContain(rawPrivatePath);
     expect(container?.textContent).not.toContain("/Users/alice");
@@ -2229,7 +2223,8 @@ describe("provider secret boundary", () => {
     });
 
     expect(authCodeInputOptional()?.value ?? "").toBe("");
-    expect(container?.textContent).toContain("Expired duplicate exchange [redacted]");
+    expect(container?.textContent).toContain("Provider account expired");
+    expect(container?.textContent).toContain("Reconnect or use the API-key fallback.");
     expect(container?.textContent).not.toContain(code);
     expect(container?.textContent).not.toContain("access_token");
     expect(container?.textContent).not.toContain("verifier");
@@ -2336,7 +2331,7 @@ describe("provider secret boundary", () => {
     expect(state?.dataset.providerAuthStatus).toBe("error");
     expect(container?.textContent).toContain("Provider login needs attention");
     expect(container?.textContent).toContain("Provider account login reported a sanitized error.");
-    expect(container?.textContent).toContain("Sanitized login error: Legacy terminal status failed safely.");
+    expect(container?.textContent).toContain("Provider account login could not complete. Retry once, reconnect, disconnect, or use the API-key fallback.");
     expect(container?.textContent).not.toContain(legacyStatus);
   });
 
@@ -2360,51 +2355,6 @@ describe("provider secret boundary", () => {
       expect(result.data.status).toBe("error");
       expect(result.data.lastError).toBe("Exchange failed with sanitized detail.");
     }
-  });
-
-  it("covers device pending verification URL polling without manual authorization-code UI", async () => {
-    vi.useFakeTimers();
-    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
-    let statusResponse: ProviderAuthResponse = {
-      ...pendingExperimentalAuthResponse(),
-      authSource: "device",
-      authorizationUrl: undefined,
-      verificationUrl: "https://device.example.test/activate",
-      sessionId: "device-session-001",
-      pollIntervalSeconds: 1,
-      message: "Device verification is pending.",
-    };
-    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url.endsWith("/v1/provider-auth/openai/status")) {
-        return Promise.resolve(jsonResponse(statusResponse));
-      }
-      return mockRuntimeResponse(input, init, { authResponse: statusResponse });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    renderApp();
-    await flushAsync();
-
-    expect(container?.textContent).toContain("Device verification is pending.");
-    expect(container?.textContent).toContain("Browser or device verification is pending.");
-    expect(container?.textContent).toContain("Suggested refresh interval: 1 seconds");
-    expect(container?.textContent).not.toContain("Manual authorization-code exchange");
-    expect(authCodeInputOptional()).toBeUndefined();
-    expect(browserStorageDump()).not.toContain("device-session-001");
-
-    const statusCallsBeforePoll = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
-    statusResponse = connectedExperimentalAuthResponse();
-    await act(async () => {
-      vi.advanceTimersByTime(1000);
-      await Promise.resolve();
-    });
-    await flushAsync();
-
-    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length).toBeGreaterThan(statusCallsBeforePoll);
-    expect(container?.textContent).toContain("Provider account connected");
-    expect(container?.textContent).not.toContain("Manual authorization-code exchange");
-    expect(localSetItem).not.toHaveBeenCalled();
-    expect(browserStorageDump()).not.toContain("device-session-001");
   });
 
   it("enables disconnect for connected account login", async () => {
@@ -2521,7 +2471,7 @@ describe("provider secret boundary", () => {
     expect(statusCallsAfterReconnect).toBeGreaterThan(statusCallsBeforeReconnect);
     text = container?.textContent ?? "";
     expect(text).toContain("Provider account expired");
-    expect(text).toContain("Runtime recovered without the pending browser session.");
+    expect(text).not.toContain("Runtime recovered without the pending browser session.");
     expect(text).toContain("Reconnect provider account");
     expect(text).toContain("Use OpenAI API key fallback");
     expect(text).not.toContain("Manual authorization-code exchange");
@@ -2565,7 +2515,7 @@ describe("provider secret boundary", () => {
     const text = container?.textContent ?? "";
     expect(authCodeInputOptional()).toBeUndefined();
     expect(text).toContain("Provider account expired");
-    expect(text).toContain("Pending browser session expired before exchange.");
+    expect(text).not.toContain("Pending browser session expired before exchange.");
     expect(text).toContain("Reconnect provider account");
     expect(text).toContain("Use OpenAI API key fallback");
     expect(text).not.toContain(code);
@@ -2599,7 +2549,8 @@ describe("provider secret boundary", () => {
 
     const text = container?.textContent ?? "";
     expect(text).toContain("If exchange is rejected, retry exchange with a fresh browser code once");
-    expect(text).toContain("Authorization exchange was rejected by the local runtime.");
+    expect(text).toContain("Authorization exchange did not complete. Retry once with a fresh browser code, reconnect, or use the API-key fallback.");
+    expect(text).not.toContain("Authorization exchange was rejected by the local runtime.");
     expect(text).toContain("Reconnect login");
     expect(text).toContain("Cancel or disconnect login");
     expect(text).toContain("Use OpenAI API key fallback");
@@ -2884,7 +2835,7 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("Sanitized login error: provider failed [redacted]");
+    expect(container?.textContent).toContain("Provider account login could not complete. Retry once, reconnect, disconnect, or use the API-key fallback.");
     expect(container?.textContent).not.toContain("Bearer");
     expect(container?.textContent).not.toContain("access_token");
     expect(container?.textContent).not.toContain("refresh_token");
@@ -2905,7 +2856,7 @@ describe("provider secret boundary", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("Provider login needs attention");
-    expect(container?.textContent).toContain("Sanitized login error: callback failed [redacted]");
+    expect(container?.textContent).toContain("Provider account login could not complete. Retry once, reconnect, disconnect, or use the API-key fallback.");
     expect(container?.textContent).toContain("Retry login");
     expect(container?.textContent).toContain("Use OpenAI API key fallback");
     expect(container?.textContent).not.toContain("access_token");
@@ -2928,7 +2879,7 @@ describe("provider secret boundary", () => {
 
     await flushAsync();
 
-    expect(container?.textContent).toContain("experimental pending [redacted]");
+    expect(container?.textContent).not.toContain("experimental pending");
     expect(container?.textContent).not.toContain("code-secret-value");
     expect(container?.textContent).not.toContain("refresh_token");
     expect(container?.textContent).not.toContain("access_token");

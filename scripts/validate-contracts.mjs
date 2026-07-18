@@ -994,6 +994,15 @@ const invalidMappings = [
     "packages/contracts/schemas/engine/provider-auth-exchange-response.schema.json"
   ],
   ...[
+    ["provider-auth-status-verification-url.json", "provider-auth-status-response.schema.json"],
+    ["provider-auth-start-device-source.json", "provider-auth-start-response.schema.json"],
+    ["provider-auth-exchange-browser-source.json", "provider-auth-exchange-response.schema.json"],
+    ["provider-auth-disconnect-verification-url.json", "provider-auth-disconnect-response.schema.json"]
+  ].map(([fileName, schemaName]) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    `packages/contracts/schemas/engine/${schemaName}`
+  ]),
+  ...[
     ["provider-auth-status-account-label-bearer.json", "provider-auth-status-response.schema.json"],
     ["provider-auth-status-redacted-sk-key.json", "provider-auth-status-response.schema.json"],
     ["provider-auth-status-scopes-access-token.json", "provider-auth-status-response.schema.json"],

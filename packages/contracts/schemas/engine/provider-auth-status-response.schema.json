@@ -40,9 +40,6 @@
     "authorizationUrl": {
       "$ref": "#/$defs/authUrl"
     },
-    "verificationUrl": {
-      "$ref": "#/$defs/authUrl"
-    },
     "sessionId": {
       "$ref": "#/$defs/sessionId"
     },
@@ -91,10 +88,7 @@
         "connected",
         "expired",
         "revoked",
-        "error",
-        "provider_error",
-        "exchange_failed",
-        "storage_error"
+        "error"
       ]
     },
     "authSource": {
@@ -102,17 +96,13 @@
       "enum": [
         "none",
         "api_key",
-        "oauth",
-        "device",
-        "browser"
+        "oauth"
       ]
     },
     "authFlowSource": {
       "type": "string",
       "enum": [
-        "oauth",
-        "device",
-        "browser"
+        "oauth"
       ]
     },
     "authUrl": {

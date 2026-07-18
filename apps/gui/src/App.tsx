@@ -2535,7 +2535,7 @@ export function App() {
       }
       setProviderAuthStatus(result.data);
       setProviderAuthDataRevision(targetRevision);
-      const authUrl = result.data.authorizationUrl ?? result.data.verificationUrl;
+      const authUrl = result.data.authorizationUrl;
       if (authUrl) {
         openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
       }
@@ -2606,7 +2606,7 @@ export function App() {
             setProviderAuthDataRevision(targetRevision);
           }
         } else {
-          setProviderAuthExchangeError(result.data.lastError ?? result.data.message ?? providerAuthStatusCopy[result.data.status]);
+          setProviderAuthExchangeError("Authorization exchange did not complete. Retry once with a fresh browser code, reconnect, or use the API-key fallback.");
         }
       } else {
         setProviderAuthError(result.error);
@@ -6486,7 +6486,6 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       <div className="stack">
         <strong>{providerAuthStateTitle(status.status)}</strong>
         <span>{providerAuthStatusCopy[status.status]}</span>
-        {status.message && <span>{sanitizeDisplayText(status.message)}</span>}
       </div>
       <div className="recovery-card" role="status">
         <strong>{status.status === "not_configured" || status.status === "login_unavailable" ? "Safe next step" : "Recovery guidance"}</strong>
@@ -6530,12 +6529,11 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
   if (status.status === "pending") {
     return (
       <div className="stack">
-        <span>Browser or device verification is pending.</span>
+        <span>Browser verification is pending.</span>
         <details className="inspect-details">
           <summary>Inspect sanitized login metadata</summary>
           {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
           {status.pollIntervalSeconds && <span>Suggested refresh interval: {status.pollIntervalSeconds} seconds</span>}
-          {status.scopes && status.scopes.length > 0 && <span>Requested scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
         </details>
       </div>
     );
@@ -6544,12 +6542,9 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
     return (
       <div className="stack">
         <span>Ready for chat through the local runtime when the provider-auth path is selected and no API-key provider is configured.</span>
-        {status.accountLabel && <span>Account: {sanitizeDisplayText(status.accountLabel)}</span>}
         <details className="inspect-details">
           <summary>Inspect sanitized login metadata</summary>
-          {status.scopes && status.scopes.length > 0 && <span>Scopes: {sanitizeDisplayText(status.scopes.join(", "))}</span>}
           {status.expiresAt && <span>Expires: {sanitizeDisplayText(status.expiresAt)}</span>}
-          {status.redacted && <span>Token hint: {sanitizeDisplayText(status.redacted)}</span>}
         </details>
         <span className="subtle">Raw provider tokens, cookies, auth codes, provider API keys, and runtime Session token values are not shown here. Runtime Session token and provider credentials are separate secrets.</span>
       </div>
@@ -6560,12 +6555,11 @@ function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {
       <div className="stack">
         <span>{status.status === "expired" ? "The account session expired." : "The account session was revoked."} Reconnect or use the API-key fallback.</span>
         {status.expiresAt && <span>Expired at: {sanitizeDisplayText(status.expiresAt)}</span>}
-        {status.lastError && <span>Last status detail: {sanitizeDisplayText(status.lastError)}</span>}
       </div>
     );
   }
   if (status.status === "error") {
-    return <div className="error">Sanitized login error: {sanitizeDisplayText(status.lastError ?? status.message ?? "Unknown provider-auth error")}</div>;
+    return <div className="error">Provider account login could not complete. Retry once, reconnect, disconnect, or use the API-key fallback.</div>;
   }
   if (status.status === "api_key_configured") {
     return <span className="subtle">The safe/default API-key fallback is already configured locally. Keep using it, or intentionally start provider account login.</span>;
@@ -6670,7 +6664,7 @@ function normalizeProviderAuthPollIntervalSeconds(value: number | undefined): nu
 }
 
 function isProviderAuthPollingSource(source: ProviderAuthResponse["authSource"]): boolean {
-  return source === "oauth" || source === "device" || source === "browser";
+  return source === "oauth";
 }
 
 function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: string; error?: string } {

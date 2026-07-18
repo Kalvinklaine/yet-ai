@@ -1,0 +1,11 @@
+{
+  "provider": "openai",
+  "configured": false,
+  "status": "revoked",
+  "authSource": "none",
+  "supportsLogin": true,
+  "supportsApiKey": true,
+  "cloudRequired": false,
+  "success": true,
+  "verificationUrl": "https://device.example.test/activate"
+}
