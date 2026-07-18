@@ -1,6 +1,6 @@
 # 035 Reference-informed Provider OAuth Architecture ADR
 
-Status: approved architecture direction for future migration work; implementation remains gated by the sequencing below.
+Status: approved architecture direction with the current narrow implementation recorded below; future public modes remain gated by the sequencing below.
 
 This ADR defines the target Yet AI provider OAuth framework before further code migration. It uses the inspected reference implementation behavior as architectural signal only. No source, assets, public copy, provider identifiers beyond required protocol facts, or storage paths are copied into Yet AI.
 
@@ -36,9 +36,9 @@ The target framework supports three auth modes:
 
 These are target architecture modes, not a statement that every mode is production/public today. The current public surface exposes the existing compatibility route envelope only; device-flow `userCode` and complete verification URI handling are future contract fields unless a later card adds versioned public support.
 
-## State machine
+## Internal adapter state machine
 
-Every provider adapter projects to one sanitized framework state:
+Every provider adapter uses one internal framework state:
 
 | State | Meaning | User-facing boundary |
 | --- | --- | --- |
@@ -48,11 +48,11 @@ Every provider adapter projects to one sanitized framework state:
 | `Connected` | Engine has stored usable credentials and sanitized account metadata. | Show account label, expiry, scopes, and auth source only. |
 | `Expired` | Stored credentials or pending session expired and refresh did not recover them. | Offer reconnect, disconnect, or API-key fallback. |
 | `Revoked` | User disconnected or provider denied/revoked credentials. | Confirm local removal and preserve unrelated API-key configuration. |
-| `ProviderError` | Provider returned a non-secret recoverable or terminal OAuth error. | Show sanitized category and retry/reconnect guidance. |
+| `ProviderError` | Provider returned a recoverable or terminal OAuth error. | Project to generic retry/reconnect guidance. |
 | `ExchangeFailed` | Code/token exchange failed or returned invalid token shape. | Preserve retryable pending session only when safe; never expose code/token/provider body. |
 | `StorageError` | Engine could not persist, read, lock, migrate, or delete auth state safely. | Fail closed; do not mark connected. |
 
-Adapters may keep internal sub-states, but GUI-facing status must use this vocabulary or an explicitly versioned extension.
+These are adapter-internal states, not public statuses. The canonical public wire vocabulary is exactly `login_unavailable`, `api_key_configured`, `login_available`, `pending`, `connected`, `expired`, `revoked`, and `error`; `not_configured` is GUI-local only. Public `authSource` is only `none`, `api_key`, or `oauth`. Internal `ProviderError`, `ExchangeFailed`, and `StorageError` collapse to public `error` rather than extending the wire vocabulary implicitly.
 
 ## Provider adapter SPI
 
@@ -75,9 +75,9 @@ The engine owns two distinct data classes:
 - Pending sessions: short-lived records with session id, state, verifier reference, auth mode, provider id, redirect URI, requested scopes, expiry, token endpoint metadata, callback ownership metadata, and optional device-flow polling metadata.
 - Credential bundles: durable engine-secret-store records for access token, refresh token when available, expiry, scope list, provider metadata, sanitized account label, and adapter-specific non-secret routing metadata.
 
-Pending sessions may be in-memory with durable rehydration only for flows that need restart/reload recovery. If persisted, pending files must use private permissions, symlink-safe access, bounded JSON shapes, and expiry cleanup. Credential bundles must be written transactionally: if metadata persistence fails after token storage, the adapter must roll back the partial bundle. Disconnect must attempt all relevant deletes and report `StorageError` if cleanup cannot be trusted.
+Current browser pending sessions are persisted with private permissions, symlink-safe access, bounded JSON shapes, and expiry cleanup. Credential bundles must be written transactionally: if metadata persistence fails after token storage, the adapter must roll back the partial bundle. Disconnect must attempt all relevant deletes and report an internal `StorageError` if cleanup cannot be trusted.
 
-The registry is keyed by opaque session id and state. State lookup must be direct and unambiguous so stale or corrupt sessions cannot hijack a callback. Pending sessions are single-use: a successful exchange removes the session; terminal mismatch/expired/not-found failures clear mappings; retryable provider failures may preserve the session until expiry.
+The registry is keyed by opaque session id and state. The persisted registry is callback authority. The in-memory map is only a cache of known config directories and candidate state mappings; every callback match is revalidated against persisted records. Missing or ambiguous persisted matches evict the cache and fail closed, never falling back to a stale in-memory config directory. Pending sessions are single-use: a successful exchange removes the session; terminal mismatch/expired/not-found failures clear mappings; retryable provider failures may preserve the session until expiry.
 
 ## Callback server ownership
 
@@ -136,6 +136,14 @@ Implemented today means API-key fallback, mock OAuth test harness, explicit-risk
 - Mock OAuth remains a local test harness for compatibility and smoke coverage. It is not a production adapter and cannot coexist with active Codex-like OpenAI pending/secrets state.
 - Adapter internal terminal states `ProviderError`, `ExchangeFailed`, and `StorageError` project to the existing public `error` status until a versioned GUI contract extends the wire vocabulary.
 
+Stored-auth behavior is canonical rather than inferred from route status:
+
+- access-only auth works until recorded expiry; expired access-only auth falls through to reconnect or API-key fallback;
+- refreshable auth is used before expiry and refreshed near or after expiry;
+- transient refresh failures, including 5xx responses, do not quarantine the refresh token or clear credentials; they retain the stored OAuth bundle;
+- permanent refresh quarantine accepts only exact case-sensitive top-level `error` or direct `error.code` values `refresh_token_reused`, `invalid_grant`, `refresh_token_revoked`, and `revoked`; descriptions, messages, hints, arbitrary nesting, arrays, unknown values, case variants, and 5xx responses are transient;
+- quarantine keys hash config directory, provider, and refresh token without retaining raw token material. A hit skips the provider call, clears only OAuth credentials, and preserves API-key fallback.
+
 Debug callback/login failures in this order:
 
 1. Confirm the safe/default API-key fallback first: `GET /v1/provider-auth/openai/status` should report `api_key_configured` when an API-key provider exists, or `login_unavailable` when no explicit experimental login is active.
@@ -145,10 +153,15 @@ Debug callback/login failures in this order:
 5. If callback receipt succeeds but status stays pending, separate token-exchange failure from storage failure. Retryable exchange failure may preserve the pending session until expiry; session mismatch, expiry, callback error, and successful exchange remove the mapping.
 6. If chat fallback fails after connected status, check refresh behavior and model discovery using loopback mocks first. Refresh-token reuse can clear OAuth secrets; API-key provider configuration must remain untouched.
 7. Use `disconnect` to clear OAuth pending state and OAuth secret bundles. It must preserve unrelated API-key provider configs and report sanitized storage errors if cleanup cannot be trusted.
+8. Internal diagnostics distinguish `token_http_failed_or_timeout`, real `token_http_status_<status>`, `provider_rejected`, `refresh_token_reused`, `adapter_failure`, token-shape categories, and `storage_failed`. `TokenHttpStatus` is reserved for an actual HTTP response; non-HTTP failures must never fabricate status zero. Do not retain or log raw provider bodies, descriptions, codes outside the canonical classifier, callback values, or secret material.
+9. GUI and browser callback recovery copy remains generic. It may direct the user to retry login/code, reconnect login, or return to Yet AI/use API-key fallback. It must not expose internal category/status strings, HTTP status codes, account labels, scopes, token hints, provider detail, storage taxonomy, or submitted values.
 
 Final cutover verification for provider-auth changes is:
 
 ```sh
+git diff --check
+cargo check -p yet-lsp
+cargo test -p yet-lsp --lib
 cargo test -p yet-lsp provider_auth
 cargo test -p yet-lsp --test runtime
 npm run smoke:local
@@ -156,7 +169,7 @@ npm run check
 cd apps/gui && npm test && npm run typecheck
 ```
 
-Use `cargo check -p yet-lsp` before the Rust test commands when doing code changes, because it catches type drift quickly. Use `git diff --check` before handoff for whitespace hygiene.
+Use `cargo check -p yet-lsp` before the Rust test commands when doing code changes, because it catches type drift quickly. Before callback tests, inspect port `1455`; stop only a confirmed orphaned test process, never a production runtime without user approval. Use `git diff --check` before handoff for whitespace hygiene. The release gate belongs on the exact merged `main` HEAD, not merely an agent branch.
 
 ## Rollback plan
 

@@ -19,32 +19,14 @@ const CALLBACK_NOT_FOUND_TEXT: &str =
     "Login request was not found or expired. Return to Yet AI and try again.";
 const CALLBACK_PROVIDER_ERROR_TEXT: &str =
     "Login was cancelled by the provider. Return to Yet AI and start login again.";
-const CALLBACK_EXCHANGE_FAILURE_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed (token_http_status). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_HTTP_FAILED_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed (token_http_failed_or_timeout). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_PROVIDER_REJECTED_TEXT: &str =
-    "Login reached Yet AI but the provider rejected credential exchange (provider_rejected). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_REFRESH_REJECTED_TEXT: &str =
-    "Login reached Yet AI but the refresh token was reused (refresh_token_reused). Return to Yet AI and reconnect login or use API-key fallback.";
-const CALLBACK_EXCHANGE_ADAPTER_FAILURE_TEXT: &str =
-    "Login reached Yet AI but the provider adapter failed (adapter_failure). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_JSON_INVALID_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed (token_json_invalid). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed (token_access_missing). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed (account_id_missing). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_EXPIRES_INVALID_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed (expires_invalid). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed (scopes_invalid). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT: &str =
-    "Login reached Yet AI but credential exchange failed (storage_failed). Return to Yet AI and retry login or use API-key fallback.";
-const CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT: &str =
-    "Login reached Yet AI but credential exchange used a safe model discovery fallback (model_discovery_fallback). Return to Yet AI.";
+const CALLBACK_RETRY_TEXT: &str =
+    "Login could not be completed. Return to Yet AI and retry login or the authorization code.";
+const CALLBACK_RECONNECT_TEXT: &str =
+    "Login could not be completed. Return to Yet AI and reconnect your login.";
+const CALLBACK_FALLBACK_TEXT: &str =
+    "Login could not be completed. Return to Yet AI or use the API-key fallback.";
 const CALLBACK_STORAGE_FAILURE_TEXT: &str =
-    "Login reached Yet AI but local credential storage failed. Return to Yet AI and retry after checking local storage access.";
+    "Login could not be completed. Return to Yet AI or use the API-key fallback.";
 const CALLBACK_UNAVAILABLE_TEXT: &str =
     "Login callback listener is unavailable. Return to Yet AI, restart the local runtime, and retry login.";
 const CALLBACK_AMBIGUOUS_STATE_TEXT: &str =
@@ -280,23 +262,9 @@ fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> String {
         provider_auth::ProviderAuthError::TokenExchange(category, _) => {
             let category = category.as_str();
             match category.as_str() {
-                "token_http_failed_or_timeout" => CALLBACK_EXCHANGE_HTTP_FAILED_TEXT.to_string(),
-                "provider_rejected" => CALLBACK_EXCHANGE_PROVIDER_REJECTED_TEXT.to_string(),
-                "refresh_token_reused" => {
-                    CALLBACK_EXCHANGE_REFRESH_REJECTED_TEXT.to_string()
-                }
-                "adapter_failure" => CALLBACK_EXCHANGE_ADAPTER_FAILURE_TEXT.to_string(),
-                "token_json_invalid" => CALLBACK_EXCHANGE_JSON_INVALID_TEXT.to_string(),
-                "token_access_missing" => CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT.to_string(),
-                "account_id_missing" => CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT.to_string(),
-                "expires_invalid" => CALLBACK_EXCHANGE_EXPIRES_INVALID_TEXT.to_string(),
-                "scopes_invalid" => CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT.to_string(),
-                "storage_failed" => CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT.to_string(),
-                "model_discovery_fallback" => CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT.to_string(),
-                _ if category.starts_with("token_http_status_") => format!(
-                    "Login reached Yet AI but credential exchange failed ({category}). Return to Yet AI and retry login or use API-key fallback."
-                ),
-                _ => CALLBACK_EXCHANGE_FAILURE_TEXT.to_string(),
+                "refresh_token_reused" => CALLBACK_RECONNECT_TEXT.to_string(),
+                "storage_failed" => CALLBACK_FALLBACK_TEXT.to_string(),
+                _ => CALLBACK_RETRY_TEXT.to_string(),
             }
         }
         _ => CALLBACK_FAILURE_TEXT.to_string(),
@@ -419,18 +387,9 @@ mod tests {
             CALLBACK_FAILURE_TEXT,
             CALLBACK_NOT_FOUND_TEXT,
             CALLBACK_PROVIDER_ERROR_TEXT,
-            CALLBACK_EXCHANGE_FAILURE_TEXT,
-            CALLBACK_EXCHANGE_HTTP_FAILED_TEXT,
-            CALLBACK_EXCHANGE_PROVIDER_REJECTED_TEXT,
-            CALLBACK_EXCHANGE_REFRESH_REJECTED_TEXT,
-            CALLBACK_EXCHANGE_ADAPTER_FAILURE_TEXT,
-            CALLBACK_EXCHANGE_JSON_INVALID_TEXT,
-            CALLBACK_EXCHANGE_ACCESS_MISSING_TEXT,
-            CALLBACK_EXCHANGE_ACCOUNT_MISSING_TEXT,
-            CALLBACK_EXCHANGE_EXPIRES_INVALID_TEXT,
-            CALLBACK_EXCHANGE_SCOPES_INVALID_TEXT,
-            CALLBACK_EXCHANGE_STORAGE_FAILED_TEXT,
-            CALLBACK_EXCHANGE_MODEL_FALLBACK_TEXT,
+            CALLBACK_RETRY_TEXT,
+            CALLBACK_RECONNECT_TEXT,
+            CALLBACK_FALLBACK_TEXT,
             CALLBACK_STORAGE_FAILURE_TEXT,
             CALLBACK_UNAVAILABLE_TEXT,
             CALLBACK_AMBIGUOUS_STATE_TEXT,
@@ -442,6 +401,22 @@ mod tests {
             assert!(!lower.contains("/users/"));
             assert!(!lower.contains("access_denied"));
             assert!(!lower.contains("auth.json"));
+            for internal in [
+                "provider_rejected",
+                "refresh_token_reused",
+                "adapter_failure",
+                "token_http_status",
+                "token_http_failed_or_timeout",
+                "token_json_invalid",
+                "token_access_missing",
+                "account_id_missing",
+                "expires_invalid",
+                "scopes_invalid",
+                "storage_failed",
+                "model_discovery_fallback",
+            ] {
+                assert!(!lower.contains(internal), "{text}");
+            }
         }
     }
 
@@ -460,7 +435,7 @@ mod tests {
                 provider_auth::ProviderAuthError::token_exchange(
                     crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus(400),
                 ),
-                "Login reached Yet AI but credential exchange failed (token_http_status_400). Return to Yet AI and retry login or use API-key fallback.",
+                CALLBACK_RETRY_TEXT,
             ),
             (
                 provider_auth::ProviderAuthError::CallbackUnavailable,
@@ -478,27 +453,27 @@ mod tests {
     }
 
     #[test]
-    fn callback_failure_taxonomy_never_fabricates_http_status_zero() {
+    fn callback_failure_taxonomy_maps_to_generic_action_copy() {
         let cases = [
             (
                 crate::provider_auth::CodexTokenExchangeCategory::ProviderRejected,
                 None,
-                "provider_rejected",
+                CALLBACK_RETRY_TEXT,
             ),
             (
                 crate::provider_auth::CodexTokenExchangeCategory::RefreshTokenReused,
                 None,
-                "refresh_token_reused",
+                CALLBACK_RECONNECT_TEXT,
             ),
             (
                 crate::provider_auth::CodexTokenExchangeCategory::AdapterFailure,
                 None,
-                "adapter_failure",
+                CALLBACK_RETRY_TEXT,
             ),
             (
                 crate::provider_auth::CodexTokenExchangeCategory::TokenHttpStatus(503),
                 Some("http_status=503"),
-                "token_http_status_503",
+                CALLBACK_RETRY_TEXT,
             ),
         ];
 
@@ -511,7 +486,9 @@ mod tests {
                 None => provider_auth::ProviderAuthError::token_exchange(category),
             };
             let text = callback_failure_text(&error);
-            assert!(text.contains(expected), "{text}");
+            assert_eq!(text, expected);
+            assert!(!text.contains("503"));
+            assert!(!text.contains("http_status"));
         }
     }
 
@@ -542,10 +519,7 @@ mod tests {
                     detail.to_string(),
                 ),
             );
-            assert_eq!(
-                text,
-                "Login reached Yet AI but credential exchange failed (token_http_status_400). Return to Yet AI and retry login or use API-key fallback."
-            );
+            assert_eq!(text, CALLBACK_RETRY_TEXT);
             assert!(!text.contains(detail));
         }
     }
@@ -959,7 +933,8 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert!(text.contains("token_http_status_502"), "{text}");
+        assert_eq!(text, CALLBACK_RETRY_TEXT);
+        assert!(!text.contains("502"));
         assert!(registered_config_dir_for_state("stale-state")
             .await
             .unwrap()
@@ -1004,7 +979,8 @@ mod tests {
             let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
             assert_eq!(status, StatusCode::BAD_GATEWAY);
-            assert!(text.contains("token_http_status_400"));
+            assert_eq!(text, CALLBACK_RETRY_TEXT);
+            assert!(!text.contains("400"));
             assert!(!text.contains("http_status=400"));
             assert!(!text.contains("oauth_error=invalid_grant"));
             assert!(!text.contains("Authorization code is invalid or expired"));
@@ -1028,7 +1004,8 @@ mod tests {
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
-        assert!(text.contains("token_http_status_502"), "{text}");
+        assert_eq!(text, CALLBACK_RETRY_TEXT);
+        assert!(!text.contains("502"));
         assert_eq!(
             registered_config_dir_for_state(&state).await.unwrap(),
             Some(dir)
