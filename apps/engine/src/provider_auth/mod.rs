@@ -64,6 +64,7 @@ static CODEX_REFRESH_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mute
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 mod adapters;
+mod refresh_guard;
 mod session_registry;
 mod session_store;
 mod status;
@@ -631,7 +632,7 @@ async fn post_codex_token(
     token_endpoint_url: &str,
     body: &[(&str, &str)],
 ) -> Result<CodexTokenResponse, ProviderAuthError> {
-    post_codex_token_raw(token_endpoint_url, body)
+    post_codex_token_raw(token_endpoint_url, body, false)
         .await
         .map_err(Into::into)
 }
@@ -663,6 +664,7 @@ fn codex_token_exchange_timeout_for_url(url: &reqwest::Url) -> std::time::Durati
 async fn post_codex_token_raw(
     token_endpoint_url: &str,
     body: &[(&str, &str)],
+    refresh_request: bool,
 ) -> Result<CodexTokenResponse, CodexTokenEndpointError> {
     let timeout = codex_http_timeout_for_url(token_endpoint_url);
     let builder = reqwest::Client::builder().timeout(timeout).no_proxy();
@@ -680,8 +682,10 @@ async fn post_codex_token_raw(
     let status = response.status();
     if !status.is_success() {
         let body = bounded_codex_token_error_body(response).await;
-        if status == StatusCode::UNAUTHORIZED && codex_token_error_is_refresh_token_reused(&body) {
-            return Err(CodexTokenEndpointError::RefreshTokenReused);
+        if refresh_request {
+            if let Some(category) = codex_permanent_refresh_error(status, &body) {
+                return Err(CodexTokenEndpointError::Permanent(category));
+            }
         }
         let detail = sanitized_codex_token_http_detail(status, &body);
         return Err(CodexTokenEndpointError::FailedWithDetail(
@@ -705,7 +709,7 @@ async fn refresh_codex_token(
         ("refresh_token", refresh_token),
         ("scope", CODEX_REFRESH_SCOPE),
     ];
-    post_codex_token_raw(token_endpoint_url, &body).await
+    post_codex_token_raw(token_endpoint_url, &body, true).await
 }
 
 async fn bounded_codex_token_error_body(response: reqwest::Response) -> Vec<u8> {
@@ -732,10 +736,27 @@ async fn bounded_codex_token_error_body(response: reqwest::Response) -> Vec<u8> 
     }
 }
 
-fn codex_token_error_is_refresh_token_reused(body: &[u8]) -> bool {
-    let text = String::from_utf8_lossy(body).to_ascii_lowercase();
-    text.contains("refresh_token_reused")
-        || (text.contains("refresh token") && text.contains("already been used"))
+fn codex_permanent_refresh_error(
+    status: StatusCode,
+    body: &[u8],
+) -> Option<CodexTokenExchangeCategory> {
+    if status.is_server_error() {
+        return None;
+    }
+    let parsed = serde_json::from_slice::<serde_json::Value>(body).ok()?;
+    let error = parsed.get("error")?;
+    let code = match error {
+        serde_json::Value::String(code) => Some(code.as_str()),
+        serde_json::Value::Object(error) => error.get("code")?.as_str(),
+        _ => None,
+    }?;
+    match code {
+        "refresh_token_reused" => Some(CodexTokenExchangeCategory::RefreshTokenReused),
+        "invalid_grant" | "refresh_token_revoked" | "revoked" => {
+            Some(CodexTokenExchangeCategory::ProviderRejected)
+        }
+        _ => None,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1496,19 +1517,24 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
         refresh_token: refresh_token.clone(),
         metadata: previous_metadata,
     };
+    if let Some(category) =
+        refresh_guard::quarantined_category(config_dir, provider, &refresh_token)
+    {
+        clear_codex_auth_after_permanent_refresh_failure(config_dir, provider).await?;
+        return Err(ProviderAuthError::token_exchange(category));
+    }
     let token =
         match refresh_codex_token(&current.metadata.token_endpoint_url, &refresh_token).await {
             Ok(token) => token,
-            Err(CodexTokenEndpointError::RefreshTokenReused) => {
+            Err(CodexTokenEndpointError::Permanent(category)) => {
                 if let Some(newer) =
                     read_newer_codex_chat_auth(config_dir, provider, &current.access_token).await?
                 {
                     return Ok(Some(newer));
                 }
-                clear_codex_auth_after_refresh_token_reuse(config_dir, provider).await?;
-                return Err(ProviderAuthError::token_exchange(
-                    CodexTokenExchangeCategory::RefreshTokenReused,
-                ));
+                refresh_guard::quarantine(config_dir, provider, &refresh_token, category);
+                clear_codex_auth_after_permanent_refresh_failure(config_dir, provider).await?;
+                return Err(ProviderAuthError::token_exchange(category));
             }
             Err(CodexTokenEndpointError::Failed(category)) => {
                 return Err(ProviderAuthError::token_exchange(category));
@@ -1569,7 +1595,7 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
     }))
 }
 
-async fn clear_codex_auth_after_refresh_token_reuse(
+async fn clear_codex_auth_after_permanent_refresh_failure(
     config_dir: &Path,
     provider: &str,
 ) -> Result<(), ProviderAuthError> {
@@ -2866,10 +2892,26 @@ mod tests {
         dir: &std::path::Path,
         token_endpoint_url: &str,
     ) {
+        create_near_expired_codex_oauth_connection_with_token_endpoint_and_refresh_token(
+            dir,
+            token_endpoint_url,
+            "codex-refresh-token-secret",
+        )
+        .await;
+    }
+
+    async fn create_near_expired_codex_oauth_connection_with_token_endpoint_and_refresh_token(
+        dir: &std::path::Path,
+        token_endpoint_url: &str,
+        refresh_token: &str,
+    ) {
         create_codex_oauth_connection_with_expiry_and_metadata(
             dir,
             chrono::Utc::now() + chrono::Duration::seconds(5),
-            |_, metadata| metadata.token_endpoint_url = token_endpoint_url.to_string(),
+            |token, metadata| {
+                token.refresh_token = Some(refresh_token.to_string());
+                metadata.token_endpoint_url = token_endpoint_url.to_string();
+            },
         )
         .await;
     }
@@ -3207,6 +3249,70 @@ mod tests {
             );
             assert!(!message.contains(value), "status leaked {value}: {message}");
             assert!(message.contains("token_http_status_400"));
+        }
+    }
+
+    #[test]
+    fn permanent_refresh_errors_detect_declared_invalid_grant_reuse_and_revocation() {
+        for (status, body, expected) in [
+            (
+                http::StatusCode::BAD_REQUEST,
+                r#"{"error":"invalid_grant"}"#,
+                super::CodexTokenExchangeCategory::ProviderRejected,
+            ),
+            (
+                http::StatusCode::UNAUTHORIZED,
+                r#"{"error":{"code":"refresh_token_reused"}}"#,
+                super::CodexTokenExchangeCategory::RefreshTokenReused,
+            ),
+            (
+                http::StatusCode::UNAUTHORIZED,
+                r#"{"error":"refresh_token_reused"}"#,
+                super::CodexTokenExchangeCategory::RefreshTokenReused,
+            ),
+            (
+                http::StatusCode::BAD_REQUEST,
+                r#"{"error":{"code":"refresh_token_revoked"}}"#,
+                super::CodexTokenExchangeCategory::ProviderRejected,
+            ),
+        ] {
+            assert_eq!(
+                super::codex_permanent_refresh_error(status, body.as_bytes()),
+                Some(expected)
+            );
+        }
+        assert_eq!(
+            super::codex_permanent_refresh_error(
+                http::StatusCode::INTERNAL_SERVER_ERROR,
+                br#"{"error":"invalid_grant"}"#,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn permanent_refresh_errors_ignore_noncanonical_text_and_nested_shapes() {
+        for body in [
+            r#"{"error_description":"refresh_token_reused"}"#,
+            r#"{"message":"invalid_grant"}"#,
+            r#"{"hint":"refresh_token_revoked"}"#,
+            r#"{"error":{"message":"refresh_token_reused"}}"#,
+            r#"{"error":{"description":"invalid_grant"}}"#,
+            r#"{"error":{"hint":"revoked"}}"#,
+            r#"{"error":{"details":{"code":"invalid_grant"}}}"#,
+            r#"{"error":["refresh_token_reused"]}"#,
+            r#"{"wrapper":{"error":"invalid_grant"}}"#,
+            r#"{"error":"Refresh_Token_Reused"}"#,
+            r#"{"error":"unknown_permanent_error"}"#,
+        ] {
+            assert_eq!(
+                super::codex_permanent_refresh_error(
+                    http::StatusCode::BAD_REQUEST,
+                    body.as_bytes(),
+                ),
+                None,
+                "noncanonical body was treated as permanent: {body}"
+            );
         }
     }
 
@@ -4712,8 +4818,12 @@ mod tests {
         let dir = temp_dir();
         let token_endpoint_url = refresh_token_reused_loopback_endpoint().await;
         create_expired_codex_pending_state(&dir).await;
-        create_near_expired_codex_oauth_connection_with_token_endpoint(&dir, &token_endpoint_url)
-            .await;
+        create_near_expired_codex_oauth_connection_with_token_endpoint_and_refresh_token(
+            &dir,
+            &token_endpoint_url,
+            "codex-refresh-token-permanent-cleanup-test",
+        )
+        .await;
 
         let error = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
             .await
@@ -4747,6 +4857,80 @@ mod tests {
                 "refresh_token_reused",
             ],
         );
+    }
+
+    #[tokio::test]
+    async fn quarantined_refresh_token_is_not_retried_and_api_key_fallback_survives() {
+        let dir = temp_dir();
+        create_openai_api_key_provider(&dir).await;
+        let token_endpoint_url = refresh_token_reused_loopback_endpoint().await;
+        let refresh_token = "codex-refresh-token-quarantine-no-repeat-test";
+        create_near_expired_codex_oauth_connection_with_token_endpoint_and_refresh_token(
+            &dir,
+            &token_endpoint_url,
+            refresh_token,
+        )
+        .await;
+
+        let first = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            first,
+            ProviderAuthError::TokenExchange(
+                super::CodexTokenExchangeCategory::RefreshTokenReused,
+                None
+            )
+        ));
+
+        create_near_expired_codex_oauth_connection_with_token_endpoint_and_refresh_token(
+            &dir,
+            &token_endpoint_url,
+            refresh_token,
+        )
+        .await;
+        let second = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            second,
+            ProviderAuthError::TokenExchange(
+                super::CodexTokenExchangeCategory::RefreshTokenReused,
+                None
+            )
+        ));
+        assert_eq!(codex_secret_values(&dir).await, (None, None, None));
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "api_key_configured");
+        assert_eq!(status.auth_source, "api_key");
+        assert!(status.configured);
+        assert_response_sanitized(&status, &["sk-test-api-key-secret"]);
+    }
+
+    #[tokio::test]
+    async fn transient_refresh_failure_retains_credentials_for_later_retry() {
+        let dir = temp_dir();
+        let token_endpoint_url = raw_codex_token_endpoint(
+            http::StatusCode::INTERNAL_SERVER_ERROR,
+            r#"{"error":"server_error"}"#.to_string(),
+        )
+        .await;
+        create_near_expired_codex_oauth_connection_with_token_endpoint(&dir, &token_endpoint_url)
+            .await;
+        let before = codex_secret_values(&dir).await;
+
+        let error = super::refresh_experimental_codex_chat_auth_if_needed(&dir)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ProviderAuthError::TokenExchange(
+                super::CodexTokenExchangeCategory::TokenHttpStatus(500),
+                _
+            )
+        ));
+        assert_eq!(codex_secret_values(&dir).await, before);
     }
 
     #[tokio::test]

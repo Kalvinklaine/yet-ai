@@ -295,7 +295,7 @@ pub(super) struct CodexTokenResponse {
 pub(super) enum CodexTokenEndpointError {
     Failed(CodexTokenExchangeCategory),
     FailedWithDetail(CodexTokenExchangeCategory, String),
-    RefreshTokenReused,
+    Permanent(CodexTokenExchangeCategory),
 }
 
 impl From<CodexTokenEndpointError> for ProviderAuthError {
@@ -307,9 +307,9 @@ impl From<CodexTokenEndpointError> for ProviderAuthError {
             CodexTokenEndpointError::FailedWithDetail(category, detail) => {
                 ProviderAuthError::token_exchange_with_detail(category, detail)
             }
-            CodexTokenEndpointError::RefreshTokenReused => ProviderAuthError::token_exchange(
-                CodexTokenExchangeCategory::RefreshTokenReused,
-            ),
+            CodexTokenEndpointError::Permanent(category) => {
+                ProviderAuthError::token_exchange(category)
+            }
         }
     }
 }
