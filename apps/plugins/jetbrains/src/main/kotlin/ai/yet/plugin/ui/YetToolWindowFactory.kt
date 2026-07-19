@@ -186,6 +186,25 @@ class YetToolWindowFactory : ToolWindowFactory {
 
 internal fun shouldCreateYetToolWindowContent(contentCount: Int): Boolean = contentCount == 0
 
+internal sealed class WrapperBrowserLoad {
+    data class Url(val value: String) : WrapperBrowserLoad()
+    data class Html(val value: String, val warning: String? = null) : WrapperBrowserLoad()
+}
+
+internal fun selectWrapperBrowserLoad(
+    packagedGui: PackagedGui?,
+    panel: PackagedGuiPanel?,
+    wrapperHtml: String,
+    registerWrapper: (String, String) -> Boolean,
+): WrapperBrowserLoad {
+    if (packagedGui == null || panel == null) return WrapperBrowserLoad.Html(wrapperHtml)
+    return if (registerWrapper(panel.id, wrapperHtml)) {
+        WrapperBrowserLoad.Url(packagedGui.wrapperUrl(panel))
+    } else {
+        WrapperBrowserLoad.Html(wrapperHtml, "Yet AI packaged wrapper registration failed; using in-memory wrapper")
+    }
+}
+
 internal fun canHandleApplyWorkspaceEdit(disposed: Boolean, runtimePrepared: Boolean, guiReadyRequestId: String?, acceptedHostReadyRequestId: String?): Boolean {
     val requestId = guiReadyRequestId ?: return false
     return !disposed && runtimePrepared && acceptedHostReadyRequestId == requestId
@@ -313,13 +332,15 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         } else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
         val wrapperHtml = renderHtml(latestConnection, postIntellij, packagedGui)
-        val panel = packagedGuiPanel
-        val server = packagedGuiServer
-        if (packagedGui != null && panel != null && server != null) {
-            server.registerWrapper(panel.id, wrapperHtml)
-            browser.loadURL(packagedGui.wrapperUrl(panel))
-        } else {
-            browser.loadHTML(wrapperHtml)
+        val wrapperLoad = selectWrapperBrowserLoad(packagedGui, packagedGuiPanel, wrapperHtml) { panelId, html ->
+            packagedGuiServer?.registerWrapper(panelId, html) == true
+        }
+        when (wrapperLoad) {
+            is WrapperBrowserLoad.Url -> browser.loadURL(wrapperLoad.value)
+            is WrapperBrowserLoad.Html -> {
+                wrapperLoad.warning?.let(logger::warn)
+                browser.loadHTML(wrapperLoad.value)
+            }
         }
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             RuntimeConnectionListener.TOPIC,

@@ -38,15 +38,20 @@ class PackagedGuiServer : Disposable {
             return null
         }
         val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+        val wrapperServer = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
         val executor = Executors.newFixedThreadPool(4) { runnable ->
             Thread(runnable, "Yet AI packaged GUI server").apply { isDaemon = true }
         }
         server.executor = executor
-        server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap, wrappers::toMap) }
+        wrapperServer.executor = executor
+        server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap) }
+        wrapperServer.createContext("/") { exchange -> handleWrapper(exchange, panels::toMap, wrappers::toMap) }
         server.start()
+        wrapperServer.start()
         val origin = "http://127.0.0.1:${server.address.port}"
-        val gui = PackagedGui("$origin/index.html", origin)
-        running = RunningServer(server, executor, gui)
+        val wrapperOrigin = "http://127.0.0.1:${wrapperServer.address.port}"
+        val gui = PackagedGui("$origin/index.html", origin, wrapperOrigin)
+        running = RunningServer(server, wrapperServer, executor, gui)
         return gui
     }
 
@@ -64,7 +69,7 @@ class PackagedGuiServer : Disposable {
 
     @Synchronized
     fun registerWrapper(panelId: String, wrapperHtml: String): Boolean {
-        if (!isValidPanelId(panelId) || !panels.containsKey(panelId)) return false
+        if (running == null || !isValidPanelId(panelId) || !panels.containsKey(panelId)) return false
         wrappers[panelId] = wrapperHtml
         return true
     }
@@ -81,6 +86,7 @@ class PackagedGuiServer : Disposable {
         val current = running
         if (current != null) {
             current.server.stop(0)
+            current.wrapperServer.stop(0)
             current.executor.shutdownNow()
         }
         panels.clear()
@@ -99,16 +105,22 @@ class PackagedGuiServer : Disposable {
 
     private fun resourceBytes(path: String): ByteArray? = PackagedGuiServer::class.java.getResourceAsStream(path)?.use { it.readBytes() }
 
-    private data class RunningServer(val server: HttpServer, val executor: ExecutorService, val gui: PackagedGui)
+    private data class RunningServer(val server: HttpServer, val wrapperServer: HttpServer, val executor: ExecutorService, val gui: PackagedGui)
 
     companion object {
         fun getInstance(): PackagedGuiServer = service()
     }
 }
 
-data class PackagedGui(val indexUrl: String, val origin: String) {
+data class PackagedGui(val indexUrl: String, val origin: String, val wrapperOrigin: String = nextLoopbackOrigin(origin)) {
     fun forPanel(panel: PackagedGuiPanel): PackagedGui = copy(indexUrl = origin + panel.proxyBaseUrl + "/index.html")
-    fun wrapperUrl(panel: PackagedGuiPanel): String = origin + panel.proxyBaseUrl + "/wrapper.html"
+    fun wrapperUrl(panel: PackagedGuiPanel): String = wrapperOrigin + panel.proxyBaseUrl + "/wrapper.html"
+}
+
+private fun nextLoopbackOrigin(origin: String): String {
+    val uri = URI(origin)
+    require(uri.scheme == "http" && uri.host == "127.0.0.1" && uri.port in 1..65534)
+    return "http://127.0.0.1:${uri.port + 1}"
 }
 
 data class PackagedGuiPanel(val id: String, val proxyBaseUrl: String)
@@ -159,15 +171,9 @@ fun handle(
     exchange: HttpExchange,
     loadResource: (String) -> ByteArray?,
     panels: () -> Map<String, PackagedGuiPanelRuntime> = { emptyMap() },
-    wrappers: () -> Map<String, String> = { emptyMap() },
     proxyTimeouts: PackagedGuiProxyTimeouts = PackagedGuiProxyTimeouts(),
 ) {
     try {
-        val wrapperPanelId = panelWrapperRoute(exchange.requestURI.rawPath)
-        if (wrapperPanelId != null) {
-            servePanelWrapper(exchange, wrapperPanelId, panels(), wrappers())
-            return
-        }
         val panelIndex = panelIndexRoute(exchange.requestURI.rawPath)
         if (panelIndex != null) {
             servePanelIndex(exchange, panelIndex, loadResource, panels())
@@ -193,6 +199,23 @@ fun handle(
             return
         }
         send(exchange, 200, mimeType(resource), body)
+    } finally {
+        exchange.close()
+    }
+}
+
+fun handleWrapper(
+    exchange: HttpExchange,
+    panels: () -> Map<String, PackagedGuiPanelRuntime>,
+    wrappers: () -> Map<String, String>,
+) {
+    try {
+        val panelId = panelWrapperRoute(exchange.requestURI.rawPath)
+        if (panelId == null) {
+            send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
+            return
+        }
+        servePanelWrapper(exchange, panelId, panels(), wrappers())
     } finally {
         exchange.close()
     }

@@ -84,8 +84,9 @@ class PackagedGuiServerTest {
         val panelGui = gui.forPanel(panel)
 
         assertEquals("http://127.0.0.1:49221/panel/panel-1/index.html", panelGui.indexUrl)
-        assertEquals("http://127.0.0.1:49221/panel/panel-1/wrapper.html", panelGui.wrapperUrl(panel))
+        assertEquals("http://127.0.0.1:49222/panel/panel-1/wrapper.html", panelGui.wrapperUrl(panel))
         assertEquals(gui.origin, panelGui.origin)
+        assertTrue(URI(panelGui.wrapperUrl(panel)).authority != URI(panelGui.indexUrl).authority)
     }
 
     @Test
@@ -130,8 +131,10 @@ class PackagedGuiServerTest {
         val gui = server.start() ?: error("packaged GUI test resource unavailable")
         try {
             val panel = server.registerPanel(RuntimeSettings("http://127.0.0.1:8765", null, null))
+            assertTrue(URI(gui.wrapperUrl(panel)).authority != URI(gui.forPanel(panel).indexUrl).authority)
             assertTrue(server.registerWrapper(panel.id, "<html>live-panel-wrapper</html>"))
             assertEquals(200, request(gui.wrapperUrl(panel)).status)
+            assertEquals(404, request("${gui.origin}/panel/${panel.id}/wrapper.html").status)
 
             server.unregisterPanel(panel.id)
 
@@ -140,6 +143,15 @@ class PackagedGuiServerTest {
         } finally {
             server.dispose()
         }
+    }
+
+    @Test
+    fun wrapperRegistrationRequiresRunningServers() {
+        val server = PackagedGuiServer()
+        val panel = server.registerPanel(RuntimeSettings("http://127.0.0.1:8765", null, null))
+
+        assertTrue(!server.registerWrapper(panel.id, "<html>unserved</html>"))
+        server.dispose()
     }
 
     @Test
@@ -345,7 +357,13 @@ private fun withPackagedServer(
     block: (TestServer) -> Unit,
 ) {
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
-    server.createContext("/") { exchange -> handle(exchange, { null }, { panels.toMap() }, { wrappers.toMap() }, proxyTimeouts) }
+    server.createContext("/") { exchange ->
+        if (wrappers.isEmpty()) {
+            handle(exchange, { null }, { panels.toMap() }, proxyTimeouts)
+        } else {
+            handleWrapper(exchange, { panels.toMap() }, { wrappers.toMap() })
+        }
+    }
     server.start()
     try {
         block(TestServer(server))

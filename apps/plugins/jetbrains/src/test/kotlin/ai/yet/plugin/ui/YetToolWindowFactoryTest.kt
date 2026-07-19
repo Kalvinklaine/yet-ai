@@ -67,14 +67,48 @@ class YetToolWindowFactoryTest {
 
         assertContains(source, "val postIntellij = query.inject(")
         assertContains(source, "val wrapperHtml = renderHtml(latestConnection, postIntellij, packagedGui)")
-        assertContains(source, "server.registerWrapper(panel.id, wrapperHtml)")
-        assertContains(source, "browser.loadURL(packagedGui.wrapperUrl(panel))")
-        assertContains(source, "browser.loadHTML(wrapperHtml)")
+        assertContains(source, "packagedGuiServer?.registerWrapper(panelId, html) == true")
+        assertContains(source, "is WrapperBrowserLoad.Url -> browser.loadURL(wrapperLoad.value)")
+        assertContains(source, "browser.loadHTML(wrapperLoad.value)")
         assertFalse(source.contains("browser.loadHTML(renderHtml(latestConnection, postIntellij, packagedGui))"))
         assertContains(source, "event.source !== currentFrameWindow || event.source !== frame?.contentWindow")
         assertContains(source, "event.origin !== frameTargetOrigin")
         assertContains(source, "message.payload.frameNonce === currentFrameNonce")
         assertContains(source, "acceptedHostReadyRequestId === currentReadyRequestId()")
+    }
+
+    @Test
+    fun wrapperLoadSelectionUsesUrlOnlyAfterSuccessfulRegistration() {
+        val gui = PackagedGui(
+            "http://127.0.0.1:49221/panel/panel-1/index.html",
+            "http://127.0.0.1:49221",
+            "http://127.0.0.1:49222",
+        )
+        val panel = PackagedGuiPanel("panel-1", "/panel/panel-1")
+
+        val success = selectWrapperBrowserLoad(gui, panel, "<html>safe</html>") { panelId, html ->
+            panelId == "panel-1" && html == "<html>safe</html>"
+        }
+        val failure = selectWrapperBrowserLoad(gui, panel, "<html>fallback</html>") { _, _ -> false }
+
+        assertEquals(WrapperBrowserLoad.Url("http://127.0.0.1:49222/panel/panel-1/wrapper.html"), success)
+        assertEquals(
+            WrapperBrowserLoad.Html("<html>fallback</html>", "Yet AI packaged wrapper registration failed; using in-memory wrapper"),
+            failure,
+        )
+    }
+
+    @Test
+    fun wrapperLoadSelectionUsesHtmlWhenPackagedGuiIsUnavailable() {
+        var registrationAttempted = false
+
+        val load = selectWrapperBrowserLoad(null, null, "<html>development</html>") { _, _ ->
+            registrationAttempted = true
+            true
+        }
+
+        assertEquals(WrapperBrowserLoad.Html("<html>development</html>"), load)
+        assertFalse(registrationAttempted)
     }
 
 
