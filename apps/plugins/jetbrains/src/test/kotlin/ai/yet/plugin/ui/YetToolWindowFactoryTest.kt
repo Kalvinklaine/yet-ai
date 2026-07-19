@@ -105,7 +105,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "Packaged Yet AI GUI loaded but did not send a validated ready signal")
         assertContains(html, "Packaged Yet AI GUI did not finish loading")
         assertContains(html, "See the fallback panel above for the engine-served Web UI URL and repair steps")
-        assertContains(html, "showReadinessFallback(readinessMessage);")
+        assertContains(html, "showReadinessFallback(`\${readinessMessage} Readiness phase: \${readinessPhase}.`);")
         assertContains(html, "shellStatus.textContent = message;")
         assertContains(html, "if (shellFallback) shellFallback.hidden = false;")
         assertContains(html, "Yet AI GUI readiness fallback shown")
@@ -121,8 +121,9 @@ class YetToolWindowFactoryTest {
         )
 
         assertContains(html, "} else if (isGuiMessage(event.data)) {")
-        assertContains(html, "isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce")
+        assertContains(html, "const isGuiMessage = (message) => isGuiReadyShape(message) && message.payload.frameNonce === currentFrameNonce;")
         assertContains(html, "frameReady = true;")
+        assertContains(html, "setReadinessPhase(\"gui_ready_accepted\");")
         assertContains(html, "clearReadinessFallbackTimer();")
         assertContains(html, "Yet AI received validated gui.ready from current iframe")
         assertContains(html, "hideShellAfterReady();")
@@ -134,6 +135,41 @@ class YetToolWindowFactoryTest {
         assertContains(html, "if (message.type === \"host.ready\") {")
         assertContains(html, "acceptedHostReadyRequestId = message.requestId;")
         assertContains(html, "hostReadyAcceptedForCurrentFrame = true;")
+    }
+
+    @Test
+    fun readinessTimeoutReportsOnlyFixedSanitizedHandshakePhases() {
+        val secretCapableInput = "raw-event-token-sk-proj-12345678-/Users/person/private"
+        val html = renderHtml(
+            RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
+            "console.log('bridge')",
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+        )
+
+        listOf(
+            "frame_waiting_for_load",
+            "frame_loaded_waiting_for_nonce",
+            "frame_nonce_unavailable",
+            "frame_nonce_sent_waiting_for_gui_ready",
+            "gui_ready_rejected_wrong_origin",
+            "gui_ready_rejected_wrong_source",
+            "gui_ready_rejected_wrong_nonce",
+            "gui_ready_rejected_invalid_shape",
+            "gui_ready_accepted",
+        ).forEach { phase -> assertContains(html, "\"$phase\"") }
+        assertContains(html, "const readinessPhases = Object.freeze([")
+        assertContains(html, "if (readinessPhases.includes(phase)) readinessPhase = phase;")
+        assertContains(html, "setReadinessPhase(\"frame_loaded_waiting_for_nonce\");")
+        assertContains(html, "setReadinessPhase(\"frame_nonce_unavailable\");")
+        assertContains(html, "setReadinessPhase(\"frame_nonce_sent_waiting_for_gui_ready\");")
+        assertContains(html, "if (guiReadyAttempt) setReadinessPhase(\"gui_ready_rejected_wrong_source\");")
+        assertContains(html, "if (guiReadyAttempt) setReadinessPhase(\"gui_ready_rejected_wrong_origin\");")
+        assertContains(html, "setReadinessPhase(isGuiReadyShape(event.data) ? \"gui_ready_rejected_wrong_nonce\" : \"gui_ready_rejected_invalid_shape\");")
+        assertContains(html, "showReadinessFallback(`\${readinessMessage} Readiness phase: \${readinessPhase}.`);")
+        assertFalse(html.contains("Readiness phase: \${event"), html)
+        assertFalse(html.contains("Readiness phase: \${event.data"), html)
+        assertFalse(html.contains("Readiness phase: \${message"), html)
+        assertFalse(html.contains(secretCapableInput), html)
     }
 
     @Test
@@ -536,10 +572,11 @@ class YetToolWindowFactoryTest {
         assertContains(html, "return code >= 0x20 && (code < 0x7f || code > 0x9f);")
         assertContains(html, "const isFrameNonce = (value) => typeof value === \"string\" && /^[0-9a-f]{32}$/.test(value);")
         assertContains(html, "!isPlainObject(message) || !hasOnlyKeys(message, [\"version\", \"type\", \"requestId\", \"payload\"])")
-        assertContains(html, "message.version !== bridgeVersion || message.type !== \"gui.ready\" || !isRequestId(message.requestId)")
+        assertContains(html, "message.version === bridgeVersion && message.type === \"gui.ready\" && isRequestId(message.requestId)")
         assertContains(html, "hasOnlyKeys(message.payload, [\"supportedBridgeVersion\", \"frameNonce\"])")
         assertContains(html, "message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion")
-        assertContains(html, "isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce")
+        assertContains(html, "isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce)")
+        assertContains(html, "const isGuiMessage = (message) => isGuiReadyShape(message) && message.payload.frameNonce === currentFrameNonce;")
         assertContains(html, "currentFrameWindow.postMessage({ version: bridgeVersion, type: \"host.frameNonce\", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);")
         assertContains(html, "const readyMessage = { ...event.data, requestId: currentGuiReadyRequestId, payload: { supportedBridgeVersion: event.data.payload?.supportedBridgeVersion } };")
         assertContains(html, "if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;")

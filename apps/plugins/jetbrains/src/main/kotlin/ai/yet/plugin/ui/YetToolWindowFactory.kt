@@ -868,6 +868,21 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         let frameNonceChallengeAttempts = 0;
         let readinessFallbackTimerId;
         let readinessFallbackGeneration = 0;
+        const readinessPhases = Object.freeze([
+          "frame_waiting_for_load",
+          "frame_loaded_waiting_for_nonce",
+          "frame_nonce_unavailable",
+          "frame_nonce_sent_waiting_for_gui_ready",
+          "gui_ready_rejected_wrong_origin",
+          "gui_ready_rejected_wrong_source",
+          "gui_ready_rejected_wrong_nonce",
+          "gui_ready_rejected_invalid_shape",
+          "gui_ready_accepted",
+        ]);
+        let readinessPhase = "frame_waiting_for_load";
+        const setReadinessPhase = (phase) => {
+          if (readinessPhases.includes(phase)) readinessPhase = phase;
+        };
         const maxPendingHostMessages = 32;
         const maxPendingDiagnostics = 16;
         const boundedArray = (value, maxSize) => Array.isArray(value) ? value.slice(-maxSize) : [];
@@ -916,6 +931,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         const markFrameLoaded = () => {
           frameLoaded = true;
+          setReadinessPhase("frame_loaded_waiting_for_nonce");
           console.log("Yet AI iframe loaded; waiting for validated gui.ready");
         };
         const showReadinessFallback = (message) => {
@@ -946,7 +962,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
             const readinessMessage = frameLoaded
               ? "Packaged Yet AI GUI loaded but did not send a validated ready signal. See the fallback panel above for the engine-served Web UI URL and repair steps."
               : "Packaged Yet AI GUI did not finish loading. See the fallback panel above for the engine-served Web UI URL and repair steps.";
-            showReadinessFallback(readinessMessage);
+            showReadinessFallback(`${'$'}{readinessMessage} Readiness phase: ${'$'}{readinessPhase}.`);
           }, 8000);
         };
         if (shellFallback && frame) armReadinessFallbackTimer(frameGeneration);
@@ -1108,10 +1124,9 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.runtimeRefresh" || !requiredRequestId(message.requestId)) return false;
           return isPlainObject(message.payload) && Object.keys(message.payload).length === 0;
         };
-        const isGuiMessage = (message) => {
-          if (!isPlainObject(message) || !hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) || message.version !== bridgeVersion || message.type !== "gui.ready" || !isRequestId(message.requestId)) return false;
-          return isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce) && message.payload.frameNonce === currentFrameNonce;
-        };
+        const isGuiReadyAttempt = (message) => isPlainObject(message) && message.type === "gui.ready";
+        const isGuiReadyShape = (message) => isPlainObject(message) && hasOnlyKeys(message, ["version", "type", "requestId", "payload"]) && message.version === bridgeVersion && message.type === "gui.ready" && isRequestId(message.requestId) && isPlainObject(message.payload) && hasOnlyKeys(message.payload, ["supportedBridgeVersion", "frameNonce"]) && (message.payload.supportedBridgeVersion === undefined || message.payload.supportedBridgeVersion === bridgeVersion) && isFrameNonce(currentFrameNonce) && isFrameNonce(message.payload.frameNonce);
+        const isGuiMessage = (message) => isGuiReadyShape(message) && message.payload.frameNonce === currentFrameNonce;
         const currentReadyRequestId = () => currentGuiReadyRequestId;
         const randomToken = () => {
           if (!globalThis.crypto || typeof globalThis.crypto.getRandomValues !== "function") return undefined;
@@ -1127,6 +1142,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const sendFrameNonceChallenge = () => {
           if (frameReady || !frame || !currentFrameWindow || frame.contentWindow !== currentFrameWindow || !frameTargetOrigin || !isFrameNonce(currentFrameNonce)) return;
           currentFrameWindow.postMessage({ version: bridgeVersion, type: "host.frameNonce", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);
+          if (frameNonceChallengeAttempts === 0) setReadinessPhase("frame_nonce_sent_waiting_for_gui_ready");
           frameNonceChallengeAttempts += 1;
           if (!frameReady && frameNonceChallengeAttempts < 20) {
             window.setTimeout(sendFrameNonceChallenge, 50);
@@ -1136,9 +1152,11 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           showDiagnostic("Secure browser randomness is unavailable. Yet AI cannot authorize the embedded GUI bridge until the shell is reloaded in a secure context.");
         };
         const resetFrameNonceChallenge = () => {
+          setReadinessPhase("frame_loaded_waiting_for_nonce");
           currentFrameNonce = newFrameNonce();
           frameNonceChallengeAttempts = 0;
           if (currentFrameNonce === undefined) {
+            setReadinessPhase("frame_nonce_unavailable");
             console.log("Yet AI cannot create frame nonce because secure wrapper randomness is unavailable");
             showRandomnessDiagnostic();
             return;
@@ -1149,6 +1167,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           clearReadinessFallbackTimer();
           frameLoaded = false;
           frameReady = false;
+          setReadinessPhase("frame_waiting_for_load");
           currentGuiReadySequence = 0;
           currentGuiReadyRequestId = undefined;
           acceptedHostReadyRequestId = undefined;
@@ -1191,8 +1210,14 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         };
         window.__yetAiSendHostMessageToFrame = sendToFrame;
         window.addEventListener("message", (event) => {
+          const guiReadyAttempt = isGuiReadyAttempt(event.data);
+          if (event.source !== currentFrameWindow || event.source !== frame?.contentWindow) {
+            if (guiReadyAttempt) setReadinessPhase("gui_ready_rejected_wrong_source");
+            return;
+          }
           if (event.source === currentFrameWindow && event.source === frame?.contentWindow) {
             if (frameTargetOrigin && frameTargetOrigin !== "*" && event.origin !== frameTargetOrigin) {
+              if (guiReadyAttempt) setReadinessPhase("gui_ready_rejected_wrong_origin");
               console.log("Yet AI rejected iframe message from unexpected origin");
               return;
             }
@@ -1246,6 +1271,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
                 return;
               }
               frameReady = true;
+              setReadinessPhase("gui_ready_accepted");
               clearReadinessFallbackTimer();
               console.log("Yet AI received validated gui.ready from current iframe");
               hideShellAfterReady();
@@ -1258,6 +1284,9 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
               hostReadyAcceptedForCurrentFrame = false;
               flushPending();
               window.postIntellijMessage(readyMessage);
+            } else if (guiReadyAttempt) {
+              setReadinessPhase(isGuiReadyShape(event.data) ? "gui_ready_rejected_wrong_nonce" : "gui_ready_rejected_invalid_shape");
+              console.log("Yet AI rejected invalid iframe GUI bridge message");
             } else {
               console.log("Yet AI rejected invalid iframe GUI bridge message");
             }
