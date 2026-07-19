@@ -290,7 +290,7 @@ try {
   const frameLocator = page.frameLocator("iframe[title='Yet AI GUI']");
   await frameLocator.locator("body").waitFor({ state: "visible", timeout: 5000 });
   await assertPanelScopedBootstrap(page);
-  await assertIframeCannotBypassWrapperBridge(page, frameLocator, wrapperBaseUrl, guiBaseUrl);
+  await assertCrossOriginWrapperGlobalsBlocked(frameLocator, wrapperBaseUrl, guiBaseUrl);
   const hiddenHeroTitle = await frameLocator.locator(".hero h1").first().evaluate((element) => {
     const hero = element.closest(".hero");
     return getComputedStyle(element).display === "none"
@@ -318,11 +318,11 @@ try {
     failures.push("Wrapper bridge collector did not collect gui.ready from the iframe.");
   }
 
-  const iframeGuiReady = await page.evaluate(() => window.__yetAiIframeGuiReady === true);
-  if (!iframeGuiReady) {
-    failures.push("GUI iframe did not send gui.ready to the parent wrapper.");
-  }
+  // The cross-origin probe above can overlap the natural handshake, but authority
+  // immutability is meaningful only after the current-frame ready state settles.
+  await waitForStableAcceptedGuiReady(page);
   await assertAcceptedReadyHidesFallback(page);
+  await assertPostReadyWrapperAuthorityImmutable(page, frameLocator);
   await assertRejectedReadyInputsPreserveAuthority(page, bridgeVersion, guiBaseUrl);
   const bridgeMessageCountBeforeHostileGui = await page.evaluate(() => window.__yetAiBridgeMessages?.length ?? 0);
   await frameLocator.locator("body").evaluate((body, version) => {
@@ -776,12 +776,87 @@ async function assertPanelScopedBootstrap(page) {
   }
 }
 
-async function assertIframeCannotBypassWrapperBridge(page, frameLocator, wrapperOrigin, iframeOrigin) {
+async function assertCrossOriginWrapperGlobalsBlocked(frameLocator, wrapperOrigin, iframeOrigin) {
   if (wrapperOrigin === iframeOrigin) {
     failures.push("Wrapper and iframe origins collapsed in the production-like browser smoke.");
     return;
   }
-  const before = await page.evaluate(() => ({
+  const accessAttempts = await attemptCrossOriginWrapperGlobalAccess(frameLocator);
+  if (!accessAttempts.every((attempt) => attempt.blocked)) {
+    failures.push(`Cross-origin iframe could inspect or invoke wrapper bridge authority: ${JSON.stringify(accessAttempts)}.`);
+  }
+}
+
+async function waitForStableAcceptedGuiReady(page) {
+  const state = await page.evaluate(() => new Promise((resolve) => {
+    const readyIdPattern = /^gui-ready-\d+-\d+-[0-9a-f]{32}$/;
+    const deadline = Date.now() + 5000;
+    let candidate;
+    let stableSince = 0;
+    const inspect = () => {
+      const current = {
+        iframeGuiReady: window.__yetAiIframeGuiReady === true,
+        readySequence: window.__yetAiGuiReadySequence ?? 0,
+        readyRequestId: window.__yetAiCurrentReadyRequestId,
+        bridgeMessageCount: window.__yetAiBridgeMessages?.length ?? 0,
+        hostMessageCount: window.__yetAiHostMessagesPostedCount ?? 0,
+        hostReadyAccepted: window.__yetAiHostReadyAcceptedForCurrentFrame === true,
+        acceptedHostReadyRequestId: window.__yetAiAcceptedHostReadyRequestId,
+        fallbackHidden: document.getElementById("yet-ai-shell-fallback")?.hidden,
+      };
+      const accepted = current.iframeGuiReady
+        && Number.isInteger(current.readySequence)
+        && current.readySequence >= 1
+        && readyIdPattern.test(current.readyRequestId)
+        && current.fallbackHidden === true;
+      if (accepted) {
+        const authority = JSON.stringify([
+          current.readySequence,
+          current.readyRequestId,
+          current.bridgeMessageCount,
+          current.hostMessageCount,
+          current.hostReadyAccepted,
+          current.acceptedHostReadyRequestId,
+        ]);
+        if (authority !== candidate) {
+          candidate = authority;
+          stableSince = Date.now();
+        } else if (Date.now() - stableSince >= 100) {
+          resolve({ accepted: true, stableForMs: Date.now() - stableSince, ...current });
+          return;
+        }
+      } else {
+        candidate = undefined;
+        stableSince = 0;
+      }
+      if (Date.now() >= deadline) {
+        resolve({ accepted: false, stableForMs: 0, ...current });
+        return;
+      }
+      window.setTimeout(inspect, 20);
+    };
+    inspect();
+  }));
+  if (!state.accepted) {
+    failures.push(`Natural current-frame gui.ready did not reach stable accepted authority before the bypass baseline: ${JSON.stringify(state)}.`);
+  }
+}
+
+async function assertPostReadyWrapperAuthorityImmutable(page, frameLocator) {
+  const before = await collectWrapperAuthorityState(page);
+  const accessAttempts = await attemptCrossOriginWrapperGlobalAccess(frameLocator);
+  await page.waitForTimeout(100);
+  const after = await collectWrapperAuthorityState(page);
+  if (!accessAttempts.every((attempt) => attempt.blocked)) {
+    failures.push(`Post-ready cross-origin iframe could inspect or invoke wrapper bridge authority: ${JSON.stringify(accessAttempts)}.`);
+  }
+  if (!deepEqual(after, before)) {
+    failures.push(`Post-ready direct iframe bypass attempt changed stable wrapper authority: before=${JSON.stringify(before)} after=${JSON.stringify(after)}.`);
+  }
+}
+
+async function collectWrapperAuthorityState(page) {
+  return page.evaluate(() => ({
     readySequence: window.__yetAiGuiReadySequence ?? 0,
     readyRequestId: window.__yetAiCurrentReadyRequestId,
     bridgeMessageCount: window.__yetAiBridgeMessages?.length ?? 0,
@@ -789,7 +864,10 @@ async function assertIframeCannotBypassWrapperBridge(page, frameLocator, wrapper
     hostReadyAccepted: window.__yetAiHostReadyAcceptedForCurrentFrame === true,
     acceptedHostReadyRequestId: window.__yetAiAcceptedHostReadyRequestId,
   }));
-  const bypass = await frameLocator.locator("body").evaluate(() => {
+}
+
+async function attemptCrossOriginWrapperGlobalAccess(frameLocator) {
+  return frameLocator.locator("body").evaluate(() => {
     const names = [
       "postIntellijMessage",
       "__yetAiSendHostMessageToFrame",
@@ -809,21 +887,6 @@ async function assertIframeCannotBypassWrapperBridge(page, frameLocator, wrapper
       }
     });
   });
-  await page.waitForTimeout(100);
-  const after = await page.evaluate(() => ({
-    readySequence: window.__yetAiGuiReadySequence ?? 0,
-    readyRequestId: window.__yetAiCurrentReadyRequestId,
-    bridgeMessageCount: window.__yetAiBridgeMessages?.length ?? 0,
-    hostMessageCount: window.__yetAiHostMessagesPostedCount ?? 0,
-    hostReadyAccepted: window.__yetAiHostReadyAcceptedForCurrentFrame === true,
-    acceptedHostReadyRequestId: window.__yetAiAcceptedHostReadyRequestId,
-  }));
-  if (!bypass.every((attempt) => attempt.blocked)) {
-    failures.push(`Cross-origin iframe could inspect or invoke wrapper bridge authority: ${JSON.stringify(bypass)}.`);
-  }
-  if (!deepEqual(after, before)) {
-    failures.push(`Direct iframe bypass attempt changed wrapper readiness authority: before=${JSON.stringify(before)} after=${JSON.stringify(after)}.`);
-  }
 }
 
 async function assertWrapperLoadedButNotReadyFallbackPath(page) {
