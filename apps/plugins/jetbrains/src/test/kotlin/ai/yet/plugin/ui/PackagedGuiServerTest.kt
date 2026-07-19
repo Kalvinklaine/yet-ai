@@ -7,8 +7,10 @@ import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URI
+import java.net.ServerSocket
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -185,6 +187,36 @@ class PackagedGuiServerTest {
     }
 
     @Test
+    fun refusedRuntimeConnectionReturnsSanitizedBadGateway() {
+        val unavailablePort = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+        val runtimeUrl = "http://127.0.0.1:$unavailablePort"
+        val sessionToken = "private-session-token"
+
+        withPackagedServer(mapOf("panel-refused" to PackagedGuiPanelRuntime(runtimeUrl, sessionToken))) { proxy ->
+            val response = request("${proxy.origin}/panel/panel-refused/v1/private-provider-path")
+
+            assertEquals(502, response.status)
+            assertEquals("{\"error\":\"runtime_proxy_unavailable\"}", response.body)
+            assertProxyFailureDoesNotLeak(response.body, runtimeUrl, sessionToken, "private-provider-path", "Connection refused")
+        }
+    }
+
+    @Test
+    fun slowRuntimeResponseReturnsSanitizedGatewayTimeout() = withRuntimeServer(delayMillis = 500, body = "provider-secret-body") { runtime ->
+        val sessionToken = "private-timeout-token"
+        withPackagedServer(
+            mapOf("panel-timeout" to PackagedGuiPanelRuntime(runtime.origin, sessionToken)),
+            proxyTimeouts = PackagedGuiProxyTimeouts(connectMillis = 200, readMillis = 100),
+        ) { proxy ->
+            val response = request("${proxy.origin}/panel/panel-timeout/v1/slow-private-path")
+
+            assertEquals(504, response.status)
+            assertEquals("{\"error\":\"runtime_proxy_timeout\"}", response.body)
+            assertProxyFailureDoesNotLeak(response.body, runtime.origin, sessionToken, "slow-private-path", "provider-secret-body", "timed out")
+        }
+    }
+
+    @Test
     fun proxyDiagnosticsRecordAbsentAuthorizationAndUpstream401WithoutTokenValue() = withRuntimeServer(401) { runtime ->
         YetProxyAuthDiagnosticsStore.directTokenBridge()
         withPackagedServer(mapOf("panel-401" to PackagedGuiPanelRuntime(runtime.origin, null))) { proxy ->
@@ -287,14 +319,15 @@ private class RuntimeTestServer(private val server: HttpServer, val requests: Mu
     fun stop() = server.stop(0)
 }
 
-private fun withRuntimeServer(status: Int = 200, block: (RuntimeTestServer) -> Unit) {
+private fun withRuntimeServer(status: Int = 200, delayMillis: Long = 0, body: String = "runtime-ok", block: (RuntimeTestServer) -> Unit) {
     val requests = mutableListOf<RuntimeRequest>()
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
     server.createContext("/") { exchange ->
         requests.add(RuntimeRequest(exchange.requestURI.rawPath + exchange.requestURI.rawQuery?.let { "?$it" }.orEmpty(), exchange.requestHeaders.getFirst("Authorization")))
-        val body = "runtime-ok".toByteArray()
-        exchange.sendResponseHeaders(status, body.size.toLong())
-        exchange.responseBody.use { it.write(body) }
+        if (delayMillis > 0) Thread.sleep(delayMillis)
+        val responseBody = body.toByteArray()
+        exchange.sendResponseHeaders(status, responseBody.size.toLong())
+        exchange.responseBody.use { it.write(responseBody) }
         exchange.close()
     }
     server.start()
@@ -305,15 +338,24 @@ private fun withRuntimeServer(status: Int = 200, block: (RuntimeTestServer) -> U
     }
 }
 
-private fun withPackagedServer(panels: Map<String, PackagedGuiPanelRuntime>, wrappers: Map<String, String> = emptyMap(), block: (TestServer) -> Unit) {
+private fun withPackagedServer(
+    panels: Map<String, PackagedGuiPanelRuntime>,
+    wrappers: Map<String, String> = emptyMap(),
+    proxyTimeouts: PackagedGuiProxyTimeouts = PackagedGuiProxyTimeouts(),
+    block: (TestServer) -> Unit,
+) {
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
-    server.createContext("/") { exchange -> handle(exchange, { null }, { panels.toMap() }, { wrappers.toMap() }) }
+    server.createContext("/") { exchange -> handle(exchange, { null }, { panels.toMap() }, { wrappers.toMap() }, proxyTimeouts) }
     server.start()
     try {
         block(TestServer(server))
     } finally {
         server.stop(0)
     }
+}
+
+private fun assertProxyFailureDoesNotLeak(body: String, vararg forbidden: String) {
+    forbidden.forEach { value -> assertFalse(body.contains(value, ignoreCase = true), body) }
 }
 
 private fun request(url: String, method: String = "GET"): Response {

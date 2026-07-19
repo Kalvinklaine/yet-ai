@@ -8,9 +8,11 @@ import com.intellij.openapi.components.service
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.SocketTimeoutException
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -115,6 +117,8 @@ data class PackagedGuiPanelRuntime(val runtimeUrl: String, val sessionToken: Str
 
 data class PackagedGuiProxyRequest(val targetUrl: String, val headers: Map<String, String>)
 
+data class PackagedGuiProxyTimeouts(val connectMillis: Int = 2_000, val readMillis: Int = 10_000)
+
 sealed class PackagedGuiProxyDecision {
     data class Forward(val request: PackagedGuiProxyRequest) : PackagedGuiProxyDecision()
     data object Reject : PackagedGuiProxyDecision()
@@ -156,6 +160,7 @@ fun handle(
     loadResource: (String) -> ByteArray?,
     panels: () -> Map<String, PackagedGuiPanelRuntime> = { emptyMap() },
     wrappers: () -> Map<String, String> = { emptyMap() },
+    proxyTimeouts: PackagedGuiProxyTimeouts = PackagedGuiProxyTimeouts(),
 ) {
     try {
         val wrapperPanelId = panelWrapperRoute(exchange.requestURI.rawPath)
@@ -170,7 +175,7 @@ fun handle(
         }
         val panelRoute = panelProxyRoute(exchange.requestURI.rawPath)
         if (panelRoute != null) {
-            proxyPanelRequest(exchange, panelRoute.first, panelRoute.second, panels())
+            proxyPanelRequest(exchange, panelRoute.first, panelRoute.second, panels(), proxyTimeouts)
             return
         }
         if (exchange.requestMethod != "GET") {
@@ -273,7 +278,13 @@ private fun panelProxyRoute(rawPath: String): Pair<String, String>? {
     return panelId to proxiedPath
 }
 
-private fun proxyPanelRequest(exchange: HttpExchange, panelId: String, rawPath: String, panels: Map<String, PackagedGuiPanelRuntime>) {
+private fun proxyPanelRequest(
+    exchange: HttpExchange,
+    panelId: String,
+    rawPath: String,
+    panels: Map<String, PackagedGuiPanelRuntime>,
+    timeouts: PackagedGuiProxyTimeouts,
+) {
     if (exchange.requestMethod != "GET" && exchange.requestMethod != "POST") {
         send(exchange, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(StandardCharsets.UTF_8))
         return
@@ -287,25 +298,40 @@ private fun proxyPanelRequest(exchange: HttpExchange, panelId: String, rawPath: 
         val rawQuery = exchange.requestURI.rawQuery
         if (rawQuery == null) uri else URI(uri.scheme, uri.authority, uri.path, rawQuery, null)
     }
-    val connection = target.toURL().openConnection() as HttpURLConnection
-    connection.requestMethod = exchange.requestMethod
-    connection.instanceFollowRedirects = false
-    decision.request.headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
-    exchange.requestHeaders["Content-Type"]?.firstOrNull()?.let { connection.setRequestProperty("Content-Type", it) }
-    if (exchange.requestMethod == "POST") {
-        connection.doOutput = true
-        exchange.requestBody.use { input -> connection.outputStream.use { output -> input.copyTo(output) } }
-    }
-    val status = connection.responseCode
-    YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), status)
-    val contentType = connection.headerFields["Content-Type"]?.firstOrNull() ?: "application/octet-stream"
-    val body = try {
-        (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
+    var connection: HttpURLConnection? = null
+    val response = try {
+        connection = target.toURL().openConnection() as HttpURLConnection
+        connection.connectTimeout = timeouts.connectMillis
+        connection.readTimeout = timeouts.readMillis
+        connection.requestMethod = exchange.requestMethod
+        connection.instanceFollowRedirects = false
+        decision.request.headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
+        exchange.requestHeaders["Content-Type"]?.firstOrNull()?.let { connection.setRequestProperty("Content-Type", it) }
+        if (exchange.requestMethod == "POST") {
+            connection.doOutput = true
+            exchange.requestBody.use { input -> connection.outputStream.use { output -> input.copyTo(output) } }
+        }
+        val status = connection.responseCode
+        YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), status)
+        val contentType = connection.headerFields["Content-Type"]?.firstOrNull() ?: "application/octet-stream"
+        val body = (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
+        PackagedGuiProxyResponse(status, contentType, body)
+    } catch (_: SocketTimeoutException) {
+        YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 504)
+        proxyFailure(504, "runtime_proxy_timeout")
+    } catch (_: IOException) {
+        YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 502)
+        proxyFailure(502, "runtime_proxy_unavailable")
     } finally {
-        connection.disconnect()
+        connection?.disconnect()
     }
-    send(exchange, status, contentType, body)
+    send(exchange, response.status, response.contentType, response.body)
 }
+
+private data class PackagedGuiProxyResponse(val status: Int, val contentType: String, val body: ByteArray)
+
+private fun proxyFailure(status: Int, error: String) =
+    PackagedGuiProxyResponse(status, "application/json; charset=utf-8", "{\"error\":\"$error\"}".toByteArray(StandardCharsets.UTF_8))
 
 fun resourcePath(rawPath: String): String? {
     if (rawPath.contains('\\')) {
