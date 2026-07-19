@@ -20,6 +20,7 @@ const packagedGuiIndexPath = path.join(packagedGuiRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "jetbrains-wrapper-browser");
 const requiredVisibleText = ["Chat readiness", "Conversations", "Coding Actions"];
 const bridgeVersion = "2026-05-15";
+const readinessTimeoutMs = 100;
 const pluginLikeViewport = { width: 800, height: 800 };
 const headed = process.argv.includes("--headed");
 const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
@@ -193,14 +194,11 @@ const panelGuiBaseUrl = `${guiBaseUrl}${panelBasePath}`;
 const productionWrapperHtml = await renderProductionWrapperHtml(panelGuiBaseUrl);
 assertWrapperReadinessSemantics(productionWrapperHtml);
 const instrumentedWrapperHtml = instrumentProductionWrapperHtml(productionWrapperHtml);
-if (!instrumentedWrapperHtml.includes("window.__yetAiSmokeTriggerLoadedButNotReadyFallback")) {
-  throw new Error("JetBrains wrapper smoke did not install the loaded-but-not-ready assertion helper.");
-}
-const wrapperServer = await startWrapperServer(instrumentedWrapperHtml, runtimeBaseUrl);
+const wrapperServer = await startWrapperServer(instrumentedWrapperHtml);
 const wrapperBaseUrl = `http://127.0.0.1:${wrapperServer.port}`;
 const wrapperUrl = `${wrapperBaseUrl}${panelBasePath}/wrapper.html`;
-if (new URL(wrapperUrl).origin === new URL(panelGuiBaseUrl).origin) {
-  throw new Error("JetBrains wrapper browser smoke requires distinct wrapper and iframe origins.");
+if (wrapperBaseUrl === guiBaseUrl) {
+  throw new Error("JetBrains wrapper smoke requires distinct wrapper and GUI origins.");
 }
 let browser;
 
@@ -279,6 +277,9 @@ try {
   }
   await page.waitForSelector("iframe[title='Yet AI GUI']", { state: "visible", timeout: 5000 });
   await assertWrapperLoadedButNotReadyFallbackPath(page);
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, realGuiUrl) => {
+    frame.src = realGuiUrl;
+  }, `${panelGuiBaseUrl}/index.html`);
 
   const iframeElement = page.locator("iframe[title='Yet AI GUI']");
   const iframeBox = await iframeElement.boundingBox();
@@ -753,13 +754,14 @@ try {
   }
 
   console.log("JetBrains wrapper browser smoke passed.");
-  console.log("Checked JetBrains-like wrapper iframe rendering, exact loopback target origin, real gui.ready to host.ready/contextSnapshot wrapper bridge delivery, attached-context preview/default include/disabled-toggle behavior, Refresh runtime click feedback, bridge collector, login-shaped first-message chat through mock runtime/SSE, JavaScript execution, and local JS/CSS asset responses.");
+  console.log("Checked isolated wrapper/GUI origins, the real timer-driven loaded-but-not-ready fallback, exact loopback target origin, real gui.ready to host.ready/contextSnapshot wrapper bridge delivery, attached-context preview/default include/disabled-toggle behavior, Refresh runtime click feedback, bridge collector, login-shaped first-message chat through mock runtime/SSE, JavaScript execution, and local JS/CSS asset responses.");
   console.log(`Saved sanitized layout screenshot/metrics/DOM under ${path.relative(root, evidenceRoot)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.metricsPath)}, ${path.basename(evidence.domPath)}).`);
   console.log("No engine, provider credentials, OpenAI/ChatGPT, hosted Yet AI services, JetBrains IDE, or JCEF automation were used.");
   }
 } finally {
   await browser?.close().catch(() => undefined);
   await runtimeServer.close();
+  await wrapperServer.close();
   await packagedGuiServer.close();
   await wrapperServer.close();
 }
@@ -825,29 +827,35 @@ async function assertIframeCannotBypassWrapperBridge(page, frameLocator, wrapper
   }
 }
 
-async function assertWrapperLoadedButNotReadyFallbackPath(page) {  const fallbackState = await page.evaluate(() => {
-    const fallback = document.getElementById("yet-ai-shell-fallback");
-    const status = document.getElementById("yet-ai-shell-status");
-    const previous = {
-      fallbackHidden: fallback?.hidden,
-      statusHidden: status?.hidden,
-      statusText: status?.textContent ?? "",
-    };
-    window.__yetAiSmokeTriggerLoadedButNotReadyFallback?.();
-    const current = {
-      fallbackHidden: fallback?.hidden,
-      statusHidden: status?.hidden,
-      statusText: status?.textContent ?? "",
-    };
-    if (fallback && previous.fallbackHidden !== undefined) fallback.hidden = previous.fallbackHidden;
-    if (status && previous.statusHidden !== undefined) {
-      status.hidden = previous.statusHidden;
-      status.textContent = previous.statusText;
-    }
-    return current;
-  });
-  if (fallbackState.fallbackHidden !== false || fallbackState.statusHidden !== false || !fallbackState.statusText.includes("loaded but did not send a validated ready signal")) {
-    failures.push(`Wrapper did not expose loaded-but-not-ready fallback before gui.ready: ${JSON.stringify(fallbackState)}.`);
+async function assertWrapperLoadedButNotReadyFallbackPath(page) {
+  const readinessPhases = [
+    "frame_waiting_for_load",
+    "frame_loaded_waiting_for_nonce",
+    "frame_nonce_unavailable",
+    "frame_nonce_sent_waiting_for_gui_ready",
+    "gui_ready_rejected_wrong_origin",
+    "gui_ready_rejected_wrong_source",
+    "gui_ready_rejected_wrong_nonce",
+    "gui_ready_rejected_invalid_shape",
+    "gui_ready_accepted",
+  ];
+  await page.waitForFunction(() => window.__yetAiSmokeReadinessTimeout !== undefined, undefined, { timeout: 5000 })
+    .catch(() => failures.push("Wrapper real readiness timeout callback did not run for the never-ready iframe."));
+  const fallbackState = await page.evaluate(() => ({
+    fallbackHidden: document.getElementById("yet-ai-shell-fallback")?.hidden,
+    statusHidden: document.getElementById("yet-ai-shell-status")?.hidden,
+    statusText: document.getElementById("yet-ai-shell-status")?.textContent ?? "",
+    timeout: window.__yetAiSmokeReadinessTimeout,
+  }));
+  const expectedMessage = `Packaged Yet AI GUI loaded but did not send a validated ready signal. See the fallback panel above for the engine-served Web UI URL and repair steps. Readiness phase: ${fallbackState.timeout?.readinessPhase}.`;
+  if (fallbackState.fallbackHidden !== false || fallbackState.statusHidden !== false || fallbackState.statusText !== expectedMessage) {
+    failures.push(`Wrapper real timeout did not expose the exact loaded-but-not-ready fallback: ${JSON.stringify(fallbackState)}.`);
+  }
+  if (!readinessPhases.includes(fallbackState.timeout?.readinessPhase)) {
+    failures.push(`Wrapper real timeout exposed an unbounded readiness phase: ${JSON.stringify(fallbackState.timeout)}.`);
+  }
+  if (!Number.isInteger(fallbackState.timeout?.timerGeneration) || fallbackState.timeout.timerGeneration < 1 || fallbackState.timeout.timerGeneration !== fallbackState.timeout.frameGeneration) {
+    failures.push(`Wrapper real timeout did not pass the armed timer/current frame generation checks: ${JSON.stringify(fallbackState.timeout)}.`);
   }
 }
 
@@ -2637,6 +2645,16 @@ function assertDeepEqual(actual, expected, label) {
 
 function instrumentProductionWrapperHtml(wrapperHtml) {
   let html = wrapperHtml;
+  html = html.replace(`src="${panelGuiBaseUrl}/index.html"`, `src="${guiBaseUrl}/__smoke/never-ready.html"`);
+  if (!html.includes(`src="${guiBaseUrl}/__smoke/never-ready.html"`)) {
+    throw new Error("JetBrains wrapper smoke did not install the never-ready iframe page.");
+  }
+  html = html.replace("if (frameReady || readinessFallbackGeneration !== generation || frameGeneration !== generation) return;", `if (frameReady || readinessFallbackGeneration !== generation || frameGeneration !== generation) return;
+            window.__yetAiSmokeReadinessTimeout = { timerGeneration: generation, frameGeneration, readinessPhase };`);
+  html = html.replace("}, 8000);", `}, ${readinessTimeoutMs});`);
+  if (!html.includes("window.__yetAiSmokeReadinessTimeout = { timerGeneration: generation, frameGeneration, readinessPhase };") || !html.includes(`}, ${readinessTimeoutMs});`)) {
+    throw new Error("JetBrains wrapper smoke did not instrument the production readiness timer callback.");
+  }
   html = html.replace("const pendingHostMessages = boundedArray(window.__yetAiPendingHostMessages, maxPendingHostMessages);", `window.__yetAiPendingHostMessages = [{
   version: "${bridgeVersion}",
   type: "host.ready",
@@ -2684,13 +2702,9 @@ window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued dia
             restoredDiagnosticContents: pendingDiagnostics.length === initialDiagnostics.length && pendingDiagnostics.every((message, index) => message === initialDiagnostics[index]),
           };
         };
-        window.__yetAiSmokeTriggerLoadedButNotReadyFallback = () => {
-          markFrameLoaded();
-          showReadinessFallback("Packaged Yet AI GUI loaded but did not send a validated ready signal. See the fallback panel above for the engine-served Web UI URL and repair steps.");
-        };
         window.__yetAiSetNextAssistantResponseForSmoke = (content) => {
           if (typeof content === "string" && content.length > 0 && content.length <= 50000) {
-            return fetch("/__smoke/next-assistant-response", {
+            return fetch("${guiBaseUrl}/__smoke/next-assistant-response", {
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ content }),
@@ -3383,6 +3397,11 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method === "GET" && requestUrl.pathname === "/__smoke/never-ready.html") {
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      response.end("<!doctype html><html><body>Smoke iframe loaded without gui.ready.</body></html>");
+      return;
+    }
     if (requestUrl.pathname === "/__smoke/next-assistant-response") {
       await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
       return;
@@ -3411,21 +3430,12 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
   return listen(server);
 }
 
-async function startWrapperServer(wrapperHtml, runtimeBaseUrl) {
-  const server = http.createServer(async (request, response) => {
+async function startWrapperServer(wrapperHtml) {
+  const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (requestUrl.pathname === "/__smoke/next-assistant-response") {
-      await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
-      return;
-    }
-    if (requestUrl.pathname !== `${panelBasePath}/wrapper.html`) {
-      response.writeHead(404);
-      response.end("Not found");
-      return;
-    }
-    if (request.method !== "GET") {
-      response.writeHead(405, { allow: "GET" });
-      response.end("Method not allowed");
+    if (request.method !== "GET" || requestUrl.pathname !== `${panelBasePath}/wrapper.html`) {
+      response.writeHead(request.method === "GET" ? 404 : 405, request.method === "GET" ? undefined : { allow: "GET" });
+      response.end(request.method === "GET" ? "Not found" : "Method not allowed");
       return;
     }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
