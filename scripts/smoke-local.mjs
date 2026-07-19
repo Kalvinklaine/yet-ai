@@ -3,7 +3,7 @@ import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 
 const rootDir = process.cwd();
 const token = `smoke-token-${crypto.randomUUID()}`;
@@ -289,35 +289,6 @@ try {
   assert(parsedCodexChatBody.input?.[0]?.role === "user", "experimental Codex-like chat request did not send user role");
   assert(parsedCodexChatBody.input?.[0]?.content?.[0]?.text === "Say hello through experimental mock OAuth.", "experimental Codex-like chat request did not send first message content");
 
-  const codexTerminalStart = await requestJson(baseUrl, "/v1/provider-auth/openai/start", {
-    method: "POST",
-    body: JSON.stringify({
-      experimentalCodexLike: true,
-      tokenEndpointUrl: mockCodexTokenEndpoint.url,
-      chatEndpointUrl: mockCodexChatEndpoint.baseUrl
-    })
-  });
-  const codexTerminalState = new URL(codexTerminalStart.authorizationUrl).searchParams.get("state");
-  const codexTerminalCallback = await requestCallback(codexTerminalState, "codex-code-smoke-invalid-grant-secret");
-  assert(codexTerminalCallback.status === 502, "experimental Codex-like invalid_grant callback did not return HTTP 502");
-  assert(codexTerminalCallback.body.includes("start login again"), "experimental Codex-like invalid_grant callback did not return safe fresh-login text");
-  assert(!codexTerminalCallback.body.includes("retry login or the authorization code"), "experimental Codex-like invalid_grant callback incorrectly offered code retry");
-  assertNoSecretLeak(codexTerminalCallback.raw, [
-    { label: "Codex-like invalid_grant callback auth code", value: "codex-code-smoke-invalid-grant-secret" },
-    { label: "Codex-like invalid_grant callback state", value: codexTerminalState },
-    { label: "Codex-like invalid_grant provider description", value: "authorization code was already used" },
-    { label: "raw code query marker", value: "?code=" },
-    { label: "raw state query marker", value: "&state=" },
-    { label: "private path marker", value: tempHome }
-  ]);
-  const codexTerminalStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
-  assert(codexTerminalStatus.status === "error", "experimental Codex-like invalid_grant did not become terminal error status");
-  assert(codexTerminalStatus.configured === false, "experimental Codex-like invalid_grant remained configured");
-  assert(codexTerminalStatus.sessionId === undefined, "experimental Codex-like invalid_grant retained retry session");
-  assert(codexTerminalStatus.authorizationUrl === undefined, "experimental Codex-like invalid_grant retained authorization URL");
-  assert(codexTerminalStatus.lastError === "Login reached Yet AI but token exchange failed (token_http_status_400; http_status=400; oauth_error=invalid_grant). Retry login or use the API-key fallback.", "experimental Codex-like invalid_grant returned unexpected sanitized diagnostic");
-  assert(codexTokenRequestCount === 5, "experimental Codex-like invalid_grant did not call mock token endpoint a fifth time");
-
   const noModelProviderResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
     body: JSON.stringify({
@@ -481,6 +452,51 @@ try {
   assert(openAiFallbackResponse.id === "openai-api", "OpenAI API fallback provider create returned unexpected provider id");
   assert(openAiFallbackResponse.auth?.configured === true, "OpenAI API fallback provider create did not report configured auth");
 
+  const codexTerminalDisconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  assert(codexTerminalDisconnect.success === true, "experimental Codex-like terminal setup disconnect did not report success");
+  assert(codexTerminalDisconnect.status === "api_key_configured", "experimental Codex-like terminal setup disconnect did not preserve API-key fallback");
+  assert(codexTerminalDisconnect.authSource === "api_key", "experimental Codex-like terminal setup disconnect did not use API-key fallback");
+  assert(codexTerminalDisconnect.configured === true, "experimental Codex-like terminal setup disconnect lost API-key fallback");
+
+  const codexTerminalStart = await requestJson(baseUrl, "/v1/provider-auth/openai/start", {
+    method: "POST",
+    body: JSON.stringify({
+      experimentalCodexLike: true,
+      tokenEndpointUrl: mockCodexTokenEndpoint.url,
+      chatEndpointUrl: mockCodexChatEndpoint.baseUrl
+    })
+  });
+  const codexTerminalStartStatus = sanitizedProviderAuthStatus(codexTerminalStart);
+  assert(codexTerminalStart.status === "pending", `experimental Codex-like terminal start did not return pending status: ${JSON.stringify(codexTerminalStartStatus)}`);
+  assert(codexTerminalStart.authSource === "oauth", `experimental Codex-like terminal start did not use OAuth: ${JSON.stringify(codexTerminalStartStatus)}`);
+  assert(typeof codexTerminalStart.sessionId === "string" && codexTerminalStart.sessionId.startsWith("codex-"), `experimental Codex-like terminal start did not return a session id: ${JSON.stringify(codexTerminalStartStatus)}`);
+  assert(typeof codexTerminalStart.authorizationUrl === "string" && codexTerminalStart.authorizationUrl.startsWith("https://auth.openai.com/oauth/authorize?"), `experimental Codex-like terminal start did not return an authorization URL: ${JSON.stringify(codexTerminalStartStatus)}`);
+  const codexTerminalState = new URL(codexTerminalStart.authorizationUrl).searchParams.get("state");
+  assert(typeof codexTerminalState === "string" && codexTerminalState.length > 20, "experimental Codex-like terminal start did not return state");
+  const codexTerminalCallback = await requestCallback(codexTerminalState, "codex-code-smoke-invalid-grant-secret");
+  assert(codexTerminalCallback.status === 502, "experimental Codex-like invalid_grant callback did not return HTTP 502");
+  assert(codexTerminalCallback.body.includes("start login again"), "experimental Codex-like invalid_grant callback did not return safe fresh-login text");
+  assert(!codexTerminalCallback.body.includes("retry login or the authorization code"), "experimental Codex-like invalid_grant callback incorrectly offered code retry");
+  assertNoSecretLeak(codexTerminalCallback.raw, [
+    { label: "Codex-like invalid_grant callback auth code", value: "codex-code-smoke-invalid-grant-secret" },
+    { label: "Codex-like invalid_grant callback state", value: codexTerminalState },
+    { label: "Codex-like invalid_grant provider description", value: "authorization code was already used" },
+    { label: "raw code query marker", value: "?code=" },
+    { label: "raw state query marker", value: "&state=" },
+    { label: "private path marker", value: tempHome }
+  ]);
+  const codexTerminalStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(codexTerminalStatus.status === "api_key_configured", "experimental Codex-like invalid_grant did not fall back to API-key status");
+  assert(codexTerminalStatus.configured === true, "experimental Codex-like invalid_grant lost API-key fallback");
+  assert(codexTerminalStatus.authSource === "api_key", "experimental Codex-like invalid_grant did not use API-key fallback");
+  assert(codexTerminalStatus.sessionId === undefined, "experimental Codex-like invalid_grant retained retry session");
+  assert(codexTerminalStatus.authorizationUrl === undefined, "experimental Codex-like invalid_grant retained authorization URL");
+  assert(codexTerminalStatus.lastError === "Login reached Yet AI but token exchange failed (token_http_status_400; http_status=400; oauth_error=invalid_grant). Retry login or use the API-key fallback.", "experimental Codex-like invalid_grant returned unexpected sanitized diagnostic");
+  assert(codexTokenRequestCount === 5, "experimental Codex-like invalid_grant did not call mock token endpoint a fifth time");
+
   const codexDisconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
     method: "POST",
     body: JSON.stringify({})
@@ -525,6 +541,7 @@ try {
     codexCommandResponse,
     codexEvents,
     codexRaw,
+    codexTerminalDisconnect,
     codexTerminalStart,
     codexTerminalCallback,
     codexTerminalStatus,
@@ -586,7 +603,7 @@ try {
     { label: "Codex-like terminal state", value: codexTerminalState },
     { label: "Codex-like challenge", value: codexChallenge }
   ];
-  const engineOutput = engine.output();
+  const engineOutput = await readFile(engine.logPath, "utf8");
   assert(engineOutput.includes("provider_auth.exchange_failed"), "engine log omitted provider-auth exchange failure event");
   assert(engineOutput.includes("stage=callback"), "engine log omitted callback exchange stage");
   assert(engineOutput.includes("category=token_http_status_502"), "engine log omitted transient callback HTTP category");
@@ -620,6 +637,7 @@ async function makeTempHome() {
   await mkdir(path.join(home, "Library", "Application Support"), { recursive: true });
   await mkdir(path.join(home, ".config"), { recursive: true });
   await mkdir(path.join(home, ".cache"), { recursive: true });
+  await mkdir(path.join(home, "logs"), { recursive: true });
   return home;
 }
 
@@ -636,7 +654,8 @@ function startEngine(port, home) {
       NO_PROXY: appendNoProxy(process.env.NO_PROXY),
       no_proxy: appendNoProxy(process.env.no_proxy),
       YET_AI_AUTH_TOKEN: token,
-      YET_AI_HTTP_PORT: String(port)
+      YET_AI_HTTP_PORT: String(port),
+      YET_AI_LOG_DIR: path.join(home, "logs")
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -648,6 +667,7 @@ function startEngine(port, home) {
     output += chunk.toString();
   });
   child.output = () => output;
+  child.logPath = path.join(home, "logs", `engine-${port}.log`);
   child.on("exit", (code, signal) => {
     if (code !== null && code !== 0) {
       console.error(`Engine exited with code ${code}.`);
@@ -982,6 +1002,19 @@ function assertMonotonicSequence(events) {
 
 function authHeaders() {
   return { Authorization: `Bearer ${token}` };
+}
+
+function sanitizedProviderAuthStatus(response) {
+  return {
+    provider: response?.provider,
+    configured: response?.configured,
+    status: response?.status,
+    authSource: response?.authSource,
+    supportsLogin: response?.supportsLogin,
+    supportsApiKey: response?.supportsApiKey,
+    cloudRequired: response?.cloudRequired,
+    success: response?.success
+  };
 }
 
 function appendNoProxy(value) {
