@@ -763,7 +763,6 @@ try {
   await runtimeServer.close();
   await wrapperServer.close();
   await packagedGuiServer.close();
-  await wrapperServer.close();
 }
 
 async function assertPanelScopedBootstrap(page) {
