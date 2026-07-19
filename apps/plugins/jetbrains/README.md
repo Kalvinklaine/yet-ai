@@ -437,6 +437,20 @@ Classify the result from the copied diagnostics and the two log files:
 
 These logs diagnose the local loopback runtime boundary only. Runtime 401s are local session-token/auth-header problems; provider 401s after the runtime connects are upstream BYOK provider credential problems handled by the engine/provider setup flow. This checklist does not require a hosted Yet AI backend, account, managed model gateway, product credit balance, cloud workspace, signing, marketplace publication, or production-release workflow.
 
+### Installed OAuth callback 502 checklist
+
+The callback page intentionally sends a restrictive Content Security Policy with `default-src 'none'`. DevTools warnings about blocked callback-page image or connection probes are expected and non-causal. Do not disable the policy or diagnose those warnings as the login failure.
+
+A browser callback HTTP 502 means the listener at `localhost:1455` worked: the engine received the redirect, then token exchange or a post-exchange validation/storage step failed. Diagnose that boundary as follows:
+
+1. Open Tools → `Yet AI: Show Runtime Status`. Record only the sanitized provider-auth category/status plus `Build commit` and `Runtime binary freshness`.
+2. Compare `Build commit` with `git rev-parse --short=12 HEAD` from the checkout used for the ZIP. Reinstall the intended artifact if they differ. For normal bundled `auto`/`launch`, require `Runtime binary freshness: bundled match`; otherwise resolve the stale/mismatched/external runtime first.
+3. Open Tools → `Yet AI: Open Logs Folder` and inspect `engine-<port>.log`, using the port from the sanitized runtime URL. Look for the allowlisted `provider_auth.exchange_failed` event fields only: provider, stage, category, endpoint class, and sanitized detail.
+4. For transport or HTTP 5xx categories, the pending session should remain retryable. Retry once or use the GUI manual authorization-code exchange while it remains pending.
+5. For exact HTTP 400 plus `oauth_error=invalid_grant`, start a fresh browser login and do not reuse the authorization code. Use the OpenAI API-key fallback when account login remains unavailable.
+
+Never paste a raw callback URL, code, state, access/refresh token, Authorization header, cookie, query, provider response/body, session id, or private log path into diagnostics. This procedure does not claim official OpenAI OAuth support or production readiness; the account path remains experimental and real-account testing remains manual/high-risk/outside CI.
+
 Concise troubleshooting matrix:
 
 | Symptom/status | Next action |

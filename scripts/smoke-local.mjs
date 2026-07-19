@@ -220,11 +220,27 @@ try {
   const codexRestartState = new URL(codexRestart.authorizationUrl).searchParams.get("state");
   assert(codexRestart.sessionId !== codexStart.sessionId, "experimental Codex-like restart reused prior session id");
   assert(codexRestartState !== codexState, "experimental Codex-like restart reused prior state");
-  const codexReconnectCallback = await requestCallback(codexRestartState, "codex-code-smoke-reconnect-secret");
+  const codexTransientCallback = await requestCallback(codexRestartState, "codex-code-smoke-transient-secret");
+  assert(codexTransientCallback.status === 502, "experimental Codex-like transient callback did not return HTTP 502");
+  assert(codexTransientCallback.body.includes("retry login or the authorization code"), "experimental Codex-like transient callback did not return safe retry text");
+  assertNoSecretLeak(codexTransientCallback.raw, [
+    { label: "Codex-like transient callback auth code", value: "codex-code-smoke-transient-secret" },
+    { label: "Codex-like transient callback state", value: codexRestartState },
+    { label: "Codex-like transient provider body", value: "temporary callback provider detail" },
+    { label: "raw code query marker", value: "?code=" },
+    { label: "raw state query marker", value: "&state=" },
+    { label: "private path marker", value: tempHome }
+  ]);
+  const codexPendingAfterCallbackFailure = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(codexPendingAfterCallbackFailure.status === "pending", "experimental Codex-like transient callback did not preserve pending status");
+  assert(codexPendingAfterCallbackFailure.sessionId === codexRestart.sessionId, "experimental Codex-like transient callback did not preserve retry session");
+  assert(codexPendingAfterCallbackFailure.lastError === "Login reached Yet AI but token exchange failed (token_http_status_502; http_status=502; oauth_error=server_error). Retry login or use the API-key fallback.", "experimental Codex-like transient callback returned unexpected sanitized diagnostic");
+
+  const codexReconnectCallback = await requestCallback(codexRestartState, "codex-code-smoke-transient-secret");
   assert(codexReconnectCallback.status === 200, "experimental Codex-like callback did not return HTTP 200");
   assert(codexReconnectCallback.body.includes("Login received. Return to Yet AI."), "experimental Codex-like callback did not return safe success text");
   assertNoSecretLeak(codexReconnectCallback.raw, [
-    { label: "Codex-like callback auth code", value: "codex-code-smoke-reconnect-secret" },
+    { label: "Codex-like callback auth code", value: "codex-code-smoke-transient-secret" },
     { label: "Codex-like callback state", value: codexRestartState },
     { label: "Codex-like access token", value: "codex-smoke-access-token-secret" },
     { label: "Codex-like refresh token", value: "codex-smoke-refresh-token-secret" },
@@ -239,7 +255,7 @@ try {
   assert(codexReconnect.configured === true, "experimental Codex-like callback did not configure auth");
   assert(codexReconnect.sessionId === undefined, "experimental Codex-like callback connected status exposed session id");
   assert(codexReconnect.authorizationUrl === undefined, "experimental Codex-like callback connected status exposed authorization URL");
-  assert(codexTokenRequestCount === 3, "experimental Codex-like reconnect did not call mock token endpoint a third time");
+  assert(codexTokenRequestCount === 4, "experimental Codex-like callback retry did not call mock token endpoint four times total");
 
   const codexChatId = `smoke-codex-chat-${crypto.randomUUID()}`;
   const codexSubscription = subscribe(baseUrl, codexChatId);
@@ -272,6 +288,35 @@ try {
   assert(parsedCodexChatBody.model === "gpt-5-codex", "experimental Codex-like chat request used unexpected model");
   assert(parsedCodexChatBody.input?.[0]?.role === "user", "experimental Codex-like chat request did not send user role");
   assert(parsedCodexChatBody.input?.[0]?.content?.[0]?.text === "Say hello through experimental mock OAuth.", "experimental Codex-like chat request did not send first message content");
+
+  const codexTerminalStart = await requestJson(baseUrl, "/v1/provider-auth/openai/start", {
+    method: "POST",
+    body: JSON.stringify({
+      experimentalCodexLike: true,
+      tokenEndpointUrl: mockCodexTokenEndpoint.url,
+      chatEndpointUrl: mockCodexChatEndpoint.baseUrl
+    })
+  });
+  const codexTerminalState = new URL(codexTerminalStart.authorizationUrl).searchParams.get("state");
+  const codexTerminalCallback = await requestCallback(codexTerminalState, "codex-code-smoke-invalid-grant-secret");
+  assert(codexTerminalCallback.status === 502, "experimental Codex-like invalid_grant callback did not return HTTP 502");
+  assert(codexTerminalCallback.body.includes("start login again"), "experimental Codex-like invalid_grant callback did not return safe fresh-login text");
+  assert(!codexTerminalCallback.body.includes("retry login or the authorization code"), "experimental Codex-like invalid_grant callback incorrectly offered code retry");
+  assertNoSecretLeak(codexTerminalCallback.raw, [
+    { label: "Codex-like invalid_grant callback auth code", value: "codex-code-smoke-invalid-grant-secret" },
+    { label: "Codex-like invalid_grant callback state", value: codexTerminalState },
+    { label: "Codex-like invalid_grant provider description", value: "authorization code was already used" },
+    { label: "raw code query marker", value: "?code=" },
+    { label: "raw state query marker", value: "&state=" },
+    { label: "private path marker", value: tempHome }
+  ]);
+  const codexTerminalStatus = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(codexTerminalStatus.status === "error", "experimental Codex-like invalid_grant did not become terminal error status");
+  assert(codexTerminalStatus.configured === false, "experimental Codex-like invalid_grant remained configured");
+  assert(codexTerminalStatus.sessionId === undefined, "experimental Codex-like invalid_grant retained retry session");
+  assert(codexTerminalStatus.authorizationUrl === undefined, "experimental Codex-like invalid_grant retained authorization URL");
+  assert(codexTerminalStatus.lastError === "Login reached Yet AI but token exchange failed (token_http_status_400; http_status=400; oauth_error=invalid_grant). Retry login or use the API-key fallback.", "experimental Codex-like invalid_grant returned unexpected sanitized diagnostic");
+  assert(codexTokenRequestCount === 5, "experimental Codex-like invalid_grant did not call mock token endpoint a fifth time");
 
   const noModelProviderResponse = await requestJson(baseUrl, "/v1/providers", {
     method: "POST",
@@ -473,11 +518,16 @@ try {
     incompleteCodexEvents,
     incompleteCodexRaw,
     codexRestart,
+    codexTransientCallback,
+    codexPendingAfterCallbackFailure,
     codexReconnectCallback,
     codexReconnect,
     codexCommandResponse,
     codexEvents,
     codexRaw,
+    codexTerminalStart,
+    codexTerminalCallback,
+    codexTerminalStatus,
     openAiFallbackResponse,
     codexDisconnect,
     codexClearedStatus,
@@ -512,7 +562,10 @@ try {
     { label: "Codex-like refresh token", value: "codex-smoke-refresh-token-secret" },
     { label: "Codex-like auth code", value: "codex-code-smoke-secret" },
     { label: "Codex-like failed auth code", value: "codex-code-smoke-failure-secret" },
-    { label: "Codex-like reconnect auth code", value: "codex-code-smoke-reconnect-secret" },
+    { label: "Codex-like transient callback auth code", value: "codex-code-smoke-transient-secret" },
+    { label: "Codex-like invalid_grant auth code", value: "codex-code-smoke-invalid-grant-secret" },
+    { label: "Codex-like transient provider body", value: "temporary callback provider detail" },
+    { label: "Codex-like invalid_grant provider description", value: "authorization code was already used" },
     { label: "Codex-like PKCE verifier", value: parsedCodexTokenBody.code_verifier },
     { label: "authorization header marker", value: "authorization: bearer" },
     { label: "Codex-like bearer marker", value: "bearer codex-smoke-access-token-secret" },
@@ -529,10 +582,19 @@ try {
     { label: "Codex-like state", value: codexState },
     { label: "Codex-like restart session id", value: codexRestart.sessionId },
     { label: "Codex-like restart state", value: codexRestartState },
+    { label: "Codex-like terminal session id", value: codexTerminalStart.sessionId },
+    { label: "Codex-like terminal state", value: codexTerminalState },
     { label: "Codex-like challenge", value: codexChallenge }
   ];
+  const engineOutput = engine.output();
+  assert(engineOutput.includes("provider_auth.exchange_failed"), "engine log omitted provider-auth exchange failure event");
+  assert(engineOutput.includes("stage=callback"), "engine log omitted callback exchange stage");
+  assert(engineOutput.includes("category=token_http_status_502"), "engine log omitted transient callback HTTP category");
+  assert(engineOutput.includes("category=token_http_status_400"), "engine log omitted terminal callback HTTP category");
+  assert(engineOutput.includes("endpoint_class=loopback_override"), "engine log omitted loopback endpoint class");
+  assert(engineOutput.includes("detail=http_status=400;_oauth_error=invalid_grant"), "engine log omitted canonical terminal detail");
   assertNoSecretLeak(clientVisible, secretMarkers);
-  assertNoSecretLeak(engine.output(), logSecretMarkers);
+  assertNoSecretLeak(engineOutput, logSecretMarkers);
 
   console.log("Local smoke test passed.");
 } finally {
@@ -663,6 +725,22 @@ async function startMockCodexTokenEndpoint() {
       if (codexTokenRequestCount === 1) {
         response.writeHead(500, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: "temporary failure" }));
+        return;
+      }
+      if (codexTokenRequestCount === 3) {
+        response.writeHead(502, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          error: "server_error",
+          error_description: "temporary callback provider detail"
+        }));
+        return;
+      }
+      if (codexTokenRequestCount === 5) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          error: "invalid_grant",
+          error_description: "authorization code was already used"
+        }));
         return;
       }
       response.writeHead(200, { "content-type": "application/json" });
