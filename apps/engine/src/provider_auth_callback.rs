@@ -952,7 +952,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn callback_mapping_is_retained_on_retryable_exchange_failure() {
+    async fn callback_terminal_invalid_grant_is_removed_but_502_is_retryable() {
         {
             let _guard = CALLBACK_TEST_LOCK.lock().await;
             clear_all_registered_state_for_test();
@@ -985,13 +985,24 @@ mod tests {
             let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
             assert_eq!(status, StatusCode::BAD_GATEWAY);
-            assert_eq!(text, CALLBACK_RETRY_TEXT);
+            assert_eq!(text, CALLBACK_RESTART_TEXT);
             assert!(!text.contains("400"));
             assert!(!text.contains("http_status=400"));
             assert!(!text.contains("oauth_error=invalid_grant"));
             assert!(!text.contains("Authorization code is invalid or expired"));
             assert!(!text.contains("codex-code-callback-test"));
             assert!(!text.contains(&state));
+            assert!(registered_config_dir_for_state(&state)
+                .await
+                .unwrap()
+                .is_none());
+            let status = provider_auth::status(&dir, "openai").await.unwrap();
+            assert_eq!(status.status, "error");
+            assert!(status.session_id.is_none());
+            assert!(status
+                .last_error
+                .as_deref()
+                .is_some_and(|value| value.contains("oauth_error=invalid_grant")));
         }
 
         let _guard = CALLBACK_TEST_LOCK.lock().await;

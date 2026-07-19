@@ -94,6 +94,7 @@ impl OpenAiCodexOAuthAdapter {
             self.provider,
             &crate::provider_auth::types::CodexOAuthState {
                 pending: Some(session.clone()),
+                ..Default::default()
             },
         )
         .await?;
@@ -268,6 +269,7 @@ impl OpenAiCodexOAuthAdapter {
             .await?;
         }
         let had_codex = codex.pending.is_some()
+            || codex.terminal_diagnostic.is_some()
             || crate::provider_auth::codex_has_secrets(&self.config_dir, self.provider).await?;
         if had_codex {
             crate::provider_auth::write_codex_state(
@@ -372,7 +374,7 @@ impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
         &'a self,
     ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
         Box::pin(async move {
-            let response = match self
+            let mut response = match self
                 .status_response()
                 .await
                 .map_err(super::adapter_error_from_provider_auth)?
@@ -386,6 +388,23 @@ impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
                     None,
                 ),
             };
+            if response.status != "pending" && response.status != "connected" {
+                let codex = crate::provider_auth::read_codex_state(&self.config_dir, self.provider)
+                    .await
+                    .map_err(|_| ProviderOAuthAdapterError::Storage)?;
+                if let Some(last_error) = codex
+                    .terminal_diagnostic
+                    .as_ref()
+                    .and_then(crate::provider_auth::terminal_codex_last_error)
+                {
+                    response.last_error = Some(last_error);
+                    if response.status == "login_unavailable" {
+                        response.status = "error";
+                        response.supports_login = true;
+                        response.message = "Provider account login failed permanently. Start a fresh login or use the API-key fallback.".to_string();
+                    }
+                }
+            }
             Ok(Self::status_view_from_response(response))
         })
     }
@@ -421,7 +440,12 @@ impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
     ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
         Box::pin(async move {
             let response = self
-                .exchange_response("manual_exchange", request.session_id, request.state, request.code)
+                .exchange_response(
+                    "manual_exchange",
+                    request.session_id,
+                    request.state,
+                    request.code,
+                )
                 .await
                 .map_err(|error| match error {
                     ProviderAuthError::SessionExpired => ProviderOAuthAdapterError::SessionExpired,

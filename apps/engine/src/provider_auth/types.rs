@@ -206,6 +206,21 @@ pub(super) struct MockOAuthConnection {
 #[serde(rename_all = "camelCase")]
 pub(super) struct CodexOAuthState {
     pub(super) pending: Option<CodexOAuthSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) terminal_diagnostic: Option<CodexTerminalDiagnostic>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct CodexTerminalDiagnostic {
+    pub(super) http_status: u16,
+    pub(super) oauth_error: CodexTerminalOAuthError,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum CodexTerminalOAuthError {
+    InvalidGrant,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

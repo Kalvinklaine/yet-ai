@@ -2860,6 +2860,25 @@ describe("provider secret boundary", () => {
     expect(diagnostic?.textContent).toContain("Check local proxy and network access, then retry login once or use the API-key fallback.");
   });
 
+  it("renders terminal invalid_grant as fresh-login guidance after status refresh", async () => {
+    mockRuntimeResponses({
+      authResponse: {
+        ...providerAuthResponse("error"),
+        configured: false,
+        lastError: "Login reached Yet AI but token exchange failed (token_http_status_400; http_status=400; oauth_error=invalid_grant). Retry login or use the API-key fallback.",
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    const diagnostic = container?.querySelector<HTMLElement>("[data-testid='provider-auth-exchange-diagnostic']");
+    expect(diagnostic?.textContent).toContain("token_http_status_400 · HTTP 400 · OAuth invalid_grant");
+    expect(diagnostic?.textContent).toContain("Start a fresh browser login; do not reuse the authorization code.");
+    expect(container?.textContent).toContain("Retry login");
+    expect(container?.textContent).not.toContain("Manual authorization-code exchange");
+  });
+
   it("rejects malformed secret-bearing token-exchange detail instead of rendering it", async () => {
     const rawCode = "callback-code-secret-value";
     const rawToken = "access_token=" + "t".repeat(64);

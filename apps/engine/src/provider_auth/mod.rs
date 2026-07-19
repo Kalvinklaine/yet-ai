@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
-use crate::provider_auth_callback;
 use crate::logging::{log_event, EngineLogLevel};
+use crate::provider_auth_callback;
 use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
 use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
 
@@ -92,8 +92,8 @@ use status::{
 use types::{
     CodexAuthMetadata, CodexExchangeGuard, CodexOAuthSession, CodexOAuthState,
     CodexStoredAccessSnapshot, CodexStoredAuthState, CodexStoredRefreshSnapshot,
-    CodexTokenEndpointError, CodexTokenResponse, MockOAuthConnection, MockOAuthSession,
-    MockOAuthState,
+    CodexTerminalDiagnostic, CodexTerminalOAuthError, CodexTokenEndpointError, CodexTokenResponse,
+    MockOAuthConnection, MockOAuthSession, MockOAuthState,
 };
 
 fn openai_codex_adapter(config_dir: &Path) -> OpenAiCodexOAuthAdapter {
@@ -548,6 +548,7 @@ pub(super) async fn codex_exchange(
                 &error,
             );
             if codex_authorization_code_invalid_grant(&error) {
+                codex.terminal_diagnostic = terminal_codex_diagnostic(&error);
                 write_codex_state(config_dir, provider, &codex).await?;
                 provider_auth_callback::forget_pending_state(&state_value);
                 retain_registry_after_exchange_failure(
@@ -858,13 +859,43 @@ fn safe_provider_auth_detail(
 }
 
 pub(crate) fn codex_authorization_code_invalid_grant(error: &ProviderAuthError) -> bool {
-    matches!(
-        error,
-        ProviderAuthError::TokenExchange(
+    terminal_codex_diagnostic(error).is_some()
+}
+
+fn terminal_codex_diagnostic(error: &ProviderAuthError) -> Option<CodexTerminalDiagnostic> {
+    let ProviderAuthError::TokenExchange(CodexTokenExchangeCategory::TokenHttpStatus(400), detail) =
+        error
+    else {
+        return None;
+    };
+    let safe = safe_provider_auth_detail(
+        CodexTokenExchangeCategory::TokenHttpStatus(400),
+        detail.as_deref(),
+    )?;
+    let mut fields = safe.split("; ");
+    let http_status = fields.next()?.strip_prefix("http_status=")?.parse().ok()?;
+    let oauth_error = fields.next()?.strip_prefix("oauth_error=")?;
+    if http_status != 400 || oauth_error != "invalid_grant" || fields.next().is_some() {
+        return None;
+    }
+    Some(CodexTerminalDiagnostic {
+        http_status,
+        oauth_error: CodexTerminalOAuthError::InvalidGrant,
+    })
+}
+
+fn terminal_codex_last_error(diagnostic: &CodexTerminalDiagnostic) -> Option<String> {
+    if diagnostic.http_status != 400
+        || diagnostic.oauth_error != CodexTerminalOAuthError::InvalidGrant
+    {
+        return None;
+    }
+    Some(sanitized_provider_auth_last_error(
+        &ProviderAuthError::token_exchange_with_detail(
             CodexTokenExchangeCategory::TokenHttpStatus(400),
-            Some(detail),
-        ) if detail == "http_status=400; oauth_error=invalid_grant"
-    )
+            "http_status=400; oauth_error=invalid_grant".to_string(),
+        ),
+    ))
 }
 
 fn codex_endpoint_class(token_endpoint_url: &str) -> &'static str {
@@ -3139,6 +3170,7 @@ mod tests {
             "openai",
             &super::CodexOAuthState {
                 pending: Some(session.clone()),
+                ..Default::default()
             },
         )
         .await
@@ -3156,6 +3188,7 @@ mod tests {
             "openai",
             &super::CodexOAuthState {
                 pending: Some(session.clone()),
+                ..Default::default()
             },
         )
         .await
@@ -3171,6 +3204,7 @@ mod tests {
             "openai",
             &super::CodexOAuthState {
                 pending: Some(session.clone()),
+                ..Default::default()
             },
         )
         .await
@@ -5748,6 +5782,118 @@ mod tests {
             super::read_codex_state(&dir, "openai").await,
             Err(ProviderAuthError::Storage)
         ));
+    }
+
+    #[tokio::test]
+    async fn terminal_codex_diagnostic_round_trips_and_is_status_visible() {
+        let dir = temp_dir();
+        let diagnostic = super::CodexTerminalDiagnostic {
+            http_status: 400,
+            oauth_error: super::CodexTerminalOAuthError::InvalidGrant,
+        };
+        super::write_codex_state(
+            &dir,
+            "openai",
+            &super::CodexOAuthState {
+                pending: None,
+                terminal_diagnostic: Some(diagnostic.clone()),
+            },
+        )
+        .await
+        .unwrap();
+
+        let state = super::read_codex_state(&dir, "openai").await.unwrap();
+        assert_eq!(state.terminal_diagnostic, Some(diagnostic));
+        let status = super::status(&dir, "openai").await.unwrap();
+        assert_eq!(status.status, "error");
+        assert!(status.session_id.is_none());
+        assert_eq!(
+            status.last_error.as_deref(),
+            Some("Login reached Yet AI but token exchange failed (token_http_status_400; http_status=400; oauth_error=invalid_grant). Retry login or use the API-key fallback.")
+        );
+        assert_response_sanitized(&status, &["authorization-code", "callback-state"]);
+    }
+
+    #[tokio::test]
+    async fn fresh_start_success_and_disconnect_clear_terminal_codex_diagnostic() {
+        let diagnostic = super::CodexTerminalDiagnostic {
+            http_status: 400,
+            oauth_error: super::CodexTerminalOAuthError::InvalidGrant,
+        };
+
+        let start_dir = temp_dir();
+        super::write_codex_state(
+            &start_dir,
+            "openai",
+            &super::CodexOAuthState {
+                pending: None,
+                terminal_diagnostic: Some(diagnostic.clone()),
+            },
+        )
+        .await
+        .unwrap();
+        let started = super::start(
+            &start_dir,
+            "openai",
+            super::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(started.status, "pending");
+        assert!(super::read_codex_state(&start_dir, "openai")
+            .await
+            .unwrap()
+            .terminal_diagnostic
+            .is_none());
+
+        let success_dir = temp_dir();
+        let token_endpoint_url = successful_codex_token_endpoint_with_hook(|| {}).await;
+        let pending =
+            create_codex_pending_state_with_token_endpoint(&success_dir, &token_endpoint_url).await;
+        let mut state = super::read_codex_state(&success_dir, "openai")
+            .await
+            .unwrap();
+        state.terminal_diagnostic = Some(diagnostic.clone());
+        super::write_codex_state(&success_dir, "openai", &state)
+            .await
+            .unwrap();
+        super::exchange(
+            &success_dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(pending.session_id),
+                state: Some(pending.state),
+                code: Some("fresh-success-code".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        assert!(super::read_codex_state(&success_dir, "openai")
+            .await
+            .unwrap()
+            .terminal_diagnostic
+            .is_none());
+
+        let disconnect_dir = temp_dir();
+        super::write_codex_state(
+            &disconnect_dir,
+            "openai",
+            &super::CodexOAuthState {
+                pending: None,
+                terminal_diagnostic: Some(diagnostic),
+            },
+        )
+        .await
+        .unwrap();
+        super::disconnect(&disconnect_dir, "openai").await.unwrap();
+        assert!(super::read_codex_state(&disconnect_dir, "openai")
+            .await
+            .unwrap()
+            .terminal_diagnostic
+            .is_none());
     }
 
     fn test_query_param(url: &str, name: &str) -> String {
