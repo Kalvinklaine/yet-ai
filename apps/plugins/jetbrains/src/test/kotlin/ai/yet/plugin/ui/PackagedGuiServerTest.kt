@@ -131,7 +131,11 @@ class PackagedGuiServerTest {
         val gui = server.start() ?: error("packaged GUI test resource unavailable")
         try {
             val panel = server.registerPanel(RuntimeSettings("http://127.0.0.1:8765", null, null))
-            assertTrue(URI(gui.wrapperUrl(panel)).authority != URI(gui.forPanel(panel).indexUrl).authority)
+            val wrapperUri = URI(gui.wrapperUrl(panel))
+            val iframeUri = URI(gui.forPanel(panel).indexUrl)
+            assertEquals(iframeUri.scheme, wrapperUri.scheme)
+            assertEquals(iframeUri.host, wrapperUri.host)
+            assertTrue(wrapperUri.port != iframeUri.port)
             assertTrue(server.registerWrapper(panel.id, "<html>live-panel-wrapper</html>"))
             assertEquals(200, request(gui.wrapperUrl(panel)).status)
             assertEquals(404, request("${gui.origin}/panel/${panel.id}/wrapper.html").status)

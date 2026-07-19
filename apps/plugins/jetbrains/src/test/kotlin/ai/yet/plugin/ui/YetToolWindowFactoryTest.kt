@@ -20,7 +20,7 @@ import kotlin.test.assertTrue
 class YetToolWindowFactoryTest {
     @Test
     fun packagedGuiUsesLoopbackServerIframe() {
-        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222")
             .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
@@ -31,6 +31,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "<iframe title=\"Yet AI GUI\" src=\"http://127.0.0.1:49221/panel/panel-1/index.html\"></iframe>")
         assertContains(html, "const frameTargetOrigin = \"http://127.0.0.1:49221\";")
         assertContains(html, "Installed plugin packaged panel: <code>http://127.0.0.1:49221/panel/panel-1/index.html</code>")
+        assertTrue(java.net.URI(packagedGui.wrapperOrigin).authority != java.net.URI(packagedGui.indexUrl).authority)
         assertContains(html, "Engine-served Web UI: <code>http://127.0.0.1:8001/</code>")
         assertContains(html, "Connecting to Yet AI local runtime")
         assertContains(html, "Open the engine-served Web UI at <code>http://127.0.0.1:8001/</code>")
@@ -92,6 +93,7 @@ class YetToolWindowFactoryTest {
         val failure = selectWrapperBrowserLoad(gui, panel, "<html>fallback</html>") { _, _ -> false }
 
         assertEquals(WrapperBrowserLoad.Url("http://127.0.0.1:49222/panel/panel-1/wrapper.html"), success)
+        assertTrue(java.net.URI((success as WrapperBrowserLoad.Url).value).authority != java.net.URI(gui.indexUrl).authority)
         assertEquals(
             WrapperBrowserLoad.Html("<html>fallback</html>", "Yet AI packaged wrapper registration failed; using in-memory wrapper"),
             failure,

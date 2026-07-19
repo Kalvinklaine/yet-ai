@@ -196,8 +196,12 @@ const instrumentedWrapperHtml = instrumentProductionWrapperHtml(productionWrappe
 if (!instrumentedWrapperHtml.includes("window.__yetAiSmokeTriggerLoadedButNotReadyFallback")) {
   throw new Error("JetBrains wrapper smoke did not install the loaded-but-not-ready assertion helper.");
 }
-packagedGuiServer.registerWrapper(instrumentedWrapperHtml);
-const wrapperUrl = `${panelGuiBaseUrl}/wrapper.html`;
+const wrapperServer = await startWrapperServer(instrumentedWrapperHtml, runtimeBaseUrl);
+const wrapperBaseUrl = `http://127.0.0.1:${wrapperServer.port}`;
+const wrapperUrl = `${wrapperBaseUrl}${panelBasePath}/wrapper.html`;
+if (new URL(wrapperUrl).origin === new URL(panelGuiBaseUrl).origin) {
+  throw new Error("JetBrains wrapper browser smoke requires distinct wrapper and iframe origins.");
+}
 let browser;
 
 try {
@@ -217,7 +221,7 @@ try {
       await route.abort();
       return;
     }
-    if (isAllowedBrowserUrl(url, [guiBaseUrl])) {
+    if (isAllowedBrowserUrl(url, [wrapperBaseUrl, guiBaseUrl])) {
       await route.continue();
       return;
     }
@@ -285,6 +289,7 @@ try {
   const frameLocator = page.frameLocator("iframe[title='Yet AI GUI']");
   await frameLocator.locator("body").waitFor({ state: "visible", timeout: 5000 });
   await assertPanelScopedBootstrap(page);
+  await assertIframeCannotBypassWrapperBridge(page, frameLocator, wrapperBaseUrl, guiBaseUrl);
   const hiddenHeroTitle = await frameLocator.locator(".hero h1").first().evaluate((element) => {
     const hero = element.closest(".hero");
     return getComputedStyle(element).display === "none"
@@ -756,6 +761,7 @@ try {
   await browser?.close().catch(() => undefined);
   await runtimeServer.close();
   await packagedGuiServer.close();
+  await wrapperServer.close();
 }
 
 async function assertPanelScopedBootstrap(page) {
@@ -766,6 +772,56 @@ async function assertPanelScopedBootstrap(page) {
   const bootstrap = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => window.__yetAiInitialRuntimeConfig).catch(() => undefined);
   if (bootstrap?.runtimeAccess !== "same_origin_proxy" || bootstrap?.runtimeBaseUrl !== panelBasePath || bootstrap?.runtimeProxyBaseUrl !== panelBasePath) {
     failures.push(`Panel index did not inject PackagedGuiServer bootstrap config: ${JSON.stringify(bootstrap)}.`);
+  }
+}
+
+async function assertIframeCannotBypassWrapperBridge(page, frameLocator, wrapperOrigin, iframeOrigin) {
+  if (wrapperOrigin === iframeOrigin) {
+    failures.push("Wrapper and iframe origins collapsed in the production-like browser smoke.");
+    return;
+  }
+  const before = await page.evaluate(() => ({
+    readySequence: window.__yetAiGuiReadySequence ?? 0,
+    readyRequestId: window.__yetAiCurrentReadyRequestId,
+    bridgeMessageCount: window.__yetAiBridgeMessages?.length ?? 0,
+    hostMessageCount: window.__yetAiHostMessagesPostedCount ?? 0,
+    hostReadyAccepted: window.__yetAiHostReadyAcceptedForCurrentFrame === true,
+    acceptedHostReadyRequestId: window.__yetAiAcceptedHostReadyRequestId,
+  }));
+  const bypass = await frameLocator.locator("body").evaluate(() => {
+    const names = [
+      "postIntellijMessage",
+      "__yetAiSendHostMessageToFrame",
+      "__yetAiBridgeMessages",
+      "__yetAiCurrentReadyRequestId",
+      "__yetAiGuiReadySequence",
+      "__yetAiHostMessagesPostedCount",
+    ];
+    return names.map((name) => {
+      try {
+        const value = window.parent[name];
+        if (typeof value === "function") value({ type: "gui.ready" });
+        else window.parent[name] = "iframe-bypass-attempt";
+        return { name, blocked: false };
+      } catch (error) {
+        return { name, blocked: error instanceof DOMException && error.name === "SecurityError" };
+      }
+    });
+  });
+  await page.waitForTimeout(100);
+  const after = await page.evaluate(() => ({
+    readySequence: window.__yetAiGuiReadySequence ?? 0,
+    readyRequestId: window.__yetAiCurrentReadyRequestId,
+    bridgeMessageCount: window.__yetAiBridgeMessages?.length ?? 0,
+    hostMessageCount: window.__yetAiHostMessagesPostedCount ?? 0,
+    hostReadyAccepted: window.__yetAiHostReadyAcceptedForCurrentFrame === true,
+    acceptedHostReadyRequestId: window.__yetAiAcceptedHostReadyRequestId,
+  }));
+  if (!bypass.every((attempt) => attempt.blocked)) {
+    failures.push(`Cross-origin iframe could inspect or invoke wrapper bridge authority: ${JSON.stringify(bypass)}.`);
+  }
+  if (!deepEqual(after, before)) {
+    failures.push(`Direct iframe bypass attempt changed wrapper readiness authority: before=${JSON.stringify(before)} after=${JSON.stringify(after)}.`);
   }
 }
 
@@ -2650,6 +2706,10 @@ window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued dia
           window.__yetAiCurrentFrameNonce = currentFrameNonce;`);
   html = html.replace("currentGuiReadyRequestId = undefined;", `currentGuiReadyRequestId = undefined;
           window.__yetAiCurrentReadyRequestId = undefined;`);
+  html = html.replace("acceptedHostReadyRequestId = undefined;", `acceptedHostReadyRequestId = undefined;
+          window.__yetAiAcceptedHostReadyRequestId = undefined;`);
+  html = html.replace("hostReadyAcceptedForCurrentFrame = false;", `hostReadyAcceptedForCurrentFrame = false;
+          window.__yetAiHostReadyAcceptedForCurrentFrame = false;`);
   html = html.replace("currentFrameNonce = undefined;", `currentFrameNonce = undefined;
           window.__yetAiCurrentFrameNonce = undefined;`);
   html = html.replace("pendingHostMessages.length = 0;", `pendingHostMessages.length = 0;`);
@@ -2669,6 +2729,10 @@ window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued dia
   html = html.replace("currentFrameWindow.postMessage(message, frameTargetOrigin);", `currentFrameWindow.postMessage(message, frameTargetOrigin);
             window.__yetAiHostMessagesPostedCount += 1;
             window.__yetAiHostMessagesPosted.push(message);`);
+  html = html.replace("acceptedHostReadyRequestId = message.requestId;", `acceptedHostReadyRequestId = message.requestId;
+              window.__yetAiAcceptedHostReadyRequestId = acceptedHostReadyRequestId;`);
+  html = html.replace("hostReadyAcceptedForCurrentFrame = true;", `hostReadyAcceptedForCurrentFrame = true;
+              window.__yetAiHostReadyAcceptedForCurrentFrame = true;`);
   html = html.replace("if (!frameReady && frameNonceChallengeAttempts < 20) {", `window.__yetAiLastFrameNonceForSmoke = currentFrameNonce;
           if (!frameReady && frameNonceChallengeAttempts < 20) {`);
   return html;
@@ -3317,26 +3381,10 @@ function assertNoSecretLeak(text, markers) {
 
 async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
   const realStaticRoot = await realpath(staticRoot);
-  let wrapperHtml;
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
     if (requestUrl.pathname === "/__smoke/next-assistant-response") {
       await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
-      return;
-    }
-    if (requestUrl.pathname === `${panelBasePath}/wrapper.html`) {
-      if (request.method !== "GET") {
-        response.writeHead(405, { allow: "GET" });
-        response.end("Method not allowed");
-        return;
-      }
-      if (wrapperHtml === undefined) {
-        response.writeHead(404);
-        response.end("Not found");
-        return;
-      }
-      response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      response.end(wrapperHtml);
       return;
     }
     const panelPrefix = `${panelBasePath}/`;
@@ -3360,13 +3408,30 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
     }
     await servePackagedGuiAsset(request, response, realStaticRoot, requestUrl.pathname.slice(panelBasePath.length));
   });
-  const runningServer = await listen(server);
-  return {
-    ...runningServer,
-    registerWrapper: (html) => {
-      wrapperHtml = html;
-    },
-  };
+  return listen(server);
+}
+
+async function startWrapperServer(wrapperHtml, runtimeBaseUrl) {
+  const server = http.createServer(async (request, response) => {
+    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (requestUrl.pathname === "/__smoke/next-assistant-response") {
+      await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
+      return;
+    }
+    if (requestUrl.pathname !== `${panelBasePath}/wrapper.html`) {
+      response.writeHead(404);
+      response.end("Not found");
+      return;
+    }
+    if (request.method !== "GET") {
+      response.writeHead(405, { allow: "GET" });
+      response.end("Method not allowed");
+      return;
+    }
+    response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    response.end(wrapperHtml);
+  });
+  return listen(server);
 }
 
 async function servePanelIndexHtml(request, response, realStaticRoot) {
