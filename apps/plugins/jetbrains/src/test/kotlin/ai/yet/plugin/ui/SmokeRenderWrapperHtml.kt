@@ -11,7 +11,7 @@ fun main(args: Array<String>) {
     val origin = args[0]
     val panelId = args[1]
     val panelBasePath = args[2]
-    val packagedGui = PackagedGui("$origin/index.html", origin).forPanel(PackagedGuiPanel(panelId, panelBasePath))
+    val packagedGui = PackagedGui("$origin/index.html", origin, "http://127.0.0.1:49222").forPanel(PackagedGuiPanel(panelId, panelBasePath))
     val connection = RuntimeConnectionResult(
         RuntimeSettings("http://127.0.0.1:8001", null, null),
         "Connected to Yet AI local runtime.",

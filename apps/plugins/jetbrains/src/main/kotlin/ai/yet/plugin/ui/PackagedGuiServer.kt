@@ -112,15 +112,9 @@ class PackagedGuiServer : Disposable {
     }
 }
 
-data class PackagedGui(val indexUrl: String, val origin: String, val wrapperOrigin: String = nextLoopbackOrigin(origin)) {
+data class PackagedGui(val indexUrl: String, val origin: String, val wrapperOrigin: String) {
     fun forPanel(panel: PackagedGuiPanel): PackagedGui = copy(indexUrl = origin + panel.proxyBaseUrl + "/index.html")
     fun wrapperUrl(panel: PackagedGuiPanel): String = wrapperOrigin + panel.proxyBaseUrl + "/wrapper.html"
-}
-
-private fun nextLoopbackOrigin(origin: String): String {
-    val uri = URI(origin)
-    require(uri.scheme == "http" && uri.host == "127.0.0.1" && uri.port in 1..65534)
-    return "http://127.0.0.1:${uri.port + 1}"
 }
 
 data class PackagedGuiPanel(val id: String, val proxyBaseUrl: String)

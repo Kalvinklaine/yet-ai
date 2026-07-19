@@ -79,7 +79,7 @@ class PackagedGuiServerTest {
 
     @Test
     fun packagedGuiPanelUrlUsesPanelScopedIndex() {
-        val gui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val gui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222")
         val panel = PackagedGuiPanel("panel-1", "/panel/panel-1")
         val panelGui = gui.forPanel(panel)
 

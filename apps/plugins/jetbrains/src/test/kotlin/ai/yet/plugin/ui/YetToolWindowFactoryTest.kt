@@ -119,7 +119,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "let frameLoaded = false;")
@@ -141,7 +141,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "const clearReadinessFallbackTimer = () => {")
@@ -169,7 +169,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "} else if (isGuiMessage(event.data)) {")
@@ -195,7 +195,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         listOf(
@@ -229,7 +229,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "event.source === currentFrameWindow && event.source === frame?.contentWindow")
@@ -248,7 +248,7 @@ class YetToolWindowFactoryTest {
 
     @Test
     fun pluginManagedWrapperShowsEngineServedRootWithoutToken() {
-        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222")
             .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
         val connection = RuntimeConnectionResult(
             RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
@@ -278,7 +278,7 @@ class YetToolWindowFactoryTest {
 
     @Test
     fun externalRuntimeWrapperDoesNotPromiseManagedWebUi() {
-        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222")
         val connection = RuntimeConnectionResult(
             RuntimeSettings("http://127.0.0.1:8123", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.CONNECT),
             "Connected to external runtime.",
@@ -350,7 +350,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "let latestShellRuntimeCopyPayload;")
@@ -370,7 +370,7 @@ class YetToolWindowFactoryTest {
 
     @Test
     fun shellRuntimeCopyUpdateScriptAdvertisesPluginManagedEngineServedWebUiOnlyWithSanitizedRoot() {
-        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222")
             .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
         val connection = RuntimeConnectionResult(
             RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
@@ -401,7 +401,7 @@ class YetToolWindowFactoryTest {
 
     @Test
     fun shellRuntimeCopyUpdateScriptKeepsExternalRuntimeCopyExternal() {
-        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222")
         val connection = RuntimeConnectionResult(
             RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, null, launchMode = ai.yet.plugin.runtime.LaunchMode.CONNECT),
             "Connected to external runtime.",
@@ -497,7 +497,7 @@ class YetToolWindowFactoryTest {
 
     @Test
     fun shellRuntimeCopyUpdateScriptHidesFallbackForConnectedHealthyRuntime() {
-        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
+        val packagedGui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222")
             .forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
         val connection = RuntimeConnectionResult(
             RuntimeSettings("http://127.0.0.1:8123/private?token=must-not-leak", null, "raw-static-session-token", launchMode = ai.yet.plugin.runtime.LaunchMode.LAUNCH),
@@ -531,7 +531,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, "runtime unavailable"),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "let frameReady = false")
@@ -616,7 +616,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "const isRequestId = (value) => value === undefined || (typeof value === \"string\" && value.length > 0 && value.length <= 128")
@@ -653,7 +653,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "const maxIdeActionRequestBytes = 8192;")
@@ -693,7 +693,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "const maxApplyWorkspaceEditRequestBytes = 65536;")
@@ -721,7 +721,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "const isGuiRuntimeRefresh = (message) => {")
@@ -741,7 +741,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "const bytes = new Uint8Array(16);")
@@ -760,7 +760,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "let currentFrameWindow = frame?.contentWindow;")
@@ -780,7 +780,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, "raw-static-session-token"), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertFalse(html.contains("raw-static-session-token"))
@@ -793,7 +793,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "if (message.type === \"host.ready\") return isHostReadyPayload(message.payload)")
@@ -832,7 +832,7 @@ class YetToolWindowFactoryTest {
         val html = renderHtml(
             RuntimeConnectionResult(RuntimeSettings("http://127.0.0.1:8001", null, null), null, null),
             "console.log('bridge')",
-            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221"),
+            PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221", "http://127.0.0.1:49222"),
         )
 
         assertContains(html, "const maxPendingHostMessages = 32;")
