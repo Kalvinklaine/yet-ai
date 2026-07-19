@@ -312,7 +312,15 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
             }
         } else null
         val postIntellij = query.inject("JSON.stringify(message)", "function(error) { console.log('Yet AI bridge send failed'); }", "function(response) {}")
-        browser.loadHTML(renderHtml(latestConnection, postIntellij, packagedGui))
+        val wrapperHtml = renderHtml(latestConnection, postIntellij, packagedGui)
+        val panel = packagedGuiPanel
+        val server = packagedGuiServer
+        if (packagedGui != null && panel != null && server != null) {
+            server.registerWrapper(panel.id, wrapperHtml)
+            browser.loadURL(packagedGui.wrapperUrl(panel))
+        } else {
+            browser.loadHTML(wrapperHtml)
+        }
         ApplicationManager.getApplication().messageBus.connect(this).subscribe(
             RuntimeConnectionListener.TOPIC,
             object : RuntimeConnectionListener {

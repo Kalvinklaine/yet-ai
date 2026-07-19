@@ -61,6 +61,22 @@ class YetToolWindowFactoryTest {
         assertFalse(html.contains("/assets/index-"))
     }
 
+    @Test
+    fun packagedPanelLoadsRegisteredLoopbackWrapperUrlAndKeepsInjectedBridge() {
+        val source = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/kotlin/ai/yet/plugin/ui/YetToolWindowFactory.kt"))
+
+        assertContains(source, "val postIntellij = query.inject(")
+        assertContains(source, "val wrapperHtml = renderHtml(latestConnection, postIntellij, packagedGui)")
+        assertContains(source, "server.registerWrapper(panel.id, wrapperHtml)")
+        assertContains(source, "browser.loadURL(packagedGui.wrapperUrl(panel))")
+        assertContains(source, "browser.loadHTML(wrapperHtml)")
+        assertFalse(source.contains("browser.loadHTML(renderHtml(latestConnection, postIntellij, packagedGui))"))
+        assertContains(source, "event.source !== currentFrameWindow || event.source !== frame?.contentWindow")
+        assertContains(source, "event.origin !== frameTargetOrigin")
+        assertContains(source, "message.payload.frameNonce === currentFrameNonce")
+        assertContains(source, "acceptedHostReadyRequestId === currentReadyRequestId()")
+    }
+
 
     @Test
     fun iframeLoadAloneDoesNotMarkGuiReadyOrHideFallback() {

@@ -22,6 +22,7 @@ import java.util.concurrent.Executors
 @Service(Service.Level.APP)
 class PackagedGuiServer : Disposable {
     private val panels = ConcurrentHashMap<String, PackagedGuiPanelRuntime>()
+    private val wrappers = ConcurrentHashMap<String, String>()
     private val random = SecureRandom()
     private var running: RunningServer? = null
 
@@ -39,7 +40,7 @@ class PackagedGuiServer : Disposable {
             Thread(runnable, "Yet AI packaged GUI server").apply { isDaemon = true }
         }
         server.executor = executor
-        server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap) }
+        server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap, wrappers::toMap) }
         server.start()
         val origin = "http://127.0.0.1:${server.address.port}"
         val gui = PackagedGui("$origin/index.html", origin)
@@ -59,7 +60,16 @@ class PackagedGuiServer : Disposable {
         panels[panelId] = PackagedGuiPanelRuntime(settings.runtimeUrl, settings.sessionToken)
     }
 
+    @Synchronized
+    fun registerWrapper(panelId: String, wrapperHtml: String): Boolean {
+        if (!isValidPanelId(panelId) || !panels.containsKey(panelId)) return false
+        wrappers[panelId] = wrapperHtml
+        return true
+    }
+
+    @Synchronized
     fun unregisterPanel(panelId: String) {
+        wrappers.remove(panelId)
         panels.remove(panelId)
         YetProxyAuthDiagnosticsStore.sameOriginProxyUnregistered(panelId)
     }
@@ -72,6 +82,7 @@ class PackagedGuiServer : Disposable {
             current.executor.shutdownNow()
         }
         panels.clear()
+        wrappers.clear()
         running = null
     }
 
@@ -95,6 +106,7 @@ class PackagedGuiServer : Disposable {
 
 data class PackagedGui(val indexUrl: String, val origin: String) {
     fun forPanel(panel: PackagedGuiPanel): PackagedGui = copy(indexUrl = origin + panel.proxyBaseUrl + "/index.html")
+    fun wrapperUrl(panel: PackagedGuiPanel): String = origin + panel.proxyBaseUrl + "/wrapper.html"
 }
 
 data class PackagedGuiPanel(val id: String, val proxyBaseUrl: String)
@@ -139,8 +151,18 @@ private fun isLoopbackRuntimeRoot(value: String): Boolean {
         (path.isEmpty() || path == "/")
 }
 
-fun handle(exchange: HttpExchange, loadResource: (String) -> ByteArray?, panels: () -> Map<String, PackagedGuiPanelRuntime> = { emptyMap() }) {
+fun handle(
+    exchange: HttpExchange,
+    loadResource: (String) -> ByteArray?,
+    panels: () -> Map<String, PackagedGuiPanelRuntime> = { emptyMap() },
+    wrappers: () -> Map<String, String> = { emptyMap() },
+) {
     try {
+        val wrapperPanelId = panelWrapperRoute(exchange.requestURI.rawPath)
+        if (wrapperPanelId != null) {
+            servePanelWrapper(exchange, wrapperPanelId, panels(), wrappers())
+            return
+        }
         val panelIndex = panelIndexRoute(exchange.requestURI.rawPath)
         if (panelIndex != null) {
             servePanelIndex(exchange, panelIndex, loadResource, panels())
@@ -169,6 +191,31 @@ fun handle(exchange: HttpExchange, loadResource: (String) -> ByteArray?, panels:
     } finally {
         exchange.close()
     }
+}
+
+private fun panelWrapperRoute(rawPath: String): String? {
+    val prefix = "/panel/"
+    if (!rawPath.startsWith(prefix)) return null
+    val remainder = rawPath.removePrefix(prefix)
+    val separator = remainder.indexOf('/')
+    if (separator < 0) return null
+    val panelId = remainder.substring(0, separator)
+    val path = remainder.substring(separator)
+    if (!isValidPanelId(panelId) || path != "/wrapper.html") return null
+    return panelId
+}
+
+private fun servePanelWrapper(exchange: HttpExchange, panelId: String, panels: Map<String, PackagedGuiPanelRuntime>, wrappers: Map<String, String>) {
+    if (exchange.requestMethod != "GET") {
+        send(exchange, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    val wrapper = wrappers[panelId]
+    if (!panels.containsKey(panelId) || wrapper == null) {
+        send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    send(exchange, 200, "text/html; charset=utf-8", wrapper.toByteArray(StandardCharsets.UTF_8))
 }
 
 private fun panelIndexRoute(rawPath: String): String? {

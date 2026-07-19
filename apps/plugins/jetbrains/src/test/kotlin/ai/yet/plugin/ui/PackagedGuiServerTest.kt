@@ -78,10 +78,66 @@ class PackagedGuiServerTest {
     @Test
     fun packagedGuiPanelUrlUsesPanelScopedIndex() {
         val gui = PackagedGui("http://127.0.0.1:49221/index.html", "http://127.0.0.1:49221")
-        val panelGui = gui.forPanel(PackagedGuiPanel("panel-1", "/panel/panel-1"))
+        val panel = PackagedGuiPanel("panel-1", "/panel/panel-1")
+        val panelGui = gui.forPanel(panel)
 
         assertEquals("http://127.0.0.1:49221/panel/panel-1/index.html", panelGui.indexUrl)
+        assertEquals("http://127.0.0.1:49221/panel/panel-1/wrapper.html", panelGui.wrapperUrl(panel))
         assertEquals(gui.origin, panelGui.origin)
+    }
+
+    @Test
+    fun registeredPanelWrapperIsServedOnlyForItsPanel() {
+        val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", null))
+        val wrappers = mapOf("panel-1" to "<html>panel-one-wrapper</html>")
+        withPackagedServer(panels, wrappers) { proxy ->
+            val response = request("${proxy.origin}/panel/panel-1/wrapper.html")
+
+            assertEquals(200, response.status)
+            assertEquals("<html>panel-one-wrapper</html>", response.body)
+            assertEquals(404, request("${proxy.origin}/panel/missing/wrapper.html").status)
+        }
+    }
+
+    @Test
+    fun panelWrapperRejectsMethodsMalformedPathsAndTraversal() {
+        val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", null))
+        val wrappers = mapOf("panel-1" to "<html>safe-wrapper</html>")
+        withPackagedServer(panels, wrappers) { proxy ->
+            assertEquals(405, request("${proxy.origin}/panel/panel-1/wrapper.html", "POST").status)
+            assertEquals(404, request("${proxy.origin}/panel/%2e%2e/wrapper.html").status)
+            assertEquals(404, request("${proxy.origin}/panel/panel-1/%2e%2e/wrapper.html").status)
+            assertEquals(404, request("${proxy.origin}/panel/panel-1/wrapper.html/extra").status)
+        }
+    }
+
+    @Test
+    fun stalePanelCannotReadRetainedWrapperSnapshot() {
+        val panels = mutableMapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", null))
+        val wrappers = mutableMapOf("panel-1" to "<html>panel-one-wrapper</html>")
+        withPackagedServer(panels, wrappers) { proxy ->
+            assertEquals(200, request("${proxy.origin}/panel/panel-1/wrapper.html").status)
+            panels.remove("panel-1")
+            assertEquals(404, request("${proxy.origin}/panel/panel-1/wrapper.html").status)
+        }
+    }
+
+    @Test
+    fun unregisterPanelRemovesLiveWrapperRoute() {
+        val server = PackagedGuiServer()
+        val gui = server.start() ?: error("packaged GUI test resource unavailable")
+        try {
+            val panel = server.registerPanel(RuntimeSettings("http://127.0.0.1:8765", null, null))
+            assertTrue(server.registerWrapper(panel.id, "<html>live-panel-wrapper</html>"))
+            assertEquals(200, request(gui.wrapperUrl(panel)).status)
+
+            server.unregisterPanel(panel.id)
+
+            assertEquals(404, request(gui.wrapperUrl(panel)).status)
+            assertTrue(!server.registerWrapper(panel.id, "<html>stale-wrapper</html>"))
+        } finally {
+            server.dispose()
+        }
     }
 
     @Test
@@ -249,9 +305,9 @@ private fun withRuntimeServer(status: Int = 200, block: (RuntimeTestServer) -> U
     }
 }
 
-private fun withPackagedServer(panels: Map<String, PackagedGuiPanelRuntime>, block: (TestServer) -> Unit) {
+private fun withPackagedServer(panels: Map<String, PackagedGuiPanelRuntime>, wrappers: Map<String, String> = emptyMap(), block: (TestServer) -> Unit) {
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
-    server.createContext("/") { exchange -> handle(exchange, { null }, { panels.toMap() }) }
+    server.createContext("/") { exchange -> handle(exchange, { null }, { panels.toMap() }, { wrappers.toMap() }) }
     server.start()
     try {
         block(TestServer(server))
@@ -260,9 +316,9 @@ private fun withPackagedServer(panels: Map<String, PackagedGuiPanelRuntime>, blo
     }
 }
 
-private fun request(url: String): Response {
+private fun request(url: String, method: String = "GET"): Response {
     val connection = URI(url).toURL().openConnection() as HttpURLConnection
-    connection.requestMethod = "GET"
+    connection.requestMethod = method
     connection.connectTimeout = 2000
     connection.readTimeout = 2000
     val status = connection.responseCode
