@@ -1000,12 +1000,22 @@ mod tests {
             .unwrap()
             .1
             .into_owned();
+        crate::logging::clear_test_log_lines();
 
         let (status, text) = callback_response("GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(text, CALLBACK_RETRY_TEXT);
         assert!(!text.contains("502"));
+        let logs = crate::logging::test_log_lines().join("\n");
+        assert!(logs.contains("provider_auth.exchange_failed"));
+        assert!(logs.contains("provider=openai"));
+        assert!(logs.contains("stage=callback"));
+        assert!(logs.contains("category=token_http_status_502"));
+        assert!(logs.contains("endpoint_class=loopback_override"));
+        assert!(logs.contains("detail=http_status=502"));
+        assert!(!logs.contains("codex-code-callback-test"));
+        assert!(!logs.contains(&state));
         assert_eq!(
             registered_config_dir_for_state(&state).await.unwrap(),
             Some(dir)

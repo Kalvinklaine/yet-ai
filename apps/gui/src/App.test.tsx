@@ -2843,6 +2843,43 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain(longValue);
   });
 
+  it("renders allowlisted token-exchange detail with category recovery guidance", async () => {
+    mockRuntimeResponses({
+      authResponse: {
+        ...pendingExperimentalAuthResponse(),
+        lastError: "Login reached Yet AI but token exchange failed (token_http_status_502; http_status=502; oauth_error=server_error). Retry login or use the API-key fallback.",
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    const diagnostic = container?.querySelector<HTMLElement>("[data-testid='provider-auth-exchange-diagnostic']");
+    expect(diagnostic?.textContent).toContain("Sanitized token-exchange diagnostic");
+    expect(diagnostic?.textContent).toContain("token_http_status_502 · HTTP 502 · OAuth server_error");
+    expect(diagnostic?.textContent).toContain("Check local proxy and network access, then retry login once or use the API-key fallback.");
+  });
+
+  it("rejects malformed secret-bearing token-exchange detail instead of rendering it", async () => {
+    const rawCode = "callback-code-secret-value";
+    const rawToken = "access_token=" + "t".repeat(64);
+    mockRuntimeResponses({
+      authResponse: {
+        ...pendingExperimentalAuthResponse(),
+        lastError: `Login reached Yet AI but token exchange failed (token_http_status_502; http_status=502; oauth_error=server_error; code=${rawCode}; ${rawToken}). Retry login or use the API-key fallback.`,
+      },
+    });
+    renderApp();
+
+    await flushAsync();
+
+    expect(container?.querySelector("[data-testid='provider-auth-exchange-diagnostic']")).toBeNull();
+    expect(container?.textContent).not.toContain(rawCode);
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("t".repeat(64));
+    expect(browserStorageDump()).not.toContain(rawCode);
+  });
+
   it("renders error account login with sanitized retry guidance and API-key fallback", async () => {
     const longValue = "q".repeat(64);
     mockRuntimeResponses({

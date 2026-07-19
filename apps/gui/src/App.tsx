@@ -6481,6 +6481,7 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
   const canLogin = canStartExperimentalProviderAuth(status);
   const canDisconnect = status.configured && status.authSource !== "api_key";
   const loginLabel = status.status === "pending" ? "Reconnect login" : status.status === "error" ? "Retry login" : status.status === "connected" ? "Reconnect provider account" : status.status === "expired" || status.status === "revoked" ? "Reconnect provider account" : "Connect provider account";
+  const exchangeDiagnostic = providerAuthExchangeDiagnostic(status.lastError);
   return (
     <div className={`login-state-panel stack ${status.status}`} data-testid="provider-auth-state" data-provider-auth-status={status.status}>
       <div className="stack">
@@ -6493,6 +6494,13 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
         {!runtimeConnected && <span>Runtime unavailable or restarted: click Refresh runtime, then Refresh login status. If the pending browser session is stale, reconnect or use the API-key fallback.</span>}
         <span className="subtle">Login/chat only. No workspace execution.</span>
       </div>
+      {exchangeDiagnostic && (
+        <div className="recovery-card" role="status" data-testid="provider-auth-exchange-diagnostic">
+          <strong>Sanitized token-exchange diagnostic</strong>
+          <span>{exchangeDiagnostic.detail}</span>
+          <span>{exchangeDiagnostic.recovery}</span>
+        </div>
+      )}
       <ProviderAuthStateBody status={status} />
       {status.status === "pending" && status.authSource === "oauth" && status.sessionId && (
         <form className="manual-exchange-card stack" onSubmit={onExchange}>
@@ -6520,6 +6528,50 @@ function ProviderAuthJourney({ status, pendingState, exchangeCode, exchangeError
       </div>
     </div>
   );
+}
+
+const providerAuthExchangeCategories = new Set([
+  "token_http_failed_or_timeout",
+  "provider_rejected",
+  "refresh_token_reused",
+  "adapter_failure",
+  "token_json_invalid",
+  "token_access_missing",
+  "account_id_missing",
+  "expires_invalid",
+  "scopes_invalid",
+  "storage_failed",
+  "model_discovery_fallback",
+]);
+
+function providerAuthExchangeDiagnostic(lastError: string | undefined): { detail: string; recovery: string } | null {
+  if (!lastError || lastError.length > 400) {
+    return null;
+  }
+  const match = /^Login reached Yet AI but token exchange failed \(([a-z_]+|token_http_status_\d{3})(?:; http_status=(\d{3})(?:; oauth_error=(invalid_grant|invalid_client|invalid_request|unauthorized_client|unsupported_grant_type|invalid_scope|access_denied|temporarily_unavailable|server_error|slow_down))?)?\)\. Retry login or use the API-key fallback\.$/.exec(lastError);
+  if (!match) {
+    return null;
+  }
+  const category = match[1];
+  const status = match[2];
+  const oauthError = match[3];
+  if (!category || (!category.startsWith("token_http_status_") && !providerAuthExchangeCategories.has(category))) {
+    return null;
+  }
+  if (category.startsWith("token_http_status_") && category !== `token_http_status_${status ?? category.slice(-3)}`) {
+    return null;
+  }
+  const detail = [category, status ? `HTTP ${status}` : null, oauthError ? `OAuth ${oauthError}` : null].filter(Boolean).join(" · ");
+  const recovery = category === "refresh_token_reused"
+    ? "Reconnect the account with a fresh login, or use the API-key fallback."
+    : oauthError === "invalid_grant" || oauthError === "access_denied" || category === "provider_rejected"
+      ? "Start a fresh browser login; do not reuse the authorization code. The API-key fallback remains available."
+      : category === "token_http_failed_or_timeout" || (status !== undefined && Number(status) >= 500)
+        ? "Check local proxy and network access, then retry login once or use the API-key fallback."
+        : category === "storage_failed"
+          ? "Check local credential storage access, then retry or use the API-key fallback."
+          : "Retry with a fresh login once, then use the API-key fallback if the failure continues.";
+  return { detail, recovery };
 }
 
 function ProviderAuthStateBody({ status }: { status: ProviderAuthResponse }) {

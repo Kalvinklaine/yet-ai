@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
 use crate::provider_auth_callback;
+use crate::logging::{log_event, EngineLogLevel};
 use crate::providers::{self, AuthType, ProviderKind, StoredProviderConfig};
 use crate::secret_store::{provider_secret_store, ProviderSecretStore, SecretKind};
 
@@ -468,6 +469,7 @@ fn try_acquire_codex_exchange_guard(
 pub(super) async fn codex_exchange(
     config_dir: &Path,
     provider: &str,
+    stage: &'static str,
     session_id: String,
     state_value: String,
     code: String,
@@ -513,6 +515,12 @@ pub(super) async fn codex_exchange(
     let token = match exchange_codex_token(&session, &code).await {
         Ok(token) => token,
         Err(error) => {
+            log_provider_auth_exchange_failure(
+                provider,
+                stage,
+                &session.token_endpoint_url,
+                &error,
+            );
             let mut session = session;
             session.last_error = Some(sanitized_provider_auth_last_error(&error));
             codex.pending = Some(session);
@@ -533,6 +541,12 @@ pub(super) async fn codex_exchange(
     match exchange {
         Ok(response) => Ok(response),
         Err(error) => {
+            log_provider_auth_exchange_failure(
+                provider,
+                stage,
+                &session.token_endpoint_url,
+                &error,
+            );
             let mut codex = read_codex_state(config_dir, provider).await?;
             let mut session = session;
             session.last_error = Some(sanitized_provider_auth_last_error(&error));
@@ -814,6 +828,40 @@ fn safe_provider_auth_detail(
         return None;
     }
     Some(safe.join("; "))
+}
+
+fn codex_endpoint_class(token_endpoint_url: &str) -> &'static str {
+    reqwest::Url::parse(token_endpoint_url)
+        .ok()
+        .filter(is_allowed_loopback_host)
+        .map(|_| "loopback_override")
+        .unwrap_or("default_remote")
+}
+
+fn log_provider_auth_exchange_failure(
+    provider: &str,
+    stage: &'static str,
+    token_endpoint_url: &str,
+    error: &ProviderAuthError,
+) {
+    let ProviderAuthError::TokenExchange(category, detail) = error else {
+        return;
+    };
+    let safe_detail = safe_provider_auth_detail(*category, detail.as_deref());
+    let category = category.as_str();
+    let endpoint_class = codex_endpoint_class(token_endpoint_url);
+    let detail = safe_detail.as_deref().unwrap_or("none");
+    log_event(
+        EngineLogLevel::Warn,
+        "provider_auth.exchange_failed",
+        &[
+            ("provider", &provider),
+            ("stage", &stage),
+            ("category", &category),
+            ("endpoint_class", &endpoint_class),
+            ("detail", &detail),
+        ],
+    );
 }
 
 #[derive(Debug, Deserialize)]
@@ -1527,6 +1575,12 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
         match refresh_codex_token(&current.metadata.token_endpoint_url, &refresh_token).await {
             Ok(token) => token,
             Err(CodexTokenEndpointError::Permanent(category)) => {
+                log_provider_auth_exchange_failure(
+                    provider,
+                    "refresh",
+                    &current.metadata.token_endpoint_url,
+                    &ProviderAuthError::token_exchange(category),
+                );
                 if let Some(newer) =
                     read_newer_codex_chat_auth(config_dir, provider, &current.access_token).await?
                 {
@@ -1537,12 +1591,23 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
                 return Err(ProviderAuthError::token_exchange(category));
             }
             Err(CodexTokenEndpointError::Failed(category)) => {
+                log_provider_auth_exchange_failure(
+                    provider,
+                    "refresh",
+                    &current.metadata.token_endpoint_url,
+                    &ProviderAuthError::token_exchange(category),
+                );
                 return Err(ProviderAuthError::token_exchange(category));
             }
             Err(CodexTokenEndpointError::FailedWithDetail(category, detail)) => {
-                return Err(ProviderAuthError::token_exchange_with_detail(
-                    category, detail,
-                ));
+                let error = ProviderAuthError::token_exchange_with_detail(category, detail);
+                log_provider_auth_exchange_failure(
+                    provider,
+                    "refresh",
+                    &current.metadata.token_endpoint_url,
+                    &error,
+                );
+                return Err(error);
             }
         };
     let returned_refresh_token = sanitized_optional_token(token.refresh_token.as_deref());
@@ -3250,6 +3315,58 @@ mod tests {
             assert!(!message.contains(value), "status leaked {value}: {message}");
             assert!(message.contains("token_http_status_400"));
         }
+    }
+
+    #[test]
+    fn oauth_exchange_log_uses_only_allowlisted_diagnostics() {
+        crate::logging::clear_test_log_lines();
+        let raw_secret = "authorization-code-secret state=callback-secret access_token=token-secret /Users/alice/auth.json";
+        let error = ProviderAuthError::token_exchange_with_detail(
+            super::CodexTokenExchangeCategory::TokenHttpStatus(502),
+            format!("http_status=502; oauth_error=server_error; {raw_secret}"),
+        );
+
+        super::log_provider_auth_exchange_failure(
+            "openai",
+            "callback",
+            "https://auth.openai.com/oauth/token",
+            &error,
+        );
+
+        let logs = crate::logging::test_log_lines().join("\n");
+        assert!(logs.contains("provider_auth.exchange_failed"));
+        assert!(logs.contains("provider=openai"));
+        assert!(logs.contains("stage=callback"));
+        assert!(logs.contains("category=token_http_status_502"));
+        assert!(logs.contains("endpoint_class=default_remote"));
+        assert!(logs.contains("detail=none"));
+        assert!(!logs.contains(raw_secret));
+        assert!(!logs.contains("authorization-code-secret"));
+        assert!(!logs.contains("callback-secret"));
+        assert!(!logs.contains("token-secret"));
+        assert!(!logs.contains("/Users/alice"));
+    }
+
+    #[test]
+    fn oauth_exchange_log_keeps_canonical_detail_for_loopback_manual_exchange() {
+        crate::logging::clear_test_log_lines();
+        let error = ProviderAuthError::token_exchange_with_detail(
+            super::CodexTokenExchangeCategory::TokenHttpStatus(400),
+            "http_status=400; oauth_error=invalid_grant".to_string(),
+        );
+
+        super::log_provider_auth_exchange_failure(
+            "openai",
+            "manual_exchange",
+            "http://127.0.0.1:4567/token",
+            &error,
+        );
+
+        let logs = crate::logging::test_log_lines().join("\n");
+        assert!(logs.contains("stage=manual_exchange"));
+        assert!(logs.contains("category=token_http_status_400"));
+        assert!(logs.contains("endpoint_class=loopback_override"));
+        assert!(logs.contains("detail=http_status=400;_oauth_error=invalid_grant"));
     }
 
     #[test]

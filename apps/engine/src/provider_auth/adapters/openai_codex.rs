@@ -202,6 +202,7 @@ impl OpenAiCodexOAuthAdapter {
 
     pub(in crate::provider_auth) async fn exchange_response(
         &self,
+        stage: &'static str,
         session_id: String,
         state: String,
         code: String,
@@ -209,6 +210,7 @@ impl OpenAiCodexOAuthAdapter {
         crate::provider_auth::codex_exchange(
             &self.config_dir,
             self.provider,
+            stage,
             session_id,
             state,
             code,
@@ -228,7 +230,7 @@ impl OpenAiCodexOAuthAdapter {
         if session.state != state {
             return Err(ProviderAuthError::SessionMismatch);
         }
-        self.exchange_response(session.session_id, state, code)
+        self.exchange_response("callback", session.session_id, state, code)
             .await
     }
 
@@ -419,7 +421,7 @@ impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
     ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
         Box::pin(async move {
             let response = self
-                .exchange_response(request.session_id, request.state, request.code)
+                .exchange_response("manual_exchange", request.session_id, request.state, request.code)
                 .await
                 .map_err(|error| match error {
                     ProviderAuthError::SessionExpired => ProviderOAuthAdapterError::SessionExpired,
