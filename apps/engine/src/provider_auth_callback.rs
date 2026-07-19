@@ -183,11 +183,11 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, S
     if parsed.path() != "/auth/callback" {
         return (StatusCode::NOT_FOUND, CALLBACK_NOT_FOUND_TEXT.to_string());
     }
-    let query: HashMap<String, String> = parsed.query_pairs().into_owned().collect();
-    if query.contains_key("error") {
-        let Some(state) = bounded_query_value(&query, "state", 512) else {
-            return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT.to_string());
-        };
+    let Some(query) = parse_callback_query(&parsed) else {
+        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT.to_string());
+    };
+    if query.provider_error.is_some() {
+        let state = query.state;
         let config_dir = match registered_config_dir_for_state(&state).await {
             Ok(Some(config_dir)) => config_dir,
             Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT.to_string()),
@@ -206,10 +206,8 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, S
             Err(error) => (error.status(), text),
         };
     }
-    let Some(state) = bounded_query_value(&query, "state", 512) else {
-        return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT.to_string());
-    };
-    let Some(code) = bounded_query_value(&query, "code", 4096) else {
+    let state = query.state;
+    let Some(code) = query.code else {
         return (StatusCode::BAD_REQUEST, CALLBACK_FAILURE_TEXT.to_string());
     };
 
@@ -341,12 +339,53 @@ fn directly_registered_config_dir_for_test(state_value: &str) -> Option<PathBuf>
         .and_then(|state| state.pending_states.get(state_value).cloned())
 }
 
-fn bounded_query_value(
-    query: &HashMap<String, String>,
-    key: &str,
-    max_chars: usize,
-) -> Option<String> {
-    let value = query.get(key)?;
+struct CallbackQuery {
+    state: String,
+    code: Option<String>,
+    provider_error: Option<String>,
+}
+
+fn parse_callback_query(url: &reqwest::Url) -> Option<CallbackQuery> {
+    let mut state = None;
+    let mut code = None;
+    let mut provider_error = None;
+    let mut error_description = None;
+
+    for (key, value) in url.query_pairs() {
+        let target = match key.as_ref() {
+            "state" => &mut state,
+            "code" => &mut code,
+            "error" => &mut provider_error,
+            "error_description" => &mut error_description,
+            _ => return None,
+        };
+        if target.replace(value.into_owned()).is_some() {
+            return None;
+        }
+    }
+
+    let state = bounded_query_value(state?, 512)?;
+    let code = bounded_optional_query_value(code, 4096)?;
+    let provider_error = bounded_optional_query_value(provider_error, 512)?;
+    let error_description = bounded_optional_query_value(error_description, 2048)?;
+    match (&code, &provider_error, &error_description) {
+        (Some(_), None, None) | (None, Some(_), _) => Some(CallbackQuery {
+            state,
+            code,
+            provider_error,
+        }),
+        _ => None,
+    }
+}
+
+fn bounded_optional_query_value(value: Option<String>, max_chars: usize) -> Option<Option<String>> {
+    match value {
+        Some(value) => bounded_query_value(value, max_chars).map(Some),
+        None => Some(None),
+    }
+}
+
+fn bounded_query_value(value: String, max_chars: usize) -> Option<String> {
     if value.trim() != value || value.trim().is_empty() || value.chars().count() > max_chars {
         return None;
     }
@@ -356,7 +395,7 @@ fn bounded_query_value(
     {
         return None;
     }
-    Some(value.to_string())
+    Some(value)
 }
 
 async fn write_response(stream: &mut TcpStream, status: StatusCode, text: String) {
@@ -561,6 +600,50 @@ mod tests {
 
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(text, CALLBACK_FAILURE_TEXT);
+    }
+
+    #[tokio::test]
+    async fn callback_response_rejects_ambiguous_queries_without_mutating_pending_state() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_all_registered_state_for_test();
+        let dir = callback_test_dir("ambiguous-query");
+        let start = start_codex_pending(&dir, &codex_token_endpoint(StatusCode::OK).await).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        let cases = [
+            format!("state={state}&state=other&code=code-secret"),
+            format!("state={state}&code=code-secret&code=other"),
+            format!("state={state}&error=access_denied&error=server_error"),
+            format!("state={state}&code=code-secret&error=access_denied"),
+            format!("state={state}&error_description=provider-secret"),
+            format!("state={state}&code=code-secret&unexpected=value"),
+            format!(
+                "state={state}&error=access_denied&error_description=provider-secret&error_description=other"
+            ),
+        ];
+
+        for query in cases {
+            let (status, text) = callback_response("GET", &format!("/auth/callback?{query}")).await;
+
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{query}");
+            assert_eq!(text, CALLBACK_FAILURE_TEXT, "{query}");
+            assert!(!text.contains(&state));
+            assert!(!text.contains("code-secret"));
+            assert!(!text.contains("provider-secret"));
+            assert_eq!(
+                directly_registered_config_dir_for_test(&state),
+                Some(dir.clone()),
+                "{query}"
+            );
+            let status = provider_auth::status(&dir, "openai").await.unwrap();
+            assert_eq!(status.status, "pending", "{query}");
+            assert!(status.session_id.is_some(), "{query}");
+        }
     }
 
     #[test]
