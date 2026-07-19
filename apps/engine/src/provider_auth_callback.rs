@@ -23,6 +23,8 @@ const CALLBACK_RETRY_TEXT: &str =
     "Login could not be completed. Return to Yet AI and retry login or the authorization code.";
 const CALLBACK_RECONNECT_TEXT: &str =
     "Login could not be completed. Return to Yet AI and reconnect your login.";
+const CALLBACK_RESTART_TEXT: &str =
+    "Login could not be completed. Return to Yet AI and start login again.";
 const CALLBACK_FALLBACK_TEXT: &str =
     "Login could not be completed. Return to Yet AI or use the API-key fallback.";
 const CALLBACK_STORAGE_FAILURE_TEXT: &str =
@@ -248,6 +250,9 @@ fn callback_error_should_forget_mapping(
 }
 
 fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> String {
+    if provider_auth::codex_authorization_code_invalid_grant(error) {
+        return CALLBACK_RESTART_TEXT.to_string();
+    }
     match error {
         provider_auth::ProviderAuthError::SessionMismatch => {
             CALLBACK_AMBIGUOUS_STATE_TEXT.to_string()
@@ -389,6 +394,7 @@ mod tests {
             CALLBACK_PROVIDER_ERROR_TEXT,
             CALLBACK_RETRY_TEXT,
             CALLBACK_RECONNECT_TEXT,
+            CALLBACK_RESTART_TEXT,
             CALLBACK_FALLBACK_TEXT,
             CALLBACK_STORAGE_FAILURE_TEXT,
             CALLBACK_UNAVAILABLE_TEXT,

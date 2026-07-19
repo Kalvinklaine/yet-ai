@@ -547,6 +547,18 @@ pub(super) async fn codex_exchange(
                 &session.token_endpoint_url,
                 &error,
             );
+            if codex_authorization_code_invalid_grant(&error) {
+                write_codex_state(config_dir, provider, &codex).await?;
+                provider_auth_callback::forget_pending_state(&state_value);
+                retain_registry_after_exchange_failure(
+                    config_dir,
+                    provider,
+                    &session_id,
+                    ProviderAuthPendingRetention::Terminal,
+                )
+                .await?;
+                return Err(error);
+            }
             let mut session = session;
             session.last_error = Some(sanitized_provider_auth_last_error(&error));
             codex.pending = Some(session);
@@ -843,6 +855,16 @@ fn safe_provider_auth_detail(
         return None;
     }
     Some(safe.join("; "))
+}
+
+pub(crate) fn codex_authorization_code_invalid_grant(error: &ProviderAuthError) -> bool {
+    matches!(
+        error,
+        ProviderAuthError::TokenExchange(
+            CodexTokenExchangeCategory::TokenHttpStatus(400),
+            Some(detail),
+        ) if detail == "http_status=400; oauth_error=invalid_grant"
+    )
 }
 
 fn codex_endpoint_class(token_endpoint_url: &str) -> &'static str {
