@@ -8,13 +8,56 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URI
 import java.net.ServerSocket
+import java.util.concurrent.ExecutorService
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PackagedGuiServerTest {
+    @Test
+    fun partialStartupFailureStopsServersAndExecutorWithoutPublishingRunningState() {
+        lateinit var guiServer: HttpServer
+        lateinit var wrapperServer: HttpServer
+        lateinit var executor: ExecutorService
+        var startupAttempts = 0
+        val service = PackagedGuiServer { createdGuiServer, createdWrapperServer, createdExecutor ->
+            guiServer = createdGuiServer
+            wrapperServer = createdWrapperServer
+            executor = createdExecutor
+            startupAttempts += 1
+            if (startupAttempts == 1) error("simulated partial startup failure")
+        }
+
+        assertFailsWith<IllegalStateException> { service.start() }
+
+        assertTrue(executor.isShutdown)
+        assertFalse(isReachable(guiServer))
+        assertFalse(isReachable(wrapperServer))
+
+        val gui = service.start() ?: error("packaged GUI test resource unavailable")
+        try {
+            assertEquals(2, startupAttempts)
+            assertTrue(URI(gui.origin).authority != URI(gui.wrapperOrigin).authority)
+        } finally {
+            service.dispose()
+        }
+    }
+
+    @Test
+    fun successfulStartupReturnsDistinctBoundOrigins() {
+        val service = PackagedGuiServer()
+        val gui = service.start() ?: error("packaged GUI test resource unavailable")
+        try {
+            assertTrue(URI(gui.origin).authority != URI(gui.wrapperOrigin).authority)
+            assertEquals(200, request(gui.indexUrl).status)
+        } finally {
+            service.dispose()
+        }
+    }
+
     @Test
     fun mapsSafePathsToPackagedResources() {
         assertEquals("/yet-ai-gui/index.html", resourcePath("/"))
@@ -379,6 +422,10 @@ private fun withPackagedServer(
 private fun assertProxyFailureDoesNotLeak(body: String, vararg forbidden: String) {
     forbidden.forEach { value -> assertFalse(body.contains(value, ignoreCase = true), body) }
 }
+
+private fun isReachable(server: HttpServer): Boolean = runCatching {
+    request("http://127.0.0.1:${server.address.port}/")
+}.isSuccess
 
 private fun request(url: String, method: String = "GET"): Response {
     val connection = URI(url).toURL().openConnection() as HttpURLConnection

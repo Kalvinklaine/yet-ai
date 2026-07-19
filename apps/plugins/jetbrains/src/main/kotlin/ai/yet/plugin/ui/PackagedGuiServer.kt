@@ -22,7 +22,9 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 @Service(Service.Level.APP)
-class PackagedGuiServer : Disposable {
+class PackagedGuiServer internal constructor(
+    private val afterGuiServerStarted: (HttpServer, HttpServer, ExecutorService) -> Unit = { _, _, _ -> },
+) : Disposable {
     private val panels = ConcurrentHashMap<String, PackagedGuiPanelRuntime>()
     private val wrappers = ConcurrentHashMap<String, String>()
     private val random = SecureRandom()
@@ -37,22 +39,32 @@ class PackagedGuiServer : Disposable {
         if (resourceBytes("/yet-ai-gui/index.html") == null) {
             return null
         }
-        val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
-        val wrapperServer = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
         val executor = Executors.newFixedThreadPool(4) { runnable ->
             Thread(runnable, "Yet AI packaged GUI server").apply { isDaemon = true }
         }
-        server.executor = executor
-        wrapperServer.executor = executor
-        server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap) }
-        wrapperServer.createContext("/") { exchange -> handleWrapper(exchange, panels::toMap, wrappers::toMap) }
-        server.start()
-        wrapperServer.start()
-        val origin = "http://127.0.0.1:${server.address.port}"
-        val wrapperOrigin = "http://127.0.0.1:${wrapperServer.address.port}"
-        val gui = PackagedGui("$origin/index.html", origin, wrapperOrigin)
-        running = RunningServer(server, wrapperServer, executor, gui)
-        return gui
+        var server: HttpServer? = null
+        var wrapperServer: HttpServer? = null
+        try {
+            server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+            wrapperServer = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+            server.executor = executor
+            wrapperServer.executor = executor
+            server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap) }
+            wrapperServer.createContext("/") { exchange -> handleWrapper(exchange, panels::toMap, wrappers::toMap) }
+            server.start()
+            afterGuiServerStarted(server, wrapperServer, executor)
+            wrapperServer.start()
+            val origin = "http://127.0.0.1:${server.address.port}"
+            val wrapperOrigin = "http://127.0.0.1:${wrapperServer.address.port}"
+            val gui = PackagedGui("$origin/index.html", origin, wrapperOrigin)
+            running = RunningServer(server, wrapperServer, executor, gui)
+            return gui
+        } catch (error: Throwable) {
+            runCatching { server?.stop(0) }
+            runCatching { wrapperServer?.stop(0) }
+            executor.shutdownNow()
+            throw error
+        }
     }
 
     fun registerPanel(settings: RuntimeSettings): PackagedGuiPanel {
