@@ -452,6 +452,32 @@ fn is_allowed_loopback_host(url: &reqwest::Url) -> bool {
     )
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodexHttpProxyPolicy {
+    Default,
+    Bypass,
+}
+
+fn codex_http_proxy_policy(url: &reqwest::Url) -> CodexHttpProxyPolicy {
+    if is_allowed_loopback_host(url) {
+        CodexHttpProxyPolicy::Bypass
+    } else {
+        CodexHttpProxyPolicy::Default
+    }
+}
+
+fn codex_http_client(
+    url: &reqwest::Url,
+    timeout: std::time::Duration,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let builder = reqwest::Client::builder().timeout(timeout);
+    match codex_http_proxy_policy(url) {
+        CodexHttpProxyPolicy::Default => builder,
+        CodexHttpProxyPolicy::Bypass => builder.no_proxy(),
+    }
+    .build()
+}
+
 fn try_acquire_codex_exchange_guard(
     config_dir: &Path,
     provider: &str,
@@ -655,14 +681,6 @@ fn codex_token_exchange_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS)
 }
 
-fn codex_http_timeout_for_url(value: &str) -> std::time::Duration {
-    reqwest::Url::parse(value)
-        .ok()
-        .as_ref()
-        .map(codex_token_exchange_timeout_for_url)
-        .unwrap_or_else(codex_token_exchange_timeout)
-}
-
 fn codex_token_exchange_timeout_for_url(url: &reqwest::Url) -> std::time::Duration {
     if !is_allowed_loopback_host(url) || !url.path().contains("__timeout_override") {
         return codex_token_exchange_timeout();
@@ -680,19 +698,16 @@ async fn post_codex_token_raw(
     body: &[(&str, &str)],
     refresh_request: bool,
 ) -> Result<CodexTokenResponse, CodexTokenEndpointError> {
-    let timeout = codex_http_timeout_for_url(token_endpoint_url);
-    let builder = reqwest::Client::builder().timeout(timeout).no_proxy();
-    let client = builder.build().map_err(|_| {
+    let url = reqwest::Url::parse(token_endpoint_url).map_err(|_| {
         CodexTokenEndpointError::Failed(CodexTokenExchangeCategory::TokenHttpFailedOrTimeout)
     })?;
-    let response = client
-        .post(token_endpoint_url)
-        .form(body)
-        .send()
-        .await
-        .map_err(|_| {
-            CodexTokenEndpointError::Failed(CodexTokenExchangeCategory::TokenHttpFailedOrTimeout)
-        })?;
+    let timeout = codex_token_exchange_timeout_for_url(&url);
+    let client = codex_http_client(&url, timeout).map_err(|_| {
+        CodexTokenEndpointError::Failed(CodexTokenExchangeCategory::TokenHttpFailedOrTimeout)
+    })?;
+    let response = client.post(url).form(body).send().await.map_err(|_| {
+        CodexTokenEndpointError::Failed(CodexTokenExchangeCategory::TokenHttpFailedOrTimeout)
+    })?;
     let status = response.status();
     if !status.is_success() {
         let body = bounded_codex_token_error_body(response).await;
@@ -882,11 +897,8 @@ pub(in crate::provider_auth) async fn discover_codex_model(
 ) -> Result<String, ProviderAuthError> {
     validate_codex_account_id(account_id)?;
     let url = codex_models_url(chat_base_url)?;
-    let client = reqwest::Client::builder()
-        .timeout(codex_token_exchange_timeout_for_url(&url))
-        .no_proxy()
-        .build()
-        .map_err(|_| {
+    let client =
+        codex_http_client(&url, codex_token_exchange_timeout_for_url(&url)).map_err(|_| {
             ProviderAuthError::token_exchange(CodexTokenExchangeCategory::ModelDiscoveryFallback)
         })?;
     let response = client
@@ -3245,6 +3257,54 @@ mod tests {
                 > std::time::Duration::from_secs(super::CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS)
                     + std::time::Duration::from_millis(500)
         );
+    }
+
+    #[test]
+    fn codex_http_proxy_policy_bypasses_only_loopback_hosts() {
+        for value in [
+            "http://localhost:1455/token",
+            "http://127.0.0.1:1455/token",
+            "http://[::1]:1455/token",
+        ] {
+            let url = reqwest::Url::parse(value).unwrap();
+            assert_eq!(
+                super::codex_http_proxy_policy(&url),
+                super::CodexHttpProxyPolicy::Bypass,
+                "expected loopback proxy bypass for {value}"
+            );
+        }
+
+        for value in [
+            super::CODEX_TOKEN_URL,
+            super::CODEX_CHAT_BASE_URL,
+            "https://example.com/token",
+        ] {
+            let url = reqwest::Url::parse(value).unwrap();
+            assert_eq!(
+                super::codex_http_proxy_policy(&url),
+                super::CodexHttpProxyPolicy::Default,
+                "expected default proxy behavior for {value}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn malformed_codex_http_urls_fail_without_exposing_input() {
+        let unsafe_url = "not a url?code=authorization-secret";
+        let error = super::post_codex_token_raw(unsafe_url, &[], false)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::CodexTokenEndpointError::Failed(
+                super::CodexTokenExchangeCategory::TokenHttpFailedOrTimeout
+            )
+        ));
+        assert!(!format!("{error:?}").contains(unsafe_url));
+
+        let model_error = super::codex_models_url(unsafe_url).unwrap_err();
+        assert!(!model_error.to_string().contains(unsafe_url));
     }
 
     #[test]
