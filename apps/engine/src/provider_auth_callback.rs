@@ -350,6 +350,7 @@ fn parse_callback_query(url: &reqwest::Url) -> Option<CallbackQuery> {
     let mut code = None;
     let mut provider_error = None;
     let mut error_description = None;
+    let mut scope = None;
 
     for (key, value) in url.query_pairs() {
         let target = match key.as_ref() {
@@ -357,6 +358,7 @@ fn parse_callback_query(url: &reqwest::Url) -> Option<CallbackQuery> {
             "code" => &mut code,
             "error" => &mut provider_error,
             "error_description" => &mut error_description,
+            "scope" => &mut scope,
             _ => return None,
         };
         if target.replace(value.into_owned()).is_some() {
@@ -368,6 +370,8 @@ fn parse_callback_query(url: &reqwest::Url) -> Option<CallbackQuery> {
     let code = bounded_optional_query_value(code, 4096)?;
     let provider_error = bounded_optional_query_value(provider_error, 512)?;
     let error_description = bounded_optional_query_value(error_description, 2048)?;
+    // Provider-returned scope is benign metadata, validated but never used as callback authority.
+    let _scope = bounded_optional_query_value(scope, 2048)?;
     match (&code, &provider_error, &error_description) {
         (Some(_), None, None) | (None, Some(_), _) => Some(CallbackQuery {
             state,
@@ -621,6 +625,8 @@ mod tests {
             format!("state={state}&error=access_denied&error=server_error"),
             format!("state={state}&code=code-secret&error=access_denied"),
             format!("state={state}&error_description=provider-secret"),
+            format!("state={state}&code=code-secret&scope=openid&scope=profile"),
+            format!("state={state}&code=code-secret&scope={}", "x".repeat(2049)),
             format!("state={state}&code=code-secret&unexpected=value"),
             format!(
                 "state={state}&error=access_denied&error_description=provider-secret&error_description=other"
@@ -765,9 +771,15 @@ mod tests {
         format!("/auth/callback?code=codex-code-callback-test&state={state}")
     }
 
+    fn callback_query_with_scope(state: &str) -> String {
+        format!(
+            "/auth/callback?code=codex-code-callback-test&scope=openid+profile+email+offline_access&state={state}"
+        )
+    }
+
     fn callback_error_query(state: &str) -> String {
         format!(
-            "/auth/callback?error=access_denied&error_description=raw-denied-secret&state={state}"
+            "/auth/callback?error=access_denied&error_description=raw-denied-secret&scope=openid+profile+email+offline_access&state={state}"
         )
     }
 
@@ -1064,8 +1076,9 @@ mod tests {
                 .unwrap()
                 .1
                 .into_owned();
+            crate::logging::clear_test_log_lines();
 
-            let (status, text) = callback_response("GET", &callback_query(&state)).await;
+            let (status, text) = callback_response("GET", &callback_query_with_scope(&state)).await;
 
             assert_eq!(status, StatusCode::BAD_GATEWAY);
             assert_eq!(text, CALLBACK_RESTART_TEXT);
@@ -1075,6 +1088,10 @@ mod tests {
             assert!(!text.contains("Authorization code is invalid or expired"));
             assert!(!text.contains("codex-code-callback-test"));
             assert!(!text.contains(&state));
+            let logs = crate::logging::test_log_lines().join("\n");
+            assert!(!logs.contains("openid profile email offline_access"));
+            assert!(!logs.contains("codex-code-callback-test"));
+            assert!(!logs.contains(&state));
             assert!(registered_config_dir_for_state(&state)
                 .await
                 .unwrap()
@@ -1141,6 +1158,34 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_SUCCESS_TEXT);
+        assert!(registered_config_dir_for_state(&state)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn callback_with_provider_scope_reaches_successful_exchange() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_all_registered_state_for_test();
+        let dir = callback_test_dir("success-with-scope");
+        let token_endpoint_url = codex_token_endpoint(StatusCode::OK).await;
+        let start = start_codex_pending(&dir, &token_endpoint_url).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+
+        let (status, text) = callback_response("GET", &callback_query_with_scope(&state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(text, CALLBACK_SUCCESS_TEXT);
+        assert!(!text.contains("openid"));
+        assert!(!text.contains("codex-code-callback-test"));
+        assert!(!text.contains(&state));
         assert!(registered_config_dir_for_state(&state)
             .await
             .unwrap()
