@@ -3120,11 +3120,8 @@ async fn provider_auth_openai_experimental_token_expires_in_zero_uses_bounded_de
 }
 
 #[tokio::test]
-async fn provider_auth_openai_experimental_token_expires_in_invalid_values_are_rejected() {
-    for (expires_in, code) in [
-        (-1, "codex-code-negative-ttl-secret"),
-        (86401, "codex-code-huge-ttl-secret"),
-    ] {
+async fn provider_auth_openai_experimental_token_expires_in_unrepresentable_value_is_rejected() {
+    for (expires_in, code) in [(i64::MAX, "codex-code-unrepresentable-ttl-secret")] {
         let paths = test_storage_paths();
         let app = app(test_app_state(
             ProductIdentity::load().unwrap(),
@@ -3196,6 +3193,53 @@ async fn provider_auth_openai_experimental_token_expires_in_invalid_values_are_r
         assert_eq!(status, StatusCode::OK);
         assert_eq!(pending["status"], "pending");
         assert_provider_auth_response_has_no_codex_secrets(&pending);
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_exchange_preserves_multi_day_expiry() {
+    for expires_in in [7 * 24 * 3600, 8 * 24 * 3600] {
+        let app = test_app();
+        let (token_endpoint_url, _) = start_mock_codex_token_endpoint_with(expires_in).await;
+        let (status, start) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/start",
+                Body::from(
+                    json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                        .to_string(),
+                ),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+        let before = chrono::Utc::now() + chrono::Duration::seconds(expires_in - 5);
+        let (status, body) = json_response_from(
+            app,
+            authed_request(
+                Method::POST,
+                "/v1/provider-auth/openai/exchange",
+                Body::from(
+                    json!({
+                        "sessionId": start["sessionId"],
+                        "state": state,
+                        "code": "codex-code-multi-day-ttl"
+                    })
+                    .to_string(),
+                ),
+            ),
+        )
+        .await;
+        let after = chrono::Utc::now() + chrono::Duration::seconds(expires_in + 5);
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "connected");
+        let expires_at = chrono::DateTime::parse_from_rfc3339(body["expiresAt"].as_str().unwrap())
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(expires_at >= before, "{expires_in}: {expires_at}");
+        assert!(expires_at <= after, "{expires_in}: {expires_at}");
     }
 }
 
@@ -4790,7 +4834,7 @@ async fn provider_auth_openai_experimental_refresh_token_reused_without_newer_to
 #[tokio::test]
 async fn provider_auth_openai_experimental_refresh_zero_and_missing_expiry_reuse_omitted_refresh_token(
 ) {
-    for (label, expires_in) in [("zero", Some(0)), ("missing", None)] {
+    for (label, expires_in) in [("negative", Some(-1)), ("zero", Some(0)), ("missing", None)] {
         let paths = test_storage_paths();
         let store = FileSecretStore::new(&paths.config_dir);
         let mut response = json!({
@@ -4850,8 +4894,8 @@ async fn provider_auth_openai_experimental_refresh_zero_and_missing_expiry_reuse
 }
 
 #[tokio::test]
-async fn provider_auth_openai_experimental_refresh_invalid_expiry_preserves_credentials() {
-    for (label, expires_in) in [("negative", -1), ("too-large", 86401)] {
+async fn provider_auth_openai_experimental_refresh_unrepresentable_expiry_preserves_credentials() {
+    for (label, expires_in) in [("unrepresentable", i64::MAX)] {
         let paths = test_storage_paths();
         let store = FileSecretStore::new(&paths.config_dir);
         let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
@@ -4918,6 +4962,58 @@ async fn provider_auth_openai_experimental_refresh_invalid_expiry_preserves_cred
                 .unwrap(),
         );
         assert_eq!(after, before, "{label} expiry mutated credentials");
+    }
+}
+
+#[tokio::test]
+async fn provider_auth_openai_experimental_refresh_preserves_multi_day_expiry() {
+    for expires_in in [7 * 24 * 3600, 8 * 24 * 3600] {
+        let paths = test_storage_paths();
+        let store = FileSecretStore::new(&paths.config_dir);
+        let (token_endpoint_url, _) = start_refresh_codex_token_endpoint(
+            StatusCode::OK,
+            json!({
+                "access_token": "codex-refreshed-access-token-secret-abcd",
+                "expires_in": expires_in,
+                "scope": "openid profile email offline_access"
+            }),
+        )
+        .await;
+        seed_experimental_openai_oauth_with_ttl(
+            &paths,
+            "http://127.0.0.1:1456/backend-api/codex".to_string(),
+            token_endpoint_url,
+            "codex-old-access-token-secret-abcd",
+            "codex-old-refresh-token-secret-wxyz",
+            30,
+        )
+        .await;
+        let before = chrono::Utc::now() + chrono::Duration::seconds(expires_in - 5);
+
+        let auth = yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_if_needed(
+            &paths.config_dir,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        let after = chrono::Utc::now() + chrono::Duration::seconds(expires_in + 5);
+        assert_stored_secret(
+            Some(&auth.access_token),
+            "codex-refreshed-access-token-secret-abcd",
+        );
+        let metadata = store
+            .get_secret("openai", SecretKind::AuthMetadata)
+            .await
+            .unwrap()
+            .unwrap();
+        let metadata: Value = serde_json::from_str(&metadata).unwrap();
+        let expires_at =
+            chrono::DateTime::parse_from_rfc3339(metadata["expiresAt"].as_str().unwrap())
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        assert!(expires_at >= before, "{expires_in}: {expires_at}");
+        assert!(expires_at <= after, "{expires_in}: {expires_at}");
     }
 }
 

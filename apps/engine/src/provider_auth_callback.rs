@@ -1295,7 +1295,11 @@ mod tests {
     #[tokio::test]
     async fn callback_with_provider_scope_accepts_zero_and_missing_expiry() {
         let _guard = CALLBACK_TEST_LOCK.lock().await;
-        for (label, expires_in) in [("zero-expiry", Some(0)), ("missing-expiry", None)] {
+        for (label, expires_in) in [
+            ("negative-expiry", Some(-1)),
+            ("zero-expiry", Some(0)),
+            ("missing-expiry", None),
+        ] {
             clear_all_registered_state_for_test();
             let dir = callback_test_dir(label);
             let token_endpoint_url =
@@ -1323,6 +1327,43 @@ mod tests {
             assert!(!text.contains(&state));
             let connected = provider_auth::status(&dir, "openai").await.unwrap();
             assert_eq!(connected.status, "connected");
+            let expires_at =
+                chrono::DateTime::parse_from_rfc3339(connected.expires_at.as_deref().unwrap())
+                    .unwrap()
+                    .with_timezone(&chrono::Utc);
+            assert!(expires_at >= before, "{label}: {expires_at}");
+            assert!(expires_at <= after, "{label}: {expires_at}");
+        }
+    }
+
+    #[tokio::test]
+    async fn callback_with_provider_scope_preserves_explicit_multi_day_expiry() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        for (label, expires_in) in [
+            ("seven-day-expiry", 7 * 24 * 3600),
+            ("eight-day-expiry", 8 * 24 * 3600),
+        ] {
+            clear_all_registered_state_for_test();
+            let dir = callback_test_dir(label);
+            let token_endpoint_url =
+                codex_token_endpoint_with_expiry(StatusCode::OK, Some(expires_in)).await;
+            let start = start_codex_pending(&dir, &token_endpoint_url).await;
+            let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+                .unwrap()
+                .query_pairs()
+                .find(|(key, _)| key == "state")
+                .unwrap()
+                .1
+                .into_owned();
+            let before = chrono::Utc::now() + chrono::Duration::seconds(expires_in - 5);
+
+            let (status, text) =
+                callback_response(1455, "GET", &callback_query_with_scope(&state)).await;
+
+            let after = chrono::Utc::now() + chrono::Duration::seconds(expires_in + 5);
+            assert_eq!(status, StatusCode::OK, "{label}");
+            assert_eq!(text, CALLBACK_SUCCESS_TEXT, "{label}");
+            let connected = provider_auth::status(&dir, "openai").await.unwrap();
             let expires_at =
                 chrono::DateTime::parse_from_rfc3339(connected.expires_at.as_deref().unwrap())
                     .unwrap()

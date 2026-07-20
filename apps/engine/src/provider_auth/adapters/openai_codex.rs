@@ -176,8 +176,8 @@ impl OpenAiCodexOAuthAdapter {
         };
         let scopes =
             crate::provider_auth::codex_token_scopes(token.scope.as_deref(), &session.scopes)?;
-        let expires_in = crate::provider_auth::validate_codex_token_expires_in(token.expires_in)?;
-        let expires_at = (chrono::Utc::now() + chrono::Duration::seconds(expires_in)).to_rfc3339();
+        let expires_at =
+            crate::provider_auth::codex_token_expires_at(token.expires_in)?.to_rfc3339();
         let metadata = CodexAuthMetadata {
             provider: self.provider.to_string(),
             account_label: crate::provider_auth::sanitized_account_label(

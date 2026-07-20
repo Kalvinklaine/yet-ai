@@ -36,7 +36,6 @@ const CODEX_REFRESH_FILE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration
 const CODEX_REFRESH_FILE_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(10);
 const CODEX_TOKEN_REFRESH_SKEW_SECONDS: i64 = 60;
 const CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS: i64 = 8 * 24 * 3600;
-const MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS: i64 = 86400;
 const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const CODEX_CHAT_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
@@ -891,7 +890,6 @@ fn safe_provider_auth_detail(
 ) -> Option<String> {
     if category == CodexTokenExchangeCategory::ExpiresInvalid {
         return match detail? {
-            "expires_in_negative" => Some("expires_in_negative".to_string()),
             "expires_in_too_large" => Some("expires_in_too_large".to_string()),
             _ => None,
         };
@@ -1215,27 +1213,23 @@ fn validate_codex_account_id(value: &str) -> Result<(), ProviderAuthError> {
     Ok(())
 }
 
-pub(in crate::provider_auth) fn validate_codex_token_expires_in(
+pub(in crate::provider_auth) fn codex_token_expires_at(
     value: Option<i64>,
-) -> Result<i64, ProviderAuthError> {
+) -> Result<chrono::DateTime<Utc>, ProviderAuthError> {
     let value = value.unwrap_or_default();
-    if value < 0 {
-        return Err(ProviderAuthError::token_exchange_with_detail(
-            CodexTokenExchangeCategory::ExpiresInvalid,
-            "expires_in_negative".to_string(),
-        ));
-    }
-    if value > MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS {
-        return Err(ProviderAuthError::token_exchange_with_detail(
+    let expires_in = if value > 0 {
+        value
+    } else {
+        CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS
+    };
+    let invalid = || {
+        ProviderAuthError::token_exchange_with_detail(
             CodexTokenExchangeCategory::ExpiresInvalid,
             "expires_in_too_large".to_string(),
-        ));
-    }
-    Ok(if value == 0 {
-        CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS
-    } else {
-        value
-    })
+        )
+    };
+    let duration = Duration::try_seconds(expires_in).ok_or_else(&invalid)?;
+    Utc::now().checked_add_signed(duration).ok_or_else(invalid)
 }
 
 pub(in crate::provider_auth) fn codex_token_scopes(
@@ -1765,8 +1759,8 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
     validate_codex_chat_model(&current.metadata.chat_model)?;
     let chat_model = current.metadata.chat_model;
     let scopes = codex_token_scopes(token.scope.as_deref(), &current.metadata.scopes)?;
-    let expires_in = match validate_codex_token_expires_in(token.expires_in) {
-        Ok(expires_in) => expires_in,
+    let expires_at = match codex_token_expires_at(token.expires_in) {
+        Ok(expires_at) => expires_at,
         Err(error) => {
             log_provider_auth_exchange_failure(
                 provider,
@@ -1785,7 +1779,7 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
             .map(|value| sanitized_account_label(Some(value)))
             .unwrap_or_else(|| sanitized_account_label(Some(&current.metadata.account_label))),
         scopes,
-        expires_at: (Utc::now() + Duration::seconds(expires_in)).to_rfc3339(),
+        expires_at: expires_at.to_rfc3339(),
         redacted: crate::secret_store::redact_secret(&token.access_token),
         chatgpt_account_id: account_id,
         chat_base_url: current.metadata.chat_base_url,
@@ -3407,32 +3401,30 @@ mod tests {
     }
 
     #[test]
-    fn codex_token_expiry_fallback_and_bounds_match_reference_contract() {
-        assert_eq!(
-            super::validate_codex_token_expires_in(None).unwrap(),
-            8 * 24 * 3600
-        );
-        assert_eq!(
-            super::validate_codex_token_expires_in(Some(0)).unwrap(),
-            8 * 24 * 3600
-        );
-        assert_eq!(
-            super::validate_codex_token_expires_in(Some(3600)).unwrap(),
-            3600
-        );
-        for (value, expected_detail) in [
-            (Some(-1), "expires_in_negative"),
-            (Some(86401), "expires_in_too_large"),
+    fn codex_token_expiry_matches_reference_and_checks_representability() {
+        for (value, expected_seconds) in [
+            (None, 8 * 24 * 3600),
+            (Some(0), 8 * 24 * 3600),
+            (Some(-1), 8 * 24 * 3600),
+            (Some(3600), 3600),
+            (Some(7 * 24 * 3600), 7 * 24 * 3600),
+            (Some(8 * 24 * 3600), 8 * 24 * 3600),
         ] {
-            let error = super::validate_codex_token_expires_in(value).unwrap_err();
-            assert!(matches!(
-                error,
-                ProviderAuthError::TokenExchange(
-                    super::CodexTokenExchangeCategory::ExpiresInvalid,
-                    Some(ref detail)
-                ) if detail == expected_detail
-            ));
+            let before = chrono::Utc::now() + chrono::Duration::seconds(expected_seconds - 1);
+            let expires_at = super::codex_token_expires_at(value).unwrap();
+            let after = chrono::Utc::now() + chrono::Duration::seconds(expected_seconds + 1);
+            assert!(expires_at >= before, "{value:?}: {expires_at}");
+            assert!(expires_at <= after, "{value:?}: {expires_at}");
         }
+
+        let error = super::codex_token_expires_at(Some(i64::MAX)).unwrap_err();
+        assert!(matches!(
+            error,
+            ProviderAuthError::TokenExchange(
+                super::CodexTokenExchangeCategory::ExpiresInvalid,
+                Some(ref detail)
+            ) if detail == "expires_in_too_large"
+        ));
     }
 
     #[test]
@@ -3464,7 +3456,7 @@ mod tests {
 
     #[test]
     fn expires_invalid_detail_uses_exact_allowlist() {
-        for detail in ["expires_in_negative", "expires_in_too_large"] {
+        for detail in ["expires_in_too_large"] {
             assert_eq!(
                 super::safe_provider_auth_detail(
                     super::CodexTokenExchangeCategory::ExpiresInvalid,
@@ -3476,11 +3468,9 @@ mod tests {
         }
 
         for detail in [
-            "-1",
-            "86401",
-            "expires_in=-1",
-            "expires_in=86401",
-            "expires_in_negative; access_token=secret",
+            "9223372036854775807",
+            "expires_in=9223372036854775807",
+            "expires_in_too_large; access_token=secret",
             "/Users/alice/auth.json",
         ] {
             assert_eq!(
@@ -3496,11 +3486,9 @@ mod tests {
 
     #[test]
     fn expires_invalid_log_distinguishes_bounds_without_leaking_values() {
-        for (value, expected_detail) in
-            [(-1, "expires_in_negative"), (86401, "expires_in_too_large")]
-        {
+        for (value, expected_detail) in [(i64::MAX, "expires_in_too_large")] {
             crate::logging::clear_test_log_lines();
-            let error = super::validate_codex_token_expires_in(Some(value)).unwrap_err();
+            let error = super::codex_token_expires_at(Some(value)).unwrap_err();
             super::log_provider_auth_exchange_failure(
                 "openai",
                 "refresh",
@@ -3522,7 +3510,7 @@ mod tests {
         crate::logging::clear_test_log_lines();
         let error = ProviderAuthError::token_exchange_with_detail(
             super::CodexTokenExchangeCategory::ExpiresInvalid,
-            "expires_in_negative; raw_provider_body access_token=token-secret refresh_token=refresh-secret /Users/alice/auth.json expires_in=-1".to_string(),
+            "expires_in_too_large; raw_provider_body access_token=token-secret refresh_token=refresh-secret /Users/alice/auth.json expires_in=9223372036854775807".to_string(),
         );
         super::log_provider_auth_exchange_failure(
             "openai",
@@ -3538,7 +3526,7 @@ mod tests {
             "token-secret",
             "refresh-secret",
             "/Users/alice",
-            "expires_in=-1",
+            "expires_in=9223372036854775807",
             "private/token/path",
         ] {
             assert!(!logs.contains(forbidden), "log leaked {forbidden}: {logs}");
@@ -4634,7 +4622,7 @@ mod tests {
                 serde_json::json!({
                     "access_token": "codex-access-token-secret-abcd",
                     "refresh_token": "codex-refresh-token-secret-wxyz",
-                    "expires_in": 86401,
+                    "expires_in": i64::MAX,
                     "scope": "openid profile email offline_access",
                     "id_token": test_jwt_with_payload(serde_json::json!({ "chatgpt_account_id": "acct-test" }))
                 })
