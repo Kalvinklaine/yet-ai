@@ -187,6 +187,7 @@ Use this matrix when publishing or reviewing the current login-first milestone. 
 | Rust provider-auth/chat | `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp provider_auth && cargo test -p yet-lsp chat` | Engine-owned provider-auth state and chat behavior with fake/mock credentials only |
 | GUI app | `cd apps/gui && npm test -- App && npm run build` | Login-first, Demo Mode, and API-key fallback UI behavior/build assets |
 | Login-first smoke | `npm run smoke:login-first-message` | Mock-only provider-auth lifecycle, API-key fallback precedence, and first canned message |
+| Experimental account-login engine smoke | `npm run smoke:experimental-codex-login` | Real local engine provider-auth, safe model discovery, exact first Responses request, and sanitized invalid-request SSE through loopback mocks only |
 | Demo/local smokes | `npm run smoke:gui-demo-mode` and `npm run smoke:local` | No-key Demo Mode and local loopback chat/history/SSE behavior |
 | IDE smokes | `npm run smoke:vscode-first-message` and `npm run smoke:jetbrains-first-message` | Dev-preview IDE first-message flows through local runtime paths |
 | Release-candidate smoke | `npm run smoke:ide-release-candidate` | Aggregated installed-plugin/IDE visual and Demo coverage without publishing |

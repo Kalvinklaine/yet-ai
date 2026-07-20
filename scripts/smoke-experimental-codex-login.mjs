@@ -14,8 +14,12 @@ const refreshToken = `codex-loopback-refresh-${randomUUID()}`;
 const accountId = "acct-loopback-smoke";
 const idToken = jwtWithPayload({ chatgpt_account_id: accountId });
 const chatId = `smoke_codex_${randomUUID().replaceAll("-", "_")}`;
+const invalidChatId = `smoke_codex_invalid_${randomUUID().replaceAll("-", "_")}`;
 const requestId = `smoke-codex-request-${randomUUID()}`;
+const invalidRequestId = `smoke-codex-invalid-request-${randomUUID()}`;
 const firstChatSentinel = "SMOKE_CODEX_FIRST_CHAT";
+const invalidChatSentinel = "SMOKE_CODEX_INVALID_CHAT";
+const invalidProviderFragment = `raw-mock-provider-fragment-${randomUUID()}`;
 const timeoutMs = 120_000;
 
 let engine;
@@ -31,8 +35,12 @@ let modelDiscoveryAuthorizationHeader;
 let modelDiscoveryAccountHeaderSeen = false;
 let chatAuthorizationHeader;
 let chatAccountHeaderSeen = false;
-let chatRequestModel;
-let chatRequestSentinelSeen = false;
+let chatOriginatorHeader;
+let chatSessionHeader;
+let chatBetaHeader;
+let chatAcceptHeader;
+let chatContentTypeHeader;
+const chatRequestBodies = [];
 
 try {
   tempHome = await makeTempHome();
@@ -112,8 +120,33 @@ try {
   assert(chatRequestCount === 1, "mock responses endpoint was not called exactly once");
   assert(chatAuthorizationHeader === `Bearer ${accessToken}`, "mock responses endpoint did not receive experimental bearer auth");
   assert(chatAccountHeaderSeen === true, "mock responses endpoint did not receive account metadata header");
-  assert(chatRequestModel === "gpt-5-codex", "mock responses endpoint received unexpected model");
-  assert(chatRequestSentinelSeen === true, "mock responses endpoint did not receive first chat sentinel");
+  assert(chatOriginatorHeader === "codex_cli_rs", "mock responses endpoint received unexpected originator header");
+  assert(chatSessionHeader === chatId, "mock responses endpoint received unexpected session header");
+  assert(chatBetaHeader === "responses=experimental", "mock responses endpoint received unexpected beta header");
+  assert(chatAcceptHeader === "text/event-stream", "mock responses endpoint received unexpected accept header");
+  assert(chatContentTypeHeader?.startsWith("application/json"), "mock responses endpoint did not receive JSON content type");
+  assertResponsesBody(chatRequestBodies[0], firstChatSentinel);
+
+  const invalidSubscription = subscribe(baseUrl, invalidChatId);
+  const invalidCommand = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(invalidChatId)}/commands`, {
+    method: "POST",
+    body: JSON.stringify({
+      requestId: invalidRequestId,
+      type: "user_message",
+      payload: { content: invalidChatSentinel }
+    })
+  });
+  assert(invalidCommand.accepted === true, "invalid-request chat command was not accepted");
+
+  const invalidStream = await invalidSubscription;
+  const invalidEvent = invalidStream.events.find((event) => event.type === "error");
+  assert(invalidEvent?.payload?.code === "provider_invalid_request", "invalid request did not produce the stable error code");
+  assert(["format", "model", "endpoint", "unknown"].includes(invalidEvent?.payload?.reason), "invalid request reason was not allowlisted");
+  assert(invalidEvent.payload.reason === "format", "invalid request did not preserve the expected bounded reason");
+  assertMonotonicSequence(invalidStream.events);
+  assert(chatRequestCount === 2, "mock responses endpoint was not called for both chat cases");
+  assertResponsesBody(chatRequestBodies[1], invalidChatSentinel);
+  assert(!invalidStream.raw.includes(invalidProviderFragment), "raw mock provider body leaked into live SSE");
 
   const disconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
     method: "POST",
@@ -137,12 +170,14 @@ try {
     modelDiscoveryCalls: modelDiscoveryRequestCount,
     responsesEndpointCalls: chatRequestCount,
     firstChat: "safe-sentinel-observed",
+    invalidRequest: "allowlisted-format-reason-without-provider-body",
     disconnected: afterDisconnect.status === "login_unavailable",
     cloudRequired: false
   };
   const report = JSON.stringify(evidence, null, 2);
   assertNoUnsafeEvidence(report);
   assertNoUnsafeEvidence(raw);
+  assertNoUnsafeEvidence(invalidStream.raw);
   assertNoUnsafeEvidence(engine.output());
   console.log("Experimental Codex-like login smoke passed.");
   console.log(report);
@@ -258,7 +293,7 @@ async function startMockChatEndpoint() {
       modelDiscoveryAuthorizationHeader = request.headers.authorization;
       modelDiscoveryAccountHeaderSeen = request.headers["chatgpt-account-id"] === accountId;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ data: [{ id: "gpt-5-codex" }] }));
+      response.end(JSON.stringify({ data: [{ id: "gpt-4-unsafe" }, { id: "gpt-5-codex" }] }));
       return;
     }
     if (request.method !== "POST" || request.url !== "/responses") {
@@ -268,6 +303,11 @@ async function startMockChatEndpoint() {
     chatRequestCount += 1;
     chatAuthorizationHeader = request.headers.authorization;
     chatAccountHeaderSeen = request.headers["chatgpt-account-id"] === accountId;
+    chatOriginatorHeader = request.headers.originator;
+    chatSessionHeader = request.headers.session_id;
+    chatBetaHeader = request.headers["openai-beta"];
+    chatAcceptHeader = request.headers.accept;
+    chatContentTypeHeader = request.headers["content-type"];
     request.setEncoding("utf8");
     let body = "";
     request.on("data", (chunk) => {
@@ -275,8 +315,17 @@ async function startMockChatEndpoint() {
     });
     request.on("end", () => {
       const parsed = JSON.parse(body);
-      chatRequestModel = parsed.model;
-      chatRequestSentinelSeen = parsed.input?.[0]?.content?.[0]?.text === firstChatSentinel;
+      chatRequestBodies.push(parsed);
+      if (chatRequestCount === 2) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          error: {
+            code: "invalid_request_body",
+            message: `invalid request body ${invalidProviderFragment}`
+          }
+        }));
+        return;
+      }
       response.writeHead(200, {
         "content-type": "text/event-stream",
         "cache-control": "no-cache"
@@ -289,6 +338,20 @@ async function startMockChatEndpoint() {
   await listen(server, "127.0.0.1", 0);
   const address = server.address();
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
+}
+
+function assertResponsesBody(body, expectedText) {
+  assert(body && typeof body === "object" && !Array.isArray(body), "mock responses endpoint did not receive an object body");
+  assert(JSON.stringify(Object.keys(body).sort()) === JSON.stringify(["input", "instructions", "model", "store", "stream"]), "mock responses endpoint received incompatible fields");
+  assert(body.model === "gpt-5-codex", "mock responses endpoint did not use the safe discovered model");
+  assert(typeof body.instructions === "string" && body.instructions.trim().length > 0, "mock responses endpoint received empty instructions");
+  assert(body.store === false, "mock responses endpoint did not disable storage");
+  assert(body.stream === true, "mock responses endpoint did not request streaming");
+  assert(body.input?.length === 1, "mock responses endpoint received unexpected input count");
+  assert(body.input[0]?.role === "user", "mock responses endpoint received unexpected input role");
+  assert(body.input[0]?.content?.length === 1, "mock responses endpoint received unexpected content count");
+  assert(body.input[0].content[0]?.type === "input_text", "mock responses endpoint received unexpected content type");
+  assert(body.input[0].content[0]?.text === expectedText, "mock responses endpoint received unexpected user input");
 }
 
 async function requestJson(baseUrl, route, init = {}) {
@@ -419,7 +482,9 @@ function assertNoUnsafeEvidence(text) {
     "/users/",
     "/home/",
     "file://",
-    firstChatSentinel
+    firstChatSentinel,
+    invalidChatSentinel,
+    invalidProviderFragment
   ];
   for (const marker of forbidden) {
     assert(!lower.includes(String(marker).toLowerCase()), `unsafe evidence marker leaked: ${marker}`);
@@ -428,7 +493,7 @@ function assertNoUnsafeEvidence(text) {
 
 function redactUnsafe(text) {
   let value = String(text);
-  for (const marker of [runtimeToken, authCode, accessToken, refreshToken, idToken, accountId, firstChatSentinel]) {
+  for (const marker of [runtimeToken, authCode, accessToken, refreshToken, idToken, accountId, firstChatSentinel, invalidChatSentinel, invalidProviderFragment]) {
     value = value.split(marker).join("[redacted]");
   }
   return value
