@@ -1970,7 +1970,7 @@ fn classify_provider_stream_error(value: &serde_json::Value) -> ChatError {
 }
 
 fn classify_invalid_request_reason(
-    status: reqwest::StatusCode,
+    _status: reqwest::StatusCode,
     body: &[u8],
 ) -> ProviderInvalidRequestReason {
     let text = normalized_provider_error_signals(body);
@@ -1978,7 +1978,7 @@ fn classify_invalid_request_reason(
         ProviderInvalidRequestReason::Model
     } else if has_format_error_signal(&text) {
         ProviderInvalidRequestReason::Format
-    } else if status == reqwest::StatusCode::NOT_FOUND || has_endpoint_error_signal(&text) {
+    } else if has_endpoint_error_signal(&text) {
         ProviderInvalidRequestReason::Endpoint
     } else {
         ProviderInvalidRequestReason::Unknown
@@ -2013,22 +2013,28 @@ fn has_model_error_signal(text: &str) -> bool {
 }
 
 fn has_format_error_signal(text: &str) -> bool {
-    let request_shape = [
-        "request field",
-        "request body",
+    [
+        "invalid_request_body",
+        "invalid_request_schema",
+        "missing_required_field",
+        "schema_validation_failed",
+        "unprocessable_entity",
+        "invalid request body",
+        "unprocessable entity",
+        "missing required field",
+        "required field is missing",
+        "required input field",
+        "missing input field",
+        "unknown request field",
+        "invalid request field",
+        "request schema",
+        "schema validation",
         "body shape",
-        "schema",
-        "instructions",
-        "input",
+        "missing instructions",
+        "instructions is required",
     ]
     .iter()
-    .any(|signal| text.contains(signal));
-    let field_problem = ["missing", "required", "unknown", "invalid"]
-        .iter()
-        .any(|signal| text.contains(signal));
-    (request_shape && field_problem)
-        || text.contains("invalid request body")
-        || text.contains("unprocessable entity")
+    .any(|signal| text.contains(signal))
 }
 
 fn has_endpoint_error_signal(text: &str) -> bool {
@@ -3484,9 +3490,29 @@ mod tests {
                 ProviderInvalidRequestReason::Model,
             ),
             (
+                reqwest::StatusCode::BAD_REQUEST,
+                br#"{"error":{"code":"unknown_model","message":"invalid request body"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Model,
+            ),
+            (
+                reqwest::StatusCode::NOT_FOUND,
+                br#"{"error":{"message":"invalid request body; route not found"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Format,
+            ),
+            (
                 reqwest::StatusCode::NOT_FOUND,
                 br#"{"error":{"message":"path not found"}}"#.as_slice(),
                 ProviderInvalidRequestReason::Endpoint,
+            ),
+            (
+                reqwest::StatusCode::NOT_FOUND,
+                br#"{"error":{"message":"resource not found"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Unknown,
+            ),
+            (
+                reqwest::StatusCode::BAD_REQUEST,
+                br#"{"error":{"message":"input was invalid after policy evaluation"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Unknown,
             ),
             (
                 reqwest::StatusCode::BAD_REQUEST,
@@ -3509,7 +3535,7 @@ mod tests {
     fn provider_invalid_request_classifier_preserves_context_precedence_and_drops_raw_body() {
         let context = classify_provider_error(
             reqwest::StatusCode::BAD_REQUEST,
-            br#"{"error":{"message":"maximum context length exceeded"}}"#,
+            br#"{"error":{"code":"unknown_model","message":"maximum context length exceeded; invalid request body; route not found"}}"#,
         );
         assert!(matches!(context, ChatError::ContextTooLarge));
 

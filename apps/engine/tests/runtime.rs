@@ -14866,6 +14866,18 @@ async fn chat_http_invalid_request_reasons_are_allowlisted_and_provider_content_
             "chat-http-invalid-endpoint",
         ),
         (
+            StatusCode::NOT_FOUND,
+            r#"{"error":{"message":"resource not found"}}"#,
+            "unknown",
+            "chat-http-generic-404-unknown",
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"input was invalid after policy evaluation"}}"#,
+            "unknown",
+            "chat-http-ambiguous-input-unknown",
+        ),
+        (
             StatusCode::BAD_REQUEST,
             r#"{"error":{"message":"request rejected Cookie: session=unknown-secret C:\\private\\auth.json"}}"#,
             "unknown",
