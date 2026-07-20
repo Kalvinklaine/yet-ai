@@ -1560,6 +1560,19 @@ fn codex_responses_url(base_url: &str) -> Result<String, ChatError> {
     Ok(url.to_string())
 }
 
+fn experimental_responses_body(model: &str, content: &str) -> serde_json::Value {
+    json!({
+        "instructions": "You are Yet AI. Respond helpfully to the user's request.",
+        "store": false,
+        "model": model,
+        "stream": true,
+        "input": [{
+            "role": "user",
+            "content": [{ "type": "input_text", "text": content }]
+        }]
+    })
+}
+
 async fn codex_responses_stream(
     runtime: &ChatRuntime,
     client: &reqwest::Client,
@@ -1578,14 +1591,7 @@ async fn codex_responses_stream(
         .header("session_id", chat_id)
         .header("OpenAI-Beta", "responses=experimental")
         .header("Accept", "text/event-stream")
-        .json(&json!({
-            "model": auth.model,
-            "stream": true,
-            "input": [{
-                "role": "user",
-                "content": [{ "type": "input_text", "text": content }]
-            }]
-        }));
+        .json(&experimental_responses_body(&auth.model, content));
     collect_codex_responses_stream(runtime, chat_id, stream_id, request).await
 }
 
@@ -2561,15 +2567,31 @@ mod tests {
         let body = request_body(request);
         assert_eq!(body["model"], "gpt-5-codex");
         assert_eq!(body["stream"], true);
+        assert_eq!(body["store"], false);
+        assert!(body["instructions"]
+            .as_str()
+            .is_some_and(|instructions| !instructions.trim().is_empty()));
         assert_eq!(body["input"][0]["role"], "user");
         assert_eq!(body["input"][0]["content"][0]["type"], "input_text");
         assert_eq!(
             body["input"][0]["content"][0]["text"],
             "minimal user text only"
         );
-        assert!(body.get("messages").is_none());
-        assert!(body.get("tools").is_none());
-        assert!(body.get("instructions").is_none());
+        assert_eq!(body.as_object().unwrap().len(), 5);
+        for rejected in [
+            "include",
+            "max_output_tokens",
+            "max_tokens",
+            "messages",
+            "previous_response_id",
+            "stop",
+            "temperature",
+            "tool_choice",
+            "tools",
+            "top_p",
+        ] {
+            assert!(body.get(rejected).is_none(), "unexpected field: {rejected}");
+        }
     }
 
     #[tokio::test]
