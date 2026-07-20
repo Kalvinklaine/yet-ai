@@ -515,6 +515,11 @@ try {
   assert(codexClearedStatus.authSource === "api_key", "experimental Codex-like cleared status did not return API-key fallback auth source");
   assert(/^sk\.\.\.[A-Za-z0-9_-]{2}$/.test(codexClearedStatus.redacted), "experimental Codex-like cleared status returned unexpected fallback redacted hint");
 
+  const codexMissingExpiry = await verifyCodexFallbackExpiry(baseUrl, "missing");
+  const codexZeroExpiry = await verifyCodexFallbackExpiry(baseUrl, "zero");
+  const codexNegativeExpiry = await verifyCodexInvalidExpiry(baseUrl, tempHome, "negative");
+  const codexOversizedExpiry = await verifyCodexInvalidExpiry(baseUrl, tempHome, "oversized");
+
   const clientVisible = JSON.stringify({
     ping,
     caps,
@@ -548,6 +553,10 @@ try {
     openAiFallbackResponse,
     codexDisconnect,
     codexClearedStatus,
+    codexMissingExpiry,
+    codexZeroExpiry,
+    codexNegativeExpiry,
+    codexOversizedExpiry,
     noModelProviderResponse,
     providerResponse,
     modelsAfterProviders,
@@ -581,6 +590,14 @@ try {
     { label: "Codex-like failed auth code", value: "codex-code-smoke-failure-secret" },
     { label: "Codex-like transient callback auth code", value: "codex-code-smoke-transient-secret" },
     { label: "Codex-like invalid_grant auth code", value: "codex-code-smoke-invalid-grant-secret" },
+    { label: "Codex-like missing-expiry auth code", value: "codex-code-smoke-missing-expiry-secret" },
+    { label: "Codex-like zero-expiry auth code", value: "codex-code-smoke-zero-expiry-secret" },
+    { label: "Codex-like negative-expiry auth code", value: "codex-code-smoke-negative-expiry-secret" },
+    { label: "Codex-like oversized-expiry auth code", value: "codex-code-smoke-oversized-expiry-secret" },
+    { label: "Codex-like negative-expiry access token", value: "codex-smoke-negative-expiry-access-secret" },
+    { label: "Codex-like negative-expiry refresh token", value: "codex-smoke-negative-expiry-refresh-secret" },
+    { label: "Codex-like oversized-expiry access token", value: "codex-smoke-oversized-expiry-access-secret" },
+    { label: "Codex-like oversized-expiry refresh token", value: "codex-smoke-oversized-expiry-refresh-secret" },
     { label: "Codex-like transient provider body", value: "temporary callback provider detail" },
     { label: "Codex-like invalid_grant provider description", value: "authorization code was already used" },
     { label: "Codex-like PKCE verifier", value: parsedCodexTokenBody.code_verifier },
@@ -608,6 +625,7 @@ try {
   assert(engineOutput.includes("stage=callback"), "engine log omitted callback exchange stage");
   assert(engineOutput.includes("category=token_http_status_502"), "engine log omitted transient callback HTTP category");
   assert(engineOutput.includes("category=token_http_status_400"), "engine log omitted terminal callback HTTP category");
+  assert(engineOutput.includes("category=expires_invalid"), "engine log omitted invalid expiry category");
   assert(engineOutput.includes("endpoint_class=loopback_override"), "engine log omitted loopback endpoint class");
   assert(engineOutput.includes("detail=http_status=400;_oauth_error=invalid_grant"), "engine log omitted canonical terminal detail");
   assertNoSecretLeak(clientVisible, secretMarkers);
@@ -630,6 +648,87 @@ try {
   if (tempHome) {
     await rm(tempHome, { recursive: true, force: true });
   }
+}
+
+async function verifyCodexFallbackExpiry(baseUrl, expiryKind) {
+  const code = `codex-code-smoke-${expiryKind}-expiry-secret`;
+  const start = await requestJson(baseUrl, "/v1/provider-auth/openai/start", {
+    method: "POST",
+    body: JSON.stringify({
+      experimentalCodexLike: true,
+      tokenEndpointUrl: mockCodexTokenEndpoint.url,
+      chatEndpointUrl: mockCodexChatEndpoint.baseUrl
+    })
+  });
+  const state = new URL(start.authorizationUrl).searchParams.get("state");
+  const earliestExpiry = Date.now() + (8 * 24 * 60 * 60 * 1_000) - 10_000;
+  const callback = await requestCallback(state, code);
+  const latestExpiry = Date.now() + (8 * 24 * 60 * 60 * 1_000) + 10_000;
+  assert(callback.status === 200, `experimental Codex-like ${expiryKind} expiry callback did not succeed`);
+  assertNoSecretLeak(callback.raw, [
+    { label: `Codex-like ${expiryKind} expiry auth code`, value: code },
+    { label: `Codex-like ${expiryKind} expiry state`, value: state },
+    { label: "Codex-like access token", value: "codex-smoke-access-token-secret" },
+    { label: "Codex-like refresh token", value: "codex-smoke-refresh-token-secret" }
+  ]);
+  const connected = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(connected.configured === true, `experimental Codex-like ${expiryKind} expiry was not configured`);
+  assert(connected.status === "connected", `experimental Codex-like ${expiryKind} expiry was not connected`);
+  assert(connected.authSource === "oauth", `experimental Codex-like ${expiryKind} expiry did not use OAuth`);
+  const expiresAt = Date.parse(connected.expiresAt);
+  assert(Number.isFinite(expiresAt), `experimental Codex-like ${expiryKind} expiry returned invalid expiry`);
+  assert(expiresAt >= earliestExpiry, `experimental Codex-like ${expiryKind} expiry fell below fallback bound`);
+  assert(expiresAt <= latestExpiry, `experimental Codex-like ${expiryKind} expiry exceeded fallback bound`);
+  const disconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  assert(disconnect.status === "api_key_configured", `experimental Codex-like ${expiryKind} expiry cleanup lost API-key fallback`);
+  return { callback, connected, disconnect };
+}
+
+async function verifyCodexInvalidExpiry(baseUrl, home, expiryKind) {
+  const code = `codex-code-smoke-${expiryKind}-expiry-secret`;
+  const accessToken = `codex-smoke-${expiryKind}-expiry-access-secret`;
+  const refreshToken = `codex-smoke-${expiryKind}-expiry-refresh-secret`;
+  const fallbackBefore = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(fallbackBefore.status === "api_key_configured", `experimental Codex-like ${expiryKind} expiry setup lacked API-key fallback`);
+  const start = await requestJson(baseUrl, "/v1/provider-auth/openai/start", {
+    method: "POST",
+    body: JSON.stringify({
+      experimentalCodexLike: true,
+      tokenEndpointUrl: mockCodexTokenEndpoint.url,
+      chatEndpointUrl: mockCodexChatEndpoint.baseUrl
+    })
+  });
+  const state = new URL(start.authorizationUrl).searchParams.get("state");
+  const callback = await requestCallback(state, code);
+  assert(callback.status === 502, `experimental Codex-like ${expiryKind} expiry callback did not fail safely`);
+  assert(callback.body.includes("retry login or the authorization code"), `experimental Codex-like ${expiryKind} expiry callback omitted safe retry text`);
+  assertNoSecretLeak(callback.raw, [
+    { label: `Codex-like ${expiryKind} expiry auth code`, value: code },
+    { label: `Codex-like ${expiryKind} expiry state`, value: state },
+    { label: `Codex-like ${expiryKind} expiry access token`, value: accessToken },
+    { label: `Codex-like ${expiryKind} expiry refresh token`, value: refreshToken },
+    { label: "private path marker", value: home }
+  ]);
+  const pending = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
+  assert(pending.configured === false, `experimental Codex-like ${expiryKind} expiry unexpectedly configured OAuth`);
+  assert(pending.status === "pending", `experimental Codex-like ${expiryKind} expiry did not preserve pending state`);
+  assert(pending.lastError?.includes("expires_invalid"), `experimental Codex-like ${expiryKind} expiry omitted sanitized category`);
+  assertNoSecretLeak(JSON.stringify(pending), [
+    { label: `Codex-like ${expiryKind} expiry auth code`, value: code },
+    { label: `Codex-like ${expiryKind} expiry access token`, value: accessToken },
+    { label: `Codex-like ${expiryKind} expiry refresh token`, value: refreshToken }
+  ]);
+  const disconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+  assert(disconnect.status === "api_key_configured", `experimental Codex-like ${expiryKind} expiry mutated stored fallback status`);
+  assert(disconnect.authSource === "api_key", `experimental Codex-like ${expiryKind} expiry mutated stored fallback auth source`);
+  assert(disconnect.redacted === fallbackBefore.redacted, `experimental Codex-like ${expiryKind} expiry mutated stored fallback secret hint`);
+  return { callback, pending, disconnect };
 }
 
 async function makeTempHome() {
@@ -742,6 +841,31 @@ async function startMockCodexTokenEndpoint() {
     });
     request.on("end", () => {
       codexTokenRequestBody += `${body}\n`;
+      const code = parseFormBody(body).code;
+      if (code === "codex-code-smoke-missing-expiry-secret") {
+        respondWithCodexToken(response);
+        return;
+      }
+      if (code === "codex-code-smoke-zero-expiry-secret") {
+        respondWithCodexToken(response, { expires_in: 0 });
+        return;
+      }
+      if (code === "codex-code-smoke-negative-expiry-secret") {
+        respondWithCodexToken(response, {
+          access_token: "codex-smoke-negative-expiry-access-secret",
+          refresh_token: "codex-smoke-negative-expiry-refresh-secret",
+          expires_in: -1
+        });
+        return;
+      }
+      if (code === "codex-code-smoke-oversized-expiry-secret") {
+        respondWithCodexToken(response, {
+          access_token: "codex-smoke-oversized-expiry-access-secret",
+          refresh_token: "codex-smoke-oversized-expiry-refresh-secret",
+          expires_in: 86401
+        });
+        return;
+      }
       if (codexTokenRequestCount === 1) {
         response.writeHead(500, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: "temporary failure" }));
@@ -817,6 +941,19 @@ function fakeCodexIdToken() {
   return `${encode({ alg: "none", typ: "JWT" })}.${encode({ chatgpt_account_id: "account-smoke" })}.signature`;
 }
 
+function respondWithCodexToken(response, overrides = {}) {
+  const token = {
+    access_token: "codex-smoke-access-token-secret",
+    refresh_token: "codex-smoke-refresh-token-secret",
+    id_token: fakeCodexIdToken(),
+    scope: "openid profile email offline_access",
+    account_label: "smoke-user@example.test",
+    ...overrides
+  };
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify(token));
+}
+
 function parseFormBody(body) {
   return Object.fromEntries(new URLSearchParams(body).entries());
 }
@@ -859,6 +996,7 @@ async function requestEmpty(baseUrl, route, init = {}) {
 async function requestCallback(state, code) {
   const callbackUrl = new URL("http://localhost:1455/auth/callback");
   callbackUrl.searchParams.set("code", code);
+  callbackUrl.searchParams.set("scope", "openid profile email offline_access");
   callbackUrl.searchParams.set("state", state);
   const response = await fetch(callbackUrl, {
     headers: { Accept: "text/html" }
