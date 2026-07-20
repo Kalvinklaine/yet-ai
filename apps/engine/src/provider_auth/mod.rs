@@ -1119,7 +1119,7 @@ fn is_supported_codex_model(value: &str) -> bool {
     if value.contains('_') || value.contains("--") {
         return false;
     }
-    let normalized = value.to_ascii_lowercase().replace('_', "-");
+    let normalized = value.to_ascii_lowercase();
     if matches!(normalized.as_str(), "gpt-5" | "gpt-5-mini") {
         return true;
     }
@@ -1131,21 +1131,30 @@ fn is_supported_codex_model(value: &str) -> bool {
             return true;
         }
     }
-    let parts = normalized
-        .split('-')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    if parts.len() < 3 || parts.first() != Some(&"gpt") {
-        return false;
-    }
-    let Some(codex_index) = parts.iter().position(|part| *part == "codex") else {
+    let Some(codex) = normalized.strip_prefix("gpt-5") else {
         return false;
     };
-    codex_index >= 2
-        && (codex_index + 1 == parts.len()
-            || parts[codex_index + 1..]
-                .iter()
-                .all(|part| matches!(*part, "latest" | "preview" | "mini" | "spark" | "max")))
+    let codex = if let Some(codex) = codex.strip_prefix('.') {
+        let Some((version, suffix)) = codex.split_once('-') else {
+            return false;
+        };
+        if version.is_empty() || !version.chars().all(|value| value.is_ascii_digit()) {
+            return false;
+        }
+        suffix
+    } else {
+        let Some(codex) = codex.strip_prefix('-') else {
+            return false;
+        };
+        codex
+    };
+    let Some(suffix) = codex.strip_prefix("codex") else {
+        return false;
+    };
+    matches!(
+        suffix,
+        "" | "-latest" | "-preview" | "-mini" | "-spark" | "-max"
+    )
 }
 
 fn sanitized_optional_token(value: Option<&str>) -> Option<String> {
@@ -3059,7 +3068,8 @@ mod tests {
         codex_models_response_endpoint(r#"{"data":[{"id":"gpt-5-codex"}]}"#).await
     }
 
-    async fn codex_models_response_endpoint(body: &'static str) -> String {
+    async fn codex_models_response_endpoint(body: impl Into<String>) -> String {
+        let body = body.into();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(async move {
@@ -3271,6 +3281,35 @@ mod tests {
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                     body.len(),
                     body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        url
+    }
+
+    async fn successful_codex_exchange_endpoint_with_oversized_models() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/token", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer).await;
+                let body = r#"{"access_token":"codex-exchange-access-token-secret","refresh_token":"codex-exchange-refresh-token-secret","expires_in":3600,"scope":"openid profile email offline_access","id_token":"eyJhbGciOiJub25lIn0.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LXRlc3QifQ.signature","account_label":"Codex Exchange Account"}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer).await;
+                let oversized_length = super::CODEX_MODELS_RESPONSE_LIMIT_BYTES + 1;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {oversized_length}\r\nconnection: close\r\n\r\n"
                 );
                 let _ = stream.write_all(response.as_bytes()).await;
             }
@@ -4836,6 +4875,83 @@ mod tests {
         assert_eq!(model, "gpt-5.2");
     }
 
+    #[tokio::test]
+    async fn codex_exchange_model_discovery_selects_model_field_in_both_shapes() {
+        for body in [
+            r#"{"models":[{"model":"gpt-5.3-mini"}]}"#,
+            r#"{"data":[{"model":"gpt-5-codex-mini"}]}"#,
+        ] {
+            let endpoint = codex_models_response_endpoint(body).await;
+            let model =
+                super::discover_codex_model(&endpoint, "codex-access-token-secret", "acct-test")
+                    .await
+                    .unwrap();
+            let expected = if body.contains("5.3") {
+                "gpt-5.3-mini"
+            } else {
+                "gpt-5-codex-mini"
+            };
+            assert_eq!(model, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_exchange_model_discovery_oversized_response_uses_validated_session_fallback() {
+        let oversized_endpoint = codex_models_response_endpoint(
+            "x".repeat(super::CODEX_MODELS_RESPONSE_LIMIT_BYTES + 1),
+        )
+        .await;
+        let error = super::discover_codex_model(
+            &oversized_endpoint,
+            "codex-access-token-secret",
+            "acct-test",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ProviderAuthError::TokenExchange(
+                super::CodexTokenExchangeCategory::ModelDiscoveryFallback,
+                None
+            )
+        ));
+
+        let dir = temp_dir();
+        let token_endpoint_url = successful_codex_exchange_endpoint_with_oversized_models().await;
+        let mut pending =
+            create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+        pending.chat_model = "gpt-5.4-mini".to_string();
+        super::write_codex_state(
+            &dir,
+            "openai",
+            &super::CodexOAuthState {
+                pending: Some(pending.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let response = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(pending.session_id),
+                state: Some(pending.state),
+                code: Some("codex-auth-code".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.status, "connected");
+        let auth = super::experimental_codex_chat_auth(&dir)
+            .await
+            .unwrap()
+            .expect("oversized discovery should retain validated session fallback");
+        assert_eq!(auth.model, "gpt-5.4-mini");
+    }
+
     #[test]
     fn select_codex_model_accepts_supported_ids_and_rejects_unsafe_or_malformed_values() {
         for model in [
@@ -4845,6 +4961,11 @@ mod tests {
             "gpt-5.12-mini",
             "gpt-5-codex",
             "gpt-5-codex-mini",
+            "gpt-5-codex-latest",
+            "gpt-5-codex-preview",
+            "gpt-5-codex-spark",
+            "gpt-5-codex-max",
+            "gpt-5.1-codex-mini",
         ] {
             assert_eq!(
                 super::select_codex_model([model.to_string()]).unwrap(),
@@ -4858,6 +4979,12 @@ mod tests {
             "gpt-5.latest",
             "gpt-5.1-preview",
             "gpt-5-mini-preview",
+            "gpt-4-codex",
+            "gpt-foo-codex",
+            "gpt-6-codex",
+            "gpt-5.1.2-codex",
+            "gpt-5-codex-unsafe",
+            "gpt-5-codex-mini-max",
             "gpt--5-codex",
             "gpt_5_codex",
             "gpt-5/../../private",
