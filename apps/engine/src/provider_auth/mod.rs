@@ -1010,12 +1010,13 @@ struct CodexModelEntry {
 }
 
 impl CodexModelEntry {
-    fn identifier(self) -> Option<String> {
+    fn identifiers(self) -> Vec<String> {
         [self.slug, self.id, self.model]
             .into_iter()
             .flatten()
             .map(|value| value.trim().to_string())
-            .find(|value| !value.is_empty())
+            .filter(|value| !value.is_empty())
+            .collect()
     }
 }
 
@@ -1053,7 +1054,7 @@ pub(in crate::provider_auth) async fn discover_codex_model(
             .models
             .into_iter()
             .chain(models.data)
-            .filter_map(CodexModelEntry::identifier),
+            .flat_map(CodexModelEntry::identifiers),
     )
 }
 
@@ -1120,6 +1121,9 @@ fn is_supported_codex_model(value: &str) -> bool {
         return false;
     }
     let normalized = value.to_ascii_lowercase();
+    if value != normalized {
+        return false;
+    }
     if matches!(normalized.as_str(), "gpt-5" | "gpt-5-mini") {
         return true;
     }
@@ -4896,6 +4900,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_exchange_model_discovery_considers_all_entry_identifiers() {
+        for (body, expected) in [
+            (
+                r#"{"models":[{"slug":"unsupported-model","id":"gpt-5.2"}]}"#,
+                "gpt-5.2",
+            ),
+            (
+                r#"{"data":[{"id":"  ","model":"gpt-5-codex-mini"}]}"#,
+                "gpt-5-codex-mini",
+            ),
+        ] {
+            let endpoint = codex_models_response_endpoint(body).await;
+            let model =
+                super::discover_codex_model(&endpoint, "codex-access-token-secret", "acct-test")
+                    .await
+                    .unwrap();
+
+            assert_eq!(model, expected);
+        }
+    }
+
+    #[tokio::test]
     async fn codex_exchange_model_discovery_oversized_response_uses_validated_session_fallback() {
         let oversized_endpoint = codex_models_response_endpoint(
             "x".repeat(super::CODEX_MODELS_RESPONSE_LIMIT_BYTES + 1),
@@ -4976,6 +5002,8 @@ mod tests {
         for model in [
             "",
             " gpt-5.1",
+            "GPT-5-CODEX",
+            "Gpt-5.1-mini",
             "gpt-5.latest",
             "gpt-5.1-preview",
             "gpt-5-mini-preview",
@@ -4999,6 +5027,19 @@ mod tests {
                 assert!(!error.to_string().contains(model));
             }
         }
+    }
+
+    #[test]
+    fn select_codex_model_keeps_global_exact_default_preference() {
+        assert_eq!(
+            super::select_codex_model([
+                "gpt-5.2".to_string(),
+                super::CODEX_CHAT_MODEL.to_string(),
+                "gpt-5.3-mini".to_string(),
+            ])
+            .unwrap(),
+            super::CODEX_CHAT_MODEL
+        );
     }
 
     #[tokio::test]
