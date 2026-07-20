@@ -39,7 +39,7 @@ try {
   const enginePort = await freePort();
   callbackPort = await freePort();
   mockProvider = await startMockProvider();
-  engine = startEngine(enginePort, tempHome);
+  engine = startEngine(enginePort, callbackPort, tempHome);
   const baseUrl = `http://127.0.0.1:${enginePort}`;
   await waitForEngine(baseUrl);
 
@@ -111,7 +111,6 @@ try {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
-      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
@@ -215,7 +214,6 @@ try {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
-      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
@@ -469,7 +467,6 @@ try {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
-      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
@@ -661,7 +658,6 @@ async function verifyCodexFallbackExpiry(baseUrl, expiryKind) {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
-      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
@@ -703,7 +699,6 @@ async function verifyCodexInvalidExpiry(baseUrl, home, expiryKind) {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
-      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
@@ -747,7 +742,7 @@ async function makeTempHome() {
   return home;
 }
 
-function startEngine(port, home) {
+function startEngine(port, callbackPort, home) {
   const child = spawn("cargo", ["run", "-p", "yet-lsp", "--quiet"], {
     cwd: rootDir,
     env: {
@@ -761,6 +756,7 @@ function startEngine(port, home) {
       no_proxy: appendNoProxy(process.env.no_proxy),
       YET_AI_AUTH_TOKEN: token,
       YET_AI_HTTP_PORT: String(port),
+      YET_AI_PROVIDER_AUTH_CALLBACK_PORT: String(callbackPort),
       YET_AI_LOG_DIR: path.join(home, "logs")
     },
     stdio: ["ignore", "pipe", "pipe"]

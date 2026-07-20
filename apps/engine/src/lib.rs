@@ -34,10 +34,19 @@ pub struct AppState {
     pub storage_paths: StoragePaths,
     pub chat_runtime: ChatRuntime,
     pub agent_progress_runtime: AgentProgressRuntime,
+    pub provider_auth_callback_port: u16,
 }
 
 impl AppState {
     pub fn new(identity: ProductIdentity, auth_token: AuthToken) -> Self {
+        Self::new_with_callback_port(identity, auth_token, 1455)
+    }
+
+    pub fn new_with_callback_port(
+        identity: ProductIdentity,
+        auth_token: AuthToken,
+        provider_auth_callback_port: u16,
+    ) -> Self {
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let storage_paths = resolve_default_storage_paths(&identity, &project_root);
         Self {
@@ -47,6 +56,7 @@ impl AppState {
             storage_paths,
             chat_runtime: ChatRuntime::new(),
             agent_progress_runtime: AgentProgressRuntime::new(),
+            provider_auth_callback_port,
         }
     }
 
@@ -62,7 +72,19 @@ impl AppState {
             storage_paths,
             chat_runtime: ChatRuntime::new(),
             agent_progress_runtime: AgentProgressRuntime::new(),
+            provider_auth_callback_port: 1455,
         }
+    }
+
+    pub fn with_storage_paths_and_callback_port(
+        identity: ProductIdentity,
+        auth_token: AuthToken,
+        storage_paths: StoragePaths,
+        provider_auth_callback_port: u16,
+    ) -> Self {
+        let mut state = Self::with_storage_paths(identity, auth_token, storage_paths);
+        state.provider_auth_callback_port = provider_auth_callback_port;
+        state
     }
 }
 

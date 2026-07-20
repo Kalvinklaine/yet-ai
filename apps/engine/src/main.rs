@@ -17,6 +17,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
         .unwrap_or(8001);
+    let callback_port = std::env::var("YET_AI_PROVIDER_AUTH_CALLBACK_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|value| *value >= 1024)
+        .unwrap_or(1455);
     let _engine_log_guard = init_engine_logging(port);
     let auth_required = true;
     log_event(
@@ -29,6 +34,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let addr = default_bind_addr(port);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app(AppState::new(identity, token))).await?;
+    axum::serve(
+        listener,
+        app(AppState::new_with_callback_port(
+            identity,
+            token,
+            callback_port,
+        )),
+    )
+    .await?;
     Ok(())
 }

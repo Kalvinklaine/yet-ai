@@ -40,7 +40,7 @@ static CALLBACK_START_LOCK: LazyLock<tokio::sync::Mutex<()>> =
 
 #[derive(Default)]
 struct CallbackState {
-    started_ports: HashSet<u16>,
+    started_port: Option<u16>,
     pending_states: HashMap<String, PathBuf>,
     known_config_dirs: HashSet<PathBuf>,
 }
@@ -56,15 +56,17 @@ pub(crate) async fn ensure_started(
     {
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
         state.known_config_dirs.insert(config_dir.to_path_buf());
-        if state.started_ports.contains(&port) {
-            return Ok(());
+        if let Some(started_port) = state.started_port {
+            return (started_port == port)
+                .then_some(())
+                .ok_or(CallbackStartError);
         }
     }
 
     #[cfg(test)]
     {
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
-        state.started_ports.insert(port);
+        state.started_port = Some(port);
         return Ok(());
     }
 
@@ -73,8 +75,10 @@ pub(crate) async fn ensure_started(
         let _guard = CALLBACK_START_LOCK.lock().await;
         {
             let state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
-            if state.started_ports.contains(&port) {
-                return Ok(());
+            if let Some(started_port) = state.started_port {
+                return (started_port == port)
+                    .then_some(())
+                    .ok_or(CallbackStartError);
             }
         }
 
@@ -83,7 +87,7 @@ pub(crate) async fn ensure_started(
 
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
         state.known_config_dirs.insert(config_dir.to_path_buf());
-        state.started_ports.insert(port);
+        state.started_port = Some(port);
         Ok(())
     }
 }
@@ -117,7 +121,15 @@ pub(crate) fn register_pending_state(
 
 pub(crate) fn forget_pending_state(state_value: &str) {
     if let Ok(mut state) = CALLBACK_STATE.lock() {
-        state.pending_states.remove(state_value);
+        if let Some(config_dir) = state.pending_states.remove(state_value) {
+            if !state
+                .pending_states
+                .values()
+                .any(|value| value == &config_dir)
+            {
+                state.known_config_dirs.remove(&config_dir);
+            }
+        }
     }
 }
 
@@ -157,19 +169,20 @@ fn serve_listeners_in_owner_thread(listeners: LoopbackListeners) -> Result<(), C
 #[cfg(not(test))]
 async fn serve_loopback_listeners(listeners: LoopbackListeners) {
     let LoopbackListeners { ipv4, ipv6 } = listeners;
-    tokio::join!(accept_loop(ipv4), accept_loop(ipv6));
+    let port = ipv4.local_addr().map(|address| address.port()).unwrap_or(0);
+    tokio::join!(accept_loop(ipv4, port), accept_loop(ipv6, port));
 }
 
-async fn accept_loop(listener: TcpListener) {
+async fn accept_loop(listener: TcpListener, accepted_port: u16) {
     loop {
         let Ok((stream, _)) = listener.accept().await else {
             continue;
         };
-        tokio::spawn(handle_stream(stream));
+        tokio::spawn(handle_stream(stream, accepted_port));
     }
 }
 
-async fn handle_stream(mut stream: TcpStream) {
+async fn handle_stream(mut stream: TcpStream, accepted_port: u16) {
     let mut buffer = vec![0_u8; CALLBACK_READ_MAX_BYTES];
     let Ok(read) =
         tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer)).await
@@ -183,11 +196,15 @@ async fn handle_stream(mut stream: TcpStream) {
     let first_line = request.lines().next().unwrap_or_default();
     let method = first_line.split_whitespace().next().unwrap_or_default();
     let path_and_query = first_line.split_whitespace().nth(1).unwrap_or_default();
-    let (status, text) = callback_response(method, path_and_query).await;
+    let (status, text) = callback_response(accepted_port, method, path_and_query).await;
     write_response(&mut stream, status, text).await;
 }
 
-async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, String) {
+async fn callback_response(
+    accepted_port: u16,
+    method: &str,
+    path_and_query: &str,
+) -> (StatusCode, String) {
     if method != "GET" {
         return (
             StatusCode::METHOD_NOT_ALLOWED,
@@ -210,7 +227,8 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, S
             Ok(None) => return (StatusCode::BAD_REQUEST, CALLBACK_NOT_FOUND_TEXT.to_string()),
             Err(error) => return (error.status(), callback_failure_text(&error)),
         };
-        let result = provider_auth::codex_callback_error(&config_dir, state.clone()).await;
+        let result =
+            provider_auth::codex_callback_error(&config_dir, state.clone(), accepted_port).await;
         if callback_error_should_forget_mapping(&result) {
             forget_pending_state(&state);
         }
@@ -234,7 +252,9 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, S
         Err(error) => return (error.status(), callback_failure_text(&error)),
     };
 
-    match provider_auth::codex_callback_exchange(&config_dir, state.clone(), code).await {
+    match provider_auth::codex_callback_exchange(&config_dir, state.clone(), code, accepted_port)
+        .await
+    {
         Ok(_) => {
             forget_pending_state(&state);
             (StatusCode::OK, CALLBACK_SUCCESS_TEXT.to_string())
@@ -248,6 +268,10 @@ async fn callback_response(method: &str, path_and_query: &str) -> (StatusCode, S
             forget_pending_state(&state);
             (StatusCode::OK, CALLBACK_AMBIGUOUS_STATE_TEXT.to_string())
         }
+        Err(provider_auth::ProviderAuthError::CallbackPortMismatch) => (
+            StatusCode::BAD_REQUEST,
+            CALLBACK_AMBIGUOUS_STATE_TEXT.to_string(),
+        ),
         Err(error) => (error.status(), callback_failure_text(&error)),
     }
 }
@@ -270,6 +294,9 @@ fn callback_failure_text(error: &provider_auth::ProviderAuthError) -> String {
     }
     match error {
         provider_auth::ProviderAuthError::SessionMismatch => {
+            CALLBACK_AMBIGUOUS_STATE_TEXT.to_string()
+        }
+        provider_auth::ProviderAuthError::CallbackPortMismatch => {
             CALLBACK_AMBIGUOUS_STATE_TEXT.to_string()
         }
         provider_auth::ProviderAuthError::Storage
@@ -614,6 +641,7 @@ mod tests {
     #[tokio::test]
     async fn callback_response_rejects_non_get_without_exchange() {
         let (status, text) = callback_response(
+            1455,
             "POST",
             "/auth/callback?code=codex-code-secret&state=codex-state-secret",
         )
@@ -651,7 +679,8 @@ mod tests {
         ];
 
         for query in cases {
-            let (status, text) = callback_response("GET", &format!("/auth/callback?{query}")).await;
+            let (status, text) =
+                callback_response(1455, "GET", &format!("/auth/callback?{query}")).await;
 
             assert_eq!(status, StatusCode::BAD_REQUEST, "{query}");
             assert_eq!(text, CALLBACK_FAILURE_TEXT, "{query}");
@@ -850,7 +879,7 @@ mod tests {
             registered_config_dir_for_state(&state).await.unwrap(),
             Some(dir.clone())
         );
-        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_SUCCESS_TEXT);
         assert!(registered_config_dir_for_state(&state)
@@ -877,7 +906,7 @@ mod tests {
         clear_registered_states_for_test();
         assert!(directly_registered_config_dir_for_test(&state).is_none());
 
-        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_SUCCESS_TEXT);
@@ -903,7 +932,7 @@ mod tests {
             .into_owned();
         clear_all_registered_state_for_test();
 
-        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
@@ -929,7 +958,7 @@ mod tests {
         let registry_path = dir.join("provider-auth-sessions").join("openai.json");
         std::fs::write(&registry_path, r#"{"pending":[{"state":"broken""#).unwrap();
 
-        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(text, CALLBACK_STORAGE_FAILURE_TEXT);
@@ -964,7 +993,8 @@ mod tests {
         rewrite_registry_state(&second, &second_state, &duplicate_state);
         clear_registered_states_for_test();
 
-        let (status, text) = callback_response("GET", &callback_query(&duplicate_state)).await;
+        let (status, text) =
+            callback_response(1455, "GET", &callback_query(&duplicate_state)).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(text, CALLBACK_AMBIGUOUS_STATE_TEXT);
@@ -999,7 +1029,8 @@ mod tests {
         rewrite_registry_state(&second, &second_state, &duplicate_state);
         register_pending_state(&duplicate_state, &first).unwrap();
 
-        let (status, text) = callback_response("GET", &callback_query(&duplicate_state)).await;
+        let (status, text) =
+            callback_response(1455, "GET", &callback_query(&duplicate_state)).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(text, CALLBACK_AMBIGUOUS_STATE_TEXT);
@@ -1022,7 +1053,7 @@ mod tests {
         register_pending_state(&state, &dir).unwrap();
         rewrite_registry_state(&dir, &state, "replacement-state");
 
-        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
@@ -1036,7 +1067,7 @@ mod tests {
         let dir = callback_test_dir("terminal-failure");
         register_pending_state("missing-state", &dir).unwrap();
 
-        let (status, text) = callback_response("GET", &callback_query("missing-state")).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query("missing-state")).await;
 
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(text, CALLBACK_NOT_FOUND_TEXT);
@@ -1067,7 +1098,7 @@ mod tests {
             .1
             .into_owned();
 
-        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(text, CALLBACK_RETRY_TEXT);
@@ -1114,7 +1145,8 @@ mod tests {
                 .into_owned();
             crate::logging::clear_test_log_lines();
 
-            let (status, text) = callback_response("GET", &callback_query_with_scope(&state)).await;
+            let (status, text) =
+                callback_response(1455, "GET", &callback_query_with_scope(&state)).await;
 
             assert_eq!(status, StatusCode::BAD_GATEWAY);
             assert_eq!(text, CALLBACK_RESTART_TEXT);
@@ -1155,7 +1187,7 @@ mod tests {
             .into_owned();
         crate::logging::clear_test_log_lines();
 
-        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(text, CALLBACK_RETRY_TEXT);
@@ -1190,7 +1222,7 @@ mod tests {
             .1
             .into_owned();
 
-        let (status, text) = callback_response("GET", &callback_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_SUCCESS_TEXT);
@@ -1215,7 +1247,8 @@ mod tests {
             .1
             .into_owned();
 
-        let (status, text) = callback_response("GET", &callback_query_with_scope(&state)).await;
+        let (status, text) =
+            callback_response(1455, "GET", &callback_query_with_scope(&state)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_SUCCESS_TEXT);
@@ -1226,6 +1259,37 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn callback_on_wrong_listener_port_preserves_pending_session() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_all_registered_state_for_test();
+        let dir = callback_test_dir("wrong-port");
+        let token_endpoint_url = codex_token_endpoint(StatusCode::OK).await;
+        let start = start_codex_pending(&dir, &token_endpoint_url).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+
+        let (status, text) =
+            callback_response(41455, "GET", &callback_query_with_scope(&state)).await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(text, CALLBACK_AMBIGUOUS_STATE_TEXT);
+        assert!(!text.contains(&state));
+        assert!(!text.contains("codex-code-callback-test"));
+        assert_eq!(
+            directly_registered_config_dir_for_test(&state),
+            Some(dir.clone())
+        );
+        let pending = provider_auth::status(&dir, "openai").await.unwrap();
+        assert_eq!(pending.status, "pending");
+        assert_eq!(pending.session_id, start.session_id);
     }
 
     #[tokio::test]
@@ -1247,7 +1311,8 @@ mod tests {
             let before =
                 chrono::Utc::now() + chrono::Duration::days(8) - chrono::Duration::seconds(5);
 
-            let (status, text) = callback_response("GET", &callback_query_with_scope(&state)).await;
+            let (status, text) =
+                callback_response(1455, "GET", &callback_query_with_scope(&state)).await;
 
             let after =
                 chrono::Utc::now() + chrono::Duration::days(8) + chrono::Duration::seconds(5);
@@ -1282,7 +1347,7 @@ mod tests {
             .1
             .into_owned();
 
-        let (status, text) = callback_response("GET", &callback_error_query(&state)).await;
+        let (status, text) = callback_response(1455, "GET", &callback_error_query(&state)).await;
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(text, CALLBACK_PROVIDER_ERROR_TEXT);
@@ -1304,6 +1369,7 @@ mod tests {
         clear_all_registered_state_for_test();
 
         let (status, text) = callback_response(
+            1455,
             "GET",
             "/auth/callback?error=access_denied&error_description=raw-denied-secret&state=missing-state-secret",
         )
@@ -1387,7 +1453,7 @@ mod tests {
         clear_all_registered_state_for_test();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(accept_loop(listener));
+        let server = tokio::spawn(accept_loop(listener, address.port()));
 
         let (status, text) = raw_loopback_callback(
             address,
@@ -1409,6 +1475,7 @@ mod tests {
             std::env::temp_dir().join(format!("yet-ai-callback-start-test-{}", std::process::id()));
         let first = base.join("one");
         let second = base.join("two");
+        let first_dir = first.clone();
 
         let (first, second) = tokio::join!(
             ensure_started(&first, "http://localhost:1455/auth/callback"),
@@ -1417,5 +1484,10 @@ mod tests {
 
         assert!(first.is_ok());
         assert!(second.is_ok());
+        assert!(
+            ensure_started(&first_dir, "http://localhost:41455/auth/callback")
+                .await
+                .is_err()
+        );
     }
 }

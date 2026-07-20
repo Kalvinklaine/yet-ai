@@ -31,8 +31,6 @@ pub struct ProviderAuthStartRequest {
     pub token_endpoint_url: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub chat_endpoint_url: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
-    pub callback_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -138,14 +136,17 @@ pub enum ProviderAuthError {
     TokenExchange(CodexTokenExchangeCategory, Option<String>),
     #[error("provider auth callback listener is unavailable")]
     CallbackUnavailable,
+    #[error("provider auth callback listener does not match the pending session")]
+    CallbackPortMismatch,
 }
 
 impl ProviderAuthError {
     pub fn status(&self) -> StatusCode {
         match self {
-            Self::InvalidProvider | Self::InvalidRequest | Self::SessionMismatch => {
-                StatusCode::BAD_REQUEST
-            }
+            Self::InvalidProvider
+            | Self::InvalidRequest
+            | Self::SessionMismatch
+            | Self::CallbackPortMismatch => StatusCode::BAD_REQUEST,
             Self::UnsupportedProvider | Self::SessionNotFound => StatusCode::NOT_FOUND,
             Self::SessionExpired => StatusCode::GONE,
             Self::Provider(error) => error.status(),

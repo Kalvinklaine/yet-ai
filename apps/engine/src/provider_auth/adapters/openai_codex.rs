@@ -68,7 +68,7 @@ impl OpenAiCodexOAuthAdapter {
         ttl_seconds: Option<i64>,
         token_endpoint_url: Option<&str>,
         chat_endpoint_url: Option<&str>,
-        callback_port: Option<u16>,
+        callback_port: u16,
     ) -> Result<ProviderAuthResponse, ProviderAuthError> {
         crate::provider_auth::reject_codex_mock_coexistence(&self.config_dir, self.provider)
             .await?;
@@ -222,6 +222,7 @@ impl OpenAiCodexOAuthAdapter {
         &self,
         state: String,
         code: String,
+        accepted_port: u16,
     ) -> Result<ProviderAuthResponse, ProviderAuthError> {
         let codex = crate::provider_auth::read_codex_state(&self.config_dir, self.provider).await?;
         let Some(session) = codex.pending else {
@@ -230,6 +231,7 @@ impl OpenAiCodexOAuthAdapter {
         if session.state != state {
             return Err(ProviderAuthError::SessionMismatch);
         }
+        crate::provider_auth::validate_codex_callback_port(&session, accepted_port)?;
         self.exchange_response("callback", session.session_id, state, code)
             .await
     }
@@ -237,9 +239,15 @@ impl OpenAiCodexOAuthAdapter {
     pub(in crate::provider_auth) async fn callback_error(
         &self,
         state: String,
+        accepted_port: u16,
     ) -> Result<(), ProviderAuthError> {
-        crate::provider_auth::codex_callback_error_impl(&self.config_dir, self.provider, state)
-            .await
+        crate::provider_auth::codex_callback_error_impl(
+            &self.config_dir,
+            self.provider,
+            state,
+            accepted_port,
+        )
+        .await
     }
 
     pub(in crate::provider_auth) async fn callback_state_pending(
@@ -474,13 +482,16 @@ impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
     ) -> AdapterFuture<'a, Result<ProviderOAuthStatusView, ProviderOAuthAdapterError>> {
         Box::pin(async move {
             let response = self
-                .callback_exchange(request.state, request.code)
+                .callback_exchange(request.state, request.code, request.accepted_port)
                 .await
                 .map_err(|error| match error {
                     ProviderAuthError::SessionExpired => ProviderOAuthAdapterError::SessionExpired,
                     ProviderAuthError::SessionMismatch => ProviderOAuthAdapterError::InvalidSession,
                     ProviderAuthError::SessionNotFound => {
                         ProviderOAuthAdapterError::SessionNotFound
+                    }
+                    ProviderAuthError::CallbackPortMismatch => {
+                        ProviderOAuthAdapterError::CallbackPortMismatch
                     }
                     ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
                     ProviderAuthError::TokenExchange(category, Some(detail)) => {
@@ -502,7 +513,7 @@ impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
         request: ProviderOAuthCallbackErrorRequest,
     ) -> AdapterFuture<'a, Result<(), ProviderOAuthAdapterError>> {
         Box::pin(async move {
-            self.callback_error(request.state)
+            self.callback_error(request.state, request.accepted_port)
                 .await
                 .map_err(|error| match error {
                     ProviderAuthError::SessionExpired => ProviderOAuthAdapterError::SessionExpired,
@@ -519,6 +530,9 @@ impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
                     }
                     ProviderAuthError::CallbackUnavailable => {
                         ProviderOAuthAdapterError::CallbackUnavailable
+                    }
+                    ProviderAuthError::CallbackPortMismatch => {
+                        ProviderOAuthAdapterError::CallbackPortMismatch
                     }
                     _ => ProviderOAuthAdapterError::AdapterFailure,
                 })

@@ -144,7 +144,7 @@ pub(super) struct ProviderOAuthStartSessionRequest {
     pub(super) ttl_seconds: Option<i64>,
     pub(super) token_endpoint_url: Option<String>,
     pub(super) chat_endpoint_url: Option<String>,
-    pub(super) callback_port: Option<u16>,
+    pub(super) callback_port: u16,
 }
 
 impl Default for ProviderOAuthStartSessionRequest {
@@ -154,7 +154,7 @@ impl Default for ProviderOAuthStartSessionRequest {
             ttl_seconds: None,
             token_endpoint_url: None,
             chat_endpoint_url: None,
-            callback_port: None,
+            callback_port: 1455,
         }
     }
 }
@@ -176,11 +176,13 @@ pub(super) struct ProviderOAuthExchangeCodeRequest {
 pub(super) struct ProviderOAuthCallbackExchangeRequest {
     pub(super) state: String,
     pub(super) code: String,
+    pub(super) accepted_port: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct ProviderOAuthCallbackErrorRequest {
     pub(super) state: String,
+    pub(super) accepted_port: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,6 +219,7 @@ pub(super) enum ProviderOAuthAdapterError {
     PolicyBlocked,
     ProviderRejected,
     CallbackUnavailable,
+    CallbackPortMismatch,
     AdapterFailure,
     InvalidSession,
     SessionNotFound,
@@ -236,6 +239,9 @@ impl From<ProviderOAuthAdapterError> for ProviderAuthError {
             }
             ProviderOAuthAdapterError::CallbackUnavailable => {
                 ProviderAuthError::CallbackUnavailable
+            }
+            ProviderOAuthAdapterError::CallbackPortMismatch => {
+                ProviderAuthError::CallbackPortMismatch
             }
             ProviderOAuthAdapterError::AdapterFailure => {
                 ProviderAuthError::token_exchange(CodexTokenExchangeCategory::AdapterFailure)
@@ -259,6 +265,7 @@ fn adapter_error_from_provider_auth(error: ProviderAuthError) -> ProviderOAuthAd
         ProviderAuthError::Storage => ProviderOAuthAdapterError::Storage,
         ProviderAuthError::InvalidRequest => ProviderOAuthAdapterError::PolicyBlocked,
         ProviderAuthError::CallbackUnavailable => ProviderOAuthAdapterError::CallbackUnavailable,
+        ProviderAuthError::CallbackPortMismatch => ProviderOAuthAdapterError::CallbackPortMismatch,
         ProviderAuthError::TokenExchange(category, Some(detail)) => {
             ProviderOAuthAdapterError::ExchangeFailedDetail(category, detail)
         }
@@ -1056,7 +1063,7 @@ mod tests {
                 ttl_seconds: Some(600),
                 token_endpoint_url: None,
                 chat_endpoint_url: None,
-                callback_port: None,
+                callback_port: 1455,
             })
             .await
             .unwrap();
@@ -1203,6 +1210,7 @@ mod tests {
         adapter
             .callback_error(ProviderOAuthCallbackErrorRequest {
                 state: "safe-state".to_string(),
+                accepted_port: 1455,
             })
             .await
             .unwrap();
@@ -1210,6 +1218,7 @@ mod tests {
             .callback_exchange(ProviderOAuthCallbackExchangeRequest {
                 state: "safe-state".to_string(),
                 code: "authorization-code".to_string(),
+                accepted_port: 1455,
             })
             .await
             .unwrap();
@@ -1241,7 +1250,7 @@ mod tests {
                     ttl_seconds: Some(600),
                     token_endpoint_url: None,
                     chat_endpoint_url: None,
-                    callback_port: None,
+                    callback_port: 1455,
                 },
             )
             .await
@@ -1315,7 +1324,7 @@ mod tests {
                 ttl_seconds: None,
                 token_endpoint_url: None,
                 chat_endpoint_url: None,
-                callback_port: None,
+                callback_port: 1455,
             })
             .await
             .unwrap_err();
@@ -1344,7 +1353,7 @@ mod tests {
                     ttl_seconds: None,
                     token_endpoint_url: None,
                     chat_endpoint_url: None,
-                    callback_port: None,
+                    callback_port: 1455,
                 },
             )
             .await

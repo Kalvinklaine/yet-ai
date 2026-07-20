@@ -617,7 +617,13 @@ async fn provider_auth_start(
         Err(rejection) => return invalid_json_body(rejection),
     };
     provider_auth_response(
-        provider_auth::start(&state.storage_paths.config_dir, &provider, request).await,
+        provider_auth::start_with_callback_port(
+            &state.storage_paths.config_dir,
+            &provider,
+            request,
+            state.provider_auth_callback_port,
+        )
+        .await,
     )
 }
 

@@ -43,7 +43,6 @@ const CODEX_CHAT_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const CODEX_CHAT_MODEL: &str = "gpt-5-codex";
 const CODEX_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_REDIRECT_URI: &str = "http://localhost:1455/auth/callback";
-const MIN_CALLBACK_OVERRIDE_PORT: u16 = 1024;
 const CODEX_SCOPE: &str = "openid profile email offline_access";
 const CODEX_CONNECTED_MESSAGE: &str = "Experimental Codex-like OpenAI login is connected in local engine storage. This remains experimental/high-risk and is not official public third-party OpenAI OAuth support.";
 const CODEX_EXPIRED_MESSAGE: &str = "Experimental Codex-like OpenAI login expired. Reconnect the account or use the OpenAI API-key fallback.";
@@ -147,6 +146,18 @@ pub async fn start(
     provider: &str,
     request: ProviderAuthStartRequest,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
+    start_with_callback_port(config_dir, provider, request, 1455).await
+}
+
+pub(crate) async fn start_with_callback_port(
+    config_dir: &Path,
+    provider: &str,
+    request: ProviderAuthStartRequest,
+    callback_port: u16,
+) -> Result<ProviderAuthResponse, ProviderAuthError> {
+    if callback_port < 1024 {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
     let provider = normalize_supported_provider(provider)?;
     validate_start_request(provider, &request)?;
     if request.mock {
@@ -170,7 +181,7 @@ pub async fn start(
                     ttl_seconds: request.ttl_seconds,
                     token_endpoint_url: request.token_endpoint_url,
                     chat_endpoint_url: request.chat_endpoint_url,
-                    callback_port: request.callback_port,
+                    callback_port,
                 },
             )
             .await
@@ -206,15 +217,6 @@ fn validate_start_request(
         }
         if let Some(value) = request.chat_endpoint_url.as_deref() {
             validate_experimental_endpoint_url(value, true)?;
-        }
-    }
-    if let Some(port) = request.callback_port {
-        if !request.experimental_codex_like
-            || provider != "openai"
-            || request.mock
-            || port < MIN_CALLBACK_OVERRIDE_PORT
-        {
-            return Err(ProviderAuthError::InvalidRequest);
         }
     }
     Ok(())
@@ -393,7 +395,7 @@ fn new_codex_session(
     ttl_seconds: i64,
     token_endpoint_url: Option<&str>,
     chat_endpoint_url: Option<&str>,
-    callback_port: Option<u16>,
+    callback_port: u16,
 ) -> Result<CodexOAuthSession, ProviderAuthError> {
     let ttl_seconds = validate_ttl_seconds(ttl_seconds)?;
     let token_endpoint_url = experimental_endpoint_url(token_endpoint_url, CODEX_TOKEN_URL)?;
@@ -424,9 +426,8 @@ pub(super) fn default_codex_redirect_uri() -> String {
     CODEX_REDIRECT_URI.to_string()
 }
 
-fn callback_redirect_uri(port: Option<u16>) -> String {
-    port.map(|port| format!("http://localhost:{port}/auth/callback"))
-        .unwrap_or_else(default_codex_redirect_uri)
+fn callback_redirect_uri(port: u16) -> String {
+    format!("http://localhost:{port}/auth/callback")
 }
 
 fn validate_ttl_seconds(ttl_seconds: i64) -> Result<i64, ProviderAuthError> {
@@ -629,6 +630,7 @@ pub(crate) async fn codex_callback_exchange(
     config_dir: &Path,
     state_value: String,
     code: String,
+    accepted_port: u16,
 ) -> Result<ProviderAuthResponse, ProviderAuthError> {
     let adapter = openai_codex_adapter(config_dir);
     openai_codex_dispatch(&adapter)
@@ -637,6 +639,7 @@ pub(crate) async fn codex_callback_exchange(
             adapters::ProviderOAuthCallbackExchangeRequest {
                 state: state_value,
                 code,
+                accepted_port,
             },
         )
         .await
@@ -647,12 +650,16 @@ pub(crate) async fn codex_callback_exchange(
 pub(crate) async fn codex_callback_error(
     config_dir: &Path,
     state_value: String,
+    accepted_port: u16,
 ) -> Result<(), ProviderAuthError> {
     let adapter = openai_codex_adapter(config_dir);
     openai_codex_dispatch(&adapter)
         .callback_error(
             "openai",
-            adapters::ProviderOAuthCallbackErrorRequest { state: state_value },
+            adapters::ProviderOAuthCallbackErrorRequest {
+                state: state_value,
+                accepted_port,
+            },
         )
         .await
         .map_err(Into::into)
@@ -662,9 +669,15 @@ pub(super) async fn codex_callback_error_impl(
     config_dir: &Path,
     provider: &str,
     state_value: String,
+    accepted_port: u16,
 ) -> Result<(), ProviderAuthError> {
     let registry_session = lookup_codex_registry_session_by_state(config_dir, &state_value).await?;
     let mut codex = read_codex_state(config_dir, provider).await?;
+    if let Some(session) = codex.pending.as_ref() {
+        if session.state == state_value {
+            validate_codex_callback_port(session, accepted_port)?;
+        }
+    }
     let Some(session) = codex.pending.take() else {
         if let Some(session) = registry_session {
             remove_codex_registry_session(config_dir, provider, &session.session_id).await?;
@@ -687,6 +700,24 @@ pub(super) async fn codex_callback_error_impl(
     }
     write_codex_state(config_dir, provider, &codex).await?;
     remove_codex_registry_session(config_dir, provider, &session.session_id).await
+}
+
+pub(in crate::provider_auth) fn validate_codex_callback_port(
+    session: &CodexOAuthSession,
+    accepted_port: u16,
+) -> Result<(), ProviderAuthError> {
+    let parsed = reqwest::Url::parse(&session.redirect_uri)
+        .map_err(|_| ProviderAuthError::CallbackPortMismatch)?;
+    if parsed.scheme() != "http"
+        || parsed.host_str() != Some("localhost")
+        || parsed.path() != "/auth/callback"
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+        || parsed.port() != Some(accepted_port)
+    {
+        return Err(ProviderAuthError::CallbackPortMismatch);
+    }
+    Ok(())
 }
 
 async fn exchange_codex_token(
@@ -1086,6 +1117,9 @@ fn sanitized_provider_auth_last_error(error: &ProviderAuthError) -> String {
         }
         ProviderAuthError::CallbackUnavailable => {
             "Login callback listener is unavailable. Restart the local runtime and retry login.".to_string()
+        }
+        ProviderAuthError::CallbackPortMismatch => {
+            "Login callback could not be matched safely. Start login again.".to_string()
         }
         ProviderAuthError::InvalidProvider
         | ProviderAuthError::UnsupportedProvider
@@ -2262,14 +2296,20 @@ pub(crate) async fn resolve_codex_callback_config_dir(
     let mut config_dirs = config_dirs.into_iter().collect::<Vec<_>>();
     config_dirs.sort();
     config_dirs.dedup();
+    let lookups = config_dirs.into_iter().map(|config_dir| async move {
+        let pending = codex_callback_state_is_pending(&config_dir, state_value).await?;
+        Ok::<_, ProviderAuthError>((config_dir, pending))
+    });
     let mut matched = None;
-    for config_dir in config_dirs {
-        if codex_callback_state_is_pending(&config_dir, state_value).await? {
-            if matched.is_some() {
-                return Err(ProviderAuthError::SessionMismatch);
-            }
-            matched = Some(config_dir);
+    for result in futures_util::future::join_all(lookups).await {
+        let (config_dir, pending) = result?;
+        if !pending {
+            continue;
         }
+        if matched.is_some() {
+            return Err(ProviderAuthError::SessionMismatch);
+        }
+        matched = Some(config_dir);
     }
     Ok(matched)
 }
@@ -2986,7 +3026,7 @@ mod tests {
             account_label: Some("Codex Test Account".to_string()),
         };
         let models_endpoint = codex_models_endpoint().await;
-        let mut session = super::new_codex_session(600, None, None, None).unwrap();
+        let mut session = super::new_codex_session(600, None, None, 1455).unwrap();
         session.chat_base_url = models_endpoint;
         super::openai_codex_adapter(dir)
             .complete_exchange_with_token(
@@ -3215,7 +3255,7 @@ mod tests {
     }
 
     async fn create_codex_pending_state(dir: &std::path::Path) -> super::CodexOAuthSession {
-        let session = super::new_codex_session(600, None, None, None).unwrap();
+        let session = super::new_codex_session(600, None, None, 1455).unwrap();
         super::write_codex_state(
             dir,
             "openai",
@@ -3233,7 +3273,7 @@ mod tests {
         dir: &std::path::Path,
         token_endpoint_url: &str,
     ) -> super::CodexOAuthSession {
-        let session = super::new_codex_session(600, Some(token_endpoint_url), None, None).unwrap();
+        let session = super::new_codex_session(600, Some(token_endpoint_url), None, 1455).unwrap();
         super::write_codex_state(
             dir,
             "openai",
@@ -3248,7 +3288,7 @@ mod tests {
     }
 
     async fn create_expired_codex_pending_state(dir: &std::path::Path) -> super::CodexOAuthSession {
-        let mut session = super::new_codex_session(600, None, None, None).unwrap();
+        let mut session = super::new_codex_session(600, None, None, 1455).unwrap();
         session.expires_at = (chrono::Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
         super::write_codex_state(
             dir,
@@ -3397,14 +3437,14 @@ mod tests {
 
     #[test]
     fn codex_callback_redirect_defaults_and_override_are_fixed_loopback() {
-        let default = super::new_codex_session(600, None, None, None).unwrap();
+        let default = super::new_codex_session(600, None, None, 1455).unwrap();
         assert_eq!(default.redirect_uri, super::CODEX_REDIRECT_URI);
         assert_eq!(
             test_query_param(&super::codex_authorization_url(&default), "redirect_uri"),
             super::CODEX_REDIRECT_URI
         );
 
-        let overridden = super::new_codex_session(600, None, None, Some(41455)).unwrap();
+        let overridden = super::new_codex_session(600, None, None, 41455).unwrap();
         assert_eq!(
             overridden.redirect_uri,
             "http://localhost:41455/auth/callback"
@@ -3416,28 +3456,10 @@ mod tests {
     }
 
     #[test]
-    fn callback_port_override_is_rejected_outside_experimental_non_privileged_mode() {
-        for request in [
-            super::ProviderAuthStartRequest {
-                callback_port: Some(1023),
-                experimental_codex_like: true,
-                ..Default::default()
-            },
-            super::ProviderAuthStartRequest {
-                callback_port: Some(41455),
-                ..Default::default()
-            },
-            super::ProviderAuthStartRequest {
-                callback_port: Some(41455),
-                mock: true,
-                ..Default::default()
-            },
-        ] {
-            assert!(matches!(
-                super::validate_start_request("openai", &request),
-                Err(ProviderAuthError::InvalidRequest)
-            ));
-        }
+    fn callback_port_is_not_part_of_public_start_request() {
+        assert!(
+            parse_start_request(r#"{"experimentalCodexLike":true,"callbackPort":41455}"#).is_err()
+        );
     }
 
     #[test]
