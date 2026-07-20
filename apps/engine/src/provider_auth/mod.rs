@@ -35,7 +35,7 @@ const CODEX_TOKEN_ERROR_BODY_LIMIT_BYTES: usize = 4096;
 const CODEX_REFRESH_FILE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 const CODEX_REFRESH_FILE_LOCK_RETRY: std::time::Duration = std::time::Duration::from_millis(10);
 const CODEX_TOKEN_REFRESH_SKEW_SECONDS: i64 = 60;
-const CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS: i64 = 3600;
+const CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS: i64 = 8 * 24 * 3600;
 const MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS: i64 = 86400;
 const CODEX_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CODEX_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
@@ -1155,13 +1155,17 @@ fn validate_codex_account_id(value: &str) -> Result<(), ProviderAuthError> {
 pub(in crate::provider_auth) fn validate_codex_token_expires_in(
     value: Option<i64>,
 ) -> Result<i64, ProviderAuthError> {
-    let value = value.unwrap_or(CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS);
-    if value <= 0 || value > MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS {
+    let value = value.unwrap_or_default();
+    if value < 0 || value > MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS {
         return Err(ProviderAuthError::token_exchange(
             CodexTokenExchangeCategory::ExpiresInvalid,
         ));
     }
-    Ok(value)
+    Ok(if value == 0 {
+        CODEX_TOKEN_DEFAULT_EXPIRES_IN_SECONDS
+    } else {
+        value
+    })
 }
 
 pub(in crate::provider_auth) fn codex_token_scopes(
@@ -3313,6 +3317,31 @@ mod tests {
                 > std::time::Duration::from_secs(super::CODEX_TOKEN_EXCHANGE_TIMEOUT_SECONDS)
                     + std::time::Duration::from_millis(500)
         );
+    }
+
+    #[test]
+    fn codex_token_expiry_fallback_and_bounds_match_reference_contract() {
+        assert_eq!(
+            super::validate_codex_token_expires_in(None).unwrap(),
+            8 * 24 * 3600
+        );
+        assert_eq!(
+            super::validate_codex_token_expires_in(Some(0)).unwrap(),
+            8 * 24 * 3600
+        );
+        assert_eq!(
+            super::validate_codex_token_expires_in(Some(3600)).unwrap(),
+            3600
+        );
+        for value in [Some(-1), Some(86401)] {
+            assert!(matches!(
+                super::validate_codex_token_expires_in(value),
+                Err(ProviderAuthError::TokenExchange(
+                    super::CodexTokenExchangeCategory::ExpiresInvalid,
+                    None
+                ))
+            ));
+        }
     }
 
     #[test]

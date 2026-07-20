@@ -725,6 +725,13 @@ mod tests {
     }
 
     async fn codex_token_endpoint(status: StatusCode) -> String {
+        codex_token_endpoint_with_expiry(status, Some(3600)).await
+    }
+
+    async fn codex_token_endpoint_with_expiry(
+        status: StatusCode,
+        expires_in: Option<i64>,
+    ) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/token", listener.local_addr().unwrap());
         tokio::spawn(async move {
@@ -738,18 +745,30 @@ mod tests {
                 let request = String::from_utf8_lossy(&buffer[..read]);
                 let is_models = request.starts_with("GET /backend-api/codex/models");
                 let (response_status, body) = if is_models {
-                    (StatusCode::OK, r#"{"data":[{"id":"gpt-5-codex"}]}"#)
+                    (
+                        StatusCode::OK,
+                        r#"{"data":[{"id":"gpt-5-codex"}]}"#.to_string(),
+                    )
                 } else if status.is_success() || request_index == 0 {
                     (
                         status,
                         if status.is_success() {
-                            r#"{"access_token":"codex-exchange-access-token-secret","refresh_token":"codex-exchange-refresh-token-secret","expires_in":3600,"scope":"openid profile email offline_access","id_token":"eyJhbGciOiJub25lIn0.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LXRlc3QifQ.signature"}"#
+                            let mut body = serde_json::json!({
+                                "access_token": "codex-exchange-access-token-secret",
+                                "refresh_token": "codex-exchange-refresh-token-secret",
+                                "scope": "openid profile email offline_access",
+                                "id_token": "eyJhbGciOiJub25lIn0.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LXRlc3QifQ.signature"
+                            });
+                            if let Some(expires_in) = expires_in {
+                                body["expires_in"] = serde_json::json!(expires_in);
+                            }
+                            body.to_string()
                         } else {
-                            r#"{"error":"temporary_failure"}"#
+                            r#"{"error":"temporary_failure"}"#.to_string()
                         },
                     )
                 } else {
-                    (StatusCode::NOT_FOUND, r#"{}"#)
+                    (StatusCode::NOT_FOUND, r#"{}"#.to_string())
                 };
                 let response = format!(
                     "HTTP/1.1 {} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
@@ -1190,6 +1209,45 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn callback_with_provider_scope_accepts_zero_and_missing_expiry() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        for (label, expires_in) in [("zero-expiry", Some(0)), ("missing-expiry", None)] {
+            clear_all_registered_state_for_test();
+            let dir = callback_test_dir(label);
+            let token_endpoint_url =
+                codex_token_endpoint_with_expiry(StatusCode::OK, expires_in).await;
+            let start = start_codex_pending(&dir, &token_endpoint_url).await;
+            let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+                .unwrap()
+                .query_pairs()
+                .find(|(key, _)| key == "state")
+                .unwrap()
+                .1
+                .into_owned();
+            let before =
+                chrono::Utc::now() + chrono::Duration::days(8) - chrono::Duration::seconds(5);
+
+            let (status, text) = callback_response("GET", &callback_query_with_scope(&state)).await;
+
+            let after =
+                chrono::Utc::now() + chrono::Duration::days(8) + chrono::Duration::seconds(5);
+            assert_eq!(status, StatusCode::OK, "{label}");
+            assert_eq!(text, CALLBACK_SUCCESS_TEXT, "{label}");
+            assert!(!text.contains("openid"));
+            assert!(!text.contains("codex-code-callback-test"));
+            assert!(!text.contains(&state));
+            let connected = provider_auth::status(&dir, "openai").await.unwrap();
+            assert_eq!(connected.status, "connected");
+            let expires_at =
+                chrono::DateTime::parse_from_rfc3339(connected.expires_at.as_deref().unwrap())
+                    .unwrap()
+                    .with_timezone(&chrono::Utc);
+            assert!(expires_at >= before, "{label}: {expires_at}");
+            assert!(expires_at <= after, "{label}: {expires_at}");
+        }
     }
 
     #[tokio::test]

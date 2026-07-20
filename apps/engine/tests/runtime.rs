@@ -2970,7 +2970,7 @@ async fn provider_auth_openai_experimental_token_expires_in_missing_uses_bounded
         "state": state,
         "code": "codex-code-default-ttl"
     });
-    let before = chrono::Utc::now() + chrono::Duration::seconds(3500);
+    let before = chrono::Utc::now() + chrono::Duration::days(8) - chrono::Duration::seconds(5);
     let (status, body) = json_response_from(
         app,
         authed_request(
@@ -2980,7 +2980,7 @@ async fn provider_auth_openai_experimental_token_expires_in_missing_uses_bounded
         ),
     )
     .await;
-    let after = chrono::Utc::now() + chrono::Duration::seconds(3700);
+    let after = chrono::Utc::now() + chrono::Duration::days(8) + chrono::Duration::seconds(5);
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "connected");
     let expires_at = chrono::DateTime::parse_from_rfc3339(body["expiresAt"].as_str().unwrap())
@@ -2998,9 +2998,54 @@ async fn provider_auth_openai_experimental_token_expires_in_missing_uses_bounded
 }
 
 #[tokio::test]
+async fn provider_auth_openai_experimental_token_expires_in_zero_uses_bounded_default() {
+    let app = test_app();
+    let (token_endpoint_url, _) = start_mock_codex_token_endpoint_with(0).await;
+    let (status, start) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/start",
+            Body::from(
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let before = chrono::Utc::now() + chrono::Duration::days(8) - chrono::Duration::seconds(5);
+    let (status, body) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/v1/provider-auth/openai/exchange",
+            Body::from(
+                json!({
+                    "sessionId": start["sessionId"],
+                    "state": state,
+                    "code": "codex-code-zero-ttl"
+                })
+                .to_string(),
+            ),
+        ),
+    )
+    .await;
+    let after = chrono::Utc::now() + chrono::Duration::days(8) + chrono::Duration::seconds(5);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "connected");
+    let expires_at = chrono::DateTime::parse_from_rfc3339(body["expiresAt"].as_str().unwrap())
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert!(expires_at >= before);
+    assert!(expires_at <= after);
+    assert_provider_auth_response_has_no_codex_secrets(&body);
+}
+
+#[tokio::test]
 async fn provider_auth_openai_experimental_token_expires_in_invalid_values_are_rejected() {
     for (expires_in, code) in [
-        (0, "codex-code-zero-ttl-secret"),
         (-1, "codex-code-negative-ttl-secret"),
         (86401, "codex-code-huge-ttl-secret"),
     ] {
@@ -4667,68 +4712,65 @@ async fn provider_auth_openai_experimental_refresh_token_reused_without_newer_to
 }
 
 #[tokio::test]
-async fn provider_auth_openai_experimental_refresh_reuses_omitted_refresh_token() {
-    let paths = test_storage_paths();
-    let store = FileSecretStore::new(&paths.config_dir);
-    let (token_endpoint_url, _) = start_refresh_codex_token_endpoint(
-        StatusCode::OK,
-        json!({
+async fn provider_auth_openai_experimental_refresh_zero_and_missing_expiry_reuse_omitted_refresh_token(
+) {
+    for (label, expires_in) in [("zero", Some(0)), ("missing", None)] {
+        let paths = test_storage_paths();
+        let store = FileSecretStore::new(&paths.config_dir);
+        let mut response = json!({
             "access_token": "codex-refreshed-access-token-secret-abcd",
-            "expires_in": 1800,
             "scope": "openid profile email offline_access",
             "account_label": "mock-user@example.test"
-        }),
-    )
-    .await;
-    let metadata = json!({
-        "provider": "openai",
-        "accountLabel": "mock-user@example.test",
-        "scopes": ["openid", "profile", "email", "offline_access"],
-        "expiresAt": (chrono::Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
-        "redacted": "co...cd",
-        "chatgptAccountId": "acct-test",
-        "chatBaseUrl": "http://127.0.0.1:1456/backend-api/codex",
-        "chatModel": "gpt-5-codex",
-        "tokenEndpointUrl": token_endpoint_url
-    });
-    store
-        .put_secret(
-            "openai",
-            SecretKind::OAuthAccessToken,
+        });
+        if let Some(expires_in) = expires_in {
+            response["expires_in"] = json!(expires_in);
+        }
+        let (token_endpoint_url, _) =
+            start_refresh_codex_token_endpoint(StatusCode::OK, response).await;
+        seed_experimental_openai_oauth_with_ttl(
+            &paths,
+            "http://127.0.0.1:1456/backend-api/codex".to_string(),
+            token_endpoint_url,
             "codex-old-access-token-secret-abcd",
-        )
-        .await
-        .unwrap();
-    store
-        .put_secret(
-            "openai",
-            SecretKind::OAuthRefreshToken,
             "codex-old-refresh-token-secret-wxyz",
+            30,
+        )
+        .await;
+        let before = chrono::Utc::now() + chrono::Duration::days(8) - chrono::Duration::seconds(5);
+
+        let auth = yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_if_needed(
+            &paths.config_dir,
         )
         .await
-        .unwrap();
-    store
-        .put_secret("openai", SecretKind::AuthMetadata, &metadata.to_string())
-        .await
-        .unwrap();
+        .unwrap()
+        .unwrap_or_else(|| panic!("{label} expiry refresh should succeed"));
 
-    let auth =
-        yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_if_needed(&paths.config_dir)
+        let after = chrono::Utc::now() + chrono::Duration::days(8) + chrono::Duration::seconds(5);
+        assert_stored_secret(
+            Some(&auth.access_token),
+            "codex-refreshed-access-token-secret-abcd",
+        );
+        let stored_refresh = store
+            .get_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap();
+        assert_stored_secret(
+            stored_refresh.as_deref(),
+            "codex-old-refresh-token-secret-wxyz",
+        );
+        let metadata = store
+            .get_secret("openai", SecretKind::AuthMetadata)
             .await
             .unwrap()
-            .expect("refresh should reuse omitted refresh token");
-    assert_stored_secret(
-        Some(&auth.access_token),
-        "codex-refreshed-access-token-secret-abcd",
-    );
-    let stored_refresh = store
-        .get_secret("openai", SecretKind::OAuthRefreshToken)
-        .await
-        .unwrap();
-    assert_stored_secret(
-        stored_refresh.as_deref(),
-        "codex-old-refresh-token-secret-wxyz",
-    );
+            .unwrap();
+        let metadata: Value = serde_json::from_str(&metadata).unwrap();
+        let expires_at =
+            chrono::DateTime::parse_from_rfc3339(metadata["expiresAt"].as_str().unwrap())
+                .unwrap()
+                .with_timezone(&chrono::Utc);
+        assert!(expires_at >= before, "{label}: {expires_at}");
+        assert!(expires_at <= after, "{label}: {expires_at}");
+    }
 }
 
 #[tokio::test]
