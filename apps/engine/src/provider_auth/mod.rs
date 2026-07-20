@@ -2143,6 +2143,7 @@ fn validate_codex_chat_model(value: &str) -> Result<(), ProviderAuthError> {
     let trimmed = value.trim();
     let lower = trimmed.to_ascii_lowercase();
     if trimmed != value
+        || trimmed != lower
         || trimmed.is_empty()
         || trimmed.chars().count() > CODEX_CHAT_MODEL_MAX_CHARS
         || trimmed
@@ -6043,6 +6044,34 @@ mod tests {
             assert_eq!(message, "provider auth storage error");
             assert!(!message.contains(chat_model));
             assert!(!message.contains("codex-access-token-secret"));
+        }
+    }
+
+    #[tokio::test]
+    async fn stored_codex_mixed_case_chat_model_is_rejected_for_all_endpoint_classes() {
+        for chat_base_url in [
+            super::CODEX_CHAT_BASE_URL,
+            "http://127.0.0.1:3456/codex",
+        ] {
+            let dir = temp_dir();
+            create_codex_oauth_connection_with_expiry_and_metadata(
+                &dir,
+                chrono::Utc::now() + chrono::Duration::hours(1),
+                |_, metadata| {
+                    metadata.chat_base_url = chat_base_url.to_string();
+                    metadata.chat_model = "GPT-5-CODEX".to_string();
+                },
+            )
+            .await;
+
+            assert!(super::experimental_codex_chat_auth(&dir)
+                .await
+                .unwrap()
+                .is_none());
+            assert!(matches!(
+                super::select_experimental_codex_chat_auth(&dir).await,
+                Err(ProviderAuthError::Storage)
+            ));
         }
     }
 
