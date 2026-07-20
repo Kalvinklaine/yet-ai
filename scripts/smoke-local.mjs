@@ -32,10 +32,12 @@ let codexTokenRequestCount = 0;
 let codexChatAuth;
 let codexChatRequestBody = "";
 let codexChatRequestCount = 0;
+let callbackPort;
 
 try {
   tempHome = await makeTempHome();
   const enginePort = await freePort();
+  callbackPort = await freePort();
   mockProvider = await startMockProvider();
   engine = startEngine(enginePort, tempHome);
   const baseUrl = `http://127.0.0.1:${enginePort}`;
@@ -109,6 +111,7 @@ try {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
+      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
@@ -169,7 +172,7 @@ try {
   assert(parsedFailedCodexTokenBody.code === "codex-code-smoke-failure-secret", "experimental Codex-like failed exchange did not send auth code to mock token endpoint");
   assert(parsedCodexTokenBody.grant_type === "authorization_code", "experimental Codex-like retry exchange used unexpected grant type");
   assert(parsedCodexTokenBody.code === "codex-code-smoke-secret", "experimental Codex-like retry exchange did not send auth code to mock token endpoint");
-  assert(parsedCodexTokenBody.redirect_uri === "http://localhost:1455/auth/callback", "experimental Codex-like retry exchange used unexpected redirect URI");
+  assert(parsedCodexTokenBody.redirect_uri === codexAuthorizeUrl.searchParams.get("redirect_uri"), "experimental Codex-like retry exchange did not preserve the authorize redirect URI");
   assert(typeof parsedCodexTokenBody.code_verifier === "string" && parsedCodexTokenBody.code_verifier.length > 20, "experimental Codex-like retry exchange did not send PKCE verifier to mock token endpoint");
   assert(parsedFailedCodexTokenBody.code_verifier === parsedCodexTokenBody.code_verifier, "experimental Codex-like retry did not reuse pending verifier");
   assert(parsedCodexTokenBody.code_verifier !== codexState, "experimental Codex-like verifier reused state");
@@ -212,6 +215,7 @@ try {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
+      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
@@ -220,7 +224,7 @@ try {
   const codexRestartState = new URL(codexRestart.authorizationUrl).searchParams.get("state");
   assert(codexRestart.sessionId !== codexStart.sessionId, "experimental Codex-like restart reused prior session id");
   assert(codexRestartState !== codexState, "experimental Codex-like restart reused prior state");
-  const codexTransientCallback = await requestCallback(codexRestartState, "codex-code-smoke-transient-secret");
+  const codexTransientCallback = await requestCallback(codexRestart.authorizationUrl, "codex-code-smoke-transient-secret");
   assert(codexTransientCallback.status === 502, "experimental Codex-like transient callback did not return HTTP 502");
   assert(codexTransientCallback.body.includes("retry login or the authorization code"), "experimental Codex-like transient callback did not return safe retry text");
   assertNoSecretLeak(codexTransientCallback.raw, [
@@ -236,7 +240,7 @@ try {
   assert(codexPendingAfterCallbackFailure.sessionId === codexRestart.sessionId, "experimental Codex-like transient callback did not preserve retry session");
   assert(codexPendingAfterCallbackFailure.lastError === "Login reached Yet AI but token exchange failed (token_http_status_502; http_status=502; oauth_error=server_error). Retry login or use the API-key fallback.", "experimental Codex-like transient callback returned unexpected sanitized diagnostic");
 
-  const codexReconnectCallback = await requestCallback(codexRestartState, "codex-code-smoke-transient-secret");
+  const codexReconnectCallback = await requestCallback(codexRestart.authorizationUrl, "codex-code-smoke-transient-secret");
   assert(codexReconnectCallback.status === 200, "experimental Codex-like callback did not return HTTP 200");
   assert(codexReconnectCallback.body.includes("Login received. Return to Yet AI."), "experimental Codex-like callback did not return safe success text");
   assertNoSecretLeak(codexReconnectCallback.raw, [
@@ -465,6 +469,7 @@ try {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
+      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
@@ -476,7 +481,7 @@ try {
   assert(typeof codexTerminalStart.authorizationUrl === "string" && codexTerminalStart.authorizationUrl.startsWith("https://auth.openai.com/oauth/authorize?"), `experimental Codex-like terminal start did not return an authorization URL: ${JSON.stringify(codexTerminalStartStatus)}`);
   const codexTerminalState = new URL(codexTerminalStart.authorizationUrl).searchParams.get("state");
   assert(typeof codexTerminalState === "string" && codexTerminalState.length > 20, "experimental Codex-like terminal start did not return state");
-  const codexTerminalCallback = await requestCallback(codexTerminalState, "codex-code-smoke-invalid-grant-secret");
+  const codexTerminalCallback = await requestCallback(codexTerminalStart.authorizationUrl, "codex-code-smoke-invalid-grant-secret");
   assert(codexTerminalCallback.status === 502, "experimental Codex-like invalid_grant callback did not return HTTP 502");
   assert(codexTerminalCallback.body.includes("start login again"), "experimental Codex-like invalid_grant callback did not return safe fresh-login text");
   assert(!codexTerminalCallback.body.includes("retry login or the authorization code"), "experimental Codex-like invalid_grant callback incorrectly offered code retry");
@@ -656,13 +661,14 @@ async function verifyCodexFallbackExpiry(baseUrl, expiryKind) {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
+      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
   });
   const state = new URL(start.authorizationUrl).searchParams.get("state");
   const earliestExpiry = Date.now() + (8 * 24 * 60 * 60 * 1_000) - 10_000;
-  const callback = await requestCallback(state, code);
+  const callback = await requestCallback(start.authorizationUrl, code);
   const latestExpiry = Date.now() + (8 * 24 * 60 * 60 * 1_000) + 10_000;
   assert(callback.status === 200, `experimental Codex-like ${expiryKind} expiry callback did not succeed`);
   assertNoSecretLeak(callback.raw, [
@@ -697,12 +703,13 @@ async function verifyCodexInvalidExpiry(baseUrl, home, expiryKind) {
     method: "POST",
     body: JSON.stringify({
       experimentalCodexLike: true,
+      callbackPort,
       tokenEndpointUrl: mockCodexTokenEndpoint.url,
       chatEndpointUrl: mockCodexChatEndpoint.baseUrl
     })
   });
   const state = new URL(start.authorizationUrl).searchParams.get("state");
-  const callback = await requestCallback(state, code);
+  const callback = await requestCallback(start.authorizationUrl, code);
   assert(callback.status === 502, `experimental Codex-like ${expiryKind} expiry callback did not fail safely`);
   assert(callback.body.includes("retry login or the authorization code"), `experimental Codex-like ${expiryKind} expiry callback omitted safe retry text`);
   assertNoSecretLeak(callback.raw, [
@@ -993,8 +1000,10 @@ async function requestEmpty(baseUrl, route, init = {}) {
   await response.arrayBuffer();
 }
 
-async function requestCallback(state, code) {
-  const callbackUrl = new URL("http://localhost:1455/auth/callback");
+async function requestCallback(authorizationUrl, code) {
+  const authorizeUrl = new URL(authorizationUrl);
+  const callbackUrl = new URL(authorizeUrl.searchParams.get("redirect_uri"));
+  const state = authorizeUrl.searchParams.get("state");
   callbackUrl.searchParams.set("code", code);
   callbackUrl.searchParams.set("scope", "openid profile email offline_access");
   callbackUrl.searchParams.set("state", state);

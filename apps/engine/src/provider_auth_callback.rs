@@ -10,8 +10,6 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::provider_auth;
 
-#[cfg(not(test))]
-const CALLBACK_PORT: u16 = 1455;
 const CALLBACK_READ_MAX_BYTES: usize = 8192;
 const CALLBACK_SUCCESS_TEXT: &str = "Login received. Return to Yet AI.";
 const CALLBACK_FAILURE_TEXT: &str = "Login could not be completed. Return to Yet AI and try again.";
@@ -42,7 +40,7 @@ static CALLBACK_START_LOCK: LazyLock<tokio::sync::Mutex<()>> =
 
 #[derive(Default)]
 struct CallbackState {
-    started: bool,
+    started_ports: HashSet<u16>,
     pending_states: HashMap<String, PathBuf>,
     known_config_dirs: HashSet<PathBuf>,
 }
@@ -50,11 +48,15 @@ struct CallbackState {
 #[derive(Debug)]
 pub(crate) struct CallbackStartError;
 
-pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStartError> {
+pub(crate) async fn ensure_started(
+    config_dir: &Path,
+    redirect_uri: &str,
+) -> Result<(), CallbackStartError> {
+    let port = callback_port(redirect_uri)?;
     {
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
         state.known_config_dirs.insert(config_dir.to_path_buf());
-        if state.started {
+        if state.started_ports.contains(&port) {
             return Ok(());
         }
     }
@@ -62,7 +64,7 @@ pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStar
     #[cfg(test)]
     {
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
-        state.started = true;
+        state.started_ports.insert(port);
         return Ok(());
     }
 
@@ -71,19 +73,34 @@ pub(crate) async fn ensure_started(config_dir: &Path) -> Result<(), CallbackStar
         let _guard = CALLBACK_START_LOCK.lock().await;
         {
             let state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
-            if state.started {
+            if state.started_ports.contains(&port) {
                 return Ok(());
             }
         }
 
-        let listeners = bind_loopback_listeners().await?;
+        let listeners = bind_loopback_listeners(port).await?;
         serve_listeners_in_owner_thread(listeners)?;
 
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
         state.known_config_dirs.insert(config_dir.to_path_buf());
-        state.started = true;
+        state.started_ports.insert(port);
         Ok(())
     }
+}
+
+fn callback_port(redirect_uri: &str) -> Result<u16, CallbackStartError> {
+    let url = reqwest::Url::parse(redirect_uri).map_err(|_| CallbackStartError)?;
+    if url.scheme() != "http"
+        || url.host_str() != Some("localhost")
+        || url.path() != "/auth/callback"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(CallbackStartError);
+    }
+    url.port()
+        .filter(|port| *port >= 1024)
+        .ok_or(CallbackStartError)
 }
 
 pub(crate) fn register_pending_state(
@@ -111,11 +128,11 @@ struct LoopbackListeners {
 }
 
 #[cfg(not(test))]
-async fn bind_loopback_listeners() -> Result<LoopbackListeners, CallbackStartError> {
-    let ipv4 = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, CALLBACK_PORT)))
+async fn bind_loopback_listeners(port: u16) -> Result<LoopbackListeners, CallbackStartError> {
+    let ipv4 = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
         .await
         .map_err(|_| CallbackStartError)?;
-    let ipv6 = TcpListener::bind(SocketAddr::from((Ipv6Addr::LOCALHOST, CALLBACK_PORT)))
+    let ipv6 = TcpListener::bind(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
         .await
         .map_err(|_| CallbackStartError)?;
     Ok(LoopbackListeners { ipv4, ipv6 })
@@ -1393,7 +1410,10 @@ mod tests {
         let first = base.join("one");
         let second = base.join("two");
 
-        let (first, second) = tokio::join!(ensure_started(&first), ensure_started(&second));
+        let (first, second) = tokio::join!(
+            ensure_started(&first, "http://localhost:1455/auth/callback"),
+            ensure_started(&second, "http://localhost:1455/auth/callback")
+        );
 
         assert!(first.is_ok());
         assert!(second.is_ok());

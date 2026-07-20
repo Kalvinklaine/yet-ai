@@ -68,10 +68,8 @@ impl OpenAiCodexOAuthAdapter {
         ttl_seconds: Option<i64>,
         token_endpoint_url: Option<&str>,
         chat_endpoint_url: Option<&str>,
+        callback_port: Option<u16>,
     ) -> Result<ProviderAuthResponse, ProviderAuthError> {
-        crate::provider_auth_callback::ensure_started(&self.config_dir)
-            .await
-            .map_err(|_| ProviderAuthError::CallbackUnavailable)?;
         crate::provider_auth::reject_codex_mock_coexistence(&self.config_dir, self.provider)
             .await?;
         if let Some(response) =
@@ -88,6 +86,7 @@ impl OpenAiCodexOAuthAdapter {
             ttl_seconds.unwrap_or(crate::provider_auth::CODEX_TTL_SECONDS),
             token_endpoint_url,
             chat_endpoint_url,
+            callback_port,
         )?;
         crate::provider_auth::write_codex_state(
             &self.config_dir,
@@ -425,6 +424,7 @@ impl ProviderOAuthAdapter for OpenAiCodexOAuthAdapter {
                     request.ttl_seconds,
                     request.token_endpoint_url.as_deref(),
                     request.chat_endpoint_url.as_deref(),
+                    request.callback_port,
                 )
                 .await
                 .map_err(super::adapter_error_from_provider_auth)?;

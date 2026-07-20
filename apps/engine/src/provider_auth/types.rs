@@ -31,6 +31,8 @@ pub struct ProviderAuthStartRequest {
     pub token_endpoint_url: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_non_null")]
     pub chat_endpoint_url: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_non_null")]
+    pub callback_port: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -236,6 +238,8 @@ pub(super) struct CodexOAuthSession {
     pub(super) token_endpoint_url: String,
     pub(super) chat_base_url: String,
     pub(super) chat_model: String,
+    #[serde(default = "super::default_codex_redirect_uri")]
+    pub(super) redirect_uri: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) last_error: Option<String>,
 }

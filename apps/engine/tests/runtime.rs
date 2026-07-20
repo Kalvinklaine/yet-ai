@@ -1549,7 +1549,7 @@ async fn connect_experimental_openai_oauth(
             "/v1/provider-auth/openai/start",
             Body::from(
                 json!({
-                    "experimentalCodexLike": true,
+                    "experimentalCodexLike": true, "callbackPort": free_callback_port(),
                     "tokenEndpointUrl": token_endpoint_url,
                     "chatEndpointUrl": chat_endpoint_url
                 })
@@ -1589,38 +1589,71 @@ fn state_from_authorization_url(value: &str) -> &str {
         .unwrap()
 }
 
+fn free_callback_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn callback_url_from_authorization(value: &str, code: &str) -> String {
+    let authorize = reqwest::Url::parse(value).unwrap();
+    let redirect = authorize
+        .query_pairs()
+        .find(|(key, _)| key == "redirect_uri")
+        .unwrap()
+        .1
+        .into_owned();
+    let state = authorize
+        .query_pairs()
+        .find(|(key, _)| key == "state")
+        .unwrap()
+        .1
+        .into_owned();
+    let mut callback = reqwest::Url::parse(&redirect).unwrap();
+    callback
+        .query_pairs_mut()
+        .append_pair("code", code)
+        .append_pair("scope", "openid profile email offline_access")
+        .append_pair("state", &state);
+    callback.to_string()
+}
+
 async fn provider_auth_callback_text(state: &str, code: &str) -> (reqwest::StatusCode, String) {
     let path = format!("/auth/callback?code={code}&state={state}");
     provider_auth_callback_path_text(&path).await
 }
 
 async fn provider_auth_callback_path_text(path_and_query: &str) -> (reqwest::StatusCode, String) {
-    provider_auth_callback_raw_ipv4_text(path_and_query).await
+    provider_auth_callback_raw_ipv4_text(1455, path_and_query).await
 }
 
 async fn provider_auth_callback_url_text(url: &str) -> (reqwest::StatusCode, String) {
     let parsed = reqwest::Url::parse(url).unwrap();
+    let port = parsed.port().unwrap_or(1455);
     let mut path = parsed.path().to_string();
     if let Some(query) = parsed.query() {
         path.push('?');
         path.push_str(query);
     }
-    provider_auth_callback_raw_ipv4_text(&path).await
+    provider_auth_callback_raw_ipv4_text(port, &path).await
 }
 
 async fn provider_auth_callback_raw_ipv4_text(
+    port: u16,
     path_and_query: &str,
 ) -> (reqwest::StatusCode, String) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let request = format!(
-        "GET {path_and_query} HTTP/1.1\r\nHost: 127.0.0.1:1455\r\nConnection: close\r\n\r\n"
+        "GET {path_and_query} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
     );
     let mut errors = Vec::new();
     for attempt in 0..20 {
         match tokio::time::timeout(
             std::time::Duration::from_millis(750),
-            tokio::net::TcpStream::connect("127.0.0.1:1455"),
+            tokio::net::TcpStream::connect(("127.0.0.1", port)),
         )
         .await
         {
@@ -2252,9 +2285,9 @@ async fn provider_auth_openai_default_start_still_returns_login_unavailable() {
 async fn provider_auth_start_rejects_explicit_null_fields_without_state_mutation() {
     for request in [
         json!({ "ttlSeconds": null }),
-        json!({ "experimentalCodexLike": true, "ttlSeconds": null }),
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": null }),
-        json!({ "experimentalCodexLike": true, "chatEndpointUrl": null }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "ttlSeconds": null }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": null }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "chatEndpointUrl": null }),
     ] {
         let app = test_app();
         let (status, body) = json_response_from(
@@ -2340,12 +2373,15 @@ async fn provider_auth_exchange_rejects_explicit_null_fields_without_state_mutat
 #[tokio::test]
 async fn provider_auth_openai_experimental_codex_like_start_returns_pending_pkce() {
     let app = test_app();
+    let callback_port = free_callback_port();
     let (status, body) = json_response_from(
         app,
         authed_request(
             Method::POST,
             "/v1/provider-auth/openai/start",
-            Body::from(json!({ "experimentalCodexLike": true }).to_string()),
+            Body::from(
+                json!({ "experimentalCodexLike": true, "callbackPort": callback_port }).to_string(),
+            ),
         ),
     )
     .await;
@@ -2377,9 +2413,9 @@ async fn provider_auth_openai_experimental_codex_like_start_returns_pending_pkce
     assert!(authorization_url.starts_with("https://auth.openai.com/oauth/authorize?"));
     assert!(authorization_url.contains("response_type=code"));
     assert!(authorization_url.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
-    assert!(
-        authorization_url.contains("redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback")
-    );
+    assert!(authorization_url.contains(&format!(
+        "redirect_uri=http%3A%2F%2Flocalhost%3A{callback_port}%2Fauth%2Fcallback"
+    )));
     assert!(authorization_url.contains("scope=openid%20profile%20email%20offline_access"));
     assert!(authorization_url.contains("code_challenge="));
     assert!(authorization_url.contains("code_challenge_method=S256"));
@@ -2398,7 +2434,10 @@ async fn provider_auth_openai_experimental_status_returns_pending_without_verifi
         authed_request(
             Method::POST,
             "/v1/provider-auth/openai/start",
-            Body::from(json!({ "experimentalCodexLike": true }).to_string()),
+            Body::from(
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port() })
+                    .to_string(),
+            ),
         ),
     )
     .await;
@@ -2443,7 +2482,7 @@ async fn provider_auth_pending_state_corruption_fails_safely() {
             "mock-state-corrupt-secret",
         ),
         (
-            json!({ "experimentalCodexLike": true }),
+            json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port() }),
             "provider-auth-openai",
             "codex-state-corrupt-secret",
         ),
@@ -2497,7 +2536,7 @@ async fn provider_auth_pending_state_corruption_fails_safely() {
 async fn provider_auth_expired_pending_status_falls_back_without_session() {
     for start_body in [
         json!({ "mock": true, "ttlSeconds": 1 }),
-        json!({ "experimentalCodexLike": true, "ttlSeconds": 1 }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "ttlSeconds": 1 }),
     ] {
         let app = test_app();
         let (status, start) = json_response_from(
@@ -2555,7 +2594,7 @@ async fn provider_auth_openai_experimental_loopback_overrides_are_accepted() {
                 "/v1/provider-auth/openai/start",
                 Body::from(
                     json!({
-                        "experimentalCodexLike": true,
+                        "experimentalCodexLike": true, "callbackPort": free_callback_port(),
                         "tokenEndpointUrl": token_endpoint_url,
                         "chatEndpointUrl": chat_endpoint_url
                     })
@@ -2585,11 +2624,11 @@ async fn provider_auth_openai_experimental_loopback_overrides_are_accepted() {
 async fn provider_auth_openai_experimental_overrides_must_be_loopback_and_safe() {
     let forbidden_secret_url = "https://user:pass@evil.example/token?access_token=secret";
     for body in [
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "https://evil.example/token" }),
-        json!({ "experimentalCodexLike": true, "chatEndpointUrl": "https://evil.example/backend-api/codex" }),
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": forbidden_secret_url }),
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "file:///tmp/token" }),
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "not a url sk-secret-endpoint-abcd" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": "https://evil.example/token" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "chatEndpointUrl": "https://evil.example/backend-api/codex" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": forbidden_secret_url }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": "file:///tmp/token" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": "not a url sk-secret-endpoint-abcd" }),
     ] {
         let (status, body) = json_response(authed_request(
             Method::POST,
@@ -2611,10 +2650,10 @@ async fn provider_auth_openai_experimental_overrides_must_be_loopback_and_safe()
 #[tokio::test]
 async fn provider_auth_openai_experimental_overrides_reject_query_and_fragment_safely() {
     for request in [
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "http://127.0.0.1:1455/oauth/token?access_token=secret-query" }),
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "http://127.0.0.1:1455/oauth/token#refresh_token=secret-fragment" }),
-        json!({ "experimentalCodexLike": true, "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex?api_key=secret-query" }),
-        json!({ "experimentalCodexLike": true, "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex#access_token=secret-fragment" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": "http://127.0.0.1:1455/oauth/token?access_token=secret-query" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": "http://127.0.0.1:1455/oauth/token#refresh_token=secret-fragment" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex?api_key=secret-query" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex#access_token=secret-fragment" }),
     ] {
         let (status, body) = json_response(authed_request(
             Method::POST,
@@ -2637,9 +2676,9 @@ async fn provider_auth_openai_experimental_overrides_reject_query_and_fragment_s
 #[tokio::test]
 async fn provider_auth_start_rejects_empty_control_and_oversized_overrides_safely() {
     for request in [
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": "   " }),
-        json!({ "experimentalCodexLike": true, "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex\u{0085}" }),
-        json!({ "experimentalCodexLike": true, "tokenEndpointUrl": format!("http://127.0.0.1:1455/{}", "x".repeat(2050)) }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": "   " }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "chatEndpointUrl": "http://127.0.0.1:1456/backend-api/codex\u{0085}" }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": format!("http://127.0.0.1:1455/{}", "x".repeat(2050)) }),
     ] {
         let (status, body) = json_response(authed_request(
             Method::POST,
@@ -2662,9 +2701,9 @@ async fn provider_auth_start_rejects_unsafe_ttl_values_safely() {
         json!({ "mock": true, "ttlSeconds": 0 }),
         json!({ "mock": true, "ttlSeconds": -1 }),
         json!({ "mock": true, "ttlSeconds": 3601 }),
-        json!({ "experimentalCodexLike": true, "ttlSeconds": 0 }),
-        json!({ "experimentalCodexLike": true, "ttlSeconds": -1 }),
-        json!({ "experimentalCodexLike": true, "ttlSeconds": 3601 }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "ttlSeconds": 0 }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "ttlSeconds": -1 }),
+        json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "ttlSeconds": 3601 }),
     ] {
         let (status, body) = json_response(authed_request(
             Method::POST,
@@ -2693,7 +2732,7 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -2765,7 +2804,6 @@ async fn provider_auth_openai_experimental_exchange_stores_tokens_and_returns_co
 }
 
 #[tokio::test]
-#[ignore = "full runtime suite can starve the fixed-port browser callback; active real loopback listener coverage lives in provider_auth_callback::tests::real_loopback_callback_route_reaches_listener"]
 async fn provider_auth_openai_experimental_callback_completes_login() {
     let paths = test_storage_paths();
     let app = app(AppState::with_storage_paths(
@@ -2775,22 +2813,26 @@ async fn provider_auth_openai_experimental_callback_completes_login() {
     ));
     let (token_endpoint_url, token_body_receiver) =
         start_threaded_mock_codex_token_endpoint().await;
+    let callback_port = free_callback_port();
     let (status, start) = json_response_from(
         app.clone(),
         authed_request(
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url, "callbackPort": callback_port })
                     .to_string(),
             ),
         ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let state = state_from_authorization_url(start["authorizationUrl"].as_str().unwrap());
+    let authorization_url = start["authorizationUrl"].as_str().unwrap();
+    let state = state_from_authorization_url(authorization_url);
+    let callback_url =
+        callback_url_from_authorization(authorization_url, "codex-code-callback-success");
 
-    let (status, text) = provider_auth_callback_text(state, "codex-code-callback-success").await;
+    let (status, text) = provider_auth_callback_url_text(&callback_url).await;
     assert_eq!(status, reqwest::StatusCode::OK);
     assert_eq!(text, "Login received. Return to Yet AI.");
     assert!(!text.contains(state));
@@ -2803,6 +2845,10 @@ async fn provider_auth_openai_experimental_callback_completes_login() {
         &token_body["code"],
         "codex-code-callback-success",
         "callback token request code",
+    );
+    assert_eq!(
+        token_body["redirect_uri"],
+        format!("http://localhost:{callback_port}/auth/callback")
     );
     let store = FileSecretStore::new(&paths.config_dir);
     let access_secret = store
@@ -2836,7 +2882,7 @@ async fn provider_auth_openai_experimental_callback_invalid_inputs_are_sanitized
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -2879,7 +2925,7 @@ async fn provider_auth_openai_experimental_callback_failure_preserves_pending_an
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -2957,7 +3003,7 @@ async fn provider_auth_openai_experimental_token_expires_in_missing_uses_bounded
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3007,7 +3053,7 @@ async fn provider_auth_openai_experimental_token_expires_in_zero_uses_bounded_de
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3063,7 +3109,7 @@ async fn provider_auth_openai_experimental_token_expires_in_invalid_values_are_r
                 Method::POST,
                 "/v1/provider-auth/openai/start",
                 Body::from(
-                    json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                         .to_string(),
                 ),
             ),
@@ -3156,7 +3202,7 @@ async fn provider_auth_openai_experimental_exchange_accepts_missing_refresh_toke
                 Method::POST,
                 "/v1/provider-auth/openai/start",
                 Body::from(
-                    json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                         .to_string(),
                 ),
             ),
@@ -3239,7 +3285,7 @@ async fn provider_auth_openai_experimental_account_label_is_sanitized() {
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3307,7 +3353,7 @@ async fn provider_auth_openai_experimental_access_write_failure_leaves_no_oauth_
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3376,7 +3422,7 @@ async fn provider_auth_openai_experimental_refresh_write_failure_removes_access_
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3445,7 +3491,7 @@ async fn provider_auth_openai_experimental_secret_write_failure_rolls_back_parti
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3512,7 +3558,7 @@ async fn provider_auth_openai_experimental_exchange_failure_keeps_pending_for_re
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3628,7 +3674,7 @@ async fn provider_auth_openai_experimental_concurrent_exchange_is_single_flight(
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3725,7 +3771,7 @@ async fn provider_auth_openai_experimental_invalid_exchange_keeps_pending_until_
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -3810,7 +3856,7 @@ async fn provider_auth_exchange_rejects_invalid_strings_before_token_call_and_st
                 Method::POST,
                 "/v1/provider-auth/openai/start",
                 Body::from(
-                    json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                    json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                         .to_string(),
                 ),
             ),
@@ -3926,7 +3972,7 @@ async fn provider_auth_openai_experimental_token_exchange_timeout_is_bounded_and
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -4005,7 +4051,7 @@ async fn provider_auth_openai_experimental_exchange_mismatch_expired_and_duplica
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -4048,7 +4094,7 @@ async fn provider_auth_openai_experimental_exchange_mismatch_expired_and_duplica
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url, "ttlSeconds": 1 })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url, "ttlSeconds": 1 })
                     .to_string(),
             ),
         ),
@@ -4093,7 +4139,7 @@ async fn provider_auth_openai_experimental_exchange_mismatch_expired_and_duplica
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -4148,7 +4194,7 @@ async fn provider_auth_openai_experimental_disconnect_clears_oauth_not_api_key_p
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -4248,7 +4294,7 @@ async fn provider_auth_openai_experimental_disconnect_pending_then_relogin_uses_
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": first_token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": first_token_endpoint_url })
                     .to_string(),
             ),
         ),
@@ -4317,7 +4363,7 @@ async fn provider_auth_openai_experimental_disconnect_pending_then_relogin_uses_
             Method::POST,
             "/v1/provider-auth/openai/start",
             Body::from(
-                json!({ "experimentalCodexLike": true, "tokenEndpointUrl": second_token_endpoint_url })
+                json!({ "experimentalCodexLike": true, "callbackPort": free_callback_port(), "tokenEndpointUrl": second_token_endpoint_url })
                     .to_string(),
             ),
         ),

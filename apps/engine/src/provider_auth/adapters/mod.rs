@@ -144,6 +144,19 @@ pub(super) struct ProviderOAuthStartSessionRequest {
     pub(super) ttl_seconds: Option<i64>,
     pub(super) token_endpoint_url: Option<String>,
     pub(super) chat_endpoint_url: Option<String>,
+    pub(super) callback_port: Option<u16>,
+}
+
+impl Default for ProviderOAuthStartSessionRequest {
+    fn default() -> Self {
+        Self {
+            mode: ProviderOAuthAuthMode::BrowserPkce,
+            ttl_seconds: None,
+            token_endpoint_url: None,
+            chat_endpoint_url: None,
+            callback_port: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -420,7 +433,8 @@ mod tests {
         fn start_session<'a>(
             &'a self,
             _request: ProviderOAuthStartSessionRequest,
-        ) -> AdapterFuture<'a, Result<ProviderOAuthStartSession, ProviderOAuthAdapterError>> {
+        ) -> AdapterFuture<'a, Result<ProviderOAuthStartSession, ProviderOAuthAdapterError>>
+        {
             Box::pin(async { Err(ProviderOAuthAdapterError::CallbackUnavailable) })
         }
 
@@ -455,7 +469,8 @@ mod tests {
         fn refresh<'a>(
             &'a self,
             _request: ProviderOAuthRefreshRequest,
-        ) -> AdapterFuture<'a, Result<ProviderOAuthRefreshOutcome, ProviderOAuthAdapterError>> {
+        ) -> AdapterFuture<'a, Result<ProviderOAuthRefreshOutcome, ProviderOAuthAdapterError>>
+        {
             Box::pin(async { Err(ProviderOAuthAdapterError::AdapterFailure) })
         }
 
@@ -1041,6 +1056,7 @@ mod tests {
                 ttl_seconds: Some(600),
                 token_endpoint_url: None,
                 chat_endpoint_url: None,
+                callback_port: None,
             })
             .await
             .unwrap();
@@ -1225,6 +1241,7 @@ mod tests {
                     ttl_seconds: Some(600),
                     token_endpoint_url: None,
                     chat_endpoint_url: None,
+                    callback_port: None,
                 },
             )
             .await
@@ -1298,6 +1315,7 @@ mod tests {
                 ttl_seconds: None,
                 token_endpoint_url: None,
                 chat_endpoint_url: None,
+                callback_port: None,
             })
             .await
             .unwrap_err();
@@ -1312,7 +1330,10 @@ mod tests {
         let dispatch = ProviderOAuthAdapterDispatch::single(&adapter);
 
         let status_error: ProviderAuthError = dispatch.status("openai").await.unwrap_err().into();
-        assert!(matches!(status_error, ProviderAuthError::CallbackUnavailable));
+        assert!(matches!(
+            status_error,
+            ProviderAuthError::CallbackUnavailable
+        ));
         assert_eq!(status_error.status(), http::StatusCode::SERVICE_UNAVAILABLE);
 
         let start_error: ProviderAuthError = dispatch
@@ -1323,12 +1344,16 @@ mod tests {
                     ttl_seconds: None,
                     token_endpoint_url: None,
                     chat_endpoint_url: None,
+                    callback_port: None,
                 },
             )
             .await
             .unwrap_err()
             .into();
-        assert!(matches!(start_error, ProviderAuthError::CallbackUnavailable));
+        assert!(matches!(
+            start_error,
+            ProviderAuthError::CallbackUnavailable
+        ));
         assert_eq!(start_error.status(), http::StatusCode::SERVICE_UNAVAILABLE);
     }
 
