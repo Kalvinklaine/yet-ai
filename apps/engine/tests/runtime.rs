@@ -14845,6 +14845,80 @@ async fn provider_unauthorized_produces_sanitized_error_event() {
 }
 
 #[tokio::test]
+async fn chat_http_invalid_request_reasons_are_allowlisted_and_provider_content_is_not_surfaced() {
+    for (status, body, expected_reason, chat_id) in [
+        (
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"required input field is missing sk-format-secret /Users/example/private"}}"#,
+            "format",
+            "chat-http-invalid-format",
+        ),
+        (
+            StatusCode::NOT_FOUND,
+            r#"{"error":{"code":"unsupported_model","message":"route not found account-123"}}"#,
+            "model",
+            "chat-http-invalid-model",
+        ),
+        (
+            StatusCode::NOT_FOUND,
+            r#"<html>path not found Authorization: Bearer endpoint-secret https://provider.example/private</html>"#,
+            "endpoint",
+            "chat-http-invalid-endpoint",
+        ),
+        (
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"request rejected Cookie: session=unknown-secret C:\\private\\auth.json"}}"#,
+            "unknown",
+            "chat-http-invalid-unknown",
+        ),
+    ] {
+        let (base_url, _) = start_mock_provider(status, body).await;
+        let paths = test_storage_paths();
+        let app = app(test_app_state(
+            ProductIdentity::load().unwrap(),
+            AuthToken::new(TEST_TOKEN).unwrap(),
+            paths,
+        ));
+        configure_openai_provider(app.clone(), base_url, "safe-test-key").await;
+        send_user_message(app.clone(), chat_id).await;
+
+        let text = sse_text_from(
+            app.clone(),
+            &format!("/v1/chats/subscribe?chat_id={chat_id}"),
+        )
+        .await;
+        let events = sse_json_events(&text);
+        let error = events
+            .iter()
+            .find(|event| event["type"] == "error")
+            .expect("live invalid-request error event");
+        assert_eq!(error["payload"]["code"], "provider_invalid_request");
+        assert_eq!(error["payload"]["reason"], expected_reason);
+        assert!(matches!(
+            error["payload"]["reason"].as_str(),
+            Some("format" | "model" | "endpoint" | "unknown")
+        ));
+
+        let history = wait_for_chat_messages(app, chat_id, 2).await.to_string();
+        for forbidden in [
+            "sk-format-secret",
+            "/Users/example/private",
+            "account-123",
+            "Authorization",
+            "Bearer endpoint-secret",
+            "provider.example",
+            "<html>",
+            "Cookie",
+            "unknown-secret",
+            "C:\\private\\auth.json",
+        ] {
+            assert!(!text.contains(forbidden));
+            assert!(!history.contains(forbidden));
+        }
+    }
+}
+
+#[tokio::test]
 async fn chat_command_provider_http_failures_produce_stable_sanitized_error_events_and_history() {
     for (status, body, expected_code, expected_message, chat_id, forbidden) in [
         (

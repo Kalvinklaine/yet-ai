@@ -259,6 +259,33 @@ describe("chatViewState", () => {
     expect(state.messages[0].content).toContain(guidance);
   });
 
+  it.each([
+    ["format", "request format"],
+    ["model", "supported configured model"],
+    ["endpoint", "endpoint was not found"],
+    ["unknown", "model id, provider endpoint"],
+  ])("uses bounded invalid-request reason %s", (reason, guidance) => {
+    const state = applyChatViewEvent(
+      createInitialChatViewState("chat-1"),
+      event("error", { code: "provider_invalid_request", reason, message: "Provider rejected the request." }),
+    );
+
+    expect(state.messages[0].content).toContain(guidance);
+  });
+
+  it("ignores invalid reasons and never displays provider fragments", () => {
+    const fragment = `Authorization: Bearer leaked-token /Users/example/private <html>account-123 https://provider.example/private`;
+    const state = applyChatViewEvent(
+      createInitialChatViewState("chat-1"),
+      event("error", { code: "provider_invalid_request", reason: fragment, message: "Provider rejected the request." }),
+    );
+
+    expect(state.messages[0].content).toContain("model id, provider endpoint");
+    expect(state.messages[0].content).not.toContain(fragment);
+    expect(state.messages[0].content).not.toContain("leaked-token");
+    expect(state.messages[0].content).not.toContain("provider.example");
+  });
+
   it("uses safe fallback recovery for unknown and malformed error codes", () => {
     const state = [
       event("error", { code: "future_provider_error", message: "Future provider failure." }),

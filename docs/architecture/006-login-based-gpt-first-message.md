@@ -89,6 +89,8 @@ When the experimental path is connected and no safer ready path wins, the GUI ma
 
 This is dev-preview/manual recovery guidance only. It documents implemented GUI behavior around sanitized chat errors and provider-auth status; it is not a promise that the experimental account path is reliable, supportable, or suitable for production use.
 
+The `provider_invalid_request` chat error code remains stable. Its SSE payload may add an optional `reason` field limited to `format`, `model`, `endpoint`, or `unknown`. The GUI uses only those values for matching manual recovery guidance; absent or invalid values retain the generic invalid-request fallback. The reason is classified from HTTP status and allowlisted normalized signals inside the engine's bounded provider error body. Raw response text, headers, URLs, account identifiers, request identifiers, HTML, tokens, and private paths are never part of this payload or its displayed recovery copy.
+
 ## Engine, GUI, and IDE boundaries
 
 The engine owns:

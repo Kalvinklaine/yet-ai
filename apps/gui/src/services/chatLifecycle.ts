@@ -31,6 +31,8 @@ export type ChatRecoveryCode =
   | "model_not_configured"
   | "provider_request_failed";
 
+export type ProviderInvalidRequestReason = "format" | "model" | "endpoint" | "unknown";
+
 export const chatLifecycleLabels: Record<ChatLifecycleState, string> = {
   idle: "Ready for local input.",
   command_submitting: "Sending your message through the local runtime…",
@@ -63,7 +65,17 @@ const chatRecoveryCopy: Record<ChatRecoveryCode, string> = {
   provider_request_failed: "Recovery: check local provider configuration, network access, and readiness, then send again.",
 };
 
-export function chatRecoveryCopyForCode(code: string | undefined): string {
+const providerInvalidRequestRecoveryCopy: Record<ProviderInvalidRequestReason, string> = {
+  format: "Recovery: the provider rejected the request format. Review provider compatibility and request settings, then send again.",
+  model: "Recovery: the provider rejected the model. Select a supported configured model, then send again.",
+  endpoint: "Recovery: the provider endpoint was not found. Check the saved provider endpoint, then send again.",
+  unknown: chatRecoveryCopy.provider_invalid_request,
+};
+
+export function chatRecoveryCopyForCode(code: string | undefined, reason?: unknown): string {
+  if (code === "provider_invalid_request" && isProviderInvalidRequestReason(reason)) {
+    return providerInvalidRequestRecoveryCopy[reason];
+  }
   return isChatRecoveryCode(code) ? chatRecoveryCopy[code] : chatRecoveryCopy.sse_provider_error;
 }
 
@@ -99,4 +111,8 @@ export function formatChatErrorMessage(message: string, recovery: string, limit 
 
 function isChatRecoveryCode(code: string | undefined): code is ChatRecoveryCode {
   return typeof code === "string" && Object.prototype.hasOwnProperty.call(chatRecoveryCopy, code);
+}
+
+function isProviderInvalidRequestReason(reason: unknown): reason is ProviderInvalidRequestReason {
+  return typeof reason === "string" && Object.prototype.hasOwnProperty.call(providerInvalidRequestRecoveryCopy, reason);
 }

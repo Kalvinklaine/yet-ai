@@ -319,7 +319,7 @@ function formatChatErrorContent(payload: SseEvent["payload"]): string {
 
 function readErrorRecovery(payload: SseEvent["payload"]): string {
   const code = typeof payload?.code === "string" ? payload.code : "";
-  return chatRecoveryCopyForCode(code);
+  return chatRecoveryCopyForCode(code, payload?.reason);
 }
 
 function readErrorMessage(payload: SseEvent["payload"]): string {

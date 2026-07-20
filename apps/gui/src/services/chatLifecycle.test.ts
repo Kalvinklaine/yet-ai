@@ -22,6 +22,15 @@ describe("chatLifecycle", () => {
     expect(chatRecoveryCopyForCode("unknown_code")).toContain("No automatic retry");
   });
 
+  it("returns bounded invalid-request guidance and falls back for absent or invalid reasons", () => {
+    expect(chatRecoveryCopyForCode("provider_invalid_request", "format")).toContain("request format");
+    expect(chatRecoveryCopyForCode("provider_invalid_request", "model")).toContain("supported configured model");
+    expect(chatRecoveryCopyForCode("provider_invalid_request", "endpoint")).toContain("endpoint was not found");
+    expect(chatRecoveryCopyForCode("provider_invalid_request", "unknown")).toContain("model id, provider endpoint");
+    expect(chatRecoveryCopyForCode("provider_invalid_request")).toContain("model id, provider endpoint");
+    expect(chatRecoveryCopyForCode("provider_invalid_request", "raw provider fragment")).toContain("model id, provider endpoint");
+  });
+
   it("classifies runtime errors without exposing provider secrets", () => {
     expect(chatRecoveryCopyForRuntimeError({ status: 401, message: "Unauthorized" }, "sse")).toContain("Session token mismatch");
     expect(chatRecoveryCopyForRuntimeError({ status: "network", message: "failed" }, "sse")).toContain("Refresh runtime");

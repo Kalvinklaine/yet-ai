@@ -161,7 +161,7 @@ pub enum ChatError {
     #[error("provider context window is too small")]
     ContextTooLarge,
     #[error("provider rejected the request")]
-    InvalidRequest,
+    InvalidRequest(ProviderInvalidRequestReason),
     #[error("provider service returned an error")]
     UpstreamError,
     #[error("provider request failed")]
@@ -172,6 +172,15 @@ pub enum ChatError {
     MalformedStream,
     #[error("provider config error")]
     ProviderConfig,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProviderInvalidRequestReason {
+    Format,
+    Model,
+    Endpoint,
+    Unknown,
 }
 
 impl Default for ChatRuntime {
@@ -437,7 +446,7 @@ impl ChatRuntime {
                     error.client_message().to_string(),
                     ChatMessageStatus::Error,
                     "error",
-                    json!({ "code": error.code(), "message": error.client_message() }),
+                    error.payload(),
                 )
                 .await;
             }
@@ -1221,7 +1230,7 @@ impl ChatError {
             Self::Unauthorized | Self::PreStreamUnauthorized => "provider_unauthorized",
             Self::RateLimited => "provider_rate_limited",
             Self::ContextTooLarge => "provider_context_too_large",
-            Self::InvalidRequest => "provider_invalid_request",
+            Self::InvalidRequest(_) => "provider_invalid_request",
             Self::UpstreamError => "provider_upstream_error",
             Self::Request => "provider_request_failed",
             Self::Timeout => "provider_timeout",
@@ -1241,7 +1250,7 @@ impl ChatError {
             Self::ContextTooLarge => {
                 "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry."
             }
-            Self::InvalidRequest => "Provider rejected the request. Check model id, endpoint, and provider settings.",
+            Self::InvalidRequest(_) => "Provider rejected the request. Check model id, endpoint, and provider settings.",
             Self::UpstreamError => "Provider service returned an error. Check provider status or local server, then retry.",
             Self::Request => {
                 "Provider request failed. Check local provider configuration/network and try again."
@@ -1250,6 +1259,14 @@ impl ChatError {
             Self::MalformedStream => "Provider stream ended unexpectedly. Check provider compatibility or local server, then retry.",
             Self::ProviderConfig => "Provider configuration is invalid. Review endpoint, credentials, and model readiness.",
         }
+    }
+
+    fn payload(&self) -> serde_json::Value {
+        let mut payload = json!({ "code": self.code(), "message": self.client_message() });
+        if let Self::InvalidRequest(reason) = self {
+            payload["reason"] = json!(reason);
+        }
+        payload
     }
 }
 
@@ -1910,7 +1927,7 @@ fn classify_provider_error(status: reqwest::StatusCode, body: &[u8]) -> ChatErro
         429 => ChatError::RateLimited,
         413 => ChatError::ContextTooLarge,
         400 | 422 if provider_body_has_context_signal(body) => ChatError::ContextTooLarge,
-        400 | 404 | 422 => ChatError::InvalidRequest,
+        400 | 404 | 422 => ChatError::InvalidRequest(classify_invalid_request_reason(status, body)),
         408 | 504 => ChatError::Timeout,
         500..=599 => ChatError::UpstreamError,
         _ => ChatError::Request,
@@ -1937,7 +1954,10 @@ fn classify_provider_stream_error(value: &serde_json::Value) -> ChatError {
         || text.contains("not found")
         || text.contains("unprocessable")
     {
-        ChatError::InvalidRequest
+        ChatError::InvalidRequest(classify_invalid_request_reason(
+            reqwest::StatusCode::BAD_REQUEST,
+            &body,
+        ))
     } else if text.contains("server_error")
         || text.contains("internal error")
         || text.contains("service unavailable")
@@ -1947,6 +1967,76 @@ fn classify_provider_stream_error(value: &serde_json::Value) -> ChatError {
     } else {
         ChatError::Request
     }
+}
+
+fn classify_invalid_request_reason(
+    status: reqwest::StatusCode,
+    body: &[u8],
+) -> ProviderInvalidRequestReason {
+    let text = normalized_provider_error_signals(body);
+    if has_model_error_signal(&text) {
+        ProviderInvalidRequestReason::Model
+    } else if has_format_error_signal(&text) {
+        ProviderInvalidRequestReason::Format
+    } else if status == reqwest::StatusCode::NOT_FOUND || has_endpoint_error_signal(&text) {
+        ProviderInvalidRequestReason::Endpoint
+    } else {
+        ProviderInvalidRequestReason::Unknown
+    }
+}
+
+fn normalized_provider_error_signals(body: &[u8]) -> String {
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) {
+        serde_json::to_string(&value)
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    } else {
+        String::from_utf8_lossy(body).to_ascii_lowercase()
+    }
+}
+
+fn has_model_error_signal(text: &str) -> bool {
+    [
+        "unsupported_model",
+        "unknown_model",
+        "invalid_model",
+        "unsupported model",
+        "unknown model",
+        "invalid model",
+        "model_not_found",
+        "model not found",
+        "model is not supported",
+        "model does not exist",
+    ]
+    .iter()
+    .any(|signal| text.contains(signal))
+}
+
+fn has_format_error_signal(text: &str) -> bool {
+    let request_shape = [
+        "request field",
+        "request body",
+        "body shape",
+        "schema",
+        "instructions",
+        "input",
+    ]
+    .iter()
+    .any(|signal| text.contains(signal));
+    let field_problem = ["missing", "required", "unknown", "invalid"]
+        .iter()
+        .any(|signal| text.contains(signal));
+    (request_shape && field_problem)
+        || text.contains("invalid request body")
+        || text.contains("unprocessable entity")
+}
+
+fn has_endpoint_error_signal(text: &str) -> bool {
+    text.contains("path not found")
+        || text.contains("endpoint not found")
+        || text.contains("route not found")
+        || text.contains("unknown endpoint")
+        || text.contains("unknown path")
 }
 
 fn provider_body_has_context_signal(body: &[u8]) -> bool {
@@ -2264,10 +2354,10 @@ fn ollama_chat_url(base_url: &str) -> Result<String, ChatError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_completions_url, demo_response, select_chat_provider, sequence_subscription_event,
-        ChatActiveEditorContext, ChatContext, ChatContextFile, ChatContextSelection, ChatEvent,
-        OpenAiSseParser, SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT,
-        PROVIDER_STREAM_LINE_BUFFER_LIMIT,
+        chat_completions_url, classify_provider_error, demo_response, select_chat_provider,
+        sequence_subscription_event, ChatActiveEditorContext, ChatContext, ChatContextFile,
+        ChatContextSelection, ChatError, ChatEvent, OpenAiSseParser, ProviderInvalidRequestReason,
+        SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
 
     static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -3378,6 +3468,65 @@ mod tests {
     fn chat_completions_url_rejects_invalid_base_url() {
         assert!(chat_completions_url("file:///tmp/socket").is_err());
         assert!(chat_completions_url("http://user:pass@127.0.0.1:8080/v1").is_err());
+    }
+
+    #[test]
+    fn provider_invalid_request_classifier_returns_only_bounded_reasons() {
+        for (status, body, expected) in [
+            (
+                reqwest::StatusCode::BAD_REQUEST,
+                br#"{"error":{"message":"required input field is missing"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Format,
+            ),
+            (
+                reqwest::StatusCode::NOT_FOUND,
+                br#"{"error":{"code":"unsupported_model","message":"route not found"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Model,
+            ),
+            (
+                reqwest::StatusCode::NOT_FOUND,
+                br#"{"error":{"message":"path not found"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Endpoint,
+            ),
+            (
+                reqwest::StatusCode::BAD_REQUEST,
+                br#"{"error":{"message":"request rejected"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Unknown,
+            ),
+        ] {
+            let error = classify_provider_error(status, body);
+            assert!(matches!(error, ChatError::InvalidRequest(reason) if reason == expected));
+            let payload = error.payload();
+            assert_eq!(payload["code"], "provider_invalid_request");
+            assert!(matches!(
+                payload["reason"].as_str(),
+                Some("format" | "model" | "endpoint" | "unknown")
+            ));
+        }
+    }
+
+    #[test]
+    fn provider_invalid_request_classifier_preserves_context_precedence_and_drops_raw_body() {
+        let context = classify_provider_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":{"message":"maximum context length exceeded"}}"#,
+        );
+        assert!(matches!(context, ChatError::ContextTooLarge));
+
+        let raw = br#"{"error":{"message":"required input sk-secret /Users/example/private <html> Authorization: Bearer secret account-123 https://provider.example/private"}}"#;
+        let error = classify_provider_error(reqwest::StatusCode::BAD_REQUEST, raw);
+        let serialized = error.payload().to_string();
+        for forbidden in [
+            "sk-secret",
+            "/Users/example/private",
+            "<html>",
+            "Authorization",
+            "Bearer secret",
+            "account-123",
+            "provider.example",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
     }
 
     #[test]
