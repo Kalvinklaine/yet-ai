@@ -4774,6 +4774,78 @@ async fn provider_auth_openai_experimental_refresh_zero_and_missing_expiry_reuse
 }
 
 #[tokio::test]
+async fn provider_auth_openai_experimental_refresh_invalid_expiry_preserves_credentials() {
+    for (label, expires_in) in [("negative", -1), ("too-large", 86401)] {
+        let paths = test_storage_paths();
+        let store = FileSecretStore::new(&paths.config_dir);
+        let (token_endpoint_url, mut token_body_receiver) = start_refresh_codex_token_endpoint(
+            StatusCode::OK,
+            json!({
+                "access_token": format!("codex-new-access-{label}-secret"),
+                "refresh_token": format!("codex-new-refresh-{label}-secret"),
+                "expires_in": expires_in,
+                "scope": "openid profile email offline_access",
+                "account_label": format!("Bearer body-{label}-secret /Users/alice/auth.json")
+            }),
+        )
+        .await;
+        seed_experimental_openai_oauth_with_ttl(
+            &paths,
+            "http://127.0.0.1:1456/backend-api/codex".to_string(),
+            token_endpoint_url,
+            "codex-old-access-token-secret-abcd",
+            "codex-old-refresh-token-secret-wxyz",
+            30,
+        )
+        .await;
+        let before = (
+            store
+                .get_secret("openai", SecretKind::OAuthAccessToken)
+                .await
+                .unwrap(),
+            store
+                .get_secret("openai", SecretKind::OAuthRefreshToken)
+                .await
+                .unwrap(),
+            store
+                .get_secret("openai", SecretKind::AuthMetadata)
+                .await
+                .unwrap(),
+        );
+
+        let error = yet_lsp::provider_auth::refresh_experimental_codex_chat_auth_if_needed(
+            &paths.config_dir,
+        )
+        .await
+        .unwrap_err();
+
+        assert_eq!(error.to_string(), "provider auth token exchange failed");
+        let body = token_body_receiver.recv().await.unwrap();
+        assert_eq!(body["grant_type"], "refresh_token");
+        assert_json_string_value(
+            &body["refresh_token"],
+            "codex-old-refresh-token-secret-wxyz",
+            "refresh request token",
+        );
+        let after = (
+            store
+                .get_secret("openai", SecretKind::OAuthAccessToken)
+                .await
+                .unwrap(),
+            store
+                .get_secret("openai", SecretKind::OAuthRefreshToken)
+                .await
+                .unwrap(),
+            store
+                .get_secret("openai", SecretKind::AuthMetadata)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(after, before, "{label} expiry mutated credentials");
+    }
+}
+
+#[tokio::test]
 async fn provider_auth_rejects_unsupported_and_invalid_providers_safely() {
     for (uri, expected_status) in [
         ("/v1/provider-auth/ollama/status", StatusCode::NOT_FOUND),

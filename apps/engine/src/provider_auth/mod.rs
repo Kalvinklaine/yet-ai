@@ -836,6 +836,13 @@ fn safe_provider_auth_detail(
     category: CodexTokenExchangeCategory,
     detail: Option<&str>,
 ) -> Option<String> {
+    if category == CodexTokenExchangeCategory::ExpiresInvalid {
+        return match detail? {
+            "expires_in_negative" => Some("expires_in_negative".to_string()),
+            "expires_in_too_large" => Some("expires_in_too_large".to_string()),
+            _ => None,
+        };
+    }
     let CodexTokenExchangeCategory::TokenHttpStatus(expected_status) = category else {
         return None;
     };
@@ -1156,9 +1163,16 @@ pub(in crate::provider_auth) fn validate_codex_token_expires_in(
     value: Option<i64>,
 ) -> Result<i64, ProviderAuthError> {
     let value = value.unwrap_or_default();
-    if value < 0 || value > MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS {
-        return Err(ProviderAuthError::token_exchange(
+    if value < 0 {
+        return Err(ProviderAuthError::token_exchange_with_detail(
             CodexTokenExchangeCategory::ExpiresInvalid,
+            "expires_in_negative".to_string(),
+        ));
+    }
+    if value > MAX_CODEX_TOKEN_EXPIRES_IN_SECONDS {
+        return Err(ProviderAuthError::token_exchange_with_detail(
+            CodexTokenExchangeCategory::ExpiresInvalid,
+            "expires_in_too_large".to_string(),
         ));
     }
     Ok(if value == 0 {
@@ -1695,7 +1709,18 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
     validate_codex_chat_model(&current.metadata.chat_model)?;
     let chat_model = current.metadata.chat_model;
     let scopes = codex_token_scopes(token.scope.as_deref(), &current.metadata.scopes)?;
-    let expires_in = validate_codex_token_expires_in(token.expires_in)?;
+    let expires_in = match validate_codex_token_expires_in(token.expires_in) {
+        Ok(expires_in) => expires_in,
+        Err(error) => {
+            log_provider_auth_exchange_failure(
+                provider,
+                "refresh",
+                &current.metadata.token_endpoint_url,
+                &error,
+            );
+            return Err(error);
+        }
+    };
     let metadata = CodexAuthMetadata {
         provider: provider.to_string(),
         account_label: token
@@ -3333,14 +3358,101 @@ mod tests {
             super::validate_codex_token_expires_in(Some(3600)).unwrap(),
             3600
         );
-        for value in [Some(-1), Some(86401)] {
+        for (value, expected_detail) in [
+            (Some(-1), "expires_in_negative"),
+            (Some(86401), "expires_in_too_large"),
+        ] {
+            let error = super::validate_codex_token_expires_in(value).unwrap_err();
             assert!(matches!(
-                super::validate_codex_token_expires_in(value),
-                Err(ProviderAuthError::TokenExchange(
+                error,
+                ProviderAuthError::TokenExchange(
                     super::CodexTokenExchangeCategory::ExpiresInvalid,
-                    None
-                ))
+                    Some(ref detail)
+                ) if detail == expected_detail
             ));
+        }
+    }
+
+    #[test]
+    fn expires_invalid_detail_uses_exact_allowlist() {
+        for detail in ["expires_in_negative", "expires_in_too_large"] {
+            assert_eq!(
+                super::safe_provider_auth_detail(
+                    super::CodexTokenExchangeCategory::ExpiresInvalid,
+                    Some(detail),
+                )
+                .as_deref(),
+                Some(detail)
+            );
+        }
+
+        for detail in [
+            "-1",
+            "86401",
+            "expires_in=-1",
+            "expires_in=86401",
+            "expires_in_negative; access_token=secret",
+            "/Users/alice/auth.json",
+        ] {
+            assert_eq!(
+                super::safe_provider_auth_detail(
+                    super::CodexTokenExchangeCategory::ExpiresInvalid,
+                    Some(detail),
+                ),
+                None,
+                "retained unsafe expiry detail: {detail}"
+            );
+        }
+    }
+
+    #[test]
+    fn expires_invalid_log_distinguishes_bounds_without_leaking_values() {
+        for (value, expected_detail) in
+            [(-1, "expires_in_negative"), (86401, "expires_in_too_large")]
+        {
+            crate::logging::clear_test_log_lines();
+            let error = super::validate_codex_token_expires_in(Some(value)).unwrap_err();
+            super::log_provider_auth_exchange_failure(
+                "openai",
+                "refresh",
+                "http://127.0.0.1:4567/private/token/path",
+                &error,
+            );
+
+            let logs = crate::logging::test_log_lines().join("\n");
+            assert!(logs.contains("provider_auth.exchange_failed"));
+            assert!(logs.contains("stage=refresh"));
+            assert!(logs.contains("category=expires_invalid"));
+            assert!(logs.contains(&format!("detail={expected_detail}")));
+            assert!(!logs.contains(&value.to_string()));
+            assert!(!logs.contains("private/token/path"));
+            assert!(!logs.contains("access_token"));
+            assert!(!logs.contains("refresh_token"));
+        }
+
+        crate::logging::clear_test_log_lines();
+        let error = ProviderAuthError::token_exchange_with_detail(
+            super::CodexTokenExchangeCategory::ExpiresInvalid,
+            "expires_in_negative; raw_provider_body access_token=token-secret refresh_token=refresh-secret /Users/alice/auth.json expires_in=-1".to_string(),
+        );
+        super::log_provider_auth_exchange_failure(
+            "openai",
+            "refresh",
+            "http://127.0.0.1:4567/private/token/path",
+            &error,
+        );
+        let logs = crate::logging::test_log_lines().join("\n");
+        assert!(logs.contains("category=expires_invalid"));
+        assert!(logs.contains("detail=none"));
+        for forbidden in [
+            "raw_provider_body",
+            "token-secret",
+            "refresh-secret",
+            "/Users/alice",
+            "expires_in=-1",
+            "private/token/path",
+        ] {
+            assert!(!logs.contains(forbidden), "log leaked {forbidden}: {logs}");
         }
     }
 
