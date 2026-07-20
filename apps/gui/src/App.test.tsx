@@ -11220,6 +11220,49 @@ describe("edit proposal preview", () => {
     expect(applyCalls[0][0].requestId).not.toBe(assistantRequestId);
   });
 
+  it("supersedes a persisted Demo Mode edit proposal after a newer provider error", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    const proposal = demoModeSafeEditProposalPayload();
+    const envelope = demoModeSafeEditProposalEnvelope(proposal);
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-001", "Demo Mode proposal error", 1)],
+      chatThreads: { "chat-001": chatThread("chat-001", "Demo Mode proposal error", [chatMessage("chat-001", "assistant-demo-edit-1", "assistant", JSON.stringify(envelope, null, 2))]) },
+      sseEvents: [
+        { seq: 0, type: "snapshot", chatId: "chat-001", payload: { messages: [chatMessage("chat-001", "assistant-demo-edit-1", "assistant", JSON.stringify(envelope, null, 2))] } },
+        { seq: 1, type: "error", chatId: "chat-001", payload: { code: "provider_error", message: "Provider request failed safely." } },
+      ],
+    });
+
+    renderApp();
+    await flushAsync();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    await flushAsync();
+
+    expect(findButton("Apply in VS Code after review")).toBeDefined();
+    expect(proposalHistoryPanel().textContent).toContain("Demo Mode safe edit no-op preview.");
+
+    await act(async () => {
+      setTextareaValue(chatInput(), "Trigger provider error after proposal");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    const text = container?.textContent ?? "";
+    expect(text).toContain("Provider request failed safely.");
+    expect(text).toContain("Error");
+    expect(text).not.toContain("Apply in VS Code after review");
+    expect(text).not.toContain("Propose safe edit");
+    const history = container?.querySelector<HTMLElement>("[data-testid='proposal-history-panel']");
+    expect(Array.from(history?.querySelectorAll("button") ?? [])).toHaveLength(0);
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.applyWorkspaceEditRequest")).toHaveLength(0);
+  });
+
   it("keeps exact Demo Mode edit envelope preview-only in browser mode", async () => {
     delete window.postIntellijMessage;
     delete window.acquireVsCodeApi;

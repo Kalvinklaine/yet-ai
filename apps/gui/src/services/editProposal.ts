@@ -238,6 +238,9 @@ export function isCompleteAssistantEditProposalStatus(status: string | undefined
 export function latestEditProposalReviewFromMessages(messages: EditProposalSourceMessage[]): EditProposalReview {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
+    if (message.role === "error") {
+      return { state: "none" };
+    }
     if (message.role !== "assistant") {
       continue;
     }

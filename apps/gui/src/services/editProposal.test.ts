@@ -538,6 +538,20 @@ describe("latestEditProposalReviewFromMessages", () => {
     }
   });
 
+  it("returns none when a newer terminal error follows a valid proposal", () => {
+    const proposal = safeEditProposalPayload();
+    const review = latestEditProposalReviewFromMessages([
+      assistantMessage("a1", JSON.stringify(proposal)),
+      { id: "e1", role: "error", status: "error", content: "Provider request failed." },
+    ]);
+
+    expect(review).toEqual({ state: "none" });
+    expect(latestEditProposalCandidateFromMessages([
+      assistantMessage("a1", JSON.stringify(proposal)),
+      { id: "e1", role: "error", status: "error", content: "Provider request failed." },
+    ])).toBeNull();
+  });
+
   it("returns none when there are no complete assistant proposal reviews", () => {
     const proposal = safeEditProposalPayload();
     expect(latestEditProposalReviewFromMessages([
