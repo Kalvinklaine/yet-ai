@@ -1970,7 +1970,7 @@ fn classify_provider_stream_error(value: &serde_json::Value) -> ChatError {
 }
 
 fn classify_invalid_request_reason(
-    _status: reqwest::StatusCode,
+    status: reqwest::StatusCode,
     body: &[u8],
 ) -> ProviderInvalidRequestReason {
     let text = normalized_provider_error_signals(body);
@@ -1978,7 +1978,7 @@ fn classify_invalid_request_reason(
         ProviderInvalidRequestReason::Model
     } else if has_format_error_signal(&text) {
         ProviderInvalidRequestReason::Format
-    } else if has_endpoint_error_signal(&text) {
+    } else if status == reqwest::StatusCode::NOT_FOUND && has_endpoint_error_signal(&text) {
         ProviderInvalidRequestReason::Endpoint
     } else {
         ProviderInvalidRequestReason::Unknown
@@ -3491,7 +3491,8 @@ mod tests {
             ),
             (
                 reqwest::StatusCode::BAD_REQUEST,
-                br#"{"error":{"code":"unknown_model","message":"invalid request body"}}"#.as_slice(),
+                br#"{"error":{"code":"unknown_model","message":"invalid request body"}}"#
+                    .as_slice(),
                 ProviderInvalidRequestReason::Model,
             ),
             (
@@ -3507,6 +3508,16 @@ mod tests {
             (
                 reqwest::StatusCode::NOT_FOUND,
                 br#"{"error":{"message":"resource not found"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Unknown,
+            ),
+            (
+                reqwest::StatusCode::BAD_REQUEST,
+                br#"{"error":{"message":"route not found"}}"#.as_slice(),
+                ProviderInvalidRequestReason::Unknown,
+            ),
+            (
+                reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+                br#"{"error":{"message":"endpoint not found"}}"#.as_slice(),
                 ProviderInvalidRequestReason::Unknown,
             ),
             (
@@ -3529,6 +3540,18 @@ mod tests {
                 Some("format" | "model" | "endpoint" | "unknown")
             ));
         }
+    }
+
+    #[test]
+    fn provider_invalid_request_stream_route_not_found_is_unknown() {
+        let error = super::classify_provider_stream_error(&serde_json::json!({
+            "error": { "message": "route not found" }
+        }));
+
+        assert!(matches!(
+            error,
+            ChatError::InvalidRequest(ProviderInvalidRequestReason::Unknown)
+        ));
     }
 
     #[test]
