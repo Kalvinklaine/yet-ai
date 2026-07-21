@@ -1011,6 +1011,8 @@ struct CodexModelEntry {
     supported: Option<bool>,
     #[serde(default, alias = "supportedInApi")]
     supported_in_api: Option<bool>,
+    #[serde(default, alias = "apiSupported")]
+    api_supported: Option<bool>,
     #[serde(default, alias = "supportedInChatgpt", alias = "supportedInChatGPT")]
     supported_in_chatgpt: Option<bool>,
     #[serde(default, alias = "is_enabled", alias = "isEnabled")]
@@ -1053,8 +1055,12 @@ struct CodexModelEntry {
     availability: Option<String>,
     #[serde(default)]
     access: Option<String>,
+    #[serde(default, alias = "accessStatus")]
+    access_status: Option<String>,
     #[serde(default)]
     entitlement: Option<String>,
+    #[serde(default, alias = "entitlementStatus")]
+    entitlement_status: Option<String>,
     #[serde(default)]
     policy: Option<String>,
 }
@@ -1076,6 +1082,7 @@ impl CodexModelEntry {
         let positive_flags = [
             self.supported,
             self.supported_in_api,
+            self.api_supported,
             self.supported_in_chatgpt,
             self.enabled,
             self.available,
@@ -1101,7 +1108,9 @@ impl CodexModelEntry {
             self.status.as_deref(),
             self.availability.as_deref(),
             self.access.as_deref(),
+            self.access_status.as_deref(),
             self.entitlement.as_deref(),
+            self.entitlement_status.as_deref(),
             self.policy.as_deref(),
         ];
         !positive_flags.contains(&Some(false))
@@ -5211,12 +5220,18 @@ mod tests {
             r#"{"models":[{"id":"gpt-5.1","supported":false},{"id":"gpt-5.2"}]}"#,
             r#"{"data":[{"id":"gpt-5.1","isSupported":false},{"id":"gpt-5.2"}]}"#,
             r#"{"models":[{"id":"gpt-5.1","supported_in_api":false},{"id":"gpt-5.2"}]}"#,
+            r#"{"data":[{"id":"gpt-5.1","apiSupported":false},{"id":"gpt-5.2"}]}"#,
+            r#"{"models":[{"id":"gpt-5.1","api_supported":false},{"id":"gpt-5.2"}]}"#,
             r#"{"data":[{"id":"gpt-5.1","supportedInChatgpt":false},{"id":"gpt-5.2"}]}"#,
             r#"{"models":[{"id":"gpt-5.1","disabled":true},{"id":"gpt-5.2"}]}"#,
             r#"{"data":[{"id":"gpt-5.1","isRestricted":true},{"id":"gpt-5.2"}]}"#,
             r#"{"models":[{"id":"gpt-5.1","status":"retired"},{"id":"gpt-5.2"}]}"#,
             r#"{"data":[{"id":"gpt-5.1","availability":"not-available"},{"id":"gpt-5.2"}]}"#,
+            r#"{"models":[{"id":"gpt-5.1","access_status":"denied"},{"id":"gpt-5.2"}]}"#,
+            r#"{"data":[{"id":"gpt-5.1","accessStatus":"not_allowed"},{"id":"gpt-5.2"}]}"#,
             r#"{"models":[{"id":"gpt-5.1","entitlement":"unentitled"},{"id":"gpt-5.2"}]}"#,
+            r#"{"data":[{"id":"gpt-5.1","entitlement_status":"not_entitled"},{"id":"gpt-5.2"}]}"#,
+            r#"{"models":[{"id":"gpt-5.1","entitlementStatus":"entitlement_required"},{"id":"gpt-5.2"}]}"#,
             r#"{"data":[{"id":"gpt-5.1","policy":"access denied"},{"id":"gpt-5.2"}]}"#,
         ] {
             let (endpoint, request_receiver) = recording_codex_models_endpoint(body).await;
