@@ -1011,7 +1011,7 @@ struct CodexModelEntry {
     supported: Option<bool>,
     #[serde(default, alias = "supportedInApi")]
     supported_in_api: Option<bool>,
-    #[serde(default, alias = "supportedInChatgpt")]
+    #[serde(default, alias = "supportedInChatgpt", alias = "supportedInChatGPT")]
     supported_in_chatgpt: Option<bool>,
     #[serde(default, alias = "is_enabled", alias = "isEnabled")]
     enabled: Option<bool>,
@@ -1031,6 +1031,22 @@ struct CodexModelEntry {
     unavailable: Option<bool>,
     #[serde(default, alias = "is_blocked", alias = "isBlocked")]
     blocked: Option<bool>,
+    #[serde(default, alias = "is_unsupported", alias = "isUnsupported")]
+    unsupported: Option<bool>,
+    #[serde(default, alias = "notSupported")]
+    not_supported: Option<bool>,
+    #[serde(default, alias = "notAvailable")]
+    not_available: Option<bool>,
+    #[serde(default, alias = "notEntitled")]
+    not_entitled: Option<bool>,
+    #[serde(default)]
+    denied: Option<bool>,
+    #[serde(default, alias = "policyDisabled")]
+    policy_disabled: Option<bool>,
+    #[serde(default, alias = "policyRestricted")]
+    policy_restricted: Option<bool>,
+    #[serde(default, alias = "apiDisabled")]
+    api_disabled: Option<bool>,
     #[serde(default)]
     status: Option<String>,
     #[serde(default)]
@@ -1072,6 +1088,14 @@ impl CodexModelEntry {
             self.retired,
             self.unavailable,
             self.blocked,
+            self.unsupported,
+            self.not_supported,
+            self.not_available,
+            self.not_entitled,
+            self.denied,
+            self.policy_disabled,
+            self.policy_restricted,
+            self.api_disabled,
         ];
         let statuses = [
             self.status.as_deref(),
@@ -1102,7 +1126,33 @@ fn is_disabled_model_status(value: &str) -> bool {
             | "not_entitled"
             | "no_access"
             | "access_denied"
+            | "unsupported"
+            | "not_supported"
+            | "deprecated"
+            | "policy_disabled"
+            | "policy_restricted"
+            | "policy_denied"
+            | "entitlement_required"
+            | "denied"
+            | "not_allowed"
+            | "disabled_by_policy"
     )
+}
+
+fn validate_codex_discovery_session_id(value: &str) -> Result<(), ProviderAuthError> {
+    let lower = value.to_ascii_lowercase();
+    if value.is_empty()
+        || value.chars().count() > PROVIDER_AUTH_SESSION_ID_MAX_CHARS
+        || !is_url_safe_token(value)
+        || lower.starts_with("sk-")
+        || lower.contains("secret")
+        || lower.contains("token")
+        || lower.contains("bearer")
+        || lower.contains("cookie")
+    {
+        return Err(ProviderAuthError::InvalidRequest);
+    }
+    Ok(())
 }
 
 pub(in crate::provider_auth) async fn discover_codex_model(
@@ -1112,7 +1162,7 @@ pub(in crate::provider_auth) async fn discover_codex_model(
     session_id: &str,
 ) -> Result<String, ProviderAuthError> {
     validate_codex_account_id(account_id)?;
-    validate_required_string(session_id, PROVIDER_AUTH_SESSION_ID_MAX_CHARS)?;
+    validate_codex_discovery_session_id(session_id)?;
     let url = codex_models_url(chat_base_url)?;
     let client =
         codex_http_client(&url, codex_token_exchange_timeout_for_url(&url)).map_err(|_| {
@@ -5162,6 +5212,99 @@ mod tests {
             assert!(request.contains("originator: yet-ai"));
             assert!(request.contains("session_id: codex-live-session"));
         }
+    }
+
+    #[test]
+    fn codex_exchange_model_discovery_rejects_all_negative_boolean_aliases() {
+        for field in [
+            "unsupported",
+            "is_unsupported",
+            "isUnsupported",
+            "not_supported",
+            "notSupported",
+            "not_available",
+            "notAvailable",
+            "not_entitled",
+            "notEntitled",
+            "denied",
+            "policy_disabled",
+            "policyDisabled",
+            "policy_restricted",
+            "policyRestricted",
+            "api_disabled",
+            "apiDisabled",
+        ] {
+            let entry: super::CodexModelEntry = serde_json::from_value(serde_json::json!({
+                "id": "gpt-5.2",
+                (field): true,
+            }))
+            .unwrap();
+
+            assert!(!entry.is_eligible(), "accepted negative flag {field}");
+        }
+
+        let entry: super::CodexModelEntry = serde_json::from_value(serde_json::json!({
+            "id": "gpt-5.2",
+            "supportedInChatGPT": false,
+        }))
+        .unwrap();
+        assert!(!entry.is_eligible(), "accepted supportedInChatGPT=false");
+    }
+
+    #[test]
+    fn codex_exchange_model_discovery_rejects_all_disabled_statuses() {
+        for status in [
+            "unsupported",
+            "not_supported",
+            "deprecated",
+            "policy_disabled",
+            "policy_restricted",
+            "policy_denied",
+            "entitlement_required",
+            "denied",
+            "not_allowed",
+            "disabled_by_policy",
+        ] {
+            for field in ["status", "availability", "access", "entitlement", "policy"] {
+                let entry: super::CodexModelEntry = serde_json::from_value(serde_json::json!({
+                    "id": "gpt-5.2",
+                    (field): status,
+                }))
+                .unwrap();
+
+                assert!(
+                    !entry.is_eligible(),
+                    "accepted disabled {field} value {status}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_exchange_model_discovery_rejects_malformed_session_without_egress() {
+        let malformed = "codex-session\r\nx-private-secret";
+        let (endpoint, request_receiver) =
+            recording_codex_models_endpoint(r#"{"data":[{"id":"gpt-5.2"}]}"#).await;
+
+        let error = super::discover_codex_model(
+            &endpoint,
+            "codex-access-token-secret",
+            "acct-test",
+            malformed,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ProviderAuthError::InvalidRequest));
+        assert_eq!(error.to_string(), "invalid provider auth request");
+        let safe = super::sanitized_provider_auth_last_error(&error);
+        assert!(!safe.contains(malformed));
+        assert!(!safe.contains("private-secret"));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), request_receiver)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
