@@ -19,6 +19,8 @@ const requestId = `smoke-codex-request-${randomUUID()}`;
 const invalidRequestId = `smoke-codex-invalid-request-${randomUUID()}`;
 const firstChatSentinel = "SMOKE_CODEX_FIRST_CHAT";
 const invalidChatSentinel = "SMOKE_CODEX_INVALID_CHAT";
+const staleModel = "gpt-5.1";
+const recoveredModel = "gpt-5.2";
 const invalidProviderFragment = `raw-mock-provider-fragment-${randomUUID()}`;
 const timeoutMs = 120_000;
 
@@ -90,7 +92,7 @@ try {
   assert(tokenRequestCount === 1, "mock token endpoint was not called exactly once");
   assert(tokenRequestContentType?.startsWith("application/x-www-form-urlencoded"), "mock token endpoint did not receive form-urlencoded exchange");
   assert(tokenRequestGrantType === "authorization_code", "mock token endpoint did not receive authorization-code grant");
-  assert(modelDiscoveryRequestCount === 1, "mock model discovery endpoint was not called exactly once");
+  assert(modelDiscoveryRequestCount === 1, "mock model discovery endpoint was not called exactly once during login");
   assert(modelDiscoveryAuthorizationHeader === `Bearer ${accessToken}`, "mock model discovery did not receive experimental bearer auth");
   assert(modelDiscoveryAccountHeaderSeen === true, "mock model discovery did not receive account metadata header");
 
@@ -117,7 +119,8 @@ try {
   assert(events.some((event) => event.type === "stream_delta" && event.payload?.delta?.content === " connected"), "chat stream did not include connected delta");
   assert(events.some((event) => event.type === "stream_finished" && event.payload?.finishReason === "stop"), "chat stream did not finish cleanly");
   assertMonotonicSequence(events);
-  assert(chatRequestCount === 1, "mock responses endpoint was not called exactly once");
+  assert(chatRequestCount === 2, "mock responses endpoint did not retry once after stale-model rejection");
+  assert(modelDiscoveryRequestCount === 2, "mock model discovery endpoint was not called once for recovery");
   assert(chatAuthorizationHeader === `Bearer ${accessToken}`, "mock responses endpoint did not receive experimental bearer auth");
   assert(chatAccountHeaderSeen === true, "mock responses endpoint did not receive account metadata header");
   assert(chatOriginatorHeader === "codex_cli_rs", "mock responses endpoint received unexpected originator header");
@@ -125,7 +128,8 @@ try {
   assert(chatBetaHeader === "responses=experimental", "mock responses endpoint received unexpected beta header");
   assert(chatAcceptHeader === "text/event-stream", "mock responses endpoint received unexpected accept header");
   assert(chatContentTypeHeader?.startsWith("application/json"), "mock responses endpoint did not receive JSON content type");
-  assertResponsesBody(chatRequestBodies[0], firstChatSentinel);
+  assertResponsesBody(chatRequestBodies[0], firstChatSentinel, staleModel);
+  assertResponsesBody(chatRequestBodies[1], firstChatSentinel, recoveredModel);
 
   const invalidSubscription = subscribe(baseUrl, invalidChatId);
   const invalidCommand = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(invalidChatId)}/commands`, {
@@ -144,8 +148,8 @@ try {
   assert(["format", "model", "endpoint", "unknown"].includes(invalidEvent?.payload?.reason), "invalid request reason was not allowlisted");
   assert(invalidEvent.payload.reason === "format", "invalid request did not preserve the expected bounded reason");
   assertMonotonicSequence(invalidStream.events);
-  assert(chatRequestCount === 2, "mock responses endpoint was not called for both chat cases");
-  assertResponsesBody(chatRequestBodies[1], invalidChatSentinel);
+  assert(chatRequestCount === 3, "mock responses endpoint was not called for recovery and invalid chat cases");
+  assertResponsesBody(chatRequestBodies[2], invalidChatSentinel, recoveredModel);
   assert(!invalidStream.raw.includes(invalidProviderFragment), "raw mock provider body leaked into live SSE");
 
   const disconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
@@ -164,12 +168,12 @@ try {
     mode: "local-loopback-mock-only",
     lifecycle: [initial.status, start.status, pending.status, exchange.status, connected.status, disconnect.status, afterDisconnect.status],
     tokenExchange: "form-urlencoded-authorization-code",
-    modelDiscovery: "bearer-account-metadata-only",
+    modelDiscovery: "stale-model-rediscovered-and-persisted",
     responsesSse: "dedicated-responses-endpoint",
     tokenEndpointCalls: tokenRequestCount,
     modelDiscoveryCalls: modelDiscoveryRequestCount,
     responsesEndpointCalls: chatRequestCount,
-    firstChat: "safe-sentinel-observed",
+    firstChat: "stale-model-recovered-once",
     invalidRequest: "allowlisted-format-reason-without-provider-body",
     disconnected: afterDisconnect.status === "login_unavailable",
     cloudRequired: false
@@ -293,7 +297,9 @@ async function startMockChatEndpoint() {
       modelDiscoveryAuthorizationHeader = request.headers.authorization;
       modelDiscoveryAccountHeaderSeen = request.headers["chatgpt-account-id"] === accountId;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ data: [{ id: "gpt-4-unsafe" }, { id: "gpt-5-codex" }] }));
+      response.end(JSON.stringify({
+        data: [{ id: "gpt-4-unsafe" }, { id: modelDiscoveryRequestCount === 1 ? staleModel : recoveredModel }]
+      }));
       return;
     }
     if (request.method !== "POST" || request.url !== "/responses") {
@@ -316,7 +322,17 @@ async function startMockChatEndpoint() {
     request.on("end", () => {
       const parsed = JSON.parse(body);
       chatRequestBodies.push(parsed);
-      if (chatRequestCount === 2) {
+      if (chatRequestCount === 1) {
+        response.writeHead(400, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          error: {
+            code: "unsupported_model",
+            message: `model is not supported ${invalidProviderFragment}`
+          }
+        }));
+        return;
+      }
+      if (chatRequestCount === 3) {
         response.writeHead(400, { "content-type": "application/json" });
         response.end(JSON.stringify({
           error: {
@@ -340,10 +356,10 @@ async function startMockChatEndpoint() {
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
 }
 
-function assertResponsesBody(body, expectedText) {
+function assertResponsesBody(body, expectedText, expectedModel) {
   assert(body && typeof body === "object" && !Array.isArray(body), "mock responses endpoint did not receive an object body");
   assert(JSON.stringify(Object.keys(body).sort()) === JSON.stringify(["input", "instructions", "model", "store", "stream"]), "mock responses endpoint received incompatible fields");
-  assert(body.model === "gpt-5-codex", "mock responses endpoint did not use the safe discovered model");
+  assert(body.model === expectedModel, "mock responses endpoint did not use the expected safe model");
   assert(typeof body.instructions === "string" && body.instructions.trim().length > 0, "mock responses endpoint received empty instructions");
   assert(body.store === false, "mock responses endpoint did not disable storage");
   assert(body.stream === true, "mock responses endpoint did not request streaming");

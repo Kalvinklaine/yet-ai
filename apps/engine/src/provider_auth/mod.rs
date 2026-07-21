@@ -1794,6 +1794,62 @@ pub async fn refresh_experimental_codex_chat_auth_if_needed(
         .map_err(Into::into)
 }
 
+pub async fn rediscover_experimental_codex_chat_auth_after_model_rejection(
+    config_dir: &Path,
+    rejected_model: &str,
+    session_id: &str,
+) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
+    validate_codex_chat_model(rejected_model)?;
+    validate_required_string(session_id, PROVIDER_AUTH_SESSION_ID_MAX_CHARS)?;
+    let lock = codex_refresh_lock(config_dir, "openai")?;
+    let _guard = lock.lock().await;
+    let _file_guard = acquire_codex_refresh_file_lock(config_dir, "openai").await?;
+    let (access_token, mut metadata) =
+        match classify_codex_stored_auth(config_dir, "openai").await? {
+            CodexStoredAuthState::ReadyAccessOnly(snapshot) => {
+                (snapshot.access_token, snapshot.metadata)
+            }
+            CodexStoredAuthState::ReadyRefreshable(snapshot) => {
+                (snapshot.access_token, snapshot.metadata)
+            }
+            _ => return Ok(None),
+        };
+    if metadata.chat_model != rejected_model {
+        return Ok(None);
+    }
+    let discovered = discover_codex_model(
+        &metadata.chat_base_url,
+        &access_token,
+        &metadata.chatgpt_account_id,
+        session_id,
+    )
+    .await?;
+    if discovered == rejected_model {
+        return Ok(None);
+    }
+    validate_codex_chat_model(&discovered)?;
+    let store = provider_secret_store(config_dir);
+    let previous = serde_json::to_string(&metadata).map_err(|_| ProviderAuthError::Storage)?;
+    metadata.chat_model = discovered.clone();
+    let updated = serde_json::to_string(&metadata).map_err(|_| ProviderAuthError::Storage)?;
+    if store
+        .put_secret("openai", SecretKind::AuthMetadata, &updated)
+        .await
+        .is_err()
+    {
+        store
+            .put_secret("openai", SecretKind::AuthMetadata, &previous)
+            .await?;
+        return Err(ProviderAuthError::Storage);
+    }
+    Ok(Some(ExperimentalCodexChatAuth {
+        access_token,
+        chatgpt_account_id: metadata.chatgpt_account_id,
+        base_url: metadata.chat_base_url,
+        model: discovered,
+    }))
+}
+
 pub async fn select_experimental_codex_chat_auth(
     config_dir: &Path,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
@@ -6318,10 +6374,7 @@ mod tests {
 
     #[tokio::test]
     async fn stored_codex_mixed_case_chat_model_is_rejected_for_all_endpoint_classes() {
-        for chat_base_url in [
-            super::CODEX_CHAT_BASE_URL,
-            "http://127.0.0.1:3456/codex",
-        ] {
+        for chat_base_url in [super::CODEX_CHAT_BASE_URL, "http://127.0.0.1:3456/codex"] {
             let dir = temp_dir();
             create_codex_oauth_connection_with_expiry_and_metadata(
                 &dir,

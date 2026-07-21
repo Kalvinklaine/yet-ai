@@ -162,6 +162,8 @@ pub enum ChatError {
     ContextTooLarge,
     #[error("provider rejected the request")]
     InvalidRequest(ProviderInvalidRequestReason),
+    #[error("provider rejected the request")]
+    PreStreamInvalidModel,
     #[error("provider service returned an error")]
     UpstreamError,
     #[error("provider request failed")]
@@ -576,7 +578,7 @@ impl ChatRuntime {
                 demo_stream(self, chat_id, stream_id, original_content, context).await
             }
             ChatProvider::ExperimentalCodex(auth) => {
-                codex_responses_stream_with_unauthorized_retry(
+                codex_responses_stream_with_recovery(
                     self,
                     &self.client,
                     config_dir,
@@ -1230,7 +1232,7 @@ impl ChatError {
             Self::Unauthorized | Self::PreStreamUnauthorized => "provider_unauthorized",
             Self::RateLimited => "provider_rate_limited",
             Self::ContextTooLarge => "provider_context_too_large",
-            Self::InvalidRequest(_) => "provider_invalid_request",
+            Self::InvalidRequest(_) | Self::PreStreamInvalidModel => "provider_invalid_request",
             Self::UpstreamError => "provider_upstream_error",
             Self::Request => "provider_request_failed",
             Self::Timeout => "provider_timeout",
@@ -1250,7 +1252,7 @@ impl ChatError {
             Self::ContextTooLarge => {
                 "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry."
             }
-            Self::InvalidRequest(_) => "Provider rejected the request. Check model id, endpoint, and provider settings.",
+            Self::InvalidRequest(_) | Self::PreStreamInvalidModel => "Provider rejected the request. Check model id, endpoint, and provider settings.",
             Self::UpstreamError => "Provider service returned an error. Check provider status or local server, then retry.",
             Self::Request => {
                 "Provider request failed. Check local provider configuration/network and try again."
@@ -1265,6 +1267,8 @@ impl ChatError {
         let mut payload = json!({ "code": self.code(), "message": self.client_message() });
         if let Self::InvalidRequest(reason) = self {
             payload["reason"] = json!(reason);
+        } else if matches!(self, Self::PreStreamInvalidModel) {
+            payload["reason"] = json!(ProviderInvalidRequestReason::Model);
         }
         payload
     }
@@ -1612,7 +1616,7 @@ async fn codex_responses_stream(
     collect_codex_responses_stream(runtime, chat_id, stream_id, request).await
 }
 
-async fn codex_responses_stream_with_unauthorized_retry(
+async fn codex_responses_stream_with_recovery(
     runtime: &ChatRuntime,
     client: &reqwest::Client,
     config_dir: &std::path::Path,
@@ -1621,23 +1625,58 @@ async fn codex_responses_stream_with_unauthorized_retry(
     stream_id: u64,
     content: &str,
 ) -> Result<String, ChatError> {
-    let first = codex_responses_stream(runtime, client, auth, chat_id, stream_id, content).await;
-    if !matches!(first, Err(ChatError::PreStreamUnauthorized)) {
-        return first;
+    let mut current = auth.clone();
+    let mut authorization_recovered = false;
+    let mut model_recovered = false;
+    loop {
+        let result =
+            codex_responses_stream(runtime, client, &current, chat_id, stream_id, content).await;
+        match result {
+            Err(ChatError::PreStreamUnauthorized) if !authorization_recovered => {
+                authorization_recovered = true;
+                let Some(refreshed) =
+                    provider_auth::refresh_experimental_codex_chat_auth_after_rejection(
+                        config_dir,
+                        &current.access_token,
+                    )
+                    .await
+                    .map_err(|_| ChatError::ProviderConfig)?
+                else {
+                    return Err(ChatError::PreStreamUnauthorized);
+                };
+                if refreshed.access_token == current.access_token {
+                    return Err(ChatError::PreStreamUnauthorized);
+                }
+                current = refreshed;
+            }
+            Err(ChatError::PreStreamInvalidModel) if !model_recovered => {
+                model_recovered = true;
+                let original = ChatError::InvalidRequest(ProviderInvalidRequestReason::Model);
+                let Some(rediscovered) =
+                    provider_auth::rediscover_experimental_codex_chat_auth_after_model_rejection(
+                        config_dir,
+                        &current.model,
+                        chat_id,
+                    )
+                    .await
+                    .ok()
+                    .flatten()
+                else {
+                    return Err(original);
+                };
+                if rediscovered.model == current.model {
+                    return Err(original);
+                }
+                current = rediscovered;
+            }
+            Err(ChatError::PreStreamInvalidModel) => {
+                return Err(ChatError::InvalidRequest(
+                    ProviderInvalidRequestReason::Model,
+                ));
+            }
+            other => return other,
+        }
     }
-    let Some(refreshed) = provider_auth::refresh_experimental_codex_chat_auth_after_rejection(
-        config_dir,
-        &auth.access_token,
-    )
-    .await
-    .map_err(|_| ChatError::ProviderConfig)?
-    else {
-        return first;
-    };
-    if refreshed.access_token == auth.access_token {
-        return first;
-    }
-    codex_responses_stream(runtime, client, &refreshed, chat_id, stream_id, content).await
 }
 
 async fn collect_codex_responses_stream(
@@ -1657,7 +1696,17 @@ async fn collect_codex_responses_stream(
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ChatError::PreStreamUnauthorized);
         }
-        return Err(classify_provider_http_error(response).await);
+        let error = classify_provider_http_error(response).await;
+        return Err(
+            if matches!(
+                error,
+                ChatError::InvalidRequest(ProviderInvalidRequestReason::Model)
+            ) {
+                ChatError::PreStreamInvalidModel
+            } else {
+                error
+            },
+        );
     }
     let mut stream = response.bytes_stream();
     let mut parser = CodexResponsesSseParser::default();
@@ -1672,13 +1721,15 @@ async fn collect_codex_responses_stream(
             }
         })?;
         for text in decode_stream_utf8_chunk(&mut utf8_buffer, &chunk)? {
-            parser.push(&text).map_err(|error| {
-                if assistant_content.is_empty() && matches!(error, ChatError::Unauthorized) {
-                    ChatError::PreStreamUnauthorized
-                } else {
-                    error
-                }
-            })?;
+            parser
+                .push(&text)
+                .map_err(|error| match (&error, assistant_content.is_empty()) {
+                    (ChatError::Unauthorized, true) => ChatError::PreStreamUnauthorized,
+                    (ChatError::InvalidRequest(ProviderInvalidRequestReason::Model), true) => {
+                        ChatError::PreStreamInvalidModel
+                    }
+                    _ => error,
+                })?;
         }
         for delta in parser.drain_deltas() {
             assistant_content.push_str(&delta);
@@ -1698,13 +1749,16 @@ async fn collect_codex_responses_stream(
     if !utf8_buffer.is_empty() {
         return Err(ChatError::MalformedStream);
     }
-    for delta in parser.finish().map_err(|error| {
-        if assistant_content.is_empty() && matches!(error, ChatError::Unauthorized) {
-            ChatError::PreStreamUnauthorized
-        } else {
-            error
-        }
-    })? {
+    for delta in parser
+        .finish()
+        .map_err(|error| match (&error, assistant_content.is_empty()) {
+            (ChatError::Unauthorized, true) => ChatError::PreStreamUnauthorized,
+            (ChatError::InvalidRequest(ProviderInvalidRequestReason::Model), true) => {
+                ChatError::PreStreamInvalidModel
+            }
+            _ => error,
+        })?
+    {
         assistant_content.push_str(&delta);
         let current = runtime
             .push_stream_event(
@@ -2518,6 +2572,9 @@ mod tests {
     enum LoopbackResponse {
         Sse(String),
         Unauthorized(String),
+        InvalidRequest(String),
+        Models(String),
+        ModelsFailure(String),
         Token {
             access_token: String,
             refresh_token: String,
@@ -2564,6 +2621,13 @@ mod tests {
                     ),
                     LoopbackResponse::Unauthorized(body) => {
                         ("401 Unauthorized", "application/json", body)
+                    }
+                    LoopbackResponse::InvalidRequest(body) => {
+                        ("400 Bad Request", "application/json", body)
+                    }
+                    LoopbackResponse::Models(body) => ("200 OK", "application/json", body),
+                    LoopbackResponse::ModelsFailure(body) => {
+                        ("500 Internal Server Error", "application/json", body)
                     }
                     LoopbackResponse::Token {
                         access_token,
@@ -2751,6 +2815,232 @@ mod tests {
                 .filter(|request| request.starts_with("POST /token "))
                 .count(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_model_rejection_rediscovers_and_retries_once() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::InvalidRequest(
+                r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
+            ),
+            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5.2"}]}"#.to_string()),
+            LoopbackResponse::Sse("responses after model recovery".to_string()),
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-model-recovery-access-token",
+            "fake-codex-model-recovery-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-model-rejection-recovery-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "recover rejected model".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.content, "responses after model recovery");
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("POST /responses "));
+        assert!(requests[1].starts_with("GET /models?"));
+        assert!(requests[2].starts_with("POST /responses "));
+        assert_eq!(request_body(&requests[0])["model"], "gpt-5-codex");
+        assert_eq!(request_body(&requests[2])["model"], "gpt-5.2");
+        let auth = crate::provider_auth::experimental_codex_chat_auth(&dir)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(auth.model, "gpt-5.2");
+        assert_eq!(auth.access_token, "fake-codex-model-recovery-access-token");
+        assert_eq!(auth.chatgpt_account_id, "acct-test");
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_model_rejection_same_model_preserves_error_without_retry() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::InvalidRequest(
+                r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
+            ),
+            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5-codex"}]}"#.to_string()),
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-same-model-access-token",
+            "fake-codex-same-model-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-model-rejection-same-chat".to_string();
+
+        runtime
+            .accept_user_message(dir.clone(), chat_id.clone(), "same model".to_string(), None)
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.role, crate::chat_history::ChatMessageRole::Error);
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /responses "))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_model_rejection_discovery_failure_preserves_error_without_retry() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::InvalidRequest(
+                r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
+            ),
+            LoopbackResponse::ModelsFailure("ignored provider detail".to_string()),
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-discovery-failure-access-token",
+            "fake-codex-discovery-failure-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-model-rejection-discovery-failure-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "failed discovery".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.role, crate::chat_history::ChatMessageRole::Error);
+        assert_eq!(
+            message.content,
+            "Provider rejected the request. Check model id, endpoint, and provider settings."
+        );
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /responses "))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_non_model_invalid_request_does_not_rediscover() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![LoopbackResponse::InvalidRequest(
+            r#"{"error":{"code":"invalid_request_body"}}"#.to_string(),
+        )])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-format-access-token",
+            "fake-codex-format-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-model-rejection-format-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "format error".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.role, crate::chat_history::ChatMessageRole::Error);
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("POST /responses "));
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_model_rejection_retries_at_most_once() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::InvalidRequest(
+                r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
+            ),
+            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5.2"}]}"#.to_string()),
+            LoopbackResponse::InvalidRequest(
+                r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
+            ),
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "fake-codex-max-model-access-token",
+            "fake-codex-max-model-refresh-token",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "experimental-model-rejection-max-chat".to_string();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                chat_id.clone(),
+                "reject twice".to_string(),
+                None,
+            )
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.role, crate::chat_history::ChatMessageRole::Error);
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("GET /models?"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /responses "))
+                .count(),
+            2
         );
     }
 

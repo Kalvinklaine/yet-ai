@@ -4558,6 +4558,72 @@ async fn provider_auth_openai_experimental_concurrent_near_expiry_refresh_is_sin
 }
 
 #[tokio::test]
+async fn provider_auth_model_rejection_rediscovery_updates_only_chat_model() {
+    let paths = test_storage_paths();
+    let store = FileSecretStore::new(&paths.config_dir);
+    let (chat_base_url, mut auth_receiver) =
+        start_mock_models_provider(StatusCode::OK, r#"{"data":[{"id":"gpt-5.2"}]}"#).await;
+    seed_experimental_openai_oauth(
+        &paths,
+        chat_base_url,
+        "http://127.0.0.1:3456/token".to_string(),
+        "codex-model-recovery-access-secret",
+        "codex-model-recovery-refresh-secret",
+    )
+    .await;
+    let before_access = store
+        .get_secret("openai", SecretKind::OAuthAccessToken)
+        .await
+        .unwrap();
+    let before_refresh = store
+        .get_secret("openai", SecretKind::OAuthRefreshToken)
+        .await
+        .unwrap();
+
+    let auth =
+        yet_lsp::provider_auth::rediscover_experimental_codex_chat_auth_after_model_rejection(
+            &paths.config_dir,
+            "gpt-5-codex",
+            "model-recovery-runtime-test",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(auth.model, "gpt-5.2");
+    assert_stored_secret(
+        Some(&auth.access_token),
+        "codex-model-recovery-access-secret",
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthAccessToken)
+            .await
+            .unwrap(),
+        before_access
+    );
+    assert_eq!(
+        store
+            .get_secret("openai", SecretKind::OAuthRefreshToken)
+            .await
+            .unwrap(),
+        before_refresh
+    );
+    let metadata = store
+        .get_secret("openai", SecretKind::AuthMetadata)
+        .await
+        .unwrap()
+        .unwrap();
+    let metadata: Value = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(metadata["chatModel"], "gpt-5.2");
+    assert_eq!(metadata["chatgptAccountId"], "acct-test");
+    assert_stored_secret(
+        auth_receiver.recv().await.unwrap().as_deref(),
+        "Bearer codex-model-recovery-access-secret",
+    );
+}
+
+#[tokio::test]
 async fn provider_auth_openai_experimental_changed_token_after_lock_wait_requires_fresh_metadata() {
     let paths = test_storage_paths();
     let store = FileSecretStore::new(&paths.config_dir);
