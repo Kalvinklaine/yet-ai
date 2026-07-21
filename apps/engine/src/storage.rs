@@ -9,6 +9,28 @@ pub struct StoragePaths {
     pub cache_dir: PathBuf,
 }
 
+impl StoragePaths {
+    pub fn project_registry_path(&self) -> PathBuf {
+        self.config_dir.join("projects").join("registry.json")
+    }
+
+    pub fn project_config_root(&self, project_id: &str) -> Option<PathBuf> {
+        valid_project_id(project_id).then(|| self.config_dir.join("projects").join(project_id))
+    }
+
+    pub fn project_cache_root(&self, project_id: &str) -> Option<PathBuf> {
+        valid_project_id(project_id).then(|| self.cache_dir.join("projects").join(project_id))
+    }
+}
+
+fn valid_project_id(value: &str) -> bool {
+    value.len() == 26
+        && value.starts_with("prj_")
+        && value[4..]
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
 pub fn resolve_storage_paths(
     identity: &ProductIdentity,
     project_root: &Path,
@@ -51,5 +73,14 @@ mod tests {
         assert_eq!(paths.project_dir, Path::new("/workspace/.yet-ai"));
         assert_eq!(paths.config_dir, Path::new("/config/yet-ai"));
         assert_eq!(paths.cache_dir, Path::new("/cache/yet-ai"));
+        assert_eq!(
+            paths.project_registry_path(),
+            Path::new("/config/yet-ai/projects/registry.json")
+        );
+        assert_eq!(
+            paths.project_config_root("prj_abcdefghijklmnopqrstuv"),
+            Some(Path::new("/config/yet-ai/projects/prj_abcdefghijklmnopqrstuv").to_path_buf())
+        );
+        assert!(paths.project_cache_root("../unsafe").is_none());
     }
 }

@@ -7,6 +7,7 @@ pub mod identity;
 pub mod logging;
 pub mod lsp;
 pub mod project_memory;
+pub mod projects;
 pub mod provider_auth;
 pub mod provider_auth_callback;
 pub mod providers;
@@ -21,6 +22,7 @@ use axum::Router;
 
 use crate::agent_progress::AgentProgressRuntime;
 use crate::chat::ChatRuntime;
+use crate::projects::ProjectRegistryRuntime;
 
 pub use identity::ProductIdentity;
 pub use security::{AuthToken, BrowserSessionId};
@@ -34,6 +36,7 @@ pub struct AppState {
     pub storage_paths: StoragePaths,
     pub chat_runtime: ChatRuntime,
     pub agent_progress_runtime: AgentProgressRuntime,
+    pub project_registry_runtime: ProjectRegistryRuntime,
     pub provider_auth_callback_port: u16,
 }
 
@@ -49,6 +52,8 @@ impl AppState {
     ) -> Self {
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let storage_paths = resolve_default_storage_paths(&identity, &project_root);
+        let project_registry_runtime =
+            ProjectRegistryRuntime::new(storage_paths.project_registry_path());
         Self {
             identity,
             auth_token,
@@ -56,6 +61,7 @@ impl AppState {
             storage_paths,
             chat_runtime: ChatRuntime::new(),
             agent_progress_runtime: AgentProgressRuntime::new(),
+            project_registry_runtime,
             provider_auth_callback_port,
         }
     }
@@ -65,6 +71,8 @@ impl AppState {
         auth_token: AuthToken,
         storage_paths: StoragePaths,
     ) -> Self {
+        let project_registry_runtime =
+            ProjectRegistryRuntime::new(storage_paths.project_registry_path());
         Self {
             identity,
             auth_token,
@@ -72,6 +80,7 @@ impl AppState {
             storage_paths,
             chat_runtime: ChatRuntime::new(),
             agent_progress_runtime: AgentProgressRuntime::new(),
+            project_registry_runtime,
             provider_auth_callback_port: 1455,
         }
     }

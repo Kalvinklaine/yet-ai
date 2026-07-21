@@ -62,6 +62,28 @@ fn test_app() -> axum::Router {
     ))
 }
 
+#[tokio::test]
+async fn projects_runtime_uses_config_registry_path_without_project_cwd_dependency() {
+    let storage_paths = test_storage_paths();
+    let expected = storage_paths
+        .config_dir
+        .join("projects")
+        .join("registry.json");
+    let state = test_app_state(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        storage_paths,
+    );
+
+    assert_eq!(state.project_registry_runtime.registry_path(), expected);
+    assert!(state
+        .project_registry_runtime
+        .list_summaries()
+        .await
+        .unwrap()
+        .is_empty());
+}
+
 fn authed_request(method: Method, uri: &str, body: Body) -> Request<Body> {
     let has_json_body = matches!(method, Method::POST | Method::PATCH);
     let mut builder = Request::builder()
