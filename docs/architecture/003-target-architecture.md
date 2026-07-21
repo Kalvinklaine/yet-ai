@@ -600,6 +600,8 @@ Confirmed edit-proposal changes should verify the affected contracts, GUI previe
 
 ### Config and storage resolution
 
+Browser-first project isolation v1 is frozen in `036-browser-project-isolation.md`. For that milestone, one registered project is one canonical root, `/projects` is the default browser home, and every `/p/:projectId/v1/...` request resolves an immutable request-scoped `ProjectContext`; there is no mutable process-global current project. Its engine-owned operational data lives under `projects/<projectId>/...` within the Yet AI config/cache namespaces. This is the authoritative rule for browser-registered project chat, memory, progress, controlled-run state, and future indexes; the older `.yet-ai` target below remains a possible future explicitly shareable repository-state boundary, not the v1 browser project store. Providers, credentials, runtime authentication, demo mode, and global preferences remain global. This paragraph records architecture only and does not claim the project registry, routes, migration, or hub are implemented.
+
 Yet AI must isolate storage from other products.
 
 Target directories from `product/identity.json`:

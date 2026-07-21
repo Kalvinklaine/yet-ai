@@ -112,6 +112,8 @@ This path balances product differentiation and practical delivery:
 
 ## Current implemented baseline
 
+The next approved browser milestone is architecture-frozen in `036-browser-project-isolation.md`: one project equals one canonical directory root; `/projects` becomes the default browser home and primary Yet AI React project hub; project UI/data routes are scoped by an opaque engine-generated project ID; and the engine resolves immutable request-scoped project context into `projects/<projectId>/...` config/cache namespaces. Global providers, credentials, runtime authentication, demo mode, and preferences remain global. Browser registration uses bounded authenticated home-rooted directory discovery with opaque handles, while CLI registration covers roots outside that browse root. This is a staged local-first design decision, not a claim that these routes, stores, migration, discovery, or UI are implemented.
+
 The clean scaffold path has produced buildable local MVP foundations for the first implementation sequence:
 
 1. `apps/engine` provides the Rust `yet-lsp` local runtime with authenticated loopback HTTP/SSE, identity-aware storage, local provider registry/config files, engine-owned local chat history, redacted provider responses, sanitized provider/model capability readiness summaries, and a narrow OpenAI-compatible direct streaming path.
