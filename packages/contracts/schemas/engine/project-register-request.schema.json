@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/engine/project-register-request.schema.json",
   "title": "Engine Project Register Request",
-  "description": "Registers one project using an engine-issued discovery session and opaque directory handle. Raw roots and client-selected project ids are not accepted.",
+  "description": "Atomically validates and registers one project using an engine-issued discovery session and opaque directory handle. A successful commit consumes the handle; failed validation creates nothing and does not consume a still-valid handle. Raw roots and client-selected project ids are not accepted.",
   "type": "object",
   "additionalProperties": false,
   "required": ["displayName", "directorySessionId", "directoryHandle"],

@@ -65,9 +65,9 @@ Canonicalization is repeated during explicit availability checks and before a ro
 
 ### Outputs and duplicate rules
 
-Successful registration returns safe project metadata: `projectId`, sanitized label, archive state, availability/readiness, and safe timestamps or bounded activity summary when present. It does not return the canonical root through normal create/list/open responses.
+Successful registration returns safe project metadata: `projectId`, sanitized label, archive state, availability/readiness, `revision`, and safe timestamps or bounded activity summary when present. A newly registered project has `lastOpenedAt: null`; only a later successful project open sets that timestamp. `createdAt` is always present. Normal create/list/open responses do not return the canonical root.
 
-Display labels are not unique. Duplicate labels are allowed and the UI disambiguates rows with safe status and recent-activity metadata, never by exposing roots in the normal hub. Registering the same canonical root twice is rejected with a stable `duplicate_root` category and may identify the existing project only by safe project metadata.
+Display labels are not unique. Duplicate labels are allowed and the UI disambiguates rows with safe status and recent-activity metadata, never by exposing roots in the normal hub. Registering the same canonical root twice fails as `invalid_request` with a bounded non-sensitive message; it does not disclose the existing root.
 
 ## Browser directory discovery
 
@@ -77,10 +77,10 @@ Browser registration uses a bounded, authenticated, engine-owned discovery sessi
 2. The GUI starts a short-lived discovery session through `/v1/project-browser/sessions`.
 3. The engine roots that session at the user's home directory and returns only opaque handles plus sanitized entry labels and kinds.
 4. The GUI navigates directory entries by presenting an opaque parent handle; it never constructs or submits raw paths.
-5. The user explicitly selects one directory and confirms registration.
-6. The engine resolves the handle inside the same authenticated session, canonicalizes it, rechecks containment and policy, and consumes or expires the handle.
+5. The user explicitly selects one directory and confirms registration by sending `{directorySessionId,directoryHandle,displayName}` to `POST /v1/projects`.
+6. That one operation resolves the handle inside the same authenticated session, canonicalizes it, rechecks containment and policy, atomically records the project, and consumes the handle only after the record commits successfully.
 
-Sessions and handles are random, user-session-bound, short-lived, bounded in entry count, page size, navigation depth, and lifetime, and invalid after consumption, expiry, auth change, or engine restart unless a later implementation explicitly documents safe persistence. Discovery lists directories only. It performs no recursive discovery, file-content read, background scan, indexing, hidden project inference, or provider call. Hidden directories are omitted by default; any future reveal control requires an explicit product decision.
+Sessions and handles are random, user-session-bound, short-lived, bounded in entry count, page size, navigation depth, and lifetime. A handle remains valid until a successful registration consumes it, the session expires or is cancelled, authentication changes, or the engine restarts. Validation failures do not create a project and do not consume the handle, so the caller may correct a retryable request and retry while the session remains valid. Failures that prove the session or handle invalid return `discovery_expired`; policy and filesystem failures preserve the handle only while it remains safe and valid. Discovery lists directories only. It performs no recursive discovery, file-content read, background scan, indexing, hidden project inference, or provider call. Hidden directories are omitted by default; any future reveal control requires an explicit product decision.
 
 The browse root is the user's canonical home directory. Roots outside it are registered with the CLI fallback. The API does not widen discovery authority in response to `..`, symlinks, crafted handles, alternate path spellings, or client-supplied roots.
 
@@ -116,8 +116,7 @@ Back and forward navigation restore URL-addressed project pages. They never rest
 | `POST` | `/v1/projects/:projectId/restore` | Restore an archived project. |
 | `POST` | `/v1/projects/:projectId/revalidate` | Explicitly recheck availability for repair UX. |
 | `POST` | `/v1/project-browser/sessions` | Start bounded home-rooted directory discovery. |
-| `GET` | `/v1/project-browser/sessions/:sessionId/entries?handle=...` | List bounded child directory handles. |
-| `POST` | `/v1/project-browser/sessions/:sessionId/select` | Resolve and consume a selected directory handle for registration. |
+| `POST` | `/v1/project-browser/sessions/:sessionId/list` | List bounded child directory handles from a body containing only `directoryHandle`; session identity is path-owned. |
 | `DELETE` | `/v1/project-browser/sessions/:sessionId` | Cancel discovery and invalidate its handles. |
 
 The concrete discovery response schemas may be refined before implementation, but they must preserve opaque handles, authentication, bounds, containment, and no raw-path normal responses. There is no project hard-delete route in v1.
@@ -168,7 +167,7 @@ Exact child filenames remain implementation decisions of their owning subsystems
 
 Providers, provider credentials, runtime/browser-session authentication, demo mode, and global preferences remain global. They are not copied into project directories. Project chat, curated memory, agent progress, controlled-run state, and future project-specific indexes are project-scoped. V1 does not place this scoped operational data in the registered repository or use `.yet-ai` as the authoritative browser-project store.
 
-Registry and scoped writes use atomic replacement and private permissions where supported, reject unsafe engine-storage symlinks, and serialize conflicting mutations. Registration, archive/restore, and rename use registry revisions or equivalent compare-and-swap behavior so concurrent tabs cannot silently overwrite newer metadata.
+Registry and scoped writes use atomic replacement and private permissions where supported, reject unsafe engine-storage symlinks, and serialize conflicting mutations. Each project summary carries a per-project `revision` encoded as a canonical unsigned decimal string: `0` or a non-zero value without leading zeroes, with at most 20 digits. Registration starts at revision `0`. Rename, archive, and restore require `expectedRevision`; the mutation succeeds only when it exactly matches the current revision and returns the summary or lifecycle response with the revision incremented by exactly one. A mismatch or an unrepresentable increment makes no change and returns `invalid_request` with a bounded non-sensitive conflict message.
 
 ## Project hub information architecture
 
@@ -224,7 +223,7 @@ A project switch is a navigation and lifecycle boundary, not a mutation of globa
 
 Per-request cancellation is best effort; late-result rejection is mandatory. A global Settings request need not be canceled because it is global, but it cannot repopulate project-bound state.
 
-Multiple tabs may open the same or different projects. Each tab has its own generation and route state; the engine resolves each request independently. Registry mutations use revision checks and return `conflict` when another tab changed the same metadata. Archive/restore events may be observed through explicit refresh or a future bounded registry notification, but no tab silently adopts another tab's current project. A newly archived project stops accepting new project-data mutations; already open streams close or terminate with a sanitized project-state event at the next policy boundary.
+Multiple tabs may open the same or different projects. Each tab has its own generation and route state; the engine resolves each request independently. Registry mutations use the `expectedRevision` checks above; a stale mutation returns `invalid_request` with a generic conflict message because the frozen public taxonomy has no separate conflict category. Archive/restore events may be observed through explicit refresh or a future bounded registry notification, but no tab silently adopts another tab's current project. A newly archived project stops accepting new project-data mutations; already open streams close or terminate with a sanitized project-state event at the next policy boundary.
 
 ## Availability, archive, and repair states
 
@@ -246,19 +245,16 @@ Errors use stable categories, suitable HTTP status codes, and short sanitized me
 
 | Category | Meaning |
 | --- | --- |
-| `invalid_request` | Malformed body, invalid ID/label, unknown field, or exceeded bound. |
-| `unauthorized` | Missing or invalid local user/session authority. |
-| `project_not_found` | No visible registry record for the route ID. |
-| `project_archived` | The operation is unavailable while archived. |
-| `project_unavailable` | Root is missing, moved, inaccessible, or changed identity. |
-| `duplicate_root` | The canonical root is already registered. |
-| `discovery_expired` | Discovery session or handle expired, was consumed, or is invalid. |
-| `outside_browse_root` | Selection does not remain beneath the approved discovery root. |
-| `filesystem_denied` | A local filesystem policy or permission denied the operation. |
-| `conflict` | Registry revision or concurrent mutation conflict. |
-| `resource_not_found` | Nested chat, memory, or progress resource is absent from this project. |
+| `invalid_request` | Malformed or unsafe input, duplicate root, stale revision, unknown field, or exceeded bound. |
+| `not_found` | No visible project or nested project resource exists for the scoped request. |
+| `archived` | The operation is unavailable while the project is archived. |
+| `root_missing` | The registered root is missing, moved, inaccessible, or has changed identity. |
+| `discovery_expired` | The discovery session or handle expired, was consumed, or is invalid. |
+| `outside_allowed_root` | The selected directory does not remain beneath the approved discovery root. |
+| `unsafe_filesystem` | Filesystem permissions, type, canonicalization, or symlink policy denied the operation. |
 | `storage_unavailable` | Registry or scoped storage cannot be safely read or written. |
-| `legacy_only` | An unscoped compatibility resource was requested through a scoped route or vice versa. |
+
+This eight-name set is the complete public project-control taxonomy. Authentication transport failures remain governed by the existing authentication contract rather than introducing another project error category. Internal duplicate, nested-resource, legacy-boundary, revision-conflict, and filesystem details map to the categories above and never create parallel public names.
 
 Callers may retry only categories documented as transient. The GUI maps categories to bounded recovery actions such as retry, return to Projects, restore, revalidate, choose another directory, or use CLI registration. It never renders raw engine or filesystem errors.
 

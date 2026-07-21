@@ -2,8 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://schemas.yet-ai.example/contracts/engine/project-lifecycle-request.schema.json",
   "title": "Engine Project Archive or Restore Request",
-  "description": "Archive and restore accept empty bodies. Project identity and action are URL-owned; hard-delete intent is never accepted.",
+  "description": "Archive and restore require the expected project revision. Project identity and action are URL-owned; hard-delete intent is never accepted.",
   "type": "object",
   "additionalProperties": false,
-  "maxProperties": 0
+  "required": ["expectedRevision"],
+  "properties": {
+    "expectedRevision": { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,19})$" }
+  }
 }

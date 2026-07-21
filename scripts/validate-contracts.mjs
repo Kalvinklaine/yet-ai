@@ -252,7 +252,19 @@ const mappings = [
   ["packages/contracts/examples/engine/directory-discovery-session-response.json", "packages/contracts/schemas/engine/directory-discovery-session-response.schema.json"],
   ["packages/contracts/examples/engine/directory-discovery-list-request.json", "packages/contracts/schemas/engine/directory-discovery-list-request.schema.json"],
   ["packages/contracts/examples/engine/directory-discovery-list-response.json", "packages/contracts/schemas/engine/directory-discovery-list-response.schema.json"],
-  ["packages/contracts/examples/engine/project-error.json", "packages/contracts/schemas/engine/project-error.schema.json"],
+  ...[
+    "project-error.json",
+    "project-error-invalid-request.json",
+    "project-error-not-found.json",
+    "project-error-archived.json",
+    "project-error-discovery-expired.json",
+    "project-error-outside-allowed-root.json",
+    "project-error-unsafe-filesystem.json",
+    "project-error-storage-unavailable.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/engine/${fileName}`,
+    "packages/contracts/schemas/engine/project-error.schema.json"
+  ]),
   [
     "packages/contracts/examples/engine/models-response-v2-configured-only.json",
     "packages/contracts/schemas/engine/models.schema.json"
@@ -369,20 +381,27 @@ const mappings = [
 const invalidMappings = [
   ...[
     ["project-summary-private-root.json", "project-summary.schema.json"],
+    ["project-summary-missing-revision.json", "project-summary.schema.json"],
+    ["project-summary-unsafe-revision.json", "project-summary.schema.json"],
     ["project-list-cloud-required.json", "project-list-response.schema.json"],
     ["project-register-raw-path.json", "project-register-request.schema.json"],
     ["project-register-token.json", "project-register-request.schema.json"],
     ["project-register-multi-root.json", "project-register-request.schema.json"],
     ["project-register-unsafe-label.json", "project-register-request.schema.json"],
+    ["project-register-missing-session.json", "project-register-request.schema.json"],
     ["project-update-unknown-field.json", "project-update-request.schema.json"],
+    ["project-update-missing-revision.json", "project-update-request.schema.json"],
     ["project-lifecycle-hard-delete.json", "project-lifecycle-request.schema.json"],
+    ["project-lifecycle-missing-revision.json", "project-lifecycle-request.schema.json"],
     ["directory-discovery-session-client-root.json", "directory-discovery-session-request.schema.json"],
     ["directory-discovery-list-traversal.json", "directory-discovery-list-request.schema.json"],
     ["directory-discovery-list-encoded-path.json", "directory-discovery-list-request.schema.json"],
+    ["directory-discovery-list-duplicate-session-authority.json", "directory-discovery-list-request.schema.json"],
     ["directory-discovery-list-response-raw-path.json", "directory-discovery-list-response.schema.json"],
     ["directory-discovery-list-response-unsafe-label.json", "directory-discovery-list-response.schema.json"],
     ["project-error-private-path.json", "project-error.schema.json"],
-    ["project-error-secret.json", "project-error.schema.json"]
+    ["project-error-secret.json", "project-error.schema.json"],
+    ["project-error-unfrozen-category.json", "project-error.schema.json"]
   ].map(([fileName, schemaName]) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     `packages/contracts/schemas/engine/${schemaName}`

@@ -5,19 +5,21 @@
   "description": "Safe public project metadata. Canonical roots, paths, URIs, discovery handles, storage details, and auth material are private engine state and are not represented.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["projectId", "displayName", "status", "createdAt", "lastOpenedAt", "rootAvailable", "cloudRequired", "providerAccess"],
+  "required": ["projectId", "displayName", "status", "revision", "createdAt", "lastOpenedAt", "rootAvailable", "cloudRequired", "providerAccess"],
   "properties": {
     "projectId": { "$ref": "#/$defs/projectId" },
     "displayName": { "$ref": "#/$defs/displayName" },
     "status": { "enum": ["available", "missing", "archived"] },
+    "revision": { "$ref": "#/$defs/revision" },
     "createdAt": { "$ref": "#/$defs/timestamp" },
-    "lastOpenedAt": { "$ref": "#/$defs/timestamp" },
+    "lastOpenedAt": { "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }] },
     "rootAvailable": { "type": "boolean" },
     "cloudRequired": { "const": false },
     "providerAccess": { "const": "direct" }
   },
   "$defs": {
     "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" },
+    "revision": { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,19})$" },
     "timestamp": { "type": "string", "format": "date-time", "minLength": 20, "maxLength": 32, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$" },
     "displayName": {
       "type": "string",
