@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/directory-discovery-session-response.schema.json",
+  "title": "Engine Directory Discovery Session Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sessionId", "expiresAt", "root", "cloudRequired", "providerAccess"],
+  "properties": {
+    "sessionId": { "$ref": "#/$defs/sessionId" },
+    "expiresAt": { "$ref": "#/$defs/timestamp" },
+    "root": { "$ref": "#/$defs/directoryEntry" },
+    "cloudRequired": { "const": false },
+    "providerAccess": { "const": "direct" }
+  },
+  "$defs": {
+    "sessionId": { "type": "string", "pattern": "^pds_[a-f0-9]{32}$" },
+    "timestamp": { "type": "string", "format": "date-time", "minLength": 20, "maxLength": 32, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$" },
+    "directoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handle", "displayName", "selectable"],
+      "properties": {
+        "handle": { "type": "string", "pattern": "^dir_[a-f0-9]{32}$" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[^\\x00-\\x1F\\x7F/\\\\]+$" },
+        "selectable": { "type": "boolean" }
+      }
+    }
+  }
+}

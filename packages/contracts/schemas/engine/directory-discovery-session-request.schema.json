@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/directory-discovery-session-request.schema.json",
+  "title": "Engine Directory Discovery Session Request",
+  "description": "Starts discovery at the engine-approved root. Clients cannot supply roots, paths, URIs, depth, or cloud settings.",
+  "type": "object",
+  "additionalProperties": false,
+  "maxProperties": 0
+}

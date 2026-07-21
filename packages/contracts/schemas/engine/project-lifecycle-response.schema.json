@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/project-lifecycle-response.schema.json",
+  "title": "Engine Project Archive or Restore Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["projectId", "status", "rootAvailable", "updatedAt", "cloudRequired", "providerAccess"],
+  "properties": {
+    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" },
+    "status": { "enum": ["available", "missing", "archived"] },
+    "rootAvailable": { "type": "boolean" },
+    "updatedAt": { "type": "string", "format": "date-time", "minLength": 20, "maxLength": 32, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$" },
+    "cloudRequired": { "const": false },
+    "providerAccess": { "const": "direct" }
+  }
+}

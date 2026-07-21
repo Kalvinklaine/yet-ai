@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/project-list-response.schema.json",
+  "title": "Engine Project List Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["projects", "legacyUnscopedAvailable", "cloudRequired", "providerAccess"],
+  "properties": {
+    "projects": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/projectSummary" } },
+    "legacyUnscopedAvailable": { "type": "boolean" },
+    "cloudRequired": { "const": false },
+    "providerAccess": { "const": "direct" }
+  },
+  "$defs": {
+    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" },
+    "timestamp": { "type": "string", "format": "date-time", "minLength": 20, "maxLength": 32, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$" },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|/[Uu][Ss][Ee][Rr][Ss](?:/|$)|/[Hh][Oo][Mm][Ee](?:/|$)|[A-Za-z]:(?:/|\\\\)|~(?:/|\\\\)|https?://|file:))[^\\x00-\\x1F\\x7F/\\\\]+$" },
+    "projectSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectId", "displayName", "status", "createdAt", "lastOpenedAt", "rootAvailable", "cloudRequired", "providerAccess"],
+      "properties": {
+        "projectId": { "$ref": "#/$defs/projectId" },
+        "displayName": { "$ref": "#/$defs/displayName" },
+        "status": { "enum": ["available", "missing", "archived"] },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "lastOpenedAt": { "$ref": "#/$defs/timestamp" },
+        "rootAvailable": { "type": "boolean" },
+        "cloudRequired": { "const": false },
+        "providerAccess": { "const": "direct" }
+      }
+    }
+  }
+}

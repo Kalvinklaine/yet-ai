@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/directory-discovery-list-request.schema.json",
+  "title": "Engine Directory Discovery List Request",
+  "description": "Lists children using only opaque engine-issued identifiers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sessionId", "directoryHandle"],
+  "properties": {
+    "sessionId": { "type": "string", "pattern": "^pds_[a-f0-9]{32}$" },
+    "directoryHandle": { "type": "string", "pattern": "^dir_[a-f0-9]{32}$" }
+  }
+}
