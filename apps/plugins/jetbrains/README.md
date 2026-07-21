@@ -174,6 +174,7 @@ Verify the installable artifact without launching IntelliJ IDEA with the canonic
 
 ```sh
 npm run prepare:jetbrains-preview
+npm run validate:jetbrains-artifact
 npm run smoke:jetbrains-installable
 npm run smoke:jetbrains-bundled-runtime
 npm run smoke:jetbrains-gui-browser

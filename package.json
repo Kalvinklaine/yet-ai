@@ -149,6 +149,7 @@
     "validate:controlled-agent-dev-preview-fixtures": "node scripts/validate-controlled-agent-dev-preview-fixtures.mjs",
     "validate:ide-artifact-contract": "node scripts/validate-ide-artifact-contract.mjs",
     "validate:ide-artifact-workflow": "node scripts/validate-ide-artifact-workflow.mjs",
+    "validate:jetbrains-artifact": "node scripts/validate-jetbrains-artifact.mjs",
     "validate:ide-surface-contract": "node scripts/validate-ide-surface-contract.mjs",
     "validate:npm-spawn": "node scripts/validate-npm-spawn.mjs",
     "verify:controlled-agent-gui": "node scripts/verify-controlled-agent-gui.mjs",
