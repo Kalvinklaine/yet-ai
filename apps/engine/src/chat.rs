@@ -1656,7 +1656,6 @@ async fn codex_responses_stream_with_recovery(
                     provider_auth::rediscover_experimental_codex_chat_auth_after_model_rejection(
                         config_dir,
                         &current.model,
-                        chat_id,
                     )
                     .await
                     .ok()
@@ -1721,28 +1720,29 @@ async fn collect_codex_responses_stream(
             }
         })?;
         for text in decode_stream_utf8_chunk(&mut utf8_buffer, &chunk)? {
-            parser
-                .push(&text)
-                .map_err(|error| match (&error, assistant_content.is_empty()) {
+            let parse_error = parser.push(&text).err();
+            for delta in parser.drain_deltas() {
+                assistant_content.push_str(&delta);
+                let current = runtime
+                    .push_stream_event(
+                        chat_id,
+                        stream_id,
+                        "stream_delta",
+                        json!({ "delta": { "content": delta } }),
+                    )
+                    .await;
+                if !current {
+                    return Ok(assistant_content);
+                }
+            }
+            if let Some(error) = parse_error {
+                return Err(match (&error, assistant_content.is_empty()) {
                     (ChatError::Unauthorized, true) => ChatError::PreStreamUnauthorized,
                     (ChatError::InvalidRequest(ProviderInvalidRequestReason::Model), true) => {
                         ChatError::PreStreamInvalidModel
                     }
                     _ => error,
-                })?;
-        }
-        for delta in parser.drain_deltas() {
-            assistant_content.push_str(&delta);
-            let current = runtime
-                .push_stream_event(
-                    chat_id,
-                    stream_id,
-                    "stream_delta",
-                    json!({ "delta": { "content": delta } }),
-                )
-                .await;
-            if !current {
-                return Ok(assistant_content);
+                });
             }
         }
     }
@@ -2571,6 +2571,7 @@ mod tests {
     #[derive(Clone)]
     enum LoopbackResponse {
         Sse(String),
+        RawSse(String),
         Unauthorized(String),
         InvalidRequest(String),
         Models(String),
@@ -2619,6 +2620,7 @@ mod tests {
                             })
                         ),
                     ),
+                    LoopbackResponse::RawSse(body) => ("200 OK", "text/event-stream", body),
                     LoopbackResponse::Unauthorized(body) => {
                         ("401 Unauthorized", "application/json", body)
                     }
@@ -2857,6 +2859,9 @@ mod tests {
         assert!(requests[0].starts_with("POST /responses "));
         assert!(requests[1].starts_with("GET /models?"));
         assert!(requests[2].starts_with("POST /responses "));
+        let discovery_request = requests[1].to_ascii_lowercase();
+        assert!(discovery_request.contains("session_id: codex-discovery-"));
+        assert!(!discovery_request.contains(&format!("session_id: {chat_id}")));
         assert_eq!(request_body(&requests[0])["model"], "gpt-5-codex");
         assert_eq!(request_body(&requests[2])["model"], "gpt-5.2");
         let auth = crate::provider_auth::experimental_codex_chat_auth(&dir)
@@ -2866,6 +2871,174 @@ mod tests {
         assert_eq!(auth.model, "gpt-5.2");
         assert_eq!(auth.access_token, "fake-codex-model-recovery-access-token");
         assert_eq!(auth.chatgpt_account_id, "acct-test");
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_same_chunk_delta_then_recoverable_error_does_not_retry() {
+        for (label, error, expected_role) in [
+            (
+                "model",
+                serde_json::json!({
+                    "type": "response.failed",
+                    "error": { "code": "unsupported_model", "message": "invalid_request: model is not supported" }
+                }),
+                crate::chat_history::ChatMessageRole::Error,
+            ),
+            (
+                "unauthorized",
+                serde_json::json!({
+                    "type": "response.failed",
+                    "error": { "message": "unauthorized" }
+                }),
+                crate::chat_history::ChatMessageRole::Error,
+            ),
+        ] {
+            let dir = temp_dir();
+            let delta = serde_json::json!({
+                "type": "response.output_text.delta",
+                "delta": "visible"
+            });
+            let body = format!("data: {delta}\n\ndata: {error}\n\n");
+            let server = start_loopback_server(vec![LoopbackResponse::RawSse(body)]).await;
+            create_codex_oauth_connection_with_expiry_and_endpoints(
+                &dir,
+                chrono::Utc::now() + chrono::Duration::hours(1),
+                &server.base_url,
+                &format!("{}/token", server.base_url),
+                "same-chunk-access",
+                "same-chunk-refresh",
+            )
+            .await;
+            let runtime = super::ChatRuntime::new();
+            let chat_id = format!("same-chunk-{label}");
+
+            runtime
+                .accept_user_message(dir.clone(), chat_id.clone(), label.to_string(), None)
+                .await;
+            let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+            assert_eq!(message.role, expected_role);
+            let requests = server.requests.lock().unwrap().clone();
+            assert_eq!(requests.len(), 1, "{label}: retried after parsed output");
+        }
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_combined_model_then_unauthorized_recovers_each_once() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::InvalidRequest(
+                r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
+            ),
+            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5.2"}]}"#.to_string()),
+            LoopbackResponse::Unauthorized(r#"{"error":"unauthorized"}"#.to_string()),
+            LoopbackResponse::Token {
+                access_token: "combined-new-access".to_string(),
+                refresh_token: "combined-new-refresh".to_string(),
+            },
+            LoopbackResponse::Sse("combined recovered".to_string()),
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "combined-old-access",
+            "combined-old-refresh",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "combined-model-auth".to_string();
+
+        runtime
+            .accept_user_message(dir.clone(), chat_id.clone(), "combined".to_string(), None)
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.content, "combined recovered");
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 5);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("GET /models?"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /token "))
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /responses "))
+                .count(),
+            3
+        );
+    }
+
+    #[tokio::test]
+    async fn experimental_codex_combined_unauthorized_then_model_recovers_each_once() {
+        let dir = temp_dir();
+        let server = start_loopback_server(vec![
+            LoopbackResponse::Unauthorized(r#"{"error":"unauthorized"}"#.to_string()),
+            LoopbackResponse::Token {
+                access_token: "combined-new-access".to_string(),
+                refresh_token: "combined-new-refresh".to_string(),
+            },
+            LoopbackResponse::InvalidRequest(
+                r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
+            ),
+            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5.2"}]}"#.to_string()),
+            LoopbackResponse::Sse("combined recovered".to_string()),
+        ])
+        .await;
+        create_codex_oauth_connection_with_expiry_and_endpoints(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            &server.base_url,
+            &format!("{}/token", server.base_url),
+            "combined-old-access",
+            "combined-old-refresh",
+        )
+        .await;
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "combined-auth-model".to_string();
+
+        runtime
+            .accept_user_message(dir.clone(), chat_id.clone(), "combined".to_string(), None)
+            .await;
+        let message = wait_for_terminal_message(&dir, &chat_id).await;
+
+        assert_eq!(message.content, "combined recovered");
+        let requests = server.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 5);
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("GET /models?"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /token "))
+                .count(),
+            1
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /responses "))
+                .count(),
+            3
+        );
     }
 
     #[tokio::test]

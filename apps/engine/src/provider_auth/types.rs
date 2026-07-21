@@ -257,6 +257,8 @@ pub(super) struct CodexAuthMetadata {
     pub(super) chat_base_url: String,
     pub(super) chat_model: String,
     pub(super) token_endpoint_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) discovery_session_id: Option<String>,
 }
 
 #[derive(Debug)]

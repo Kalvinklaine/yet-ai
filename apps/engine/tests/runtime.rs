@@ -673,6 +673,45 @@ async fn start_mock_models_provider_body(
     (format!("http://{address}"), auth_receiver)
 }
 
+async fn start_recording_mock_models_provider(
+    body: &'static str,
+) -> (String, mpsc::Receiver<(Option<String>, Option<String>)>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (sender, receiver) = mpsc::channel(4);
+    tokio::spawn(async move {
+        let handler = move |request: axum::http::Request<Body>| {
+            let sender = sender.clone();
+            async move {
+                let auth = request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let session = request
+                    .headers()
+                    .get("session_id")
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let _ = sender.send((auth, session)).await;
+                (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    body,
+                )
+                    .into_response()
+            }
+        };
+        axum::serve(
+            listener,
+            axum::Router::new().route("/models", axum::routing::get(handler)),
+        )
+        .await
+        .unwrap();
+    });
+    (format!("http://{address}"), receiver)
+}
+
 async fn start_mock_ollama_tags_provider(
     status: StatusCode,
     body: &'static str,
@@ -4584,7 +4623,6 @@ async fn provider_auth_model_rejection_rediscovery_updates_only_chat_model() {
         yet_lsp::provider_auth::rediscover_experimental_codex_chat_auth_after_model_rejection(
             &paths.config_dir,
             "gpt-5-codex",
-            "model-recovery-runtime-test",
         )
         .await
         .unwrap()
@@ -4621,6 +4659,44 @@ async fn provider_auth_model_rejection_rediscovery_updates_only_chat_model() {
         auth_receiver.recv().await.unwrap().as_deref(),
         "Bearer codex-model-recovery-access-secret",
     );
+}
+
+#[tokio::test]
+async fn provider_auth_model_rejection_repairs_and_reuses_engine_owned_discovery_session() {
+    let paths = test_storage_paths();
+    let store = FileSecretStore::new(&paths.config_dir);
+    let (chat_base_url, mut requests) =
+        start_recording_mock_models_provider(r#"{"data":[{"id":"gpt-5.2"}]}"#).await;
+    seed_experimental_openai_oauth(
+        &paths,
+        chat_base_url,
+        "http://127.0.0.1:3456/token".to_string(),
+        "legacy-model-recovery-access",
+        "legacy-model-recovery-refresh",
+    )
+    .await;
+
+    let auth =
+        yet_lsp::provider_auth::rediscover_experimental_codex_chat_auth_after_model_rejection(
+            &paths.config_dir,
+            "gpt-5-codex",
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(auth.model, "gpt-5.2");
+    let (_, session) = requests.recv().await.unwrap();
+    let session = session.expect("discovery session header");
+    assert!(session.starts_with("codex-discovery-"));
+    assert_ne!(session, "legacy-chat-id");
+
+    let metadata = store
+        .get_secret("openai", SecretKind::AuthMetadata)
+        .await
+        .unwrap()
+        .unwrap();
+    let metadata: Value = serde_json::from_str(&metadata).unwrap();
+    assert_eq!(metadata["discoverySessionId"], session);
 }
 
 #[tokio::test]

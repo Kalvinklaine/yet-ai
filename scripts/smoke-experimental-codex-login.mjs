@@ -35,6 +35,8 @@ let tokenRequestGrantType;
 let tokenRequestContentType;
 let modelDiscoveryAuthorizationHeader;
 let modelDiscoveryAccountHeaderSeen = false;
+let loginDiscoverySessionHeader;
+let recoveryDiscoverySessionHeader;
 let chatAuthorizationHeader;
 let chatAccountHeaderSeen = false;
 let chatOriginatorHeader;
@@ -95,6 +97,7 @@ try {
   assert(modelDiscoveryRequestCount === 1, "mock model discovery endpoint was not called exactly once during login");
   assert(modelDiscoveryAuthorizationHeader === `Bearer ${accessToken}`, "mock model discovery did not receive experimental bearer auth");
   assert(modelDiscoveryAccountHeaderSeen === true, "mock model discovery did not receive account metadata header");
+  assert(loginDiscoverySessionHeader === start.sessionId, "login discovery did not use the OAuth session metadata");
 
   const connected = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
   assert(connected.status === "connected", "status did not report connected state");
@@ -121,6 +124,8 @@ try {
   assertMonotonicSequence(events);
   assert(chatRequestCount === 2, "mock responses endpoint did not retry once after stale-model rejection");
   assert(modelDiscoveryRequestCount === 2, "mock model discovery endpoint was not called once for recovery");
+  assert(recoveryDiscoverySessionHeader === loginDiscoverySessionHeader, "recovery discovery did not reuse stored session metadata");
+  assert(recoveryDiscoverySessionHeader !== chatId, "recovery discovery used the chat id as session metadata");
   assert(chatAuthorizationHeader === `Bearer ${accessToken}`, "mock responses endpoint did not receive experimental bearer auth");
   assert(chatAccountHeaderSeen === true, "mock responses endpoint did not receive account metadata header");
   assert(chatOriginatorHeader === "codex_cli_rs", "mock responses endpoint received unexpected originator header");
@@ -169,6 +174,7 @@ try {
     lifecycle: [initial.status, start.status, pending.status, exchange.status, connected.status, disconnect.status, afterDisconnect.status],
     tokenExchange: "form-urlencoded-authorization-code",
     modelDiscovery: "stale-model-rediscovered-and-persisted",
+    discoverySession: "stored-and-reused-without-value-output",
     responsesSse: "dedicated-responses-endpoint",
     tokenEndpointCalls: tokenRequestCount,
     modelDiscoveryCalls: modelDiscoveryRequestCount,
@@ -296,6 +302,8 @@ async function startMockChatEndpoint() {
       modelDiscoveryRequestCount += 1;
       modelDiscoveryAuthorizationHeader = request.headers.authorization;
       modelDiscoveryAccountHeaderSeen = request.headers["chatgpt-account-id"] === accountId;
+      if (modelDiscoveryRequestCount === 1) loginDiscoverySessionHeader = request.headers.session_id;
+      if (modelDiscoveryRequestCount === 2) recoveryDiscoverySessionHeader = request.headers.session_id;
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         data: [{ id: "gpt-4-unsafe" }, { id: modelDiscoveryRequestCount === 1 ? staleModel : recoveredModel }]

@@ -199,6 +199,7 @@ impl OpenAiCodexOAuthAdapter {
             chat_base_url: session.chat_base_url,
             chat_model,
             token_endpoint_url: session.token_endpoint_url,
+            discovery_session_id: Some(session.session_id.clone()),
         };
         self.store_connection(&token, &metadata).await?;
         self.clear_pending_after_success(state, session_id).await?;

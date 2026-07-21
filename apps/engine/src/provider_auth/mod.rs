@@ -1140,15 +1140,9 @@ fn is_disabled_model_status(value: &str) -> bool {
 }
 
 fn validate_codex_discovery_session_id(value: &str) -> Result<(), ProviderAuthError> {
-    let lower = value.to_ascii_lowercase();
     if value.is_empty()
         || value.chars().count() > PROVIDER_AUTH_SESSION_ID_MAX_CHARS
         || !is_url_safe_token(value)
-        || lower.starts_with("sk-")
-        || lower.contains("secret")
-        || lower.contains("token")
-        || lower.contains("bearer")
-        || lower.contains("cookie")
     {
         return Err(ProviderAuthError::InvalidRequest);
     }
@@ -1847,10 +1841,8 @@ pub async fn refresh_experimental_codex_chat_auth_if_needed(
 pub async fn rediscover_experimental_codex_chat_auth_after_model_rejection(
     config_dir: &Path,
     rejected_model: &str,
-    session_id: &str,
 ) -> Result<Option<ExperimentalCodexChatAuth>, ProviderAuthError> {
     validate_codex_chat_model(rejected_model)?;
-    validate_required_string(session_id, PROVIDER_AUTH_SESSION_ID_MAX_CHARS)?;
     let lock = codex_refresh_lock(config_dir, "openai")?;
     let _guard = lock.lock().await;
     let _file_guard = acquire_codex_refresh_file_lock(config_dir, "openai").await?;
@@ -1867,19 +1859,43 @@ pub async fn rediscover_experimental_codex_chat_auth_after_model_rejection(
     if metadata.chat_model != rejected_model {
         return Ok(None);
     }
+    let store = provider_secret_store(config_dir);
+    let previous = serde_json::to_string(&metadata).map_err(|_| ProviderAuthError::Storage)?;
+    let session_id = match metadata.discovery_session_id.as_deref() {
+        Some(session_id) => {
+            validate_codex_discovery_session_id(session_id)?;
+            session_id.to_string()
+        }
+        None => {
+            let session_id = format!("codex-discovery-{}", random_url_safe(32)?);
+            validate_codex_discovery_session_id(&session_id)?;
+            metadata.discovery_session_id = Some(session_id.clone());
+            let updated =
+                serde_json::to_string(&metadata).map_err(|_| ProviderAuthError::Storage)?;
+            if store
+                .put_secret("openai", SecretKind::AuthMetadata, &updated)
+                .await
+                .is_err()
+            {
+                store
+                    .put_secret("openai", SecretKind::AuthMetadata, &previous)
+                    .await?;
+                return Err(ProviderAuthError::Storage);
+            }
+            session_id
+        }
+    };
     let discovered = discover_codex_model(
         &metadata.chat_base_url,
         &access_token,
         &metadata.chatgpt_account_id,
-        session_id,
+        &session_id,
     )
     .await?;
     if discovered == rejected_model {
         return Ok(None);
     }
     validate_codex_chat_model(&discovered)?;
-    let store = provider_secret_store(config_dir);
-    let previous = serde_json::to_string(&metadata).map_err(|_| ProviderAuthError::Storage)?;
     metadata.chat_model = discovered.clone();
     let updated = serde_json::to_string(&metadata).map_err(|_| ProviderAuthError::Storage)?;
     if store
@@ -2053,6 +2069,7 @@ pub(super) async fn refresh_experimental_codex_chat_auth_impl(
         chat_base_url: current.metadata.chat_base_url,
         chat_model,
         token_endpoint_url: current.metadata.token_endpoint_url,
+        discovery_session_id: current.metadata.discovery_session_id,
     };
     let mut token = token;
     token.refresh_token = Some(refresh_token);
@@ -2306,6 +2323,9 @@ fn validate_codex_metadata(
     if metadata.provider != provider {
         return Err(ProviderAuthError::Storage);
     }
+    if let Some(session_id) = metadata.discovery_session_id.as_deref() {
+        validate_codex_discovery_session_id(session_id).map_err(|_| ProviderAuthError::Storage)?;
+    }
     validate_codex_account_id(&metadata.chatgpt_account_id)?;
     let scopes = validate_codex_scope_subset(metadata.scopes.clone(), &codex_scopes())?;
     if scopes.len() != metadata.scopes.len() {
@@ -2372,6 +2392,7 @@ fn sanitize_codex_response_metadata(
 ) -> CodexAuthMetadata {
     metadata.account_label = sanitized_account_label(Some(&metadata.account_label));
     metadata.chatgpt_account_id = "".to_string();
+    metadata.discovery_session_id = None;
     metadata.redacted = access_token
         .map(crate::secret_store::redact_secret)
         .unwrap_or_else(|| "oauth-token-...redacted".to_string());
@@ -3379,6 +3400,7 @@ mod tests {
             chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
             chat_model: super::CODEX_CHAT_MODEL.to_string(),
             token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+            discovery_session_id: None,
         };
         let mut token = token;
         let mut metadata = metadata;
@@ -3675,6 +3697,7 @@ mod tests {
             chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
             chat_model: super::CODEX_CHAT_MODEL.to_string(),
             token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+            discovery_session_id: None,
         };
         super::store_codex_connection(dir, "openai", &token, &metadata)
             .await
@@ -3708,6 +3731,7 @@ mod tests {
             chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
             chat_model: super::CODEX_CHAT_MODEL.to_string(),
             token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+            discovery_session_id: None,
         };
         super::store_codex_connection(dir, "openai", &token, &metadata)
             .await
@@ -6264,6 +6288,7 @@ mod tests {
             chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
             chat_model: super::CODEX_CHAT_MODEL.to_string(),
             token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+            discovery_session_id: None,
         })
         .unwrap();
         let previous = super::CodexCredentialSnapshot {
@@ -6289,6 +6314,7 @@ mod tests {
             chat_base_url: super::CODEX_CHAT_BASE_URL.to_string(),
             chat_model: super::CODEX_CHAT_MODEL.to_string(),
             token_endpoint_url: super::CODEX_TOKEN_URL.to_string(),
+            discovery_session_id: None,
         };
         let store = RefreshCommitFailingStore::default();
 
