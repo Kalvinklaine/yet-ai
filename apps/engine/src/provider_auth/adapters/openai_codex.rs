@@ -113,8 +113,13 @@ impl OpenAiCodexOAuthAdapter {
         access_token: &str,
         account_id: &str,
     ) -> Result<String, ProviderAuthError> {
-        crate::provider_auth::discover_codex_model(&session.chat_base_url, access_token, account_id)
-            .await
+        crate::provider_auth::discover_codex_model(
+            &session.chat_base_url,
+            access_token,
+            account_id,
+            &session.session_id,
+        )
+        .await
     }
 
     async fn store_connection(
@@ -169,10 +174,14 @@ impl OpenAiCodexOAuthAdapter {
             .await
         {
             Ok(model) => model,
-            Err(_) => {
+            Err(ProviderAuthError::TokenExchange(
+                CodexTokenExchangeCategory::ModelDiscoveryFallback,
+                _,
+            )) => {
                 crate::provider_auth::validate_codex_chat_model(&session.chat_model)?;
                 session.chat_model.clone()
             }
+            Err(error) => return Err(error),
         };
         let scopes =
             crate::provider_auth::codex_token_scopes(token.scope.as_deref(), &session.scopes)?;

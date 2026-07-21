@@ -1007,10 +1007,47 @@ struct CodexModelEntry {
     id: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default, alias = "is_supported", alias = "isSupported")]
+    supported: Option<bool>,
+    #[serde(default, alias = "supportedInApi")]
+    supported_in_api: Option<bool>,
+    #[serde(default, alias = "supportedInChatgpt")]
+    supported_in_chatgpt: Option<bool>,
+    #[serde(default, alias = "is_enabled", alias = "isEnabled")]
+    enabled: Option<bool>,
+    #[serde(default, alias = "is_available", alias = "isAvailable")]
+    available: Option<bool>,
+    #[serde(default, alias = "is_entitled", alias = "isEntitled")]
+    entitled: Option<bool>,
+    #[serde(default, alias = "hasAccess")]
+    has_access: Option<bool>,
+    #[serde(default, alias = "is_disabled", alias = "isDisabled")]
+    disabled: Option<bool>,
+    #[serde(default, alias = "is_restricted", alias = "isRestricted")]
+    restricted: Option<bool>,
+    #[serde(default, alias = "is_retired", alias = "isRetired")]
+    retired: Option<bool>,
+    #[serde(default, alias = "is_unavailable", alias = "isUnavailable")]
+    unavailable: Option<bool>,
+    #[serde(default, alias = "is_blocked", alias = "isBlocked")]
+    blocked: Option<bool>,
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    availability: Option<String>,
+    #[serde(default)]
+    access: Option<String>,
+    #[serde(default)]
+    entitlement: Option<String>,
+    #[serde(default)]
+    policy: Option<String>,
 }
 
 impl CodexModelEntry {
     fn identifiers(self) -> Vec<String> {
+        if !self.is_eligible() {
+            return Vec::new();
+        }
         [self.slug, self.id, self.model]
             .into_iter()
             .flatten()
@@ -1018,14 +1055,64 @@ impl CodexModelEntry {
             .filter(|value| !value.is_empty())
             .collect()
     }
+
+    fn is_eligible(&self) -> bool {
+        let positive_flags = [
+            self.supported,
+            self.supported_in_api,
+            self.supported_in_chatgpt,
+            self.enabled,
+            self.available,
+            self.entitled,
+            self.has_access,
+        ];
+        let negative_flags = [
+            self.disabled,
+            self.restricted,
+            self.retired,
+            self.unavailable,
+            self.blocked,
+        ];
+        let statuses = [
+            self.status.as_deref(),
+            self.availability.as_deref(),
+            self.access.as_deref(),
+            self.entitlement.as_deref(),
+            self.policy.as_deref(),
+        ];
+        !positive_flags.contains(&Some(false))
+            && !negative_flags.contains(&Some(true))
+            && !statuses.into_iter().flatten().any(is_disabled_model_status)
+    }
+}
+
+fn is_disabled_model_status(value: &str) -> bool {
+    if value.chars().count() > 64 {
+        return false;
+    }
+    let normalized = value.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+    matches!(
+        normalized.as_str(),
+        "disabled"
+            | "unavailable"
+            | "retired"
+            | "restricted"
+            | "unentitled"
+            | "not_available"
+            | "not_entitled"
+            | "no_access"
+            | "access_denied"
+    )
 }
 
 pub(in crate::provider_auth) async fn discover_codex_model(
     chat_base_url: &str,
     access_token: &str,
     account_id: &str,
+    session_id: &str,
 ) -> Result<String, ProviderAuthError> {
     validate_codex_account_id(account_id)?;
+    validate_required_string(session_id, PROVIDER_AUTH_SESSION_ID_MAX_CHARS)?;
     let url = codex_models_url(chat_base_url)?;
     let client =
         codex_http_client(&url, codex_token_exchange_timeout_for_url(&url)).map_err(|_| {
@@ -1035,6 +1122,8 @@ pub(in crate::provider_auth) async fn discover_codex_model(
         .get(url)
         .bearer_auth(access_token)
         .header("chatgpt-account-id", account_id)
+        .header("originator", "yet-ai")
+        .header("session_id", session_id)
         .send()
         .await
         .map_err(|_| {
@@ -1100,20 +1189,14 @@ fn codex_models_url(chat_base_url: &str) -> Result<reqwest::Url, ProviderAuthErr
 fn select_codex_model(
     models: impl IntoIterator<Item = String>,
 ) -> Result<String, ProviderAuthError> {
-    let mut safe = Vec::new();
     for model in models {
         if validate_codex_chat_model(&model).is_ok() && is_supported_codex_model(&model) {
-            if model == CODEX_CHAT_MODEL {
-                return Ok(model);
-            }
-            safe.push(model);
+            return Ok(model);
         }
     }
-    safe.into_iter()
-        .next()
-        .ok_or(ProviderAuthError::token_exchange(
-            CodexTokenExchangeCategory::ModelDiscoveryFallback,
-        ))
+    Err(ProviderAuthError::token_exchange(
+        CodexTokenExchangeCategory::ProviderRejected,
+    ))
 }
 
 fn is_supported_codex_model(value: &str) -> bool {
@@ -3093,6 +3176,30 @@ mod tests {
         url
     }
 
+    async fn recording_codex_models_endpoint(
+        body: impl Into<String>,
+    ) -> (String, tokio::sync::oneshot::Receiver<String>) {
+        let body = body.into();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buffer = [0_u8; 8192];
+                let read = stream.read(&mut buffer).await.unwrap_or_default();
+                let _ = sender.send(String::from_utf8_lossy(&buffer[..read]).into_owned());
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        (url, receiver)
+    }
+
     async fn create_codex_oauth_connection_via_adapter(dir: &std::path::Path) {
         let token = super::CodexTokenResponse {
             access_token: "codex-access-token-secret".to_string(),
@@ -3286,6 +3393,36 @@ mod tests {
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                     body.len(),
                     body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        url
+    }
+
+    async fn successful_codex_exchange_endpoint_with_models(models: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/token", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer).await;
+                let body = r#"{"access_token":"codex-exchange-access-token-secret","refresh_token":"codex-exchange-refresh-token-secret","expires_in":3600,"scope":"openid profile email offline_access","id_token":"eyJhbGciOiJub25lIn0.eyJjaGF0Z3B0X2FjY291bnRfaWQiOiJhY2N0LXRlc3QifQ.signature","account_label":"Codex Exchange Account"}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let mut buffer = [0_u8; 8192];
+                let _ = stream.read(&mut buffer).await;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    models.len(),
+                    models
                 );
                 let _ = stream.write_all(response.as_bytes()).await;
             }
@@ -4860,10 +4997,14 @@ mod tests {
             codex_models_response_endpoint(r#"{"models":[{"slug":"  "},{"slug":"gpt-5.1-mini"}]}"#)
                 .await;
 
-        let model =
-            super::discover_codex_model(&endpoint, "codex-access-token-secret", "acct-test")
-                .await
-                .unwrap();
+        let model = super::discover_codex_model(
+            &endpoint,
+            "codex-access-token-secret",
+            "acct-test",
+            "codex-test-session",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(model, "gpt-5.1-mini");
     }
@@ -4872,10 +5013,14 @@ mod tests {
     async fn codex_exchange_model_discovery_selects_data_id() {
         let endpoint = codex_models_response_endpoint(r#"{"data":[{"id":"gpt-5.2"}]}"#).await;
 
-        let model =
-            super::discover_codex_model(&endpoint, "codex-access-token-secret", "acct-test")
-                .await
-                .unwrap();
+        let model = super::discover_codex_model(
+            &endpoint,
+            "codex-access-token-secret",
+            "acct-test",
+            "codex-test-session",
+        )
+        .await
+        .unwrap();
 
         assert_eq!(model, "gpt-5.2");
     }
@@ -4887,10 +5032,14 @@ mod tests {
             r#"{"data":[{"model":"gpt-5-codex-mini"}]}"#,
         ] {
             let endpoint = codex_models_response_endpoint(body).await;
-            let model =
-                super::discover_codex_model(&endpoint, "codex-access-token-secret", "acct-test")
-                    .await
-                    .unwrap();
+            let model = super::discover_codex_model(
+                &endpoint,
+                "codex-access-token-secret",
+                "acct-test",
+                "codex-test-session",
+            )
+            .await
+            .unwrap();
             let expected = if body.contains("5.3") {
                 "gpt-5.3-mini"
             } else {
@@ -4913,13 +5062,132 @@ mod tests {
             ),
         ] {
             let endpoint = codex_models_response_endpoint(body).await;
-            let model =
-                super::discover_codex_model(&endpoint, "codex-access-token-secret", "acct-test")
-                    .await
-                    .unwrap();
+            let model = super::discover_codex_model(
+                &endpoint,
+                "codex-access-token-secret",
+                "acct-test",
+                "codex-test-session",
+            )
+            .await
+            .unwrap();
 
             assert_eq!(model, expected);
         }
+    }
+
+    #[tokio::test]
+    async fn codex_exchange_model_discovery_skips_ineligible_entries_and_sends_metadata() {
+        for body in [
+            r#"{"models":[{"id":"gpt-5.1","supported":false},{"id":"gpt-5.2"}]}"#,
+            r#"{"data":[{"id":"gpt-5.1","isSupported":false},{"id":"gpt-5.2"}]}"#,
+            r#"{"models":[{"id":"gpt-5.1","supported_in_api":false},{"id":"gpt-5.2"}]}"#,
+            r#"{"data":[{"id":"gpt-5.1","supportedInChatgpt":false},{"id":"gpt-5.2"}]}"#,
+            r#"{"models":[{"id":"gpt-5.1","disabled":true},{"id":"gpt-5.2"}]}"#,
+            r#"{"data":[{"id":"gpt-5.1","isRestricted":true},{"id":"gpt-5.2"}]}"#,
+            r#"{"models":[{"id":"gpt-5.1","status":"retired"},{"id":"gpt-5.2"}]}"#,
+            r#"{"data":[{"id":"gpt-5.1","availability":"not-available"},{"id":"gpt-5.2"}]}"#,
+            r#"{"models":[{"id":"gpt-5.1","entitlement":"unentitled"},{"id":"gpt-5.2"}]}"#,
+            r#"{"data":[{"id":"gpt-5.1","policy":"access denied"},{"id":"gpt-5.2"}]}"#,
+        ] {
+            let (endpoint, request_receiver) = recording_codex_models_endpoint(body).await;
+            let model = super::discover_codex_model(
+                &endpoint,
+                "codex-access-token-secret",
+                "acct-test",
+                "codex-live-session",
+            )
+            .await
+            .unwrap();
+            let request = request_receiver.await.unwrap().to_ascii_lowercase();
+
+            assert_eq!(model, "gpt-5.2", "body: {body}");
+            assert!(request.contains("authorization: bearer codex-access-token-secret"));
+            assert!(request.contains("chatgpt-account-id: acct-test"));
+            assert!(request.contains("originator: yet-ai"));
+            assert!(request.contains("session_id: codex-live-session"));
+        }
+    }
+
+    #[tokio::test]
+    async fn codex_exchange_model_discovery_first_eligible_model_wins_without_legacy_preference() {
+        let endpoint =
+            codex_models_response_endpoint(r#"{"models":[{"id":"gpt-5.2"},{"id":"gpt-5-codex"}]}"#)
+                .await;
+
+        let model = super::discover_codex_model(
+            &endpoint,
+            "codex-access-token-secret",
+            "acct-test",
+            "codex-live-session",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(model, "gpt-5.2");
+    }
+
+    #[tokio::test]
+    async fn codex_exchange_model_discovery_success_without_eligible_model_fails_closed() {
+        let endpoint = codex_models_response_endpoint(
+            r#"{"models":[{"id":"gpt-5-codex","supported":false}]}"#,
+        )
+        .await;
+
+        let error = super::discover_codex_model(
+            &endpoint,
+            "codex-access-token-secret",
+            "acct-test",
+            "codex-live-session",
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ProviderAuthError::TokenExchange(
+                super::CodexTokenExchangeCategory::ProviderRejected,
+                None
+            )
+        ));
+    }
+
+    #[tokio::test]
+    async fn codex_exchange_model_discovery_persists_eligible_alternate_without_leak() {
+        let dir = temp_dir();
+        let token_endpoint_url = successful_codex_exchange_endpoint_with_models(
+            r#"{"data":[{"id":"gpt-5.1","isEnabled":false,"account_id":"raw-account-metadata"},{"id":"gpt-5.3-mini","enabled":true}]}"#,
+        )
+        .await;
+        let pending =
+            create_codex_pending_state_with_token_endpoint(&dir, &token_endpoint_url).await;
+
+        let response = super::exchange(
+            &dir,
+            "openai",
+            super::ProviderAuthExchangeRequest {
+                session_id: Some(pending.session_id),
+                state: Some(pending.state),
+                code: Some("codex-auth-code".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        let auth = super::experimental_codex_chat_auth(&dir)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(auth.model, "gpt-5.3-mini");
+        assert_response_sanitized(
+            &response,
+            &[
+                "gpt-5.1",
+                "raw-account-metadata",
+                "codex-exchange-access-token-secret",
+                "codex-exchange-refresh-token-secret",
+                "acct-test",
+            ],
+        );
     }
 
     #[tokio::test]
@@ -4932,6 +5200,7 @@ mod tests {
             &oversized_endpoint,
             "codex-access-token-secret",
             "acct-test",
+            "codex-test-session",
         )
         .await
         .unwrap_err();
@@ -5031,7 +5300,7 @@ mod tests {
     }
 
     #[test]
-    fn select_codex_model_keeps_global_exact_default_preference() {
+    fn select_codex_model_preserves_first_eligible_response_order() {
         assert_eq!(
             super::select_codex_model([
                 "gpt-5.2".to_string(),
@@ -5039,7 +5308,7 @@ mod tests {
                 "gpt-5.3-mini".to_string(),
             ])
             .unwrap(),
-            super::CODEX_CHAT_MODEL
+            "gpt-5.2"
         );
     }
 
