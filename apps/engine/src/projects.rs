@@ -21,10 +21,7 @@ const REGISTRY_MAX_PROJECTS: usize = 10_000;
 const DISPLAY_NAME_MAX_CHARS: usize = 120;
 const PROJECT_ID_RANDOM_BYTES: usize = 16;
 static TEMP_REGISTRY_COUNTER: AtomicU64 = AtomicU64::new(0);
-#[cfg(not(test))]
 const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(test)]
-const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_millis(150);
 const REGISTRY_LOCK_RETRY: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
@@ -824,32 +821,53 @@ fn validate_registry_storage_sync(
 }
 
 fn acquire_registry_lock(path: &Path) -> Result<std::fs::File, ProjectRegistryError> {
+    acquire_registry_lock_with(path, REGISTRY_LOCK_TIMEOUT, |_| Ok(()))
+}
+
+fn acquire_registry_lock_with(
+    path: &Path,
+    timeout: Duration,
+    mut before_acquire: impl FnMut(&Path) -> Result<(), ProjectRegistryError>,
+) -> Result<std::fs::File, ProjectRegistryError> {
     ensure_registry_directory(path)?;
     let lock_path = path.with_file_name("registry.lock");
-    reject_registry_file_symlink(&lock_path)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.create(true).read(true).write(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    }
-    let lock = options
-        .open(&lock_path)
-        .map_err(|_| ProjectRegistryError::Storage)?;
-    verify_open_regular_file(&lock_path, &lock)?;
-    set_private_file(&lock)?;
-    let deadline = Instant::now() + REGISTRY_LOCK_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     loop {
-        match lock.try_lock_exclusive() {
-            Ok(()) => return Ok(lock),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                if Instant::now() >= deadline {
-                    return Err(ProjectRegistryError::Storage);
-                }
-                std::thread::sleep(REGISTRY_LOCK_RETRY);
+        reject_registry_file_symlink(&lock_path)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let lock = options
+            .open(&lock_path)
+            .map_err(|_| ProjectRegistryError::Storage)?;
+        if verify_open_regular_file(&lock_path, &lock).is_err() {
+            if Instant::now() >= deadline {
+                return Err(ProjectRegistryError::Storage);
             }
-            Err(_) => return Err(ProjectRegistryError::Storage),
+            std::thread::sleep(REGISTRY_LOCK_RETRY);
+            continue;
+        }
+        set_private_file(&lock)?;
+        before_acquire(&lock_path)?;
+        loop {
+            match lock.try_lock_exclusive() {
+                Ok(()) => match verify_open_regular_file(&lock_path, &lock) {
+                    Ok(()) => return Ok(lock),
+                    Err(_) if Instant::now() < deadline => break,
+                    Err(_) => return Err(ProjectRegistryError::Storage),
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return Err(ProjectRegistryError::Storage);
+                    }
+                    std::thread::sleep(REGISTRY_LOCK_RETRY);
+                }
+                Err(_) => return Err(ProjectRegistryError::Storage),
+            }
         }
     }
 }
@@ -1145,7 +1163,18 @@ fn create_missing_directories_durable(
         }
     }
     for child in missing.iter().rev() {
-        std::fs::create_dir(child).map_err(|_| ProjectRegistryError::Storage)?;
+        match std::fs::create_dir(child) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let metadata =
+                    std::fs::symlink_metadata(child).map_err(|_| ProjectRegistryError::Storage)?;
+                if !metadata.is_dir() || metadata.file_type().is_symlink() {
+                    return Err(ProjectRegistryError::Storage);
+                }
+            }
+            Err(_) => return Err(ProjectRegistryError::Storage),
+        }
+        set_private_directory(child)?;
         sync(child.parent().ok_or(ProjectRegistryError::Storage)?)?;
     }
     Ok(())
@@ -1173,6 +1202,22 @@ fn verify_open_regular_file(path: &Path, file: &std::fs::File) -> Result<(), Pro
         if opened.dev() != current.dev() || opened.ino() != current.ino() {
             return Err(ProjectRegistryError::Storage);
         }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        let opened_identity = (opened.volume_serial_number(), opened.file_index());
+        let current_identity = (current.volume_serial_number(), current.file_index());
+        if opened_identity.0.is_none()
+            || opened_identity.1.is_none()
+            || opened_identity != current_identity
+        {
+            return Err(ProjectRegistryError::Storage);
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        return Err(ProjectRegistryError::Storage);
     }
     Ok(())
 }
@@ -1528,12 +1573,33 @@ mod tests {
         let lock = acquire_registry_lock(&path).unwrap();
 
         assert_eq!(
-            runtime.list_summaries().await.unwrap_err(),
+            acquire_registry_lock_with(&path, Duration::from_millis(50), |_| Ok(())).unwrap_err(),
             ProjectRegistryError::Storage
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
         drop(lock);
         assert_eq!(runtime.list_summaries().await.unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn projects_retries_when_lock_path_is_replaced_before_acquire() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = registry_path(&temp);
+        let mut calls = 0;
+
+        let lock = acquire_registry_lock_with(&path, Duration::from_secs(1), |lock_path| {
+            calls += 1;
+            if calls == 1 {
+                std::fs::remove_file(lock_path).unwrap();
+                std::fs::File::create(lock_path).unwrap();
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(calls, 2);
+        verify_open_regular_file(&path.with_file_name("registry.lock"), &lock).unwrap();
     }
 
     #[cfg(unix)]
@@ -1633,6 +1699,35 @@ mod tests {
                 temp.path().join("missing-config"),
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn projects_first_directory_creation_is_private_before_parent_sync() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let projects = config.join("projects");
+        let path = projects.join("registry.json");
+        let mut checked = Vec::new();
+
+        ensure_registry_directory_with_sync(&path, |parent| {
+            let child = if parent == temp.path() {
+                config.as_path()
+            } else {
+                projects.as_path()
+            };
+            assert_eq!(
+                std::fs::metadata(child).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            checked.push(child.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(checked, vec![config, projects]);
     }
 
     #[test]
@@ -2130,6 +2225,58 @@ mod tests {
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(migrated["version"], REGISTRY_VERSION);
         assert_eq!(migrated["projects"][0]["rootBinding"]["state"], "unbound");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn projects_v3_concrete_identity_migrates_bound_and_available() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = registry_path(&temp);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let identity = current_root_identity(&root).unwrap().unwrap();
+        let project_id = new_project_id().unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 3,
+                "revision": "9",
+                "projects": [{
+                    "projectId": project_id,
+                    "displayName": "Bound",
+                    "canonicalRoot": std::fs::canonicalize(&root).unwrap(),
+                    "revision": "6",
+                    "createdAt": timestamp_now(),
+                    "lastOpenedAt": null,
+                    "archived": false,
+                    "rootIdentity": {
+                        "device": identity.device,
+                        "inode": identity.inode
+                    }
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
+        runtime.load().await.unwrap();
+        let summary = runtime.list_summaries().await.unwrap().pop().unwrap();
+        assert_eq!(summary.status, ProjectStatus::Available);
+        assert!(summary.root_available);
+        assert!(runtime.get_active_private_entry(&project_id).await.is_ok());
+        let migrated: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(migrated["projects"][0]["rootBinding"]["state"], "bound");
+        assert_eq!(
+            migrated["projects"][0]["rootBinding"]["device"],
+            identity.device
+        );
+        assert_eq!(
+            migrated["projects"][0]["rootBinding"]["inode"],
+            identity.inode
+        );
     }
 
     #[cfg(unix)]
