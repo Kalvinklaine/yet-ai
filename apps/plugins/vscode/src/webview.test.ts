@@ -1,4 +1,7 @@
 import * as assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import Module from "node:module";
 
 type ModuleWithLoad = typeof Module & {
@@ -46,6 +49,8 @@ async function main(): Promise<void> {
     await assertVerificationHandlerRejectsWithoutExecution(webview);
     assertIframeValidatorRejectsVerificationRequests(webview);
     assertHostedChatBootstrapPrecedesPackagedGui(webview);
+    assertDevFallbackKeepsPackageInert(webview);
+    assertDevFallbackWithoutPackageIsBounded(webview);
     assertHostedChatUrlStripsQueryAndHash(webview);
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
     await assertPreReadyControlledCommandRunRejectsWithoutExecution(webview);
@@ -55,6 +60,53 @@ async function main(): Promise<void> {
   } finally {
     moduleWithLoad._load = originalLoad;
   }
+}
+
+function assertDevFallbackKeepsPackageInert(webview: typeof import("./webview")): void {
+  const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-fallback-"));
+  try {
+    fs.mkdirSync(path.join(extensionRoot, "media", "gui"), { recursive: true });
+    fs.writeFileSync(path.join(extensionRoot, "media", "gui", "index.html"), '<!doctype html><html><head><script type="module" src="./assets/gui.js"></script></head><body><main id="packaged-fallback-marker">Packaged fallback</main></body></html>');
+    const html = renderDevWebview(webview, extensionRoot);
+    assert.equal(webview.hostedBootstrapTimeoutMs, 3000);
+    assert.equal((html.match(/<iframe\b/g) ?? []).length, 1);
+    assert.equal((html.match(/id=\\?"packaged-fallback-marker\\?"/g) ?? []).length, 1);
+    assert.equal(html.includes('<main id="packaged-fallback-marker">Packaged fallback</main>\n<script nonce='), false);
+    assert.equal(html.includes("setTimeout(activatePackagedFallback, 3000)"), true);
+    assert.equal(html.includes('activeGui !== "dev"'), true);
+    assert.equal(html.includes("frame.removeAttribute(\"src\")"), true);
+    assert.equal(html.includes("frame.remove()"), true);
+    assert.equal(html.includes("Yet AI ignored late iframe message after local GUI fallback"), true);
+    assert.equal((html.match(/acquireVsCodeApi\(\)/g) ?? []).length, 1);
+  } finally {
+    fs.rmSync(extensionRoot, { recursive: true, force: true });
+  }
+}
+
+function assertDevFallbackWithoutPackageIsBounded(webview: typeof import("./webview")): void {
+  const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-no-fallback-"));
+  try {
+    const html = renderDevWebview(webview, extensionRoot);
+    assert.equal(html.includes("const packagedFallbackHtml = null"), true);
+    assert.equal(html.includes("The local GUI could not be started. Rebuild the packaged GUI or restart its local development server."), true);
+    assert.equal(html.includes("Not Found"), false);
+  } finally {
+    fs.rmSync(extensionRoot, { recursive: true, force: true });
+  }
+}
+
+function renderDevWebview(webview: typeof import("./webview"), extensionRoot: string): string {
+  return webview.renderWebviewHtml(
+    { cspSource: "vscode-resource:", asWebviewUri: (uri: { toString(): string }) => uri.toString() } as never,
+    { fsPath: extensionRoot, path: extensionRoot } as never,
+    {
+      product: { id: "yet-ai", displayName: "Yet AI" },
+      engine: { binaryName: "yet-lsp" },
+      gui: { npmPackage: "@yet-ai/gui" },
+      vscode: { publisher: "yet-ai-placeholder", name: "yet-ai", displayName: "Yet AI", configurationPrefix: "yetai", commandPrefix: "yetaicmd", activityBarId: "yet-ai-toolbox-pane" },
+    } as never,
+    { runtimeUrl: "http://127.0.0.1:8001", guiDevUrl: "http://127.0.0.1:5173" } as never,
+  );
 }
 
 function assertHostedChatUrlStripsQueryAndHash(webview: typeof import("./webview")): void {

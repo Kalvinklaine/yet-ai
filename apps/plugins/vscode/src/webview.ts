@@ -187,6 +187,7 @@ const inFlightIdeActionRequestIds = new Set<string>();
 const maxVerificationOutputTailLength = 4000;
 const pendingWorkspaceSnippetSearchQueries = new Set<string>();
 export const vscodeHostedChatPath = "/vscode/hosted-chat";
+export const hostedBootstrapTimeoutMs = 3000;
 
 export function openYetAiWebview(
   context: vscode.ExtensionContext,
@@ -1669,7 +1670,7 @@ export function renderWebviewHtml(
   const guiDevOrigin = connection.guiDevUrl
     ? getLoopbackOrigin(connection.guiDevUrl, `${configurationPrefix}.guiDevUrl`)
     : undefined;
-  const packagedGui = connection.guiDevUrl ? undefined : findPackagedGui(extensionUri);
+  const packagedGui = findPackagedGui(extensionUri);
   const guiDevBootstrapToken = connection.guiDevUrl ? createNonce() : undefined;
   const bootstrap = serializeScriptJson({
     bridgeVersion,
@@ -1685,7 +1686,8 @@ export function renderWebviewHtml(
     ? `<iframe title="${escapeHtml(identity.vscode.displayName)} GUI" src="${escapeHtml(vscodeHostedChatUrl(connection.guiDevUrl, guiDevBootstrapToken!))}"></iframe>`
     : "";
   const placeholder = connection.guiDevUrl || packagedGui ? "" : `<main><h1>${escapeHtml(identity.vscode.displayName)}</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${escapeHtml(connection.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> and <code>cd apps/plugins/vscode && npm run copy:gui</code> to package the GUI, or set <code>yetai.guiDevUrl</code> to a loopback Vite dev server during development.</p></main>`;
-  const packagedGuiHtml = packagedGui ? rewritePackagedGuiHtml(packagedGui.html, packagedGui.root, webview) : "";
+  const rewrittenPackagedGuiHtml = packagedGui ? rewritePackagedGuiHtml(packagedGui.html, packagedGui.root, webview) : undefined;
+  const packagedGuiHtml = connection.guiDevUrl ? "" : rewrittenPackagedGuiHtml ?? "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1708,11 +1710,14 @@ window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
 ${placeholder}${frameSource}${packagedGuiHtml}
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
+window["acquireVsCodeApi"] = () => vscode;
 const bootstrap = ${bootstrap};
 window.yetAiBootstrap = bootstrap;
 const frame = document.querySelector("iframe");
+const frameWindow = frame?.contentWindow;
 const frameTargetOrigin = bootstrap.guiDevOrigin;
 const hostedBootstrapMessage = bootstrap.guiDevBootstrapToken ? { type: "yet-ai.hosted-bootstrap", token: bootstrap.guiDevBootstrapToken, entryMode: "hosted_chat" } : undefined;
+const packagedFallbackHtml = ${serializeScriptJson(connection.guiDevUrl ? rewrittenPackagedGuiHtml ?? null : null)};
 const maxForwardedApplyWorkspaceEditMessageBytes = ${maxForwardedApplyWorkspaceEditMessageBytes};
 const maxForwardedIdeActionMessageBytes = ${maxForwardedIdeActionMessageBytes};
 const maxForwardedControlledFileReadMessageBytes = ${maxForwardedControlledFileReadMessageBytes};
@@ -1724,6 +1729,8 @@ const maxForwardedControlledLexicalSearchMessageBytes = ${maxForwardedControlled
 let latestHostReady;
 let frameReady = false;
 let frameReadyRequestId;
+let activeGui = frame ? "dev" : "packaged";
+let hostedFallbackTimer;
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const hasSecretRequestIdMarker = (value) => /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
 const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value));
@@ -1834,8 +1841,8 @@ const isSafeRuntimeStatusText = (value) => typeof value === "string" && value.le
 const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => key === "protocolVersion" || key === "surface" || key === "lifecycle" || key === "runtimeOwner" || key === "launchMode" || key === "tokenState" || key === "processState" || key === "diagnosis" || key === "nextAction" || key === "cloudRequired" || key === "authority") && payload.protocolVersion === "2026-06-21" && payload.surface === "vscode" && ["unknown", "checking", "starting", "connected", "degraded", "disconnected", "restarting", "stopped", "auth_mismatch", "invalid_settings", "failed"].includes(payload.lifecycle) && ["ide_host", "external", "user", "test_harness"].includes(payload.runtimeOwner) && ["auto", "connect", "launch", "preview", "manual", "unknown"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "checking", "starting", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeRuntimeStatusText(payload.diagnosis) && isSafeRuntimeStatusText(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
 const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : message.type === "host.runtimeStatus" ? message.requestId === undefined && isHostRuntimeStatusPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentMultifileApplyResult" || message.type === "host.controlledAgentCommandRunResult" || message.type === "host.controlledAgentLexicalSearchResult"));
 const sendToFrame = (message) => {
-  if (frame && frame.contentWindow && frameTargetOrigin) {
-    frame.contentWindow.postMessage(message, frameTargetOrigin);
+  if (activeGui === "dev" && frameWindow && frameTargetOrigin) {
+    frameWindow.postMessage(message, frameTargetOrigin);
   }
 };
 const isPrivilegedGuiMessageType = (type) => type === "gui.ideActionRequest" || type === "gui.applyWorkspaceEditRequest" || type === "gui.controlledAgentFileReadRequest" || type === "gui.controlledAgentEditRequest" || type === "gui.controlledAgentMultifileApplyRequest" || type === "gui.controlledAgentCommandRunRequest" || type === "gui.controlledAgentVerificationBundleRequest" || type === "gui.controlledAgentLexicalSearchRequest";
@@ -1845,9 +1852,52 @@ const replayHostReady = () => {
     sendToFrame(latestHostReady);
   }
 };
+const activatePackagedFallback = () => {
+  if (activeGui !== "dev") return;
+  activeGui = packagedFallbackHtml ? "packaged" : "unavailable";
+  frameReady = false;
+  frameReadyRequestId = undefined;
+  if (frame) {
+    frame.removeAttribute("src");
+    frame.remove();
+  }
+  if (!packagedFallbackHtml) {
+    const unavailable = document.createElement("main");
+    const title = document.createElement("h1");
+    const message = document.createElement("p");
+    title.textContent = bootstrap.displayName;
+    message.textContent = "The local GUI could not be started. Rebuild the packaged GUI or restart its local development server.";
+    unavailable.append(title, message);
+    document.body.append(unavailable);
+    return;
+  }
+  const template = document.createElement("template");
+  template.innerHTML = packagedFallbackHtml;
+  const content = template.content.cloneNode(true);
+  for (const inertScript of content.querySelectorAll("script")) {
+    const liveScript = document.createElement("script");
+    for (const attribute of inertScript.attributes) liveScript.setAttribute(attribute.name, attribute.value);
+    liveScript.textContent = inertScript.textContent;
+    inertScript.replaceWith(liveScript);
+  }
+  document.body.append(content);
+};
+const completeDevBootstrap = () => {
+  if (activeGui !== "dev") return false;
+  if (hostedFallbackTimer !== undefined) {
+    clearTimeout(hostedFallbackTimer);
+    hostedFallbackTimer = undefined;
+  }
+  return true;
+};
+if (activeGui === "dev") hostedFallbackTimer = setTimeout(activatePackagedFallback, ${hostedBootstrapTimeoutMs});
 vscode.postMessage({ version: bootstrap.bridgeVersion, type: "gui.ready", requestId: bootstrap.requestId, payload: { supportedBridgeVersion: bootstrap.bridgeVersion } });
 window.addEventListener("message", (event) => {
-  if (event.source === frame?.contentWindow) {
+  if (event.source === frameWindow) {
+    if (activeGui !== "dev") {
+      console.log("Yet AI ignored late iframe message after local GUI fallback");
+      return;
+    }
     if (event.origin !== frameTargetOrigin) {
       console.log("Yet AI rejected iframe message from unexpected origin");
       return;
@@ -1856,6 +1906,7 @@ window.addEventListener("message", (event) => {
       sendToFrame(hostedBootstrapMessage);
     } else if (isFrameGuiMessage(event.data)) {
       if (event.data.type === "gui.ready") {
+        if (!completeDevBootstrap()) return;
         frameReady = true;
         frameReadyRequestId = event.data.requestId;
         vscode.postMessage(event.data);

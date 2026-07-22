@@ -15,6 +15,7 @@ const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-wrapper-bro
 const bridgeVersion = "2026-05-15";
 const hostedChatPath = "/vscode/hosted-chat";
 const devWrapperPath = "/vscode-wrapper-dev-test";
+const devFallbackWrapperPath = "/vscode-wrapper-dev-fallback-test";
 const headed = process.argv.includes("--headed");
 const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
 const runtimeToken = `vscode-wrapper-runtime-${randomUUID()}`;
@@ -165,6 +166,19 @@ try {
   if (devHostedEntry.pathname !== hostedChatPath || devHostedEntry.entryMode !== "hosted_chat") failures.push("VS Code dev iframe did not complete the wrapper-owned hosted bootstrap before GUI routing.");
   const devBootstrapRequestCount = await page.evaluate(() => window.__yetAiDevBootstrapRequestCount);
   if (devBootstrapRequestCount < 2) failures.push(`VS Code dev iframe did not retry after the forced dropped bootstrap request (${devBootstrapRequestCount} request(s)).`);
+
+  await page.goto(`${guiBaseUrl}${devFallbackWrapperPath}`, { waitUntil: "domcontentloaded" });
+  await expectBodyVisibleText(page, "Chat readiness", "VS Code packaged fallback after dropped dev bootstrap", 10_000);
+  const fallbackState = await page.evaluate(() => ({
+    iframeCount: document.querySelectorAll("iframe").length,
+    packageMountCount: window.__yetAiPackagedFallbackMountCount,
+    acquireCount: window.__yetAiAcquireVsCodeApiCount,
+    lateMessageCount: window.__yetAiLateDevMessageAcceptedCount,
+  }));
+  if (fallbackState.iframeCount !== 0) failures.push("VS Code timed-out dev iframe remained active after packaged fallback.");
+  if (fallbackState.packageMountCount !== 1) failures.push(`VS Code packaged fallback mounted ${fallbackState.packageMountCount} times instead of exactly once.`);
+  if (fallbackState.acquireCount !== 1) failures.push(`VS Code packaged fallback acquired the VS Code API ${fallbackState.acquireCount} times instead of exactly once.`);
+  if (fallbackState.lateMessageCount !== 0) failures.push("VS Code packaged fallback accepted a late dev iframe message.");
 
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const hostedEntry = await page.evaluate(() => ({ pathname: window.location.pathname, entryMode: window.__yetAiInitialRuntimeConfig?.entryMode }));
@@ -1281,6 +1295,12 @@ async function startStaticServer(staticRoot) {
         response.end(`<!doctype html><iframe src="${hostedChatPath}?yetAiHostedBootstrap=${token}"></iframe><script>const token=${JSON.stringify(token)};window.__yetAiDevBootstrapRequestCount=0;addEventListener("message",event=>{if(event.source===document.querySelector("iframe").contentWindow&&event.data?.type==="yet-ai.hosted-bootstrap.request"&&event.data.token===token){window.__yetAiDevBootstrapRequestCount+=1;if(window.__yetAiDevBootstrapRequestCount>1)event.source.postMessage({type:"yet-ai.hosted-bootstrap",token,entryMode:"hosted_chat"},location.origin);}});</script>`);
         return;
       }
+      if (requestUrl.pathname === devFallbackWrapperPath) {
+        const packagedHtml = await readFileText(packagedGuiIndex);
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(`<!doctype html><head><base href="/"></head><body><iframe src="${hostedChatPath}?yetAiHostedBootstrap=vscodeWrapperFallbackToken001"></iframe><script>const frame=document.querySelector("iframe");const frameWindow=frame.contentWindow;const vscode=acquireVsCodeApi();window.__yetAiAcquireVsCodeApiCount=1;window.acquireVsCodeApi=()=>vscode;window.__yetAiPackagedFallbackMountCount=0;window.__yetAiLateDevMessageAcceptedCount=0;addEventListener("message",event=>{if(event.source===frameWindow&&document.contains(frame))window.__yetAiLateDevMessageAcceptedCount+=1;});setTimeout(()=>{frame.removeAttribute("src");frame.remove();window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat"};history.replaceState(null,"",${JSON.stringify(hostedChatPath)});const parsed=new DOMParser().parseFromString(${scriptJson(packagedHtml)},"text/html");for(const node of [...parsed.head.querySelectorAll('link[rel="stylesheet"],script[src]'),...parsed.body.childNodes]){const clone=node.nodeName==="SCRIPT"?document.createElement("script"):node.cloneNode(true);if(node.nodeName==="SCRIPT"){for(const attribute of node.attributes)clone.setAttribute(attribute.name,attribute.value);clone.textContent=node.textContent;}document.body.append(clone);}window.__yetAiPackagedFallbackMountCount+=1;setTimeout(()=>window.dispatchEvent(new MessageEvent("message",{source:frameWindow,data:{type:"yet-ai.hosted-bootstrap.request"}})),0);},300);</script></body>`);
+        return;
+      }
       hasDevBootstrap = requestUrl.searchParams.has("yetAiHostedBootstrap");
       pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
     } catch {
@@ -1307,6 +1327,16 @@ async function startStaticServer(staticRoot) {
     }
   });
   return listen(server);
+}
+
+async function readFileText(filePath) {
+  const chunks = [];
+  for await (const chunk of createReadStream(filePath)) chunks.push(chunk);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function scriptJson(value) {
+  return JSON.stringify(value).replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
 
 function listen(server, port = 0) {
