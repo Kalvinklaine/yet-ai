@@ -692,6 +692,14 @@ async function runAssertions() {
     assert.equal(resolveAgentProgressStatePath({ state: explicitPath, cacheRoot: canonicalCacheRoot, env: { YET_AI_AGENT_PROGRESS_STATE: envPath } }), explicitPath);
     assert.equal(resolveAgentProgressStatePath({ cacheRoot: canonicalCacheRoot, env: { YET_AI_AGENT_PROGRESS_STATE: envPath } }), envPath);
     assert.equal(resolveAgentProgressStatePath({ cacheRoot: canonicalCacheRoot, env: {} }), canonicalPath);
+    assert.equal(
+      resolveAgentProgressStatePath({ cacheRoot: canonicalCacheRoot, env: {}, projectId: "prj_AAAAAAAAAAAAAAAAAAAAAA" }),
+      join(canonicalCacheRoot, "yet-ai", "projects", "prj_AAAAAAAAAAAAAAAAAAAAAA", "agent-progress", "progress.json")
+    );
+    assert.throws(
+      () => resolveAgentProgressStatePath({ cacheRoot: canonicalCacheRoot, env: {}, projectId: "../private" }),
+      /Invalid agent progress project destination/
+    );
     const portableHome = join(tmp, "portable-home");
     const portableEnv = {
       XDG_CACHE_HOME: join(portableHome, ".cache"),

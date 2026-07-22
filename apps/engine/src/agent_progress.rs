@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -10,10 +11,33 @@ use tokio::sync::Mutex;
 pub const MAX_PROGRESS_SOURCE_BYTES: u64 = 256 * 1024;
 pub const MAX_SNAPSHOTS: usize = 50;
 pub const MAX_RECENT_EVENTS: usize = 20;
+pub const MAX_PROJECT_BUCKETS: usize = 64;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct AgentProgressRuntime {
-    inner: Arc<Mutex<AgentProgressListResponse>>,
+    legacy: Arc<Mutex<AgentProgressListResponse>>,
+    projects: Arc<Mutex<ProjectRuntimeState>>,
+}
+
+#[derive(Debug, Default)]
+struct ProjectRuntimeState {
+    sequence: u64,
+    buckets: HashMap<String, ProjectRuntimeBucket>,
+}
+
+#[derive(Debug)]
+struct ProjectRuntimeBucket {
+    last_used: u64,
+    response: AgentProgressListResponse,
+}
+
+impl Default for AgentProgressRuntime {
+    fn default() -> Self {
+        Self {
+            legacy: Arc::new(Mutex::new(AgentProgressListResponse::empty())),
+            projects: Arc::new(Mutex::new(ProjectRuntimeState::default())),
+        }
+    }
 }
 
 impl AgentProgressRuntime {
@@ -26,7 +50,7 @@ impl AgentProgressRuntime {
         event: AgentProgressEvent,
     ) -> Result<AgentProgressListResponse, AgentProgressError> {
         validate_event(&event)?;
-        let mut guard = self.inner.lock().await;
+        let mut guard = self.legacy.lock().await;
         guard.generated_at = Some(event.timestamp.clone());
         upsert_event_snapshot(&mut guard, event);
         normalize_response(&mut guard)?;
@@ -34,12 +58,62 @@ impl AgentProgressRuntime {
     }
 
     pub async fn snapshot(&self) -> AgentProgressListResponse {
-        self.inner.lock().await.clone()
+        self.legacy.lock().await.clone()
+    }
+
+    pub async fn publish_project_event(
+        &self,
+        project_id: &str,
+        event: AgentProgressEvent,
+    ) -> Result<AgentProgressListResponse, AgentProgressError> {
+        validate_event(&event)?;
+        let mut state = self.projects.lock().await;
+        state.sequence = state.sequence.wrapping_add(1);
+        let sequence = state.sequence;
+        if !state.buckets.contains_key(project_id) && state.buckets.len() >= MAX_PROJECT_BUCKETS {
+            if let Some(evicted) = state
+                .buckets
+                .iter()
+                .min_by_key(|(_, bucket)| bucket.last_used)
+                .map(|(project_id, _)| project_id.clone())
+            {
+                state.buckets.remove(&evicted);
+            }
+        }
+        let bucket = state
+            .buckets
+            .entry(project_id.to_string())
+            .or_insert_with(|| ProjectRuntimeBucket {
+                last_used: sequence,
+                response: AgentProgressListResponse::empty(),
+            });
+        bucket.last_used = sequence;
+        bucket.response.generated_at = Some(event.timestamp.clone());
+        upsert_event_snapshot(&mut bucket.response, event);
+        normalize_response(&mut bucket.response)?;
+        Ok(bucket.response.clone())
+    }
+
+    pub async fn project_snapshot(&self, project_id: &str) -> AgentProgressListResponse {
+        let mut state = self.projects.lock().await;
+        state.sequence = state.sequence.wrapping_add(1);
+        let sequence = state.sequence;
+        match state.buckets.get_mut(project_id) {
+            Some(bucket) => {
+                bucket.last_used = sequence;
+                bucket.response.clone()
+            }
+            None => AgentProgressListResponse::empty(),
+        }
     }
 }
 
 pub fn progress_source_path(cache_dir: &Path) -> PathBuf {
     cache_dir.join("agent-progress").join("progress.json")
+}
+
+pub fn project_progress_source_path(agent_progress_dir: &Path) -> PathBuf {
+    agent_progress_dir.join("progress.json")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -279,9 +353,18 @@ pub enum AgentProgressError {
 pub async fn load_progress(
     cache_dir: &Path,
 ) -> Result<AgentProgressListResponse, AgentProgressError> {
-    let path = progress_source_path(cache_dir);
+    load_progress_path(&progress_source_path(cache_dir)).await
+}
+
+pub async fn load_project_progress(
+    agent_progress_dir: &Path,
+) -> Result<AgentProgressListResponse, AgentProgressError> {
+    load_progress_path(&project_progress_source_path(agent_progress_dir)).await
+}
+
+async fn load_progress_path(path: &Path) -> Result<AgentProgressListResponse, AgentProgressError> {
     reject_symlink(path.parent().ok_or(AgentProgressError::Unavailable)?).await?;
-    let metadata = match tokio::fs::symlink_metadata(&path).await {
+    let metadata = match tokio::fs::symlink_metadata(path).await {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(AgentProgressListResponse::empty());
@@ -291,7 +374,7 @@ pub async fn load_progress(
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(AgentProgressError::Unavailable);
     }
-    let bytes = read_bounded(&path).await?;
+    let bytes = read_bounded(path).await?;
     let mut response: AgentProgressListResponse =
         serde_json::from_slice(&bytes).map_err(|_| AgentProgressError::Unavailable)?;
     normalize_response(&mut response)?;
@@ -302,8 +385,23 @@ pub async fn load_progress_with_runtime(
     cache_dir: &Path,
     runtime: &AgentProgressRuntime,
 ) -> Result<AgentProgressListResponse, AgentProgressError> {
-    let mut response = load_progress(cache_dir).await?;
-    let runtime_response = runtime.snapshot().await;
+    let response = load_progress(cache_dir).await?;
+    merge_runtime_response(response, runtime.snapshot().await)
+}
+
+pub async fn load_project_progress_with_runtime(
+    agent_progress_dir: &Path,
+    project_id: &str,
+    runtime: &AgentProgressRuntime,
+) -> Result<AgentProgressListResponse, AgentProgressError> {
+    let response = load_project_progress(agent_progress_dir).await?;
+    merge_runtime_response(response, runtime.project_snapshot(project_id).await)
+}
+
+fn merge_runtime_response(
+    mut response: AgentProgressListResponse,
+    runtime_response: AgentProgressListResponse,
+) -> Result<AgentProgressListResponse, AgentProgressError> {
     if runtime_response.snapshots.is_empty() {
         return Ok(response);
     }
@@ -1280,7 +1378,176 @@ fn has_private_root_marker(value: &str, root: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_unsafe_text, validate_card_id, validate_safe_relative_path};
+    use super::*;
+
+    fn event(run_id: &str, card_id: &str, event_id: &str) -> AgentProgressEvent {
+        AgentProgressEvent {
+            protocol_version: "2026-05-29".to_string(),
+            event_id: event_id.to_string(),
+            run_id: run_id.to_string(),
+            card_id: card_id.to_string(),
+            timestamp: "2026-07-22T01:02:03Z".to_string(),
+            phase: "started".to_string(),
+            status: "running".to_string(),
+            message: "Project progress is visible.".to_string(),
+            tool: None,
+            heartbeat: None,
+            output_tail: None,
+            ide_action: None,
+            plan_proposal: None,
+            coding_task_session: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_progress_project_runtime_isolates_same_run_and_legacy_state() {
+        let runtime = AgentProgressRuntime::new();
+        runtime
+            .publish_project_event("project-a", event("same-run", "T-9", "event-a"))
+            .await
+            .unwrap();
+        runtime
+            .publish_project_event("project-b", event("same-run", "T-9", "event-b"))
+            .await
+            .unwrap();
+        runtime
+            .publish_event(event("legacy-run", "T-9", "event-legacy"))
+            .await
+            .unwrap();
+
+        let first = runtime.project_snapshot("project-a").await;
+        let second = runtime.project_snapshot("project-b").await;
+        assert_eq!(first.snapshots.len(), 1);
+        assert_eq!(second.snapshots.len(), 1);
+        assert_eq!(first.snapshots[0].recent_events[0].event_id, "event-a");
+        assert_eq!(second.snapshots[0].recent_events[0].event_id, "event-b");
+        assert_eq!(runtime.snapshot().await.snapshots[0].run_id, "legacy-run");
+        assert!(first
+            .snapshots
+            .iter()
+            .all(|value| value.run_id != "legacy-run"));
+    }
+
+    #[tokio::test]
+    async fn agent_progress_project_runtime_evicts_least_recently_used_bucket() {
+        let runtime = AgentProgressRuntime::new();
+        for index in 0..MAX_PROJECT_BUCKETS {
+            runtime
+                .publish_project_event(
+                    &format!("project-{index}"),
+                    event(&format!("run-{index}"), "T-9", &format!("event-{index}")),
+                )
+                .await
+                .unwrap();
+        }
+        runtime.project_snapshot("project-0").await;
+        runtime
+            .publish_project_event("project-new", event("run-new", "T-9", "event-new"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            runtime.project_snapshot("project-0").await.snapshots.len(),
+            1
+        );
+        assert!(runtime
+            .project_snapshot("project-1")
+            .await
+            .snapshots
+            .is_empty());
+        assert_eq!(
+            runtime
+                .project_snapshot("project-new")
+                .await
+                .snapshots
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_progress_project_runtime_handles_concurrent_publish_and_list() {
+        let runtime = AgentProgressRuntime::new();
+        let mut tasks = Vec::new();
+        for index in 0..20 {
+            let runtime = runtime.clone();
+            tasks.push(tokio::spawn(async move {
+                runtime
+                    .publish_project_event(
+                        "project-a",
+                        event(&format!("run-{index}"), "T-9", &format!("event-{index}")),
+                    )
+                    .await
+                    .unwrap();
+                runtime.project_snapshot("project-a").await
+            }));
+        }
+        for task in tasks {
+            assert!(!task.await.unwrap().snapshots.is_empty());
+        }
+        assert_eq!(
+            runtime.project_snapshot("project-a").await.snapshots.len(),
+            20
+        );
+        assert!(runtime
+            .project_snapshot("project-b")
+            .await
+            .snapshots
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_progress_project_source_isolated_and_safety_checks_are_preserved() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("projects/project-a/agent-progress");
+        let second = temp.path().join("projects/project-b/agent-progress");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let runtime = AgentProgressRuntime::new();
+        runtime
+            .publish_project_event("project-a", event("same-run", "T-9", "event-a"))
+            .await
+            .unwrap();
+        runtime
+            .publish_project_event("project-b", event("same-run", "T-9", "event-b"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            load_project_progress_with_runtime(&first, "project-a", &runtime)
+                .await
+                .unwrap()
+                .snapshots[0]
+                .recent_events[0]
+                .event_id,
+            "event-a"
+        );
+        assert_eq!(
+            load_project_progress_with_runtime(&second, "project-b", &runtime)
+                .await
+                .unwrap()
+                .snapshots[0]
+                .recent_events[0]
+                .event_id,
+            "event-b"
+        );
+
+        std::fs::write(project_progress_source_path(&first), b"{").unwrap();
+        assert!(load_project_progress(&first).await.is_err());
+        std::fs::write(
+            project_progress_source_path(&first),
+            vec![b'x'; MAX_PROGRESS_SOURCE_BYTES as usize + 1],
+        )
+        .unwrap();
+        assert!(load_project_progress(&first).await.is_err());
+
+        let mut unsafe_event = event("safe-run", "T-9", "unsafe-event");
+        unsafe_event.output_tail = Some("Bearer private value".to_string());
+        assert!(runtime
+            .publish_project_event("project-a", unsafe_event)
+            .await
+            .is_err());
+    }
 
     #[test]
     fn agent_progress_safe_relative_path_rejects_secret_like_segments() {

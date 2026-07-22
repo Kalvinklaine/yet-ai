@@ -7,6 +7,7 @@ import { PROTOCOL_VERSION, normalizeEvents, reduceAgentProgress } from "./planne
 const DEFAULT_LOCK_TIMEOUT_MS = 5000;
 const LOCK_RETRY_MS = 25;
 const STATE_ENV_OVERRIDE = "YET_AI_AGENT_PROGRESS_STATE";
+const PROJECT_ID_PATTERN = /^prj_[A-Za-z0-9_-]{22}$/;
 
 function stateError(message) {
   const error = new Error(message);
@@ -51,7 +52,14 @@ function resolveAgentProgressStatePath(options = {}) {
   if (typeof env?.[STATE_ENV_OVERRIDE] === "string" && env[STATE_ENV_OVERRIDE].length > 0) {
     return env[STATE_ENV_OVERRIDE];
   }
-  return join(resolveAgentProgressCacheRoot(options), "yet-ai", "agent-progress", "progress.json");
+  const root = join(resolveAgentProgressCacheRoot(options), "yet-ai");
+  if (options.projectId !== undefined) {
+    if (typeof options.projectId !== "string" || !PROJECT_ID_PATTERN.test(options.projectId)) {
+      throw stateError("Invalid agent progress project destination.");
+    }
+    return join(root, "projects", options.projectId, "agent-progress", "progress.json");
+  }
+  return join(root, "agent-progress", "progress.json");
 }
 
 function createProgressState(events = [], options = {}) {
