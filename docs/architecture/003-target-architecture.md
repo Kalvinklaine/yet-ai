@@ -422,9 +422,10 @@ This metadata is not provider discovery or tool enablement. It is local sanitize
 
 Provider/capability v2 is now present as an additive contract/schema foundation, not a runtime behavior change or provider catalog. `/v1/models`, provider `models`, and `/v1/caps` provider model entries may optionally include per-capability provenance (`configured`, `runtime_tested`, `provider_declared`, or `local_default`), readiness provenance, last provider-test status, UTC `Z` test timestamps, local availability status and sanitized reason, and provider-family labels. Provider summaries and `/v1/caps` provider entries may optionally include the same provider-family label. Absence of these fields means only the current MVP metadata is available; clients must not infer v2 state or readiness from missing fields. These fields are display, conservative routing, and troubleshooting facts only. They do not grant shell, git, tool, edit, apply-patch, indexing, provider-tool, autonomous-agent, bridge-action, hidden-read, background-scan, or workspace-mutation authority, and `tools: true`, reasoning support, provider family labels, or runtime-tested readiness must never bypass separate runtime feature flags, bridge policies, schemas, request correlation, and user-confirmation gates. Yet AI must still not publish built-in provider catalogs, model snapshots, dynamic provider availability claims, benchmark claims, or exact context-window claims until the engine implements and verifies those sources through the local runtime.
 
-- `GET /v1/chats`, `POST /v1/chats`, `GET /v1/chats/{chat_id}`, and `DELETE /v1/chats/{chat_id}` manage engine-owned local chat history.
-- `POST /v1/chats/{chat_id}/commands` accepts chat commands.
-- `GET /v1/chats/subscribe?chat_id={chat_id}` streams chat state over SSE.
+- `GET /p/{project_id}/v1/chats`, `POST /p/{project_id}/v1/chats`, `GET /p/{project_id}/v1/chats/{chat_id}`, and `DELETE /p/{project_id}/v1/chats/{chat_id}` manage engine-owned chat history in exactly one project namespace.
+- `POST /p/{project_id}/v1/chats/{chat_id}/commands` accepts project-scoped chat commands.
+- `GET /p/{project_id}/v1/chats/subscribe?chat_id={chat_id}` streams project-scoped chat state over SSE.
+- The corresponding `/v1/chats...` routes remain compatibility-only access to isolated legacy unscoped history. They never resolve, inspect, or control project chat namespaces.
 
 Later increments can add integration, indexing, task, knowledge, checkpoint, and trajectory endpoints. Endpoint names should be designed for Yet AI, not copied blindly.
 

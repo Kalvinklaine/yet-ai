@@ -107,7 +107,11 @@ impl ChatThread {
 }
 
 pub async fn list_threads(config_dir: &Path) -> Result<ChatListResponse, ChatHistoryError> {
-    let root = chat_history_root(config_dir);
+    list_threads_in(&chat_history_root(config_dir)).await
+}
+
+pub async fn list_threads_in(root: &Path) -> Result<ChatListResponse, ChatHistoryError> {
+    let root = root.to_path_buf();
     if !ensure_chat_history_root(&root, false).await? {
         return Ok(ChatListResponse { chats: Vec::new() });
     }
@@ -140,9 +144,13 @@ pub async fn list_threads(config_dir: &Path) -> Result<ChatListResponse, ChatHis
 }
 
 pub async fn create_thread(config_dir: &Path) -> Result<ChatThread, ChatHistoryError> {
+    create_thread_in(&chat_history_root(config_dir)).await
+}
+
+pub async fn create_thread_in(root: &Path) -> Result<ChatThread, ChatHistoryError> {
     for _ in 0..8 {
         let chat_id = new_chat_id()?;
-        let path = chat_history_path(config_dir, &chat_id)?;
+        let path = chat_history_path_in(root, &chat_id)?;
         match tokio::fs::symlink_metadata(&path).await {
             Ok(_) => continue,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -164,7 +172,11 @@ pub async fn create_thread(config_dir: &Path) -> Result<ChatThread, ChatHistoryE
 }
 
 pub async fn get_thread(config_dir: &Path, chat_id: &str) -> Result<ChatThread, ChatHistoryError> {
-    let path = chat_history_path(config_dir, chat_id)?;
+    get_thread_in(&chat_history_root(config_dir), chat_id).await
+}
+
+pub async fn get_thread_in(root: &Path, chat_id: &str) -> Result<ChatThread, ChatHistoryError> {
+    let path = chat_history_path_in(root, chat_id)?;
     if !ensure_existing_chat_history_root(&path).await? {
         return Err(ChatHistoryError::NotFound);
     }
@@ -182,7 +194,11 @@ pub async fn get_thread(config_dir: &Path, chat_id: &str) -> Result<ChatThread, 
 }
 
 pub async fn delete_thread(config_dir: &Path, chat_id: &str) -> Result<(), ChatHistoryError> {
-    let path = chat_history_path(config_dir, chat_id)?;
+    delete_thread_in(&chat_history_root(config_dir), chat_id).await
+}
+
+pub async fn delete_thread_in(root: &Path, chat_id: &str) -> Result<(), ChatHistoryError> {
+    let path = chat_history_path_in(root, chat_id)?;
     if !ensure_existing_chat_history_root(&path).await? {
         return Err(ChatHistoryError::NotFound);
     }
@@ -203,10 +219,27 @@ pub async fn append_message(
     content: String,
     status: Option<ChatMessageStatus>,
 ) -> Result<ChatMessage, ChatHistoryError> {
+    append_message_in(
+        &chat_history_root(config_dir),
+        chat_id,
+        role,
+        content,
+        status,
+    )
+    .await
+}
+
+pub async fn append_message_in(
+    root: &Path,
+    chat_id: &str,
+    role: ChatMessageRole,
+    content: String,
+    status: Option<ChatMessageStatus>,
+) -> Result<ChatMessage, ChatHistoryError> {
     validate_chat_id(chat_id)?;
-    let path = chat_history_path(config_dir, chat_id)?;
+    let path = chat_history_path_in(root, chat_id)?;
     let now = timestamp_now();
-    let mut thread = match get_thread(config_dir, chat_id).await {
+    let mut thread = match get_thread_in(root, chat_id).await {
         Ok(thread) => thread,
         Err(ChatHistoryError::NotFound) => ChatThread {
             chat_id: chat_id.to_string(),
@@ -232,10 +265,13 @@ pub async fn append_message(
 }
 
 pub fn chat_history_path(config_dir: &Path, chat_id: &str) -> Result<PathBuf, ChatHistoryError> {
+    chat_history_path_in(&chat_history_root(config_dir), chat_id)
+}
+
+pub fn chat_history_path_in(root: &Path, chat_id: &str) -> Result<PathBuf, ChatHistoryError> {
     validate_chat_id(chat_id)?;
-    let root = chat_history_root(config_dir);
     let path = root.join(format!("{chat_id}.json"));
-    if path.parent() != Some(root.as_path()) || path.file_name().is_none() {
+    if path.parent() != Some(root) || path.file_name().is_none() {
         return Err(ChatHistoryError::Storage);
     }
     Ok(path)
@@ -662,6 +698,55 @@ mod tests {
             super::get_thread(&dir, &created.chat_id).await,
             Err(ChatHistoryError::NotFound)
         ));
+    }
+
+    #[tokio::test]
+    async fn chat_history_project_namespaces_allow_same_id_without_blending() {
+        let dir = temp_dir();
+        let first = dir.join("projects/first/chat-history");
+        let second = dir.join("projects/second/chat-history");
+        super::append_message_in(
+            &first,
+            "chat_same",
+            super::ChatMessageRole::User,
+            "first".to_string(),
+            Some(super::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        super::append_message_in(
+            &second,
+            "chat_same",
+            super::ChatMessageRole::User,
+            "second".to_string(),
+            Some(super::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            super::get_thread_in(&first, "chat_same")
+                .await
+                .unwrap()
+                .messages[0]
+                .content,
+            "first"
+        );
+        assert_eq!(
+            super::get_thread_in(&second, "chat_same")
+                .await
+                .unwrap()
+                .messages[0]
+                .content,
+            "second"
+        );
+        super::delete_thread_in(&first, "chat_same").await.unwrap();
+        assert!(matches!(
+            super::get_thread_in(&first, "chat_same").await,
+            Err(ChatHistoryError::NotFound)
+        ));
+        assert!(super::get_thread_in(&second, "chat_same").await.is_ok());
+        assert!(!dir.join("chat-history").exists());
     }
 
     #[tokio::test]

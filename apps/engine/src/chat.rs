@@ -210,17 +210,41 @@ impl ChatRuntime {
         content: String,
         context: Option<ChatContext>,
     ) {
-        let lock = self.history_lock(&chat_id).await;
+        let history_root = config_dir.join("chat-history");
+        self.accept_user_message_in(
+            "legacy",
+            config_dir,
+            history_root,
+            chat_id,
+            content,
+            context,
+        )
+        .await;
+    }
+
+    pub async fn accept_user_message_in(
+        &self,
+        scope: &str,
+        provider_config_dir: std::path::PathBuf,
+        history_root: std::path::PathBuf,
+        chat_id: String,
+        content: String,
+        context: Option<ChatContext>,
+    ) {
+        let runtime_key = runtime_key(scope, &chat_id);
+        let lock = self.history_lock(&runtime_key).await;
         let _history_guard = lock.lock().await;
         let runtime = self.clone();
-        let task_config_dir = config_dir.clone();
+        let task_config_dir = provider_config_dir.clone();
+        let task_history_root = history_root.clone();
+        let task_runtime_key = runtime_key.clone();
         let task_chat_id = chat_id.clone();
         let task_content = content.clone();
         let (start_sender, start_receiver) = oneshot::channel();
         {
             let mut guard = self.inner.lock().await;
             let state = guard
-                .entry(chat_id.clone())
+                .entry(runtime_key.clone())
                 .or_insert_with(|| ChatState::new(&chat_id));
             if let Some(active) = state.active_stream.take() {
                 active.handle.abort();
@@ -240,6 +264,8 @@ impl ChatRuntime {
                     runtime
                         .run_stream(
                             task_config_dir,
+                            task_history_root,
+                            task_runtime_key,
                             task_chat_id,
                             stream_id,
                             task_content,
@@ -253,8 +279,8 @@ impl ChatRuntime {
                 handle,
             });
         }
-        let _ = chat_history::append_message(
-            &config_dir,
+        let _ = chat_history::append_message_in(
+            &history_root,
             &chat_id,
             ChatMessageRole::User,
             content,
@@ -265,7 +291,12 @@ impl ChatRuntime {
     }
 
     pub async fn accept_abort(&self, chat_id: &str) {
-        self.abort_active_stream(chat_id).await;
+        self.accept_abort_in("legacy", chat_id).await;
+    }
+
+    pub async fn accept_abort_in(&self, scope: &str, chat_id: &str) {
+        self.abort_active_stream(&runtime_key(scope, chat_id), chat_id)
+            .await;
     }
 
     pub async fn subscribe(
@@ -273,11 +304,24 @@ impl ChatRuntime {
         config_dir: std::path::PathBuf,
         chat_id: String,
     ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
+        let history_root = config_dir.join("chat-history");
+        self.subscribe_in("legacy", history_root, chat_id).await
+    }
+
+    pub async fn subscribe_in(
+        &self,
+        scope: &str,
+        history_root: std::path::PathBuf,
+        chat_id: String,
+    ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
+        let runtime_key = runtime_key(scope, &chat_id);
         let (snapshot, replay, receiver) = {
-            let snapshot = self.snapshot_event(&config_dir, &chat_id).await;
+            let snapshot = self
+                .snapshot_event(&runtime_key, &history_root, &chat_id)
+                .await;
             let mut guard = self.inner.lock().await;
             let state = guard
-                .entry(chat_id.clone())
+                .entry(runtime_key)
                 .or_insert_with(|| ChatState::new(&chat_id));
             let replay = state.replay_events_for_subscriber();
             (snapshot, replay, state.sender.subscribe())
@@ -306,6 +350,7 @@ impl ChatRuntime {
 
     async fn push_stream_event(
         &self,
+        runtime_key: &str,
         chat_id: &str,
         stream_id: u64,
         event_type: &str,
@@ -313,7 +358,7 @@ impl ChatRuntime {
     ) -> bool {
         let mut guard = self.inner.lock().await;
         let state = guard
-            .entry(chat_id.to_string())
+            .entry(runtime_key.to_string())
             .or_insert_with(|| ChatState::new(chat_id));
         if !state
             .active_stream
@@ -326,9 +371,9 @@ impl ChatRuntime {
         true
     }
 
-    async fn claim_stream_terminal_ownership(&self, chat_id: &str, stream_id: u64) -> bool {
+    async fn claim_stream_terminal_ownership(&self, runtime_key: &str, stream_id: u64) -> bool {
         let mut guard = self.inner.lock().await;
-        let Some(state) = guard.get_mut(chat_id) else {
+        let Some(state) = guard.get_mut(runtime_key) else {
             return false;
         };
         if !state
@@ -344,37 +389,39 @@ impl ChatRuntime {
 
     async fn push_terminal_event(
         &self,
+        runtime_key: &str,
         chat_id: &str,
         event_type: &str,
         payload: serde_json::Value,
     ) {
         let mut guard = self.inner.lock().await;
         let state = guard
-            .entry(chat_id.to_string())
+            .entry(runtime_key.to_string())
             .or_insert_with(|| ChatState::new(chat_id));
         state.push_event(chat_id, event_type, payload);
     }
 
     async fn push_persisted_terminal_event(
         &self,
+        runtime_key: &str,
         chat_id: &str,
         event_type: &str,
         payload: serde_json::Value,
     ) {
         let mut guard = self.inner.lock().await;
         let state = guard
-            .entry(chat_id.to_string())
+            .entry(runtime_key.to_string())
             .or_insert_with(|| ChatState::new(chat_id));
         state.push_event(chat_id, event_type, payload);
         state.mark_terminal_replay_persisted();
     }
 
-    async fn abort_active_stream(&self, chat_id: &str) -> bool {
-        let lock = self.history_lock(chat_id).await;
+    async fn abort_active_stream(&self, runtime_key: &str, chat_id: &str) -> bool {
+        let lock = self.history_lock(runtime_key).await;
         let _history_guard = lock.lock().await;
         let mut guard = self.inner.lock().await;
         let state = guard
-            .entry(chat_id.to_string())
+            .entry(runtime_key.to_string())
             .or_insert_with(|| ChatState::new(chat_id));
         let Some(active) = state.active_stream.take() else {
             return false;
@@ -392,6 +439,8 @@ impl ChatRuntime {
     async fn run_stream(
         &self,
         config_dir: std::path::PathBuf,
+        history_root: std::path::PathBuf,
+        runtime_key: String,
         chat_id: String,
         stream_id: u64,
         content: String,
@@ -399,6 +448,7 @@ impl ChatRuntime {
     ) {
         if !self
             .push_stream_event(
+                &runtime_key,
                 &chat_id,
                 stream_id,
                 "stream_started",
@@ -408,13 +458,14 @@ impl ChatRuntime {
         {
             return;
         }
-        if !self.is_active_stream(&chat_id, stream_id).await {
+        if !self.is_active_stream(&runtime_key, stream_id).await {
             return;
         }
         let prompt = assemble_provider_prompt(&content, context.as_ref());
         let result = self
             .stream_provider(
                 &config_dir,
+                &runtime_key,
                 &chat_id,
                 stream_id,
                 &prompt,
@@ -422,13 +473,14 @@ impl ChatRuntime {
                 context.as_ref(),
             )
             .await;
-        if !self.is_active_stream(&chat_id, stream_id).await {
+        if !self.is_active_stream(&runtime_key, stream_id).await {
             return;
         }
         match result {
             Ok(assistant_content) => {
                 self.persist_terminal_history_and_event(
-                    &config_dir,
+                    &history_root,
+                    &runtime_key,
                     &chat_id,
                     stream_id,
                     ChatMessageRole::Assistant,
@@ -441,7 +493,8 @@ impl ChatRuntime {
             }
             Err(error) => {
                 self.persist_terminal_history_and_event(
-                    &config_dir,
+                    &history_root,
+                    &runtime_key,
                     &chat_id,
                     stream_id,
                     ChatMessageRole::Error,
@@ -457,7 +510,8 @@ impl ChatRuntime {
 
     async fn persist_terminal_history_and_event(
         &self,
-        config_dir: &std::path::Path,
+        history_root: &std::path::Path,
+        runtime_key: &str,
         chat_id: &str,
         stream_id: u64,
         role: ChatMessageRole,
@@ -466,20 +520,22 @@ impl ChatRuntime {
         event_type: &str,
         payload: serde_json::Value,
     ) -> bool {
-        let lock = self.history_lock(chat_id).await;
+        let lock = self.history_lock(runtime_key).await;
         let _guard = lock.lock().await;
         if !self
-            .claim_stream_terminal_ownership(chat_id, stream_id)
+            .claim_stream_terminal_ownership(runtime_key, stream_id)
             .await
         {
             return false;
         }
         let append_result =
-            chat_history::append_message(config_dir, chat_id, role, content, Some(status)).await;
+            chat_history::append_message_in(history_root, chat_id, role, content, Some(status))
+                .await;
         let terminal = match append_result {
             Ok(message) => {
                 if message.role == ChatMessageRole::Assistant {
                     self.push_terminal_event(
+                        runtime_key,
                         chat_id,
                         "message_added",
                         json!({ "message": message }),
@@ -498,19 +554,26 @@ impl ChatRuntime {
             ),
         };
         if terminal.2 {
-            self.push_persisted_terminal_event(chat_id, terminal.0, terminal.1)
+            self.push_persisted_terminal_event(runtime_key, chat_id, terminal.0, terminal.1)
                 .await;
         } else {
-            self.push_terminal_event(chat_id, terminal.0, terminal.1)
+            self.push_terminal_event(runtime_key, chat_id, terminal.0, terminal.1)
                 .await;
         }
         true
     }
 
-    async fn snapshot_event(&self, config_dir: &std::path::Path, chat_id: &str) -> ChatEvent {
-        let lock = self.history_lock(chat_id).await;
+    async fn snapshot_event(
+        &self,
+        runtime_key: &str,
+        history_root: &std::path::Path,
+        chat_id: &str,
+    ) -> ChatEvent {
+        let lock = self.history_lock(runtime_key).await;
         let _guard = lock.lock().await;
-        let thread = chat_history::get_thread(config_dir, chat_id).await.ok();
+        let thread = chat_history::get_thread_in(history_root, chat_id)
+            .await
+            .ok();
         snapshot_event(chat_id, thread)
     }
 
@@ -522,9 +585,9 @@ impl ChatRuntime {
             .clone()
     }
 
-    async fn is_active_stream(&self, chat_id: &str, stream_id: u64) -> bool {
+    async fn is_active_stream(&self, runtime_key: &str, stream_id: u64) -> bool {
         let guard = self.inner.lock().await;
-        guard.get(chat_id).is_some_and(|state| {
+        guard.get(runtime_key).is_some_and(|state| {
             state
                 .active_stream
                 .as_ref()
@@ -535,6 +598,7 @@ impl ChatRuntime {
     async fn stream_provider(
         &self,
         config_dir: &std::path::Path,
+        runtime_key: &str,
         chat_id: &str,
         stream_id: u64,
         content: &str,
@@ -553,6 +617,7 @@ impl ChatRuntime {
                     &self.client,
                     &provider,
                     &model,
+                    runtime_key,
                     chat_id,
                     stream_id,
                     content,
@@ -568,6 +633,7 @@ impl ChatRuntime {
                     &self.client,
                     &provider,
                     &model,
+                    runtime_key,
                     chat_id,
                     stream_id,
                     content,
@@ -575,7 +641,15 @@ impl ChatRuntime {
                 .await
             }
             ChatProvider::DemoLocal => {
-                demo_stream(self, chat_id, stream_id, original_content, context).await
+                demo_stream(
+                    self,
+                    runtime_key,
+                    chat_id,
+                    stream_id,
+                    original_content,
+                    context,
+                )
+                .await
             }
             ChatProvider::ExperimentalCodex(auth) => {
                 codex_responses_stream_with_recovery(
@@ -583,6 +657,7 @@ impl ChatRuntime {
                     &self.client,
                     config_dir,
                     &auth,
+                    runtime_key,
                     chat_id,
                     stream_id,
                     content,
@@ -591,6 +666,10 @@ impl ChatRuntime {
             }
         }
     }
+}
+
+fn runtime_key(scope: &str, chat_id: &str) -> String {
+    format!("{}:{scope}:{chat_id}", scope.len())
 }
 
 impl ChatContext {
@@ -1320,6 +1399,7 @@ fn to_sse_event(event: ChatEvent) -> Event {
 
 async fn demo_stream(
     runtime: &ChatRuntime,
+    runtime_key: &str,
     chat_id: &str,
     stream_id: u64,
     content: &str,
@@ -1329,6 +1409,7 @@ async fn demo_stream(
     for delta in response.split_inclusive([' ', '\n']) {
         if !runtime
             .push_stream_event(
+                runtime_key,
                 chat_id,
                 stream_id,
                 "stream_delta",
@@ -1514,6 +1595,7 @@ async fn openai_compatible_stream(
     client: &reqwest::Client,
     provider: &StoredProviderConfig,
     model: &str,
+    runtime_key: &str,
     chat_id: &str,
     stream_id: u64,
     content: &str,
@@ -1542,7 +1624,7 @@ async fn openai_compatible_stream(
     if let Some(api_key) = api_key {
         request = request.bearer_auth(api_key);
     }
-    collect_openai_compatible_stream(runtime, chat_id, stream_id, request).await
+    collect_openai_compatible_stream(runtime, runtime_key, chat_id, stream_id, request).await
 }
 
 async fn ollama_stream(
@@ -1550,6 +1632,7 @@ async fn ollama_stream(
     client: &reqwest::Client,
     provider: &StoredProviderConfig,
     model: &str,
+    runtime_key: &str,
     chat_id: &str,
     stream_id: u64,
     content: &str,
@@ -1566,7 +1649,7 @@ async fn ollama_stream(
             "stream": true,
             "messages": [{ "role": "user", "content": content }]
         }));
-    collect_ollama_stream(runtime, chat_id, stream_id, request).await
+    collect_ollama_stream(runtime, runtime_key, chat_id, stream_id, request).await
 }
 
 fn codex_responses_url(base_url: &str) -> Result<String, ChatError> {
@@ -1598,6 +1681,7 @@ async fn codex_responses_stream(
     runtime: &ChatRuntime,
     client: &reqwest::Client,
     auth: &ExperimentalCodexChatAuth,
+    runtime_key: &str,
     chat_id: &str,
     stream_id: u64,
     content: &str,
@@ -1613,7 +1697,7 @@ async fn codex_responses_stream(
         .header("OpenAI-Beta", "responses=experimental")
         .header("Accept", "text/event-stream")
         .json(&experimental_responses_body(&auth.model, content));
-    collect_codex_responses_stream(runtime, chat_id, stream_id, request).await
+    collect_codex_responses_stream(runtime, runtime_key, chat_id, stream_id, request).await
 }
 
 async fn codex_responses_stream_with_recovery(
@@ -1621,6 +1705,7 @@ async fn codex_responses_stream_with_recovery(
     client: &reqwest::Client,
     config_dir: &std::path::Path,
     auth: &ExperimentalCodexChatAuth,
+    runtime_key: &str,
     chat_id: &str,
     stream_id: u64,
     content: &str,
@@ -1629,8 +1714,16 @@ async fn codex_responses_stream_with_recovery(
     let mut authorization_recovered = false;
     let mut model_recovered = false;
     loop {
-        let result =
-            codex_responses_stream(runtime, client, &current, chat_id, stream_id, content).await;
+        let result = codex_responses_stream(
+            runtime,
+            client,
+            &current,
+            runtime_key,
+            chat_id,
+            stream_id,
+            content,
+        )
+        .await;
         match result {
             Err(ChatError::PreStreamUnauthorized) if !authorization_recovered => {
                 authorization_recovered = true;
@@ -1680,6 +1773,7 @@ async fn codex_responses_stream_with_recovery(
 
 async fn collect_codex_responses_stream(
     runtime: &ChatRuntime,
+    runtime_key: &str,
     chat_id: &str,
     stream_id: u64,
     request: reqwest::RequestBuilder,
@@ -1725,6 +1819,7 @@ async fn collect_codex_responses_stream(
                 assistant_content.push_str(&delta);
                 let current = runtime
                     .push_stream_event(
+                        runtime_key,
                         chat_id,
                         stream_id,
                         "stream_delta",
@@ -1762,6 +1857,7 @@ async fn collect_codex_responses_stream(
         assistant_content.push_str(&delta);
         let current = runtime
             .push_stream_event(
+                runtime_key,
                 chat_id,
                 stream_id,
                 "stream_delta",
@@ -1777,6 +1873,7 @@ async fn collect_codex_responses_stream(
 
 async fn collect_openai_compatible_stream(
     runtime: &ChatRuntime,
+    runtime_key: &str,
     chat_id: &str,
     stream_id: u64,
     request: reqwest::RequestBuilder,
@@ -1813,6 +1910,7 @@ async fn collect_openai_compatible_stream(
             assistant_content.push_str(&delta);
             let current = runtime
                 .push_stream_event(
+                    runtime_key,
                     chat_id,
                     stream_id,
                     "stream_delta",
@@ -1831,6 +1929,7 @@ async fn collect_openai_compatible_stream(
         assistant_content.push_str(&delta);
         let current = runtime
             .push_stream_event(
+                runtime_key,
                 chat_id,
                 stream_id,
                 "stream_delta",
@@ -1846,6 +1945,7 @@ async fn collect_openai_compatible_stream(
 
 async fn collect_ollama_stream(
     runtime: &ChatRuntime,
+    runtime_key: &str,
     chat_id: &str,
     stream_id: u64,
     request: reqwest::RequestBuilder,
@@ -1879,6 +1979,7 @@ async fn collect_ollama_stream(
             assistant_content.push_str(&delta);
             let current = runtime
                 .push_stream_event(
+                    runtime_key,
                     chat_id,
                     stream_id,
                     "stream_delta",
@@ -1897,6 +1998,7 @@ async fn collect_ollama_stream(
         assistant_content.push_str(&delta);
         let current = runtime
             .push_stream_event(
+                runtime_key,
                 chat_id,
                 stream_id,
                 "stream_delta",
@@ -4070,6 +4172,38 @@ mod tests {
                 .seq,
             5
         );
+    }
+
+    #[tokio::test]
+    async fn project_chat_runtime_abort_is_scoped_for_same_chat_id() {
+        let runtime = super::ChatRuntime::new();
+        let first_key = super::runtime_key("project-a", "chat_same");
+        let second_key = super::runtime_key("project-b", "chat_same");
+        let first_handle = tokio::spawn(std::future::pending::<()>());
+        let second_handle = tokio::spawn(std::future::pending::<()>());
+        {
+            let mut states = runtime.inner.lock().await;
+            let first = states
+                .entry(first_key.clone())
+                .or_insert_with(|| super::ChatState::new("chat_same"));
+            first.active_stream = Some(super::ActiveStream {
+                id: 1,
+                handle: first_handle,
+            });
+            let second = states
+                .entry(second_key.clone())
+                .or_insert_with(|| super::ChatState::new("chat_same"));
+            second.active_stream = Some(super::ActiveStream {
+                id: 1,
+                handle: second_handle,
+            });
+        }
+
+        runtime.accept_abort_in("project-a", "chat_same").await;
+
+        let states = runtime.inner.lock().await;
+        assert!(states[&first_key].active_stream.is_none());
+        assert!(states[&second_key].active_stream.is_some());
     }
 
     #[test]

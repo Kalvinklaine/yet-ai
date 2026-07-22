@@ -1044,6 +1044,84 @@ async fn chats_delete(
     }
 }
 
+async fn project_chats_list(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Response {
+    let context = match project::resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match chat_history::list_threads_in(&context.storage().chat_history).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => chat_history_error(error),
+    }
+}
+
+async fn project_chats_create(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Response {
+    let context = match project::resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match chat_history::create_thread_in(&context.storage().chat_history).await {
+        Ok(thread) => (StatusCode::CREATED, Json(thread)).into_response(),
+        Err(error) => chat_history_error(error),
+    }
+}
+
+async fn project_chats_get(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path((project_id, chat_id)): Path<(String, String)>,
+) -> Response {
+    let context = match project_chat_context(&state, &project_id, &chat_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match chat_history::get_thread_in(&context.storage().chat_history, &chat_id).await {
+        Ok(thread) => Json(thread).into_response(),
+        Err(error) => chat_history_error(error),
+    }
+}
+
+async fn project_chats_delete(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path((project_id, chat_id)): Path<(String, String)>,
+) -> Response {
+    let context = match project_chat_context(&state, &project_id, &chat_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match chat_history::delete_thread_in(&context.storage().chat_history, &chat_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => chat_history_error(error),
+    }
+}
+
+async fn project_chat_context(
+    state: &AppState,
+    project_id: &str,
+    chat_id: &str,
+) -> Result<crate::projects::ProjectContext, Response> {
+    if chat_history::validate_chat_id(chat_id).is_err() {
+        return Err(invalid_chat_id_response());
+    }
+    let context = project::resolve_context(state, project_id).await?;
+    match chat_history::get_thread_in(&context.storage().chat_history, chat_id).await {
+        Ok(_) => Ok(context),
+        Err(chat_history::ChatHistoryError::NotFound) => {
+            Err(chat_history_error(chat_history::ChatHistoryError::NotFound))
+        }
+        Err(error) => Err(chat_history_error(error)),
+    }
+}
+
 fn chat_history_error(error: chat_history::ChatHistoryError) -> Response {
     let status = error.status();
     (status, Json(json!({ "error": error.to_string() }))).into_response()
@@ -1135,6 +1213,67 @@ async fn chat_command(
     }
 }
 
+async fn project_chat_command(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path((project_id, chat_id)): Path<(String, String)>,
+    command: Result<Json<ChatCommandRequest>, JsonRejection>,
+) -> Response {
+    let context = match project_chat_context(&state, &project_id, &chat_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    let Json(command) = match command {
+        Ok(command) => command,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    if !valid_bounded_string(&command.request_id, CHAT_COMMAND_REQUEST_ID_MAX_LENGTH) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match command.command_type.as_str() {
+        "abort" => {
+            if !valid_abort_payload(command.payload.as_ref()) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            state
+                .chat_runtime
+                .accept_abort_in(context.project_id(), &chat_id)
+                .await;
+        }
+        "user_message" => {
+            let Some((content, chat_context)) = user_message_payload(command.payload.as_ref())
+            else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
+            state
+                .chat_runtime
+                .accept_user_message_in(
+                    context.project_id(),
+                    state.storage_paths.config_dir.clone(),
+                    context.storage().chat_history.clone(),
+                    chat_id.clone(),
+                    content.to_string(),
+                    chat_context,
+                )
+                .await;
+        }
+        _ => {
+            return (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(json!({ "error": "unsupported command type" })),
+            )
+                .into_response();
+        }
+    }
+    Json(json!({
+        "accepted": true,
+        "chatId": chat_id,
+        "requestId": command.request_id,
+        "type": command.command_type
+    }))
+    .into_response()
+}
+
 fn valid_bounded_string(value: &str, max_length: usize) -> bool {
     !value.is_empty() && value.chars().count() <= max_length && !value.chars().any(is_c0_c1_control)
 }
@@ -1206,6 +1345,40 @@ async fn chats_subscribe(
     let stream = state
         .chat_runtime
         .subscribe(state.storage_paths.config_dir.clone(), chat_id)
+        .await;
+    Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(std::time::Duration::from_secs(30))
+                .text("keep-alive"),
+        )
+        .into_response()
+}
+
+async fn project_chats_subscribe(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    query: Result<Query<SubscribeQuery>, QueryRejection>,
+) -> Response {
+    let Query(query) = match query {
+        Ok(query) => query,
+        Err(_) => return invalid_chat_id_response(),
+    };
+    let Some(chat_id) = query.chat_id else {
+        return invalid_chat_id_response();
+    };
+    let context = match project_chat_context(&state, &project_id, &chat_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    let stream = state
+        .chat_runtime
+        .subscribe_in(
+            context.project_id(),
+            context.storage().chat_history.clone(),
+            chat_id,
+        )
         .await;
     Sse::new(stream)
         .keep_alive(
@@ -1683,7 +1856,8 @@ mod project_tests {
             true,
         )
         .await;
-        assert_eq!(scoped.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(scoped.status(), StatusCode::OK);
+        assert_eq!(response_text(scoped).await, r#"{"chats":[]}"#);
         assert!(!state.storage_paths.config_dir.join("chat-history").exists());
 
         let unknown = project_request(
@@ -1749,8 +1923,142 @@ mod project_tests {
         );
         let second = project_request(state, "GET", format!("/p/{second_id}/v1/chats"), "", true);
         let (first, second) = tokio::join!(first, second);
-        assert_eq!(first.status(), StatusCode::NOT_IMPLEMENTED);
-        assert_eq!(second.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+        let _ = std::fs::remove_dir_all(first_root.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn project_chat_crud_isolates_same_id_and_legacy_history() {
+        let (state, first_id, first_root) = project_test_state().await;
+        let second_root = first_root
+            .parent()
+            .unwrap()
+            .join("private-chat-second-root");
+        std::fs::create_dir_all(&second_root).unwrap();
+        let second_id = state
+            .project_registry_runtime
+            .register(&second_root, Some("Second chat"))
+            .await
+            .unwrap()
+            .project_id;
+        let first_context = state
+            .project_registry_runtime
+            .resolve_context(&state.storage_paths, &first_id)
+            .await
+            .unwrap();
+        let second_context = state
+            .project_registry_runtime
+            .resolve_context(&state.storage_paths, &second_id)
+            .await
+            .unwrap();
+        for (root, content) in [
+            (&first_context.storage().chat_history, "first"),
+            (&second_context.storage().chat_history, "second"),
+        ] {
+            crate::chat_history::append_message_in(
+                root,
+                "chat_same",
+                crate::chat_history::ChatMessageRole::User,
+                content.to_string(),
+                Some(crate::chat_history::ChatMessageStatus::Complete),
+            )
+            .await
+            .unwrap();
+        }
+        crate::chat_history::append_message(
+            &state.storage_paths.config_dir,
+            "chat_same",
+            crate::chat_history::ChatMessageRole::User,
+            "legacy".to_string(),
+            Some(crate::chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+
+        for (project_id, expected) in [(&first_id, "first"), (&second_id, "second")] {
+            let list = project_request(
+                state.clone(),
+                "GET",
+                format!("/p/{project_id}/v1/chats"),
+                "",
+                true,
+            )
+            .await;
+            assert_eq!(list.status(), StatusCode::OK);
+            let list_body = response_text(list).await;
+            assert!(list_body.contains("chat_same"));
+            assert!(!list_body.contains("legacy"));
+            let response = project_request(
+                state.clone(),
+                "GET",
+                format!("/p/{project_id}/v1/chats/chat_same"),
+                "",
+                true,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = response_text(response).await;
+            assert!(body.contains(expected));
+            assert!(!body.contains("legacy"));
+        }
+
+        let deleted = project_request(
+            state.clone(),
+            "DELETE",
+            format!("/p/{first_id}/v1/chats/chat_same"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+        let wrong_project = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{first_id}/v1/chats/chat_same"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(wrong_project.status(), StatusCode::NOT_FOUND);
+        let wrong_project_command = project_request(
+            state.clone(),
+            "POST",
+            format!("/p/{first_id}/v1/chats/chat_same/commands"),
+            r#"{"requestId":"known-id","type":"abort","payload":{}}"#,
+            true,
+        )
+        .await;
+        assert_eq!(wrong_project_command.status(), StatusCode::NOT_FOUND);
+        let wrong_project_stream = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{first_id}/v1/chats/subscribe?chat_id=chat_same"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(wrong_project_stream.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            crate::chat_history::get_thread_in(&second_context.storage().chat_history, "chat_same")
+                .await
+                .unwrap()
+                .messages[0]
+                .content,
+            "second"
+        );
+        assert_eq!(
+            crate::chat_history::get_thread(&state.storage_paths.config_dir, "chat_same")
+                .await
+                .unwrap()
+                .messages[0]
+                .content,
+            "legacy"
+        );
+        let created =
+            project_request(state, "POST", format!("/p/{first_id}/v1/chats"), "", true).await;
+        assert_eq!(created.status(), StatusCode::CREATED);
+        assert!(response_text(created).await.contains("chat_"));
         let _ = std::fs::remove_dir_all(first_root.parent().unwrap());
     }
 
