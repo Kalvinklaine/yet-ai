@@ -19,7 +19,9 @@ use crate::chat::ChatContext;
 use crate::chat_history;
 use crate::demo_mode;
 use crate::logging::{log_event, EngineLogLevel};
+use crate::project_browser::ProjectBrowserError;
 use crate::project_memory;
+use crate::projects::ProjectRegistryError;
 use crate::provider_auth;
 use crate::providers;
 use crate::security::{Authenticated, RuntimeCaller, CALLER_HEADER_NAME};
@@ -62,6 +64,15 @@ pub fn router(state: AppState) -> Router {
                 .route("/models", get(models_list))
                 .route("/agent-progress", get(agent_progress_list))
                 .route("/agent-progress/events", post(agent_progress_event))
+                .route(
+                    "/project-browser/sessions",
+                    post(project_browser_session_create),
+                )
+                .route(
+                    "/project-browser/sessions/:session_id/list",
+                    post(project_browser_list),
+                )
+                .route("/projects", post(project_register))
                 .route(
                     "/project-memory",
                     get(project_memory_list).post(project_memory_create),
@@ -360,6 +371,111 @@ fn invalid_json_body(rejection: JsonRejection) -> Response {
         _ => StatusCode::BAD_REQUEST,
     };
     (status, Json(json!({ "error": "invalid request body" }))).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DirectoryListRequest {
+    directory_handle: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ProjectRegisterRequest {
+    display_name: String,
+    directory_session_id: String,
+    directory_handle: String,
+}
+
+async fn project_browser_session_create(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    request: Result<Json<EmptyProjectBrowserRequest>, JsonRejection>,
+) -> Response {
+    if let Err(rejection) = request {
+        return invalid_json_body(rejection);
+    }
+    match state.project_browser_runtime.create_session().await {
+        Ok(response) => (StatusCode::CREATED, Json(response)).into_response(),
+        Err(error) => project_browser_error(error),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyProjectBrowserRequest {}
+
+async fn project_browser_list(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    request: Result<Json<DirectoryListRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    match state
+        .project_browser_runtime
+        .list(&session_id, &request.directory_handle)
+        .await
+    {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => project_browser_error(error),
+    }
+}
+
+async fn project_register(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    request: Result<Json<ProjectRegisterRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    match state
+        .project_browser_runtime
+        .register(
+            &state.project_registry_runtime,
+            &request.directory_session_id,
+            &request.directory_handle,
+            &request.display_name,
+        )
+        .await
+    {
+        Ok(summary) => (StatusCode::CREATED, Json(summary)).into_response(),
+        Err(ProjectBrowserError::Registry(error)) => project_registry_error(error),
+        Err(error) => project_browser_error(error),
+    }
+}
+
+fn project_browser_error(error: ProjectBrowserError) -> Response {
+    let (status, category) = match error {
+        ProjectBrowserError::InvalidRequest | ProjectBrowserError::LimitReached => {
+            (StatusCode::BAD_REQUEST, "invalid_request")
+        }
+        ProjectBrowserError::DiscoveryExpired => (StatusCode::GONE, "discovery_expired"),
+        ProjectBrowserError::OutsideAllowedRoot => (StatusCode::FORBIDDEN, "outside_allowed_root"),
+        ProjectBrowserError::UnsafeFilesystem => (StatusCode::FORBIDDEN, "unsafe_filesystem"),
+        ProjectBrowserError::Registry(_) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable")
+        }
+    };
+    (status, Json(json!({ "error": category }))).into_response()
+}
+
+fn project_registry_error(error: ProjectRegistryError) -> Response {
+    let (status, category) = match error {
+        ProjectRegistryError::InvalidRequest
+        | ProjectRegistryError::Conflict
+        | ProjectRegistryError::LimitReached => (StatusCode::BAD_REQUEST, "invalid_request"),
+        ProjectRegistryError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+        ProjectRegistryError::Archived => (StatusCode::CONFLICT, "archived"),
+        ProjectRegistryError::RootUnavailable => (StatusCode::CONFLICT, "root_missing"),
+        ProjectRegistryError::Storage => (StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable"),
+    };
+    (status, Json(json!({ "error": category }))).into_response()
 }
 
 #[derive(Debug, Serialize)]
@@ -1011,6 +1127,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::identity::ProductIdentity;
+    use crate::project_browser::ProjectBrowserRuntime;
     use crate::security::AuthToken;
     use crate::storage::{resolve_storage_paths, StoragePaths};
     use crate::AppState;
@@ -1071,6 +1188,136 @@ mod tests {
                 .to_vec(),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn project_browser_http_registers_without_path_transport_and_consumes_handle() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir(home.path().join("Selected")).unwrap();
+        let identity = ProductIdentity::load().unwrap();
+        let mut state = AppState::with_storage_paths(
+            identity,
+            AuthToken::new("test-token").unwrap(),
+            temp_storage_paths(),
+        );
+        state.project_browser_runtime =
+            ProjectBrowserRuntime::with_home(Some(home.path().to_path_buf()));
+        let app = super::router(state);
+
+        let session_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/project-browser/sessions")
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(session_response.status(), StatusCode::CREATED);
+        let session: serde_json::Value =
+            serde_json::from_str(&response_text(session_response).await).unwrap();
+        let session_id = session["sessionId"].as_str().unwrap();
+        let root_handle = session["root"]["handle"].as_str().unwrap();
+        let session_json = session.to_string();
+        assert!(!session_json.contains(home.path().to_str().unwrap()));
+
+        let list_response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/v1/project-browser/sessions/{session_id}/list"))
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"directoryHandle":"{root_handle}"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(list_response.status(), StatusCode::OK);
+        let list: serde_json::Value =
+            serde_json::from_str(&response_text(list_response).await).unwrap();
+        let selected_handle = list["entries"][0]["handle"].as_str().unwrap();
+        assert_eq!(list["entries"][0]["displayName"], "Selected");
+        assert!(!list.to_string().contains(home.path().to_str().unwrap()));
+
+        let body = format!(
+            r#"{{"displayName":"Selected","directorySessionId":"{session_id}","directoryHandle":"{selected_handle}"}}"#
+        );
+        let registered = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/projects")
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(registered.status(), StatusCode::CREATED);
+        let registered_body = response_text(registered).await;
+        assert!(!registered_body.contains(home.path().to_str().unwrap()));
+        assert!(!registered_body.contains(selected_handle));
+
+        let replayed = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/projects")
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replayed.status(), StatusCode::GONE);
+        assert_eq!(
+            response_text(replayed).await,
+            r#"{"error":"discovery_expired"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn project_browser_http_requires_auth_and_rejects_raw_path_fields() {
+        let app = test_app();
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/project-browser/sessions")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+        let raw_path = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/projects")
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        r#"{"displayName":"Unsafe","directorySessionId":"pds_00000000000000000000000000000000","directoryHandle":"dir_00000000000000000000000000000000","path":"/private"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(raw_path.status(), StatusCode::BAD_REQUEST);
+        assert!(!response_text(raw_path).await.contains("/private"));
     }
 
     fn browser_session_cookie_for_state(state: &AppState) -> String {

@@ -6,6 +6,8 @@ pub mod http;
 pub mod identity;
 pub mod logging;
 pub mod lsp;
+pub mod project_browser;
+pub mod project_cli;
 pub mod project_memory;
 pub mod projects;
 pub mod provider_auth;
@@ -22,6 +24,7 @@ use axum::Router;
 
 use crate::agent_progress::AgentProgressRuntime;
 use crate::chat::ChatRuntime;
+use crate::project_browser::ProjectBrowserRuntime;
 use crate::projects::ProjectRegistryRuntime;
 
 pub use identity::ProductIdentity;
@@ -36,6 +39,7 @@ pub struct AppState {
     pub storage_paths: StoragePaths,
     pub chat_runtime: ChatRuntime,
     pub agent_progress_runtime: AgentProgressRuntime,
+    pub project_browser_runtime: ProjectBrowserRuntime,
     pub project_registry_runtime: ProjectRegistryRuntime,
     pub provider_auth_callback_port: u16,
 }
@@ -60,6 +64,7 @@ impl AppState {
             storage_paths,
             chat_runtime: ChatRuntime::new(),
             agent_progress_runtime: AgentProgressRuntime::new(),
+            project_browser_runtime: ProjectBrowserRuntime::new(),
             project_registry_runtime,
             provider_auth_callback_port,
         }
@@ -78,6 +83,7 @@ impl AppState {
             storage_paths,
             chat_runtime: ChatRuntime::new(),
             agent_progress_runtime: AgentProgressRuntime::new(),
+            project_browser_runtime: ProjectBrowserRuntime::new(),
             project_registry_runtime,
             provider_auth_callback_port: 1455,
         }

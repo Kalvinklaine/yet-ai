@@ -31,6 +31,23 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `GET /v1/chats/subscribe?chat_id=...`
 - `GET /v1/agent-progress`
 - `POST /v1/agent-progress/events`
+- `POST /v1/project-browser/sessions`
+- `POST /v1/project-browser/sessions/{session_id}/list`
+- `POST /v1/projects`
+
+## Local project registration
+
+Browser registration starts an authenticated, short-lived discovery session rooted at the canonical user home. The API lists only immediate, non-hidden, readable child directories as sanitized basenames and opaque session-bound handles. It does not return or accept absolute paths, list files, recurse, scan for repositories, read contents, index, or watch directories. Discovery is bounded by lifetime, navigation depth, sessions, handles, and entries; canonicalization and containment checks prevent symlink escape. A successful `POST /v1/projects` consumes the selected handle.
+
+The local CLI is the explicit escape hatch for directories outside the browser home boundary:
+
+```sh
+yet-lsp project add <absolute-or-relative-directory> [--name <label>]
+yet-lsp project list
+yet-lsp project open <projectId>
+```
+
+`project add` canonicalizes the explicit local argument and uses the same private registry and root-safety policy. `project list` prints safe project summaries. `project open` validates an available project, records the open lifecycle event, and prints only `http://127.0.0.1:<port>/p/<projectId>/`; it never prints the canonical root or runtime token.
 
 The read-only LSP MVP is available as a separate stdio mode through `yet-lsp --lsp-stdio` and is not part of the HTTP API. Its current scope is limited to local `initialize`, `initialized`, `shutdown`, `exit`, bounded `textDocument/didOpen`, `textDocument/didChange`, and `textDocument/didClose` over supported `file://` documents supplied by the editor, plus deterministic local-only `textDocument/completion`, `textDocument/hover`, and `textDocument/documentSymbol` responses for cached safe documents. Completion returns only the infrastructure status item `Yet AI LSP connected`; hover returns only bounded read-only connection status text; document symbols are bounded names and ranges derived from cached editor-supplied text without documentation payloads. These surfaces are infrastructure and code-intelligence proofs, not production AI completion, provider-backed code generation, provider diagnostics, or semantic indexing. Unsupported, closed, unknown, oversized, invalid-position, or binary-like documents return safe empty or null results. The LSP mode must not read arbitrary files, index workspaces, call providers or local models on keystrokes, execute shell/tools/git/tasks, write files, apply patches, mutate workspaces, expose raw document bodies in labels/details/docs/logs, or require a hosted Yet AI backend, account, managed gateway, product credits, provider configuration, provider secrets, or cloud workspace.
 

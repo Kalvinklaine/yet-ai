@@ -6,9 +6,22 @@ use yet_lsp::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if lsp::lsp_stdio_requested(std::env::args().skip(1)) {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if lsp::lsp_stdio_requested(args.iter().cloned()) {
         lsp::run_lsp_stdio().await?;
         return Ok(());
+    }
+    if yet_lsp::project_cli::requested(&args) {
+        match yet_lsp::project_cli::run(&args).await {
+            Ok(output) => {
+                println!("{output}");
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
     }
 
     let identity = ProductIdentity::load()?;
