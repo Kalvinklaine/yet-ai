@@ -1127,9 +1127,8 @@ fn ensure_registry_directory_with_sync(
     let directory = path.parent().ok_or(ProjectRegistryError::Storage)?;
     let parent = directory.parent().ok_or(ProjectRegistryError::Storage)?;
     create_missing_directories_durable(parent, &mut sync)?;
-    let mut created = false;
     match std::fs::create_dir(directory) {
-        Ok(()) => created = true,
+        Ok(()) => {}
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(_) => return Err(ProjectRegistryError::Storage),
     }
@@ -1139,9 +1138,7 @@ fn ensure_registry_directory_with_sync(
         return Err(ProjectRegistryError::Storage);
     }
     set_private_directory(directory)?;
-    if created {
-        sync(parent)?;
-    }
+    sync(parent)?;
     Ok(())
 }
 
@@ -1524,6 +1521,49 @@ mod tests {
             .any(|summary| summary.project_id == second.project_id));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn projects_independent_runtimes_bootstrap_absent_storage_concurrently() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let first_root = temp.path().join("first");
+        let second_root = temp.path().join("second");
+        std::fs::create_dir(&first_root).unwrap();
+        std::fs::create_dir(&second_root).unwrap();
+        let paths = storage_paths(&temp);
+        assert!(!paths.config_dir.exists());
+        assert!(!paths.cache_dir.exists());
+        let first_runtime = ProjectRegistryRuntime::new(&paths);
+        let second_runtime = ProjectRegistryRuntime::new(&paths);
+
+        let (first, second) = tokio::join!(
+            first_runtime.register(&first_root, Some("First")),
+            second_runtime.register(&second_root, Some("Second"))
+        );
+        let first = first.unwrap();
+        let second = second.unwrap();
+
+        let summaries = ProjectRegistryRuntime::new(&paths)
+            .list_summaries()
+            .await
+            .unwrap();
+        assert_eq!(summaries.len(), 2);
+        assert!(summaries
+            .iter()
+            .any(|summary| summary.project_id == first.project_id));
+        assert!(summaries
+            .iter()
+            .any(|summary| summary.project_id == second.project_id));
+        let projects_directory = paths.config_dir.join("projects");
+        for directory in [paths.config_dir.as_path(), projects_directory.as_path()] {
+            assert_eq!(
+                std::fs::metadata(directory).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+    }
+
     #[tokio::test]
     async fn projects_independent_same_revision_mutations_have_one_conflict() {
         let temp = tempfile::tempdir().unwrap();
@@ -1728,6 +1768,33 @@ mod tests {
         .unwrap();
 
         assert_eq!(checked, vec![config, projects]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn projects_existing_directory_is_hardened_before_parent_sync() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let config = temp.path().join("config");
+        let projects = config.join("projects");
+        let path = projects.join("registry.json");
+        std::fs::create_dir(&config).unwrap();
+        std::fs::create_dir(&projects).unwrap();
+        std::fs::set_permissions(&projects, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut synced = Vec::new();
+
+        ensure_registry_directory_with_sync(&path, |parent| {
+            assert_eq!(
+                std::fs::metadata(&projects).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            synced.push(parent.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(synced, vec![config]);
     }
 
     #[test]
