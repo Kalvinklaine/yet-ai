@@ -13,6 +13,7 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 futures-util = "0.3"
+fs2 = "0.4"
 getrandom = "0.2"
 http = "1"
 http-body-util = "0.1"

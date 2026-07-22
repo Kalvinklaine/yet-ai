@@ -3,22 +3,29 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use chrono::{SecondsFormat, Utc};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::storage::{
     canonical_storage_boundary, validate_storage_chain, ProjectStoragePaths, StoragePaths,
 };
 
-const REGISTRY_VERSION: u32 = 3;
+const REGISTRY_VERSION: u32 = 4;
 const INITIAL_REVISION: &str = "1";
 const REGISTRY_MAX_BYTES: u64 = 2_000_000;
 const REGISTRY_MAX_PROJECTS: usize = 10_000;
 const DISPLAY_NAME_MAX_CHARS: usize = 120;
 const PROJECT_ID_RANDOM_BYTES: usize = 16;
 static TEMP_REGISTRY_COUNTER: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(test))]
+const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(test)]
+const REGISTRY_LOCK_TIMEOUT: Duration = Duration::from_millis(150);
+const REGISTRY_LOCK_RETRY: Duration = Duration::from_millis(10);
 
 #[derive(Clone)]
 pub struct ProjectRegistryRuntime {
@@ -69,7 +76,7 @@ pub struct PrivateProjectEntry {
     pub last_opened_at: Option<String>,
     pub archived: bool,
     canonical_root: PathBuf,
-    root_identity: Option<RootIdentity>,
+    root_binding: RootBinding,
 }
 
 impl std::fmt::Debug for PrivateProjectEntry {
@@ -146,7 +153,7 @@ impl PrivateProjectEntry {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProjectRegistry {
     version: u32,
@@ -154,7 +161,7 @@ struct ProjectRegistry {
     projects: Vec<StoredProjectEntry>,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoredProjectEntry {
     project_id: String,
@@ -164,7 +171,7 @@ struct StoredProjectEntry {
     created_at: String,
     last_opened_at: Option<String>,
     archived: bool,
-    root_identity: Option<RootIdentity>,
+    root_binding: RootBinding,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -172,6 +179,35 @@ struct StoredProjectEntry {
 struct RootIdentity {
     device: u64,
     inode: u64,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum RootBinding {
+    Bound { device: u64, inode: u64 },
+    Unsupported,
+    Unbound,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VersionThreeProjectRegistry {
+    version: u32,
+    revision: String,
+    projects: Vec<VersionThreeStoredProjectEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VersionThreeStoredProjectEntry {
+    project_id: String,
+    display_name: String,
+    canonical_root: PathBuf,
+    revision: String,
+    created_at: String,
+    last_opened_at: Option<String>,
+    archived: bool,
+    root_identity: Option<RootIdentity>,
 }
 
 #[derive(Deserialize)]
@@ -249,15 +285,19 @@ impl ProjectRegistryRuntime {
     pub async fn load(&self) -> Result<(), ProjectRegistryError> {
         self.validate_registry_storage()?;
         let mut state = self.state.lock().await;
-        *state = Some(load_registry(&self.registry_path).await?);
+        let (registry, ()) = self.transaction(|_| Ok(())).await?;
+        *state = Some(registry);
         Ok(())
     }
 
     pub async fn list_summaries(&self) -> Result<Vec<ProjectSummary>, ProjectRegistryError> {
         self.validate_registry_storage()?;
         let mut state = self.state.lock().await;
-        let registry = ensure_loaded(&self.registry_path, &mut state).await?;
-        Ok(registry.projects.iter().map(project_summary).collect())
+        let (registry, summaries) = self
+            .transaction(|registry| Ok(registry.projects.iter().map(project_summary).collect()))
+            .await?;
+        *state = Some(registry);
+        Ok(summaries)
     }
 
     pub async fn get_private_entry(
@@ -267,13 +307,19 @@ impl ProjectRegistryRuntime {
         validate_project_id(project_id)?;
         self.validate_registry_storage()?;
         let mut state = self.state.lock().await;
-        let registry = ensure_loaded(&self.registry_path, &mut state).await?;
-        registry
-            .projects
-            .iter()
-            .find(|entry| entry.project_id == project_id)
-            .map(private_entry)
-            .ok_or(ProjectRegistryError::NotFound)
+        let project_id = project_id.to_string();
+        let (registry, entry) = self
+            .transaction(move |registry| {
+                registry
+                    .projects
+                    .iter()
+                    .find(|entry| entry.project_id == project_id)
+                    .map(private_entry)
+                    .ok_or(ProjectRegistryError::NotFound)
+            })
+            .await?;
+        *state = Some(registry);
+        Ok(entry)
     }
 
     pub async fn get_active_private_entry(
@@ -283,7 +329,7 @@ impl ProjectRegistryRuntime {
         let entry = self.get_private_entry(project_id).await?;
         if entry.archived {
             Err(ProjectRegistryError::Archived)
-        } else if !root_is_available(entry.canonical_root(), entry.root_identity) {
+        } else if !root_is_available(entry.canonical_root(), entry.root_binding) {
             Err(ProjectRegistryError::RootUnavailable)
         } else {
             Ok(entry)
@@ -314,7 +360,7 @@ impl ProjectRegistryRuntime {
         if entry.archived {
             return Err(ProjectContextError::Archived);
         }
-        if !root_is_available(entry.canonical_root(), entry.root_identity) {
+        if !root_is_available(entry.canonical_root(), entry.root_binding) {
             return Err(ProjectContextError::RootMissing);
         }
         let storage = storage_paths
@@ -335,48 +381,51 @@ impl ProjectRegistryRuntime {
         display_name: Option<&str>,
     ) -> Result<ProjectSummary, ProjectRegistryError> {
         let canonical_root = canonical_directory(root.as_ref()).await?;
-        let root_identity = readable_root_identity(&canonical_root)?;
+        let root_binding = readable_root_binding(&canonical_root)?;
         self.validate_registration_root(&canonical_root)?;
         let display_name = match display_name {
             Some(value) => validate_display_name(value)?.to_string(),
             None => default_display_name(&canonical_root),
         };
         let mut state = self.state.lock().await;
-        let registry = ensure_loaded(&self.registry_path, &mut state).await?;
-        let mut candidate = registry.clone();
-        if let Some(entry) = registry
-            .projects
-            .iter()
-            .find(|entry| entry.canonical_root == canonical_root)
-        {
-            if entry.root_identity == root_identity
-                && root_is_available(&entry.canonical_root, entry.root_identity)
-            {
-                return Ok(project_summary(entry));
-            }
-            return Err(ProjectRegistryError::RootUnavailable);
-        }
-        if candidate.projects.len() >= REGISTRY_MAX_PROJECTS {
-            return Err(ProjectRegistryError::LimitReached);
-        }
-        if !root_is_available(&canonical_root, root_identity) {
-            return Err(ProjectRegistryError::RootUnavailable);
-        }
-        let now = timestamp_now();
-        candidate.projects.push(StoredProjectEntry {
-            project_id: unique_project_id(&candidate)?,
-            display_name,
-            canonical_root,
-            revision: INITIAL_REVISION.to_string(),
-            created_at: now.clone(),
-            last_opened_at: None,
-            archived: false,
-            root_identity,
-        });
-        candidate.revision = increment_revision(&candidate.revision)?;
-        self.persist(&candidate).await?;
-        let summary = project_summary(candidate.projects.last().expect("inserted project"));
-        *registry = candidate;
+        let (registry, summary) = self
+            .transaction(move |registry| {
+                if let Some(entry) = registry
+                    .projects
+                    .iter()
+                    .find(|entry| entry.canonical_root == canonical_root)
+                {
+                    if entry.root_binding == root_binding
+                        && root_is_available(&entry.canonical_root, entry.root_binding)
+                    {
+                        return Ok(project_summary(entry));
+                    }
+                    return Err(ProjectRegistryError::RootUnavailable);
+                }
+                if registry.projects.len() >= REGISTRY_MAX_PROJECTS {
+                    return Err(ProjectRegistryError::LimitReached);
+                }
+                if !root_is_available(&canonical_root, root_binding) {
+                    return Err(ProjectRegistryError::RootUnavailable);
+                }
+                let now = timestamp_now();
+                registry.projects.push(StoredProjectEntry {
+                    project_id: unique_project_id(registry)?,
+                    display_name,
+                    canonical_root,
+                    revision: INITIAL_REVISION.to_string(),
+                    created_at: now,
+                    last_opened_at: None,
+                    archived: false,
+                    root_binding,
+                });
+                registry.revision = increment_revision(&registry.revision)?;
+                Ok(project_summary(
+                    registry.projects.last().expect("inserted project"),
+                ))
+            })
+            .await?;
+        *state = Some(registry);
         Ok(summary)
     }
 
@@ -427,7 +476,7 @@ impl ProjectRegistryRuntime {
             if entry.archived {
                 return Err(ProjectRegistryError::Archived);
             }
-            if !root_is_available(&entry.canonical_root, entry.root_identity) {
+            if !root_is_available(&entry.canonical_root, entry.root_binding) {
                 return Err(ProjectRegistryError::RootUnavailable);
             }
             entry.last_opened_at = Some(now);
@@ -440,7 +489,7 @@ impl ProjectRegistryRuntime {
         &self,
         project_id: &str,
         expected_revision: &str,
-        change: impl FnOnce(&mut StoredProjectEntry),
+        change: impl FnOnce(&mut StoredProjectEntry) + Send + 'static,
     ) -> Result<ProjectSummary, ProjectRegistryError> {
         self.mutate_checked(project_id, expected_revision, |entry| {
             change(entry);
@@ -453,42 +502,52 @@ impl ProjectRegistryRuntime {
         &self,
         project_id: &str,
         expected_revision: &str,
-        change: impl FnOnce(&mut StoredProjectEntry) -> Result<(), ProjectRegistryError>,
+        change: impl FnOnce(&mut StoredProjectEntry) -> Result<(), ProjectRegistryError>
+            + Send
+            + 'static,
     ) -> Result<ProjectSummary, ProjectRegistryError> {
         validate_revision(expected_revision).map_err(|_| ProjectRegistryError::InvalidRequest)?;
         self.validate_registry_storage()?;
         let mut state = self.state.lock().await;
-        let registry = ensure_loaded(&self.registry_path, &mut state).await?;
-        let mut candidate = registry.clone();
-        let entry = candidate
-            .projects
-            .iter_mut()
-            .find(|entry| entry.project_id == project_id)
-            .ok_or(ProjectRegistryError::NotFound)?;
-        if entry.revision != expected_revision {
-            return Err(ProjectRegistryError::Conflict);
-        }
-        change(entry)?;
-        entry.revision = increment_revision(&entry.revision)?;
-        candidate.revision = increment_revision(&candidate.revision)?;
-        self.persist(&candidate).await?;
-        let summary = candidate
-            .projects
-            .iter()
-            .find(|entry| entry.project_id == project_id)
-            .map(project_summary)
-            .expect("mutated project");
-        *registry = candidate;
+        let project_id = project_id.to_string();
+        let expected_revision = expected_revision.to_string();
+        let (registry, summary) = self
+            .transaction(move |registry| {
+                let entry = registry
+                    .projects
+                    .iter_mut()
+                    .find(|entry| entry.project_id == project_id)
+                    .ok_or(ProjectRegistryError::NotFound)?;
+                if entry.revision != expected_revision {
+                    return Err(ProjectRegistryError::Conflict);
+                }
+                change(entry)?;
+                entry.revision = increment_revision(&entry.revision)?;
+                let summary = project_summary(entry);
+                registry.revision = increment_revision(&registry.revision)?;
+                Ok(summary)
+            })
+            .await?;
+        *state = Some(registry);
         Ok(summary)
     }
 
-    async fn persist(&self, registry: &ProjectRegistry) -> Result<(), ProjectRegistryError> {
+    async fn transaction<T, F>(
+        &self,
+        operation: F,
+    ) -> Result<(ProjectRegistry, T), ProjectRegistryError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut ProjectRegistry) -> Result<T, ProjectRegistryError> + Send + 'static,
+    {
+        let path = self.registry_path.clone();
         #[cfg(test)]
-        if self.fail_writes.load(Ordering::SeqCst) {
-            return Err(ProjectRegistryError::Storage);
-        }
-        self.validate_registry_storage()?;
-        persist_registry(&self.registry_path, registry).await
+        let fail_writes = self.fail_writes.load(Ordering::SeqCst);
+        #[cfg(not(test))]
+        let fail_writes = false;
+        tokio::task::spawn_blocking(move || registry_transaction(&path, fail_writes, operation))
+            .await
+            .map_err(|_| ProjectRegistryError::Storage)?
     }
 
     fn validate_registry_storage(&self) -> Result<(), ProjectRegistryError> {
@@ -517,16 +576,6 @@ impl ProjectRegistryRuntime {
     }
 }
 
-async fn ensure_loaded<'a>(
-    path: &Path,
-    state: &'a mut Option<ProjectRegistry>,
-) -> Result<&'a mut ProjectRegistry, ProjectRegistryError> {
-    if state.is_none() {
-        *state = Some(load_registry(path).await?);
-    }
-    Ok(state.as_mut().expect("loaded registry"))
-}
-
 fn private_entry(entry: &StoredProjectEntry) -> PrivateProjectEntry {
     PrivateProjectEntry {
         project_id: entry.project_id.clone(),
@@ -536,12 +585,12 @@ fn private_entry(entry: &StoredProjectEntry) -> PrivateProjectEntry {
         last_opened_at: entry.last_opened_at.clone(),
         archived: entry.archived,
         canonical_root: entry.canonical_root.clone(),
-        root_identity: entry.root_identity,
+        root_binding: entry.root_binding,
     }
 }
 
 fn project_summary(entry: &StoredProjectEntry) -> ProjectSummary {
-    let root_available = root_is_available(&entry.canonical_root, entry.root_identity);
+    let root_available = root_is_available(&entry.canonical_root, entry.root_binding);
     ProjectSummary {
         project_id: entry.project_id.clone(),
         display_name: entry.display_name.clone(),
@@ -655,20 +704,39 @@ fn validate_project_id(value: &str) -> Result<(), ProjectRegistryError> {
         .ok_or(ProjectRegistryError::InvalidRequest)
 }
 
-fn root_is_available(root: &Path, expected_identity: Option<RootIdentity>) -> bool {
+fn root_is_available(root: &Path, binding: RootBinding) -> bool {
     std::fs::canonicalize(root).is_ok_and(|current| {
         current == root
             && current.is_dir()
             && std::fs::read_dir(&current).is_ok()
-            && current_root_identity(&current).is_some_and(|identity| identity == expected_identity)
+            && binding_matches_current(binding, current_root_identity(&current))
     })
 }
 
-fn readable_root_identity(root: &Path) -> Result<Option<RootIdentity>, ProjectRegistryError> {
+fn readable_root_binding(root: &Path) -> Result<RootBinding, ProjectRegistryError> {
     if !root.is_dir() || std::fs::read_dir(root).is_err() {
         return Err(ProjectRegistryError::RootUnavailable);
     }
-    current_root_identity(root).ok_or(ProjectRegistryError::RootUnavailable)
+    current_root_identity(root)
+        .map(|identity| match identity {
+            Some(identity) => RootBinding::Bound {
+                device: identity.device,
+                inode: identity.inode,
+            },
+            None => RootBinding::Unsupported,
+        })
+        .ok_or(ProjectRegistryError::RootUnavailable)
+}
+
+fn binding_matches_current(binding: RootBinding, current: Option<Option<RootIdentity>>) -> bool {
+    match (binding, current) {
+        (RootBinding::Bound { device, inode }, Some(Some(identity))) => {
+            identity == RootIdentity { device, inode }
+        }
+        (RootBinding::Unsupported, Some(None)) => true,
+        (RootBinding::Unbound, _) => false,
+        _ => false,
+    }
 }
 
 #[cfg(unix)]
@@ -711,11 +779,53 @@ fn increment_revision(value: &str) -> Result<String, ProjectRegistryError> {
         .ok_or(ProjectRegistryError::Conflict)
 }
 
-async fn load_registry(path: &Path) -> Result<ProjectRegistry, ProjectRegistryError> {
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || load_registry_sync(&path))
-        .await
-        .map_err(|_| ProjectRegistryError::Storage)?
+fn registry_transaction<T>(
+    path: &Path,
+    fail_writes: bool,
+    operation: impl FnOnce(&mut ProjectRegistry) -> Result<T, ProjectRegistryError>,
+) -> Result<(ProjectRegistry, T), ProjectRegistryError> {
+    let lock = acquire_registry_lock(path)?;
+    let mut registry = load_registry_sync(path)?;
+    let before = registry.clone();
+    let result = operation(&mut registry)?;
+    if registry != before {
+        if fail_writes {
+            return Err(ProjectRegistryError::Storage);
+        }
+        persist_registry_sync(path, &registry)?;
+    }
+    drop(lock);
+    Ok((registry, result))
+}
+
+fn acquire_registry_lock(path: &Path) -> Result<std::fs::File, ProjectRegistryError> {
+    ensure_registry_directory(path)?;
+    let lock_path = path.with_file_name("registry.lock");
+    reject_registry_file_symlink(&lock_path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).read(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    let lock = options
+        .open(&lock_path)
+        .map_err(|_| ProjectRegistryError::Storage)?;
+    set_private_file(&lock)?;
+    let deadline = Instant::now() + REGISTRY_LOCK_TIMEOUT;
+    loop {
+        match lock.try_lock_exclusive() {
+            Ok(()) => return Ok(lock),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if Instant::now() >= deadline {
+                    return Err(ProjectRegistryError::Storage);
+                }
+                std::thread::sleep(REGISTRY_LOCK_RETRY);
+            }
+            Err(_) => return Err(ProjectRegistryError::Storage),
+        }
+    }
 }
 
 fn load_registry_sync(path: &Path) -> Result<ProjectRegistry, ProjectRegistryError> {
@@ -751,6 +861,12 @@ fn load_registry_sync(path: &Path) -> Result<ProjectRegistry, ProjectRegistryErr
             serde_json::from_value(value).map_err(|_| ProjectRegistryError::Storage)?,
             false,
         ),
+        3 => (
+            migrate_version_three_registry(
+                serde_json::from_slice(&bytes).map_err(|_| ProjectRegistryError::Storage)?,
+            )?,
+            true,
+        ),
         2 => (
             migrate_version_two_registry(
                 serde_json::from_slice(&bytes).map_err(|_| ProjectRegistryError::Storage)?,
@@ -777,6 +893,37 @@ fn load_registry_sync(path: &Path) -> Result<ProjectRegistry, ProjectRegistryErr
     Ok(registry)
 }
 
+fn migrate_version_three_registry(
+    legacy: VersionThreeProjectRegistry,
+) -> Result<ProjectRegistry, ProjectRegistryError> {
+    if legacy.version != 3 {
+        return Err(ProjectRegistryError::Storage);
+    }
+    Ok(ProjectRegistry {
+        version: REGISTRY_VERSION,
+        revision: legacy.revision,
+        projects: legacy
+            .projects
+            .into_iter()
+            .map(|entry| StoredProjectEntry {
+                root_binding: entry
+                    .root_identity
+                    .map_or(RootBinding::Unbound, |identity| RootBinding::Bound {
+                        device: identity.device,
+                        inode: identity.inode,
+                    }),
+                project_id: entry.project_id,
+                display_name: entry.display_name,
+                canonical_root: entry.canonical_root,
+                revision: entry.revision,
+                created_at: entry.created_at,
+                last_opened_at: entry.last_opened_at,
+                archived: entry.archived,
+            })
+            .collect(),
+    })
+}
+
 fn migrate_version_two_registry(
     legacy: VersionTwoProjectRegistry,
 ) -> Result<ProjectRegistry, ProjectRegistryError> {
@@ -790,7 +937,7 @@ fn migrate_version_two_registry(
             .projects
             .into_iter()
             .map(|entry| StoredProjectEntry {
-                root_identity: None,
+                root_binding: RootBinding::Unbound,
                 project_id: entry.project_id,
                 display_name: entry.display_name,
                 canonical_root: entry.canonical_root,
@@ -813,7 +960,7 @@ fn migrate_legacy_registry(
         .projects
         .into_iter()
         .map(|entry| StoredProjectEntry {
-            root_identity: None,
+            root_binding: RootBinding::Unbound,
             project_id: entry.project_id,
             display_name: entry.display_name,
             canonical_root: entry.canonical_root,
@@ -865,7 +1012,7 @@ fn valid_timestamp(value: &str) -> bool {
         && chrono::DateTime::parse_from_rfc3339(value).is_ok()
 }
 
-async fn persist_registry(
+fn persist_registry_sync(
     path: &Path,
     registry: &ProjectRegistry,
 ) -> Result<(), ProjectRegistryError> {
@@ -874,10 +1021,7 @@ async fn persist_registry(
     if bytes.len() as u64 > REGISTRY_MAX_BYTES {
         return Err(ProjectRegistryError::Storage);
     }
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || atomic_write_registry(&path, &bytes))
-        .await
-        .map_err(|_| ProjectRegistryError::Storage)?
+    atomic_write_registry(path, &bytes)
 }
 
 fn atomic_write_registry(path: &Path, bytes: &[u8]) -> Result<(), ProjectRegistryError> {
@@ -906,7 +1050,7 @@ fn atomic_write_registry(path: &Path, bytes: &[u8]) -> Result<(), ProjectRegistr
         set_private_file(&file)?;
         reject_registry_file_symlink(path)?;
         std::fs::rename(&temp, path).map_err(|_| ProjectRegistryError::Storage)?;
-        let _ = sync_directory(path.parent().ok_or(ProjectRegistryError::Storage)?);
+        sync_directory(path.parent().ok_or(ProjectRegistryError::Storage)?)?;
         Ok(())
     })();
     if result.is_err() {
@@ -1012,18 +1156,18 @@ fn sync_directory(path: &Path) -> Result<(), ProjectRegistryError> {
         .and_then(|directory| directory.sync_all());
     match result {
         Ok(()) => Ok(()),
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::PermissionDenied
-                    | std::io::ErrorKind::Unsupported
-                    | std::io::ErrorKind::InvalidInput
-            ) =>
-        {
-            Ok(())
-        }
+        Err(error) if ignorable_directory_sync_error(error.kind()) => Ok(()),
         Err(_) => Err(ProjectRegistryError::Storage),
     }
+}
+
+fn ignorable_directory_sync_error(kind: std::io::ErrorKind) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::Unsupported
+            | std::io::ErrorKind::InvalidInput
+    )
 }
 
 #[cfg(not(unix))]
@@ -1224,6 +1368,150 @@ mod tests {
         }
         assert_eq!(ids.len(), 1);
         assert_eq!(runtime.list_summaries().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn projects_independent_runtimes_preserve_concurrent_registrations_and_refresh_reads() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_root = temp.path().join("first");
+        let second_root = temp.path().join("second");
+        std::fs::create_dir(&first_root).unwrap();
+        std::fs::create_dir(&second_root).unwrap();
+        let paths = storage_paths(&temp);
+        let first_runtime = ProjectRegistryRuntime::new(&paths);
+        let second_runtime = ProjectRegistryRuntime::new(&paths);
+        first_runtime.load().await.unwrap();
+
+        let (first, second) = tokio::join!(
+            first_runtime.register(&first_root, Some("First")),
+            second_runtime.register(&second_root, Some("Second"))
+        );
+        let first = first.unwrap();
+        let second = second.unwrap();
+        assert_ne!(first.project_id, second.project_id);
+
+        let summaries = first_runtime.list_summaries().await.unwrap();
+        assert_eq!(summaries.len(), 2);
+        assert!(summaries
+            .iter()
+            .any(|summary| summary.project_id == first.project_id));
+        assert!(summaries
+            .iter()
+            .any(|summary| summary.project_id == second.project_id));
+    }
+
+    #[tokio::test]
+    async fn projects_independent_same_revision_mutations_have_one_conflict() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let paths = storage_paths(&temp);
+        let first_runtime = ProjectRegistryRuntime::new(&paths);
+        let second_runtime = ProjectRegistryRuntime::new(&paths);
+        let created = first_runtime
+            .register(&root, Some("Original"))
+            .await
+            .unwrap();
+
+        let (first, second) = tokio::join!(
+            first_runtime.update_display_name(&created.project_id, "First", &created.revision),
+            second_runtime.update_display_name(&created.project_id, "Second", &created.revision)
+        );
+        assert_eq!(
+            [&first, &second]
+                .iter()
+                .filter(|result| result.is_ok())
+                .count(),
+            1
+        );
+        assert_eq!(
+            [&first, &second]
+                .iter()
+                .filter(|result| matches!(result, Err(ProjectRegistryError::Conflict)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            first_runtime.list_summaries().await.unwrap()[0].revision,
+            "2"
+        );
+    }
+
+    #[tokio::test]
+    async fn projects_lock_timeout_leaves_registry_intact() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let path = registry_path(&temp);
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
+        runtime.register(&root, Some("Original")).await.unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let lock = acquire_registry_lock(&path).unwrap();
+
+        assert_eq!(
+            runtime.list_summaries().await.unwrap_err(),
+            ProjectRegistryError::Storage
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        drop(lock);
+        assert_eq!(runtime.list_summaries().await.unwrap().len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn projects_symlinked_lock_file_is_rejected_without_registry_damage() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let path = registry_path(&temp);
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
+        runtime.register(&root, Some("Original")).await.unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let lock_path = path.with_file_name("registry.lock");
+        std::fs::remove_file(&lock_path).unwrap();
+        let outside = temp.path().join("outside-lock");
+        std::fs::write(&outside, b"untouched").unwrap();
+        std::os::unix::fs::symlink(&outside, &lock_path).unwrap();
+
+        assert_eq!(
+            runtime.list_summaries().await.unwrap_err(),
+            ProjectRegistryError::Storage
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(std::fs::read(outside).unwrap(), b"untouched");
+    }
+
+    #[test]
+    fn projects_unbound_and_unsupported_identity_policy_is_explicit() {
+        let identity = RootIdentity {
+            device: 7,
+            inode: 11,
+        };
+        assert!(!binding_matches_current(RootBinding::Unbound, Some(None)));
+        assert!(!binding_matches_current(
+            RootBinding::Unbound,
+            Some(Some(identity))
+        ));
+        assert!(binding_matches_current(
+            RootBinding::Unsupported,
+            Some(None)
+        ));
+        assert!(!binding_matches_current(
+            RootBinding::Unsupported,
+            Some(Some(identity))
+        ));
+    }
+
+    #[test]
+    fn projects_parent_directory_sync_failure_policy_is_explicit() {
+        for kind in [
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::Unsupported,
+            std::io::ErrorKind::InvalidInput,
+        ] {
+            assert!(ignorable_directory_sync_error(kind));
+        }
+        assert!(!ignorable_directory_sync_error(std::io::ErrorKind::Other));
     }
 
     #[tokio::test]
@@ -1551,7 +1839,10 @@ mod tests {
         let migrated_json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(migrated_json["version"], REGISTRY_VERSION);
-        assert!(migrated_json["projects"][0]["rootIdentity"].is_null());
+        assert_eq!(
+            migrated_json["projects"][0]["rootBinding"]["state"],
+            "unbound"
+        );
 
         for revision in ["0", "01", "18446744073709551616"] {
             let mut value: serde_json::Value = serde_json::from_slice(
@@ -1566,7 +1857,7 @@ mod tests {
                         created_at: timestamp_now(),
                         last_opened_at: None,
                         archived: false,
-                        root_identity: readable_root_identity(&root).unwrap(),
+                        root_binding: readable_root_binding(&root).unwrap(),
                     }],
                 })
                 .unwrap(),
@@ -1625,7 +1916,7 @@ mod tests {
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(migrated["version"], REGISTRY_VERSION);
         assert_eq!(migrated["revision"], "7");
-        assert!(migrated["projects"][0]["rootIdentity"].is_null());
+        assert_eq!(migrated["projects"][0]["rootBinding"]["state"], "unbound");
     }
 
     #[cfg(unix)]
@@ -1687,7 +1978,7 @@ mod tests {
             );
             let migrated: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-            assert!(migrated["projects"][0]["rootIdentity"].is_null());
+            assert_eq!(migrated["projects"][0]["rootBinding"]["state"], "unbound");
         }
     }
 

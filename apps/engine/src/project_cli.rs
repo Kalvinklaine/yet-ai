@@ -180,4 +180,24 @@ mod tests {
             assert!(error.len() < 100);
         }
     }
+
+    #[tokio::test]
+    async fn project_cli_and_server_like_runtime_preserve_each_others_projects() {
+        let temp = tempfile::tempdir().unwrap();
+        let cli_root = temp.path().join("cli-root");
+        let server_root = temp.path().join("server-root");
+        std::fs::create_dir(&cli_root).unwrap();
+        std::fs::create_dir(&server_root).unwrap();
+        let storage = paths(&temp);
+        let server = ProjectRegistryRuntime::new(&storage);
+        let cli_args = args(&["project", "add", cli_root.to_str().unwrap()]);
+
+        let (cli, server_result) = tokio::join!(
+            run_with_storage(&cli_args, &storage, temp.path().to_path_buf(), 8001,),
+            server.register(&server_root, Some("Server"))
+        );
+        cli.unwrap();
+        server_result.unwrap();
+        assert_eq!(server.list_summaries().await.unwrap().len(), 2);
+    }
 }
