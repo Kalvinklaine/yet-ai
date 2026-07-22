@@ -110,7 +110,7 @@ Back and forward navigation restore URL-addressed project pages. They never rest
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/v1/projects` | List safe project summaries, including explicitly requested archived entries. |
+| `GET` | `/v1/projects` | List safe project summaries plus the aggregate `legacyUnscopedAvailable` boolean. |
 | `POST` | `/v1/projects` | Register a project from an engine discovery handle. |
 | `GET` | `/v1/projects/:projectId` | Read one safe project summary. |
 | `PATCH` | `/v1/projects/:projectId` | Rename or update permitted safe metadata. |
@@ -144,6 +144,8 @@ Project memory exposes `GET` and `POST /p/:projectId/v1/project-memory`, `POST /
 | `/v1/project-memory...` | During compatibility rollout, accesses only isolated legacy unscoped memory and is never guessed into a project. It is deprecated and later disabled. |
 | `/v1/agent-progress...` | During compatibility rollout, exposes only isolated legacy unscoped progress according to its existing read-only policy. It is deprecated and later disabled. |
 | `/projects/legacy` | Explicit GUI entry for available legacy unscoped data; absence of legacy data may return the project hub or a safe empty state. |
+
+`legacyUnscopedAvailable` is true only when at least one bounded legacy chat, curated-memory note, or progress run is readable through the compatibility APIs. Empty storage directories do not make the bucket available. The project list returns only this aggregate boolean: it does not return per-category counts, record IDs, content, tags, titles, roots, paths, or secrets. `/projects/legacy` reads and deletes through the existing unscoped compatibility APIs; it cannot start a project agent run, attach ownerless memory to a project chat, or import or move records. Registration, open, archive, and restore never inspect, copy, assign, or alter legacy data.
 
 Global endpoints such as providers, provider authentication, models, capabilities, runtime authentication, demo mode, and global preferences remain under `/v1/...`; they do not acquire a project prefix merely because the GUI is displaying a project.
 

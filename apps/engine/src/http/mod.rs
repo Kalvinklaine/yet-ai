@@ -1837,6 +1837,174 @@ mod project_tests {
     }
 
     #[tokio::test]
+    async fn legacy_unscoped_summary_is_bounded_and_never_blends_into_projects() {
+        let identity = ProductIdentity::load().unwrap();
+        let paths = temp_storage_paths();
+        std::fs::create_dir_all(paths.config_dir.join("chat-history")).unwrap();
+        std::fs::create_dir_all(paths.config_dir.join("project-memory")).unwrap();
+        std::fs::create_dir_all(paths.cache_dir.join("agent-progress")).unwrap();
+        let state = AppState::with_storage_paths(
+            identity,
+            AuthToken::new("test-token").unwrap(),
+            paths,
+        );
+
+        let empty = project_request(
+            state.clone(),
+            "GET",
+            "/v1/projects".to_string(),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(empty.status(), StatusCode::OK);
+        let empty: serde_json::Value =
+            serde_json::from_str(&response_text(empty).await).unwrap();
+        assert_eq!(empty["legacyUnscopedAvailable"], false);
+
+        crate::chat_history::append_message(
+            &state.storage_paths.config_dir,
+            "chat_legacy_ownerless",
+            crate::chat_history::ChatMessageRole::User,
+            "Ownerless chat data".to_string(),
+            Some(crate::chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        let chat_only = project_request(
+            state.clone(),
+            "GET",
+            "/v1/projects".to_string(),
+            "",
+            true,
+        )
+        .await;
+        let chat_only: serde_json::Value =
+            serde_json::from_str(&response_text(chat_only).await).unwrap();
+        assert_eq!(chat_only["legacyUnscopedAvailable"], true);
+        let memory = project_json_request(
+            state.clone(),
+            "POST",
+            "/v1/project-memory".to_string(),
+            memory_create_body("Ownerless note", "Ownerless memory data", &["legacy"]),
+        )
+        .await;
+        assert_eq!(memory.status(), StatusCode::CREATED);
+        let memory: serde_json::Value =
+            serde_json::from_str(&response_text(memory).await).unwrap();
+        let legacy_note_id = memory["id"].as_str().unwrap().to_string();
+        let progress = project_request(
+            state.clone(),
+            "POST",
+            "/v1/agent-progress/events".to_string(),
+            &serde_json::json!({
+                "protocolVersion": "2026-05-29",
+                "eventId": "legacy-ownerless-event",
+                "runId": "legacy-ownerless-run",
+                "cardId": "T-10",
+                "timestamp": "2026-07-22T01:02:03Z",
+                "phase": "started",
+                "status": "running",
+                "message": "Ownerless progress data is available."
+            })
+            .to_string(),
+            true,
+        )
+        .await;
+        assert_eq!(progress.status(), StatusCode::OK);
+
+        let legacy_chat_path = state
+            .storage_paths
+            .config_dir
+            .join("chat-history/chat_legacy_ownerless.json");
+        let legacy_memory_path = state
+            .storage_paths
+            .config_dir
+            .join("project-memory/notes.json");
+        let chat_before = std::fs::read(&legacy_chat_path).unwrap();
+        let memory_before = std::fs::read(&legacy_memory_path).unwrap();
+
+        let project_root = state
+            .storage_paths
+            .project_dir
+            .parent()
+            .unwrap()
+            .join("legacy-ownerless-project-root");
+        std::fs::create_dir_all(&project_root).unwrap();
+        let project = state
+            .project_registry_runtime
+            .register(&project_root, Some("Isolated project"))
+            .await
+            .unwrap();
+
+        let list = project_request(
+            state.clone(),
+            "GET",
+            "/v1/projects".to_string(),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(list.status(), StatusCode::OK);
+        let list_body = response_text(list).await;
+        let list: serde_json::Value = serde_json::from_str(&list_body).unwrap();
+        assert_eq!(list["legacyUnscopedAvailable"], true);
+        assert_eq!(list["projects"].as_array().unwrap().len(), 1);
+        assert!(!list_body.contains("chat_legacy_ownerless"));
+        assert!(!list_body.contains(&legacy_note_id));
+        assert!(!list_body.contains("legacy-ownerless-run"));
+        assert!(!list_body.contains(project_root.to_str().unwrap()));
+
+        for resource in ["chats", "project-memory", "agent-progress"] {
+            let response = project_request(
+                state.clone(),
+                "GET",
+                format!("/p/{}/v1/{resource}", project.project_id),
+                "",
+                true,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK, "{resource}");
+            let body = response_text(response).await;
+            assert!(!body.contains("chat_legacy_ownerless"), "{resource}");
+            assert!(!body.contains(&legacy_note_id), "{resource}");
+            assert!(!body.contains("legacy-ownerless-run"), "{resource}");
+        }
+
+        let archived = state
+            .project_registry_runtime
+            .archive(&project.project_id, &project.revision)
+            .await
+            .unwrap();
+        state
+            .project_registry_runtime
+            .restore(&project.project_id, &archived.revision)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&legacy_chat_path).unwrap(), chat_before);
+        assert_eq!(std::fs::read(&legacy_memory_path).unwrap(), memory_before);
+        let legacy_chat = project_request(
+            state.clone(),
+            "GET",
+            "/v1/chats/chat_legacy_ownerless".to_string(),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(legacy_chat.status(), StatusCode::OK);
+        let legacy_memory = project_request(
+            state,
+            "GET",
+            format!("/v1/project-memory/{legacy_note_id}"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(legacy_memory.status(), StatusCode::OK);
+        let _ = std::fs::remove_dir_all(project_root.parent().unwrap());
+    }
+
+    #[tokio::test]
     async fn project_scoped_routes_resolve_context_without_using_legacy_storage() {
         let (state, project_id, root) = project_test_state().await;
         let unauthenticated = project_request(

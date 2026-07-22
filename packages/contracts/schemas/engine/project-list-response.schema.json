@@ -7,7 +7,7 @@
   "required": ["projects", "legacyUnscopedAvailable", "cloudRequired", "providerAccess"],
   "properties": {
     "projects": { "type": "array", "maxItems": 500, "items": { "$ref": "#/$defs/projectSummary" } },
-    "legacyUnscopedAvailable": { "type": "boolean" },
+    "legacyUnscopedAvailable": { "type": "boolean", "description": "True only when at least one isolated ownerless legacy chat, memory note, or progress run is available through compatibility APIs." },
     "cloudRequired": { "const": false },
     "providerAccess": { "const": "direct" }
   },

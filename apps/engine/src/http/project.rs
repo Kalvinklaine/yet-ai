@@ -10,6 +10,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::agent_progress;
+use crate::chat_history;
 use crate::project_memory;
 use crate::projects::{
     is_valid_project_id, ProjectContext, ProjectContextError, ProjectRegistryError, ProjectStatus,
@@ -66,7 +67,7 @@ pub(super) async fn list(_auth: Authenticated, State(state): State<AppState>) ->
     match state.project_registry_runtime.list_summaries().await {
         Ok(projects) => Json(ProjectListResponse {
             projects: projects.into_iter().take(500).collect(),
-            legacy_unscoped_available: legacy_unscoped_available(&state),
+            legacy_unscoped_available: legacy_unscoped_available(&state).await,
             cloud_required: false,
             provider_access: "direct",
         })
@@ -75,14 +76,18 @@ pub(super) async fn list(_auth: Authenticated, State(state): State<AppState>) ->
     }
 }
 
-fn legacy_unscoped_available(state: &AppState) -> bool {
-    [
-        state.storage_paths.config_dir.join("chat-history"),
-        state.storage_paths.config_dir.join("project-memory"),
-        state.storage_paths.cache_dir.join("agent-progress"),
-    ]
-    .into_iter()
-    .any(|path| path.is_dir())
+async fn legacy_unscoped_available(state: &AppState) -> bool {
+    let memory_root = state.storage_paths.config_dir.join("project-memory");
+    let chats = chat_history::list_threads(&state.storage_paths.config_dir);
+    let memory = project_memory::list(&memory_root);
+    let progress = agent_progress::load_progress_with_runtime(
+        &state.storage_paths.cache_dir,
+        &state.agent_progress_runtime,
+    );
+    let (chats, memory, progress) = tokio::join!(chats, memory, progress);
+    chats.is_ok_and(|response| !response.chats.is_empty())
+        || memory.is_ok_and(|response| !response.notes.is_empty())
+        || progress.is_ok_and(|response| !response.snapshots.is_empty())
 }
 
 pub(super) async fn get(
