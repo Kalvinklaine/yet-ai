@@ -23,6 +23,7 @@ let stdout = "";
 let stderr = "";
 const browserFailures = [];
 const browserPages = [];
+const browserNetworkLog = [];
 
 try {
   await requirePrerequisites();
@@ -114,15 +115,59 @@ try {
 
   await pageA.goto(`${baseUrl}/p/${projectA.projectId}/chat/${chatA.chatId}`);
   await expectText(pageA, chatA.chatId);
+  const alphaCommandMarker = "alpha-in-flight-only";
+  const alphaPendingLabels = [
+    "Sending your message through the local runtime",
+    "Message accepted; opening the response stream",
+    "Connecting to the local response stream",
+    "Assistant is responding",
+    "Assistant is streaming",
+  ];
+  const commandPath = `/p/${projectA.projectId}/v1/chats/${chatA.chatId}/commands`;
+  const subscribePath = `/p/${projectA.projectId}/v1/chats/subscribe`;
+  const commandAccepted = waitForSuccessfulResponse(pageA, commandPath, "project A chat command");
+  const sseAccepted = waitForSuccessfulResponse(pageA, subscribePath, "project A SSE subscription", "text/event-stream");
   const composer = pageA.locator('[data-testid="chat-composer"] textarea');
-  await composer.fill("alpha-in-flight-only");
+  await composer.fill(alphaCommandMarker);
   await pageA.getByRole("button", { name: "Send", exact: true }).click();
+  await Promise.all([commandAccepted, sseAccepted]);
+  await expectText(pageA, "Assistant is responding");
+  assert((await pageA.locator("body").innerText()).includes(alphaCommandMarker), "Accepted project A command was not visible before the route switch.");
   await pageA.goto(`${baseUrl}/p/${projectB.projectId}/chat/${chatB.chatId}`);
+  await expectText(pageA, "Beta safe label");
   await expectText(pageA, chatB.chatId);
-  await pageA.waitForTimeout(700);
-  const switchedText = await pageA.locator("body").innerText();
-  assert(!switchedText.includes("alpha-in-flight-only"), "Project A command or SSE result mutated project B after navigation.");
-  assert(!switchedText.includes("alpha-memory-only"), "Project switch retained attached project A memory state.");
+  assert(pageA.url() === `${baseUrl}/p/${projectB.projectId}/chat/${chatB.chatId}`, "Same-tab switch did not retain the project B chat route.");
+  const forbiddenInB = [
+    alphaCommandMarker,
+    chatA.chatId,
+    projectA.projectId,
+    "Alpha safe label",
+    "alpha-memory-only",
+    "alpha-progress-only",
+    projectARoot,
+    token,
+    ...alphaPendingLabels,
+  ];
+  await assertPageExcludes(pageA, forbiddenInB, "Project B immediately after switching from active project A work");
+  const aTerminal = await waitForChatTerminalEvent(port, projectA.projectId, chatA.chatId);
+  assert(["abort", "stop"].includes(aTerminal.payload?.finishReason), `Project A route-switch terminal event was invalid: ${JSON.stringify(aTerminal)}`);
+  assert(browserNetworkLog.some((entry) => entry.includes(`request-failed GET ${subscribePath}`) && entry.includes("ERR_ABORTED")), "Project A browser SSE subscription was not retired during navigation.");
+  await pageA.waitForTimeout(200);
+  await assertPageExcludes(pageA, forbiddenInB, "Project B after project A terminal/abort timing");
+  await assertPageExcludes(pageB, forbiddenInB, "independent project B tab after project A terminal/abort timing");
+
+  const aThread = JSON.stringify(await api("GET", `/p/${projectA.projectId}/v1/chats/${chatA.chatId}`));
+  const bThread = JSON.stringify(await api("GET", `/p/${projectB.projectId}/v1/chats/${chatB.chatId}`));
+  assert(aThread.includes(alphaCommandMarker), "Project A API did not retain its accepted user command after route-switch retirement.");
+  if (aTerminal.payload?.finishReason === "stop") {
+    assert(aThread.includes("Hello from Yet AI Demo Mode"), "Completed project A terminal result was missing from project A history.");
+  }
+  assert(!bThread.includes(alphaCommandMarker) && !bThread.includes(chatA.chatId), "Project B API received project A chat history after route switching.");
+  await pageA.goto(`${baseUrl}/p/${projectA.projectId}/chat/${chatA.chatId}`);
+  await expectText(pageA, "Alpha safe label");
+  await expectText(pageA, alphaCommandMarker);
+  const returnedAEvidence = `${await pageA.content()}\n${await pageA.locator("body").innerText()}`;
+  assert(!returnedAEvidence.includes("beta-memory-only") && !returnedAEvidence.includes("beta-progress-only") && !returnedAEvidence.includes(chatB.chatId), "Returning to project A exposed project B state.");
 
   await pageA.goto(`${baseUrl}/projects/legacy`);
   await expectText(pageA, "Legacy");
@@ -152,6 +197,7 @@ try {
   console.log("Verified loopback-only execution and absence of project roots or auth material from browser-visible and engine-log evidence.");
 } catch (error) {
   console.error(redact(error instanceof Error ? error.message : String(error)));
+  if (browserNetworkLog.length > 0) console.error(`Browser request/SSE log:\n${redact(browserNetworkLog.join("\n"))}`);
   const tail = redact([stdout.trim(), stderr.trim()].filter(Boolean).join("\n"));
   if (tail) console.error(`Engine output tail:\n${tail}`);
   process.exitCode = 1;
@@ -262,8 +308,79 @@ async function createPage(context, baseUrl) {
     if ((url.protocol === "http:" || url.protocol === "https:") && !["127.0.0.1", "localhost", "::1"].includes(url.hostname)) {
       browserFailures.push(`non-loopback request: ${request.url()}`);
     }
+    if (isChatDiagnosticRequest(url.pathname)) browserNetworkLog.push(`request ${request.method()} ${url.pathname}`);
+  });
+  page.on("response", (response) => {
+    const url = new URL(response.url());
+    if (isChatDiagnosticRequest(url.pathname)) browserNetworkLog.push(`response ${response.status()} ${url.pathname} ${response.headers()["content-type"] ?? "no-content-type"}`);
+  });
+  page.on("requestfailed", (request) => {
+    const url = new URL(request.url());
+    if (isChatDiagnosticRequest(url.pathname)) browserNetworkLog.push(`request-failed ${request.method()} ${url.pathname} ${request.failure()?.errorText ?? "unknown"}`);
   });
   return page;
+}
+
+function isChatDiagnosticRequest(pathname) {
+  return pathname.includes("/chats/") && (pathname.endsWith("/commands") || pathname.endsWith("/subscribe"));
+}
+
+async function waitForSuccessfulResponse(page, pathname, label, expectedContentType) {
+  const response = await page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return url.pathname === pathname;
+  }, { timeout: timeoutMs });
+  assert(response.ok(), `${label} returned HTTP ${response.status()}.`);
+  if (expectedContentType) {
+    assert((response.headers()["content-type"] ?? "").includes(expectedContentType), `${label} did not return ${expectedContentType}.`);
+  }
+  return response;
+}
+
+async function waitForChatTerminalEvent(port, projectId, chatId) {
+  const pathname = `/p/${projectId}/v1/chats/subscribe?chat_id=${encodeURIComponent(chatId)}`;
+  browserNetworkLog.push(`probe GET ${pathname.split("?", 1)[0]}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}${pathname}`, {
+      headers: { Authorization: `Bearer ${token}`, Accept: "text/event-stream" },
+      signal: controller.signal,
+    });
+    browserNetworkLog.push(`probe-response ${response.status} ${pathname.split("?", 1)[0]} ${response.headers.get("content-type") ?? "no-content-type"}`);
+    assert(response.ok && response.body, `Project A terminal SSE probe returned HTTP ${response.status}.`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      for (const frame of buffer.split(/\r?\n\r?\n/).slice(0, -1)) {
+        const data = frame.split(/\r?\n/).find((line) => line.startsWith("data:"));
+        if (!data) continue;
+        const event = JSON.parse(data.slice(5).trim());
+        if (event.type === "stream_finished" && event.chatId === chatId) {
+          browserNetworkLog.push(`probe-event stream_finished ${event.payload?.finishReason ?? "unknown"} ${chatId}`);
+          await reader.cancel();
+          return event;
+        }
+      }
+      buffer = buffer.split(/\r?\n\r?\n/).at(-1) ?? "";
+    }
+    throw new Error("Project A terminal SSE probe ended before stream_finished.");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function assertPageExcludes(page, forbiddenValues, label) {
+  const html = await page.content();
+  const body = await page.locator("body").innerText();
+  for (const value of forbiddenValues) {
+    assert(!html.includes(value), `${label} HTML contained forbidden project A evidence ${JSON.stringify(value)}.`);
+    assert(!body.includes(value), `${label} body contained forbidden project A evidence ${JSON.stringify(value)}.`);
+  }
 }
 
 async function verifyBrowserPrivacy(context, pages, privateValues) {

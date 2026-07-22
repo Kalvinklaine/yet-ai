@@ -1428,7 +1428,7 @@ async fn demo_stream(
         {
             break;
         }
-        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     Ok(response)
 }
