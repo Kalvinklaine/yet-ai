@@ -16,6 +16,9 @@ let hubSettings: RuntimeSettings | undefined;
 vi.mock("./components/ProjectHub", () => ({
   ProjectHub: ({ settings }: { settings: RuntimeSettings }) => { hubSettings = settings; return <div>Projects</div>; },
 }));
+vi.mock("./components/LegacyData", () => ({
+  LegacyData: () => <div data-testid="legacy-data">legacy</div>,
+}));
 
 let root: ReactDOM.Root | undefined;
 
@@ -71,7 +74,7 @@ describe("ProjectRouterShell", () => {
       root = ReactDOM.createRoot(container);
       root.render(<ProjectRouterShell />);
     });
-    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("legacy");
+    expect(container.querySelector("[data-testid='legacy-data']")?.textContent).toBe("legacy");
 
     act(() => navigateProjectRoute(window, { kind: "settings" }));
 

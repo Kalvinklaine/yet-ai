@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { App } from "./App";
 import { ProjectHub } from "./components/ProjectHub";
 import { ProjectShell } from "./components/ProjectShell";
+import { LegacyData } from "./components/LegacyData";
 import { ProjectLink, navigateProjectRoute, parseProjectRoute, subscribeToProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
 import { useLiveRuntimeSettings } from "./services/useLiveRuntimeSettings";
 
@@ -25,8 +26,9 @@ export function ProjectRouterShell() {
     return <ProjectHub settings={settings} navigate={navigate} />;
   }
   if (route.kind === "project") {
-    return <ProjectShell route={route} settings={settings} navigate={navigate}>{route.page === "home" ? null : <App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />}</ProjectShell>;
+    return <ProjectShell route={route} settings={settings} navigate={navigate}>{route.page === "home" ? null : <App route={route} navigate={navigate} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />}</ProjectShell>;
   }
+  if (route.kind === "legacy") return <LegacyData settings={settings} navigate={navigate} />;
   return <App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
 }
 

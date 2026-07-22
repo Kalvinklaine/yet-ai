@@ -455,8 +455,8 @@ export function deleteChat(settings: ChatRuntimeSettings, chatId: string): Promi
   });
 }
 
-export function getAgentProgress(settings: RuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<AgentProgressListResponse>> {
-  return runtimeFetch<AgentProgressListResponse>(settings, "/v1/agent-progress", { signal });
+export function getAgentProgress(settings: ChatRuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<AgentProgressListResponse>> {
+  return runtimeFetch<AgentProgressListResponse>(settings, chatApiPath(settings, "/agent-progress"), { signal });
 }
 
 export function sendUserMessage(

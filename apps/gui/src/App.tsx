@@ -24,7 +24,7 @@ import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatus
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatRuntimeSettings, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { createProjectRuntimeSettings } from "./services/projectClient";
-import { buildProjectRoute, type AppRoute } from "./services/projectRouting";
+import { buildProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
 import { ProjectScopeController, createProjectScopeCorrelation, type ProjectScopeCorrelation, type ProjectScopeResetters } from "./services/projectScope";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
@@ -399,9 +399,12 @@ export function generateApplyRequestSessionNonce(): string {
   return `s${hex}`;
 }
 
-export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter }) {
+export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; navigate?: ProjectNavigation; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter }) {
   const projectId = route.kind === "project" ? route.projectId : undefined;
   const projectPage = route.kind === "project" ? route.page : undefined;
+  const showChatPage = projectPage === undefined || projectPage === "chat";
+  const showMemoryPage = projectPage === "memory";
+  const showAgentPage = projectPage === "agent";
   const routedChatId = route.kind === "project" && route.page === "chat" ? route.chatId : undefined;
   const initialChatId = routedChatId ?? "chat-001";
   const projectScopeControllerRef = useRef<ProjectScopeController>();
@@ -2238,6 +2241,7 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
       setChatHistoryRevision(targetRevision);
       setCompactConversationsOpen(false);
       setChatId(result.data.chatId);
+      if (projectId) navigate?.({ kind: "project", projectId, page: "chat", chatId: result.data.chatId });
       setConversationNotice(`Created and selected ${sanitizeDisplayText(result.data.title || result.data.chatId)}.`);
       setChatView(hydrateChatViewFromThread(resetChatViewState(result.data.chatId), result.data));
       setTimeline([]);
@@ -2257,7 +2261,7 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
       setChatHistoryRevision(targetRevision);
     }
     setChatHistoryLoading(false);
-  }, [abortActiveStream, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, isCurrentRefresh]);
+  }, [abortActiveStream, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, isCurrentRefresh, navigate, projectId]);
 
   const selectChat = useCallback((nextChatId: string) => {
     setCompactConversationsOpen(false);
@@ -2275,11 +2279,12 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
     clearExplicitContextBundle(null);
     setAttachedContextAcknowledged(false);
     setChatId(nextChatId);
+    if (projectId) navigate?.({ kind: "project", projectId, page: "chat", chatId: nextChatId });
     const selectedSummary = chatSummaries.find((summary) => summary.chatId === nextChatId);
     setConversationNotice(`Switched to ${sanitizeDisplayText(selectedSummary?.title || nextChatId)}.`);
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
-  }, [abortActiveStream, chatSummaries, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, loadChatThread]);
+  }, [abortActiveStream, chatSummaries, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, loadChatThread, navigate, projectId]);
 
   useEffect(() => {
     if (!routedChatId || routedChatId === chatIdRef.current) {
@@ -2349,6 +2354,7 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
         const fallbackSummary = fallback.remainingSummaries.find((summary) => summary.chatId === fallback.nextChatId);
         setConversationNotice(fallbackSummary ? `Deleted ${targetTitle}. Selected ${sanitizeDisplayText(fallbackSummary.title || fallback.nextChatId)}.` : `Deleted ${targetTitle}. No saved conversations remain; showing a fresh local chat.`);
         setChatId(fallback.nextChatId);
+        if (projectId) navigate?.({ kind: "project", projectId, page: "chat", ...(fallback.remainingSummaries.length > 0 ? { chatId: fallback.nextChatId } : {}) });
         setChatView(resetChatViewState(fallback.nextChatId));
         setChatInput("");
         setTimeline([]);
@@ -2368,7 +2374,7 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
     }
     setDeletingChatId(null);
     setChatHistoryLoading(false);
-  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
+  }, [abortActiveStream, chatSummaries, clearEditProposalState, clearIdeActionState, isCurrentRefresh, navigate, projectId]);
   const connect = useCallback(async (requestHostRefresh = false) => {
     if (bridgeHost !== "browser" && !hostReadyAppliedRef.current && runtimeConnectionSource !== "manual") {
       if (requestHostRefresh && bridgeHost === "jetbrains") {
@@ -3360,6 +3366,10 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
   }, [refreshProjectMemory, runtimeConnected, settingsRevision]);
 
   useEffect(() => {
+    if (showAgentPage && runtimeConnected) void refreshAgentProgress();
+  }, [refreshAgentProgress, runtimeConnected, settingsRevision, showAgentPage]);
+
+  useEffect(() => {
     if (ideActionProposalReview.state !== "valid") {
       if (ideActionProposalReview.state === "rejected") {
         appendTrace({ family: "ide.result", title: "IDE action proposal rejected", status: "rejected", summary: ideActionProposalReview.diagnostic.message, details: { sourceMessageId: ideActionProposalReview.sourceMessageId, reason: ideActionProposalReview.diagnostic.reasonCode } });
@@ -3823,6 +3833,11 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
         {controlledHostCapabilities && controlledHostCapabilityMatrix.reasonLabels.length > 0 && <span className="subtle">Reason labels: {controlledHostCapabilityMatrix.reasonLabels.join(" · ")}.</span>}
       </section>}
 
+      {projectPage && <section className="readiness-card ready" role="status" data-testid={`project-${projectPage}-boundary`}><strong>Project {projectPage}</strong><span>All {projectPage} data below is bound to the current route project.</span></section>}
+
+      {showMemoryPage && <section className="card stack" aria-label="Project memory page"><ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} /></section>}
+
+      <div hidden={!showChatPage}>
       <CodingSessionTracePanel entries={tracePanelEntries} />
 
       <section className="card stack chat-primary-card">
@@ -4027,6 +4042,7 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
           </section>
         </div>
       </section>
+      </div>
 
 
       <section className="card stack secondary-card runtime-card">
@@ -4080,7 +4096,7 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
         </details>
       </section>
 
-      <section className="card stack secondary-card agent-progress-card" aria-label="Agent progress">
+      {(showAgentPage || projectPage === undefined) && <section className="card stack secondary-card agent-progress-card" aria-label="Agent progress">
         <details className="debug-details" data-testid="agent-progress-details">
           <summary><h2>Agent progress</h2></summary>
         <div className="row">
@@ -4089,9 +4105,9 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
         <p className="subtle">Read-only local observability only. This panel does not start agents, run tools, merge git, edit files, execute shell, call providers, or mutate the workspace.</p>
         <AgentProgressPanel progress={agentProgress} />
         </details>
-      </section>
+      </section>}
 
-      <section ref={providerSetupCardRef} className={`card stack secondary-card provider-setup-card${providerSetupHighlight ? " provider-setup-card-highlight" : ""}`}>
+      {projectPage === undefined && <section ref={providerSetupCardRef} className={`card stack secondary-card provider-setup-card${providerSetupHighlight ? " provider-setup-card-highlight" : ""}`}>
         <details className="debug-details provider-setup-details" data-testid="provider-setup-details" open={providerDetailsOpen} onToggle={(event) => setProviderDetailsOpen(event.currentTarget.open)}>
           <summary><h2>Provider setup</h2><span className="subtle">BYOK, local, demo, login</span></summary>
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
@@ -4247,7 +4263,7 @@ export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSett
           </div>
         </div>
         </details>
-      </section>
+      </section>}
 
 
       <section className="card stack secondary-card debug-card">
