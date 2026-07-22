@@ -27,6 +27,7 @@ pub struct ChatRuntime {
 struct ChatState {
     events: Vec<ChatEvent>,
     terminal_replay: TerminalReplayRetention,
+    known_terminal_append_failure: bool,
     next_seq: u64,
     sender: broadcast::Sender<ChatEvent>,
     active_stream: Option<ActiveStream>,
@@ -316,13 +317,18 @@ impl ChatRuntime {
     ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
         let runtime_key = runtime_key(scope, &chat_id);
         let (snapshot, replay, receiver) = {
-            let snapshot = self
+            let mut snapshot = self
                 .snapshot_event(&runtime_key, &history_root, &chat_id)
                 .await;
             let mut guard = self.inner.lock().await;
             let state = guard
                 .entry(runtime_key)
                 .or_insert_with(|| ChatState::new(&chat_id));
+            if snapshot.event_type == "error"
+                && (state.known_terminal_append_failure || state.active_stream.is_some())
+            {
+                snapshot = snapshot_event(&chat_id, None);
+            }
             let replay = state.replay_events_for_subscriber();
             (snapshot, replay, state.sender.subscribe())
         };
@@ -413,6 +419,7 @@ impl ChatRuntime {
             .entry(runtime_key.to_string())
             .or_insert_with(|| ChatState::new(chat_id));
         state.push_event(chat_id, event_type, payload);
+        state.known_terminal_append_failure = false;
         state.mark_terminal_replay_persisted();
     }
 
@@ -557,8 +564,12 @@ impl ChatRuntime {
             self.push_persisted_terminal_event(runtime_key, chat_id, terminal.0, terminal.1)
                 .await;
         } else {
-            self.push_terminal_event(runtime_key, chat_id, terminal.0, terminal.1)
-                .await;
+            let mut guard = self.inner.lock().await;
+            let state = guard
+                .entry(runtime_key.to_string())
+                .or_insert_with(|| ChatState::new(chat_id));
+            state.known_terminal_append_failure = true;
+            state.push_event(chat_id, terminal.0, terminal.1);
         }
         true
     }
@@ -1253,6 +1264,7 @@ impl ChatState {
         Self {
             events: Vec::new(),
             terminal_replay: TerminalReplayRetention::ActiveOrUnpersisted,
+            known_terminal_append_failure: false,
             next_seq: 1,
             sender,
             active_stream: None,
