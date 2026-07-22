@@ -14,6 +14,7 @@ const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-wrapper-browser");
 const bridgeVersion = "2026-05-15";
 const hostedChatPath = "/vscode/hosted-chat";
+const devWrapperPath = "/vscode-wrapper-dev-test";
 const headed = process.argv.includes("--headed");
 const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
 const runtimeToken = `vscode-wrapper-runtime-${randomUUID()}`;
@@ -155,6 +156,12 @@ try {
       },
     });
   });
+
+  await page.goto(`${guiBaseUrl}${devWrapperPath}`, { waitUntil: "domcontentloaded" });
+  const devFrame = page.frameLocator("iframe");
+  await devFrame.getByText("Chat readiness", { exact: false }).first().waitFor({ state: "attached", timeout: 10_000 });
+  const devHostedEntry = await devFrame.locator("body").evaluate(() => ({ pathname: window.location.pathname, entryMode: window.__yetAiInitialRuntimeConfig?.entryMode }));
+  if (devHostedEntry.pathname !== hostedChatPath || devHostedEntry.entryMode !== "hosted_chat") failures.push("VS Code dev iframe did not complete the wrapper-owned hosted bootstrap before GUI routing.");
 
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const hostedEntry = await page.evaluate(() => ({ pathname: window.location.pathname, entryMode: window.__yetAiInitialRuntimeConfig?.entryMode }));
@@ -1219,8 +1226,16 @@ async function startStaticServer(staticRoot) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
     let pathname;
+    let hasDevBootstrap = false;
     try {
       const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+      if (requestUrl.pathname === devWrapperPath) {
+        const token = "vscodeWrapperDevBootstrapToken01";
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+        response.end(`<!doctype html><iframe src="${hostedChatPath}?yetAiHostedBootstrap=${token}"></iframe><script>const token=${JSON.stringify(token)};addEventListener("message",event=>{if(event.source===document.querySelector("iframe").contentWindow&&event.data?.type==="yet-ai.hosted-bootstrap.request"&&event.data.token===token)event.source.postMessage({type:"yet-ai.hosted-bootstrap",token,entryMode:"hosted_chat"},location.origin);});</script>`);
+        return;
+      }
+      hasDevBootstrap = requestUrl.searchParams.has("yetAiHostedBootstrap");
       pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
     } catch {
       response.writeHead(400).end("Bad request");
@@ -1235,7 +1250,8 @@ async function startStaticServer(staticRoot) {
       if (hostedEntry) {
         const chunks = [];
         for await (const chunk of createReadStream(realRequestedPath)) chunks.push(chunk);
-        const html = Buffer.concat(chunks).toString("utf8").replace("<head>", '<head><base href="/"><script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat"};</script>');
+        const bootstrapScript = hasDevBootstrap ? "" : '<script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat"};</script>';
+        const html = Buffer.concat(chunks).toString("utf8").replace("<head>", `<head><base href="/">${bootstrapScript}`);
         response.end(html);
       } else {
         createReadStream(realRequestedPath).pipe(response);

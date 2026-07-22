@@ -947,9 +947,10 @@ for (const guiDevUrl of httpsLoopbackGuiDevUrls) {
 
   assertNoSecretSentinels(httpsGuiDevHtml, fakeSecretValues, label);
 
-  const expectedIframe = `<iframe title="Yet AI Test GUI" src="${guiDevUrl}/vscode/hosted-chat"></iframe>`;
-  if (!httpsGuiDevHtml.includes(expectedIframe)) {
-    throw new Error(`${label} missing exact iframe src: ${expectedIframe}`);
+  const escapedGuiDevUrl = guiDevUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const expectedIframe = new RegExp(`<iframe title="Yet AI Test GUI" src="${escapedGuiDevUrl}/vscode/hosted-chat\\?yetAiHostedBootstrap=[A-Za-z0-9_-]{32}"></iframe>`);
+  if (!expectedIframe.test(httpsGuiDevHtml)) {
+    throw new Error(`${label} missing authenticated hosted iframe src.`);
   }
 
   if (!httpsLoopbackFrameSourcePattern.test(httpsGuiDevHtml)) {

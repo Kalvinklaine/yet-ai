@@ -85,7 +85,10 @@ function assertHostedChatBootstrapPrecedesPackagedGui(webview: typeof import("./
     } as never,
     { runtimeUrl: "http://127.0.0.1:8001", guiDevUrl: "http://127.0.0.1:5173" } as never,
   );
-  assert.equal(devHtml.includes('src="http://127.0.0.1:5173/vscode/hosted-chat"'), true);
+  assert.match(devHtml, /src="http:\/\/127\.0\.0\.1:5173\/vscode\/hosted-chat\?yetAiHostedBootstrap=[A-Za-z0-9_-]{32}"/);
+  assert.equal(devHtml.includes('type: "yet-ai.hosted-bootstrap", token: bootstrap.guiDevBootstrapToken, entryMode: "hosted_chat"'), true);
+  assert.equal(devHtml.includes('event.data.type === "yet-ai.hosted-bootstrap.request" && event.data.token === hostedBootstrapMessage.token'), true);
+  assert.equal(devHtml.includes('postMessage(message, "*")'), false);
 }
 
 function assertHostReadyIncludesMetadataOnlyCapabilities(webview: typeof import("./webview")): void {

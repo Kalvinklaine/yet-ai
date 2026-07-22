@@ -1670,6 +1670,7 @@ export function renderWebviewHtml(
     ? getLoopbackOrigin(connection.guiDevUrl, `${configurationPrefix}.guiDevUrl`)
     : undefined;
   const packagedGui = connection.guiDevUrl ? undefined : findPackagedGui(extensionUri);
+  const guiDevBootstrapToken = connection.guiDevUrl ? createNonce() : undefined;
   const bootstrap = serializeScriptJson({
     bridgeVersion,
     requestId: createRequestId(),
@@ -1678,9 +1679,10 @@ export function renderWebviewHtml(
     runtimeUrl: connection.runtimeUrl,
     cloudRequired: false,
     guiDevOrigin,
+    guiDevBootstrapToken,
   });
   const frameSource = connection.guiDevUrl
-    ? `<iframe title="${escapeHtml(identity.vscode.displayName)} GUI" src="${escapeHtml(vscodeHostedChatUrl(connection.guiDevUrl))}"></iframe>`
+    ? `<iframe title="${escapeHtml(identity.vscode.displayName)} GUI" src="${escapeHtml(vscodeHostedChatUrl(connection.guiDevUrl, guiDevBootstrapToken!))}"></iframe>`
     : "";
   const placeholder = connection.guiDevUrl || packagedGui ? "" : `<main><h1>${escapeHtml(identity.vscode.displayName)}</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${escapeHtml(connection.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> and <code>cd apps/plugins/vscode && npm run copy:gui</code> to package the GUI, or set <code>yetai.guiDevUrl</code> to a loopback Vite dev server during development.</p></main>`;
   const packagedGuiHtml = packagedGui ? rewritePackagedGuiHtml(packagedGui.html, packagedGui.root, webview) : "";
@@ -1710,6 +1712,7 @@ const bootstrap = ${bootstrap};
 window.yetAiBootstrap = bootstrap;
 const frame = document.querySelector("iframe");
 const frameTargetOrigin = bootstrap.guiDevOrigin;
+const hostedBootstrapMessage = bootstrap.guiDevBootstrapToken ? { type: "yet-ai.hosted-bootstrap", token: bootstrap.guiDevBootstrapToken, entryMode: "hosted_chat" } : undefined;
 const maxForwardedApplyWorkspaceEditMessageBytes = ${maxForwardedApplyWorkspaceEditMessageBytes};
 const maxForwardedIdeActionMessageBytes = ${maxForwardedIdeActionMessageBytes};
 const maxForwardedControlledFileReadMessageBytes = ${maxForwardedControlledFileReadMessageBytes};
@@ -1849,7 +1852,9 @@ window.addEventListener("message", (event) => {
       console.log("Yet AI rejected iframe message from unexpected origin");
       return;
     }
-    if (isFrameGuiMessage(event.data)) {
+    if (hostedBootstrapMessage && isPlainObject(event.data) && Object.keys(event.data).every((key) => key === "type" || key === "token") && event.data.type === "yet-ai.hosted-bootstrap.request" && event.data.token === hostedBootstrapMessage.token) {
+      sendToFrame(hostedBootstrapMessage);
+    } else if (isFrameGuiMessage(event.data)) {
       if (event.data.type === "gui.ready") {
         frameReady = true;
         frameReadyRequestId = event.data.requestId;
@@ -1882,9 +1887,12 @@ window.addEventListener("message", (event) => {
 </html>`;
 }
 
-function vscodeHostedChatUrl(guiDevUrl: string): string {
+function vscodeHostedChatUrl(guiDevUrl: string, bootstrapToken: string): string {
   const url = new URL(guiDevUrl);
   url.pathname = vscodeHostedChatPath;
+  url.search = "";
+  url.searchParams.set("yetAiHostedBootstrap", bootstrapToken);
+  url.hash = "";
   return url.toString();
 }
 
