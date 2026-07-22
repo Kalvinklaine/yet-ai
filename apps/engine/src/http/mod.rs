@@ -27,6 +27,8 @@ use crate::providers;
 use crate::security::{Authenticated, RuntimeCaller, CALLER_HEADER_NAME};
 use crate::AppState;
 
+mod project;
+
 const V1_BODY_LIMIT_BYTES: usize = 256 * 1024;
 const WEB_UI_BOOTSTRAP: &str = r#"<script>window.__yetAiInitialRuntimeConfig={runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"/",runtimeProxyBaseUrl:"/"};</script>"#;
 const WEB_UI_DIST_DIR_ENV: &str = "YET_AI_WEB_UI_DIST_DIR";
@@ -35,8 +37,25 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(web_ui_index))
         .route("/index.html", get(web_ui_index))
+        .route("/projects", get(web_ui_index))
+        .route("/projects/legacy", get(web_ui_index))
+        .route("/settings", get(web_ui_index))
+        .route("/p/:project_id/", get(web_ui_project_index))
+        .route("/p/:project_id/chat", get(web_ui_project_index))
+        .route(
+            "/p/:project_id/chat/:chat_id",
+            get(web_ui_project_chat_index),
+        )
+        .route("/p/:project_id/memory", get(web_ui_project_index))
+        .route("/p/:project_id/agent", get(web_ui_project_index))
         .route("/_yet_ai/browser-session", get(browser_session))
         .route("/assets/*asset_path", get(web_ui_asset))
+        .nest(
+            "/p/:project_id/v1",
+            project::scoped_router()
+                .layer(DefaultBodyLimit::max(V1_BODY_LIMIT_BYTES))
+                .layer(from_fn(request_summary_middleware)),
+        )
         .nest(
             "/v1",
             Router::new()
@@ -62,6 +81,13 @@ pub fn router(state: AppState) -> Router {
                     post(provider_auth_disconnect),
                 )
                 .route("/models", get(models_list))
+                .route("/projects", get(project::list))
+                .route(
+                    "/projects/:project_id",
+                    get(project::get).patch(project::update),
+                )
+                .route("/projects/:project_id/archive", post(project::archive))
+                .route("/projects/:project_id/restore", post(project::restore))
                 .route("/agent-progress", get(agent_progress_list))
                 .route("/agent-progress/events", post(agent_progress_event))
                 .route(
@@ -100,13 +126,54 @@ async fn web_ui_index(State(state): State<AppState>, headers: HeaderMap) -> Resp
         return StatusCode::NOT_FOUND.into_response();
     }
     match tokio::fs::read_to_string(web_ui_dist_dir().join("index.html")).await {
-        Ok(index_html) => match inject_web_ui_bootstrap(&index_html) {
+        Ok(index_html) => match inject_web_ui_bootstrap(&index_html, None) {
             Ok(html) => html_response(html, &state),
             Err(message) => web_ui_unavailable(message),
         },
         Err(error) => web_ui_unavailable(format!(
             "Built Web UI is missing at {}. Run `npm --prefix apps/gui run build` or set {WEB_UI_DIST_DIR_ENV} to a built GUI dist directory. ({error})",
             web_ui_dist_dir().join("index.html").display()
+        )),
+    }
+}
+
+async fn web_ui_project_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(project_id): Path<String>,
+) -> Response {
+    web_ui_project_response(state, headers, project_id).await
+}
+
+async fn web_ui_project_chat_index(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((project_id, chat_id)): Path<(String, String)>,
+) -> Response {
+    if chat_history::validate_chat_id(&chat_id).is_err() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    web_ui_project_response(state, headers, project_id).await
+}
+
+async fn web_ui_project_response(
+    state: AppState,
+    headers: HeaderMap,
+    project_id: String,
+) -> Response {
+    if !web_ui_request_uses_loopback_host(&headers) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if project::public_summary(&state, &project_id).await.is_err() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    match tokio::fs::read_to_string(web_ui_dist_dir().join("index.html")).await {
+        Ok(index_html) => match inject_web_ui_bootstrap(&index_html, Some(&project_id)) {
+            Ok(html) => html_response(html, &state),
+            Err(message) => web_ui_unavailable(message),
+        },
+        Err(error) => web_ui_unavailable(format!(
+            "Built Web UI is missing. Run `npm --prefix apps/gui run build` or set {WEB_UI_DIST_DIR_ENV}. ({error})"
         )),
     }
 }
@@ -186,13 +253,19 @@ fn valid_port(port: &str) -> bool {
     !port.is_empty() && port.chars().all(|value| value.is_ascii_digit())
 }
 
-fn inject_web_ui_bootstrap(index_html: &str) -> Result<String, String> {
+fn inject_web_ui_bootstrap(index_html: &str, project_id: Option<&str>) -> Result<String, String> {
     let Some(script_index) = index_html.find("<script type=\"module\"") else {
         return Err("Built Web UI index.html does not contain a Vite module script.".to_string());
     };
-    let mut html = String::with_capacity(index_html.len() + WEB_UI_BOOTSTRAP.len() + 1);
+    let project_bootstrap = project_id.map(|project_id| {
+        format!(
+            r#"<script>window.__yetAiInitialRuntimeConfig={{runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"/",runtimeProxyBaseUrl:"/",projectId:"{project_id}",projectApiBase:"/p/{project_id}/v1"}};</script>"#
+        )
+    });
+    let bootstrap = project_bootstrap.as_deref().unwrap_or(WEB_UI_BOOTSTRAP);
+    let mut html = String::with_capacity(index_html.len() + bootstrap.len() + 1);
     html.push_str(&index_html[..script_index]);
-    html.push_str(WEB_UI_BOOTSTRAP);
+    html.push_str(bootstrap);
     html.push('\n');
     html.push_str(&index_html[script_index..]);
     Ok(html)
@@ -1118,7 +1191,7 @@ async fn chats_subscribe(
 }
 
 #[cfg(test)]
-mod tests {
+mod project_tests {
     use axum::body::Body;
     use axum::http::{header, Request, StatusCode};
     use axum::response::Response;
@@ -1395,6 +1468,306 @@ mod tests {
         assert!(!html.contains("test-token"));
         assert!(!html.contains("Authorization"));
         let _ = std::fs::remove_dir_all(dist);
+    }
+
+    async fn project_test_state() -> (AppState, String, PathBuf) {
+        let identity = ProductIdentity::load().unwrap();
+        let paths = temp_storage_paths();
+        let root = paths.project_dir.parent().unwrap().join(format!(
+            "private-project-root-{}",
+            TEST_DIR_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let state =
+            AppState::with_storage_paths(identity, AuthToken::new("test-token").unwrap(), paths);
+        let summary = state
+            .project_registry_runtime
+            .register(&root, Some("HTTP project"))
+            .await
+            .unwrap();
+        (state, summary.project_id, root)
+    }
+
+    async fn project_request(
+        state: AppState,
+        method: &str,
+        uri: String,
+        body: &'static str,
+        authenticated: bool,
+    ) -> Response {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if authenticated {
+            builder = builder.header(header::AUTHORIZATION, "Bearer test-token");
+        }
+        if !body.is_empty() {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+        }
+        super::router(state)
+            .oneshot(builder.body(Body::from(body)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn project_control_routes_require_auth_and_apply_revision_lifecycle() {
+        let (state, project_id, root) = project_test_state().await;
+        let unauthenticated =
+            project_request(state.clone(), "GET", "/v1/projects".to_string(), "", false).await;
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let list =
+            project_request(state.clone(), "GET", "/v1/projects".to_string(), "", true).await;
+        assert_eq!(list.status(), StatusCode::OK);
+        let list_body = response_text(list).await;
+        assert!(list_body.contains(&project_id));
+        assert!(!list_body.contains(root.to_str().unwrap()));
+
+        let detail = project_request(
+            state.clone(),
+            "GET",
+            format!("/v1/projects/{project_id}"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(detail.status(), StatusCode::OK);
+        assert!(response_text(detail).await.contains("HTTP project"));
+
+        let unknown = project_request(
+            state.clone(),
+            "GET",
+            "/v1/projects/prj_AAAAAAAAAAAAAAAAAAAAAA".to_string(),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let unknown_body = response_text(unknown).await;
+        assert!(unknown_body.contains("not_found"));
+        assert!(!unknown_body.contains("prj_AAAAAAAAAAAAAAAAAAAAAA"));
+
+        let renamed = project_request(
+            state.clone(),
+            "PATCH",
+            format!("/v1/projects/{project_id}"),
+            r#"{"displayName":"Renamed","expectedRevision":"1"}"#,
+            true,
+        )
+        .await;
+        assert_eq!(renamed.status(), StatusCode::OK);
+        let renamed_body = response_text(renamed).await;
+        assert!(renamed_body.contains("\"revision\":\"2\""));
+
+        let stale = project_request(
+            state.clone(),
+            "POST",
+            format!("/v1/projects/{project_id}/archive"),
+            r#"{"expectedRevision":"1"}"#,
+            true,
+        )
+        .await;
+        assert_eq!(stale.status(), StatusCode::BAD_REQUEST);
+        assert!(response_text(stale).await.contains("invalid_request"));
+
+        let archived = project_request(
+            state.clone(),
+            "POST",
+            format!("/v1/projects/{project_id}/archive"),
+            r#"{"expectedRevision":"2"}"#,
+            true,
+        )
+        .await;
+        assert_eq!(archived.status(), StatusCode::OK);
+        assert!(response_text(archived)
+            .await
+            .contains("\"status\":\"archived\""));
+
+        let restored = project_request(
+            state.clone(),
+            "POST",
+            format!("/v1/projects/{project_id}/restore"),
+            r#"{"expectedRevision":"3"}"#,
+            true,
+        )
+        .await;
+        assert_eq!(restored.status(), StatusCode::OK);
+        assert!(response_text(restored).await.contains("\"revision\":\"4\""));
+        assert_eq!(
+            project_request(
+                state,
+                "DELETE",
+                format!("/v1/projects/{project_id}"),
+                "",
+                true
+            )
+            .await
+            .status(),
+            StatusCode::METHOD_NOT_ALLOWED
+        );
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn project_scoped_routes_resolve_context_without_using_legacy_storage() {
+        let (state, project_id, root) = project_test_state().await;
+        let unauthenticated = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{project_id}/v1/chats"),
+            "",
+            false,
+        )
+        .await;
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+        let scoped = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{project_id}/v1/chats"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(scoped.status(), StatusCode::NOT_IMPLEMENTED);
+        assert!(!state.storage_paths.config_dir.join("chat-history").exists());
+
+        let unknown = project_request(
+            state.clone(),
+            "GET",
+            "/p/prj_AAAAAAAAAAAAAAAAAAAAAA/v1/project-memory".to_string(),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert!(!response_text(unknown)
+            .await
+            .contains(root.to_str().unwrap()));
+
+        let archived = state
+            .project_registry_runtime
+            .archive(&project_id, "1")
+            .await
+            .unwrap();
+        let archived_response = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{project_id}/v1/agent-progress"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(archived_response.status(), StatusCode::CONFLICT);
+        assert!(response_text(archived_response).await.contains("archived"));
+        state
+            .project_registry_runtime
+            .restore(&project_id, &archived.revision)
+            .await
+            .unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        let missing =
+            project_request(state, "GET", format!("/p/{project_id}/v1/chats"), "", true).await;
+        assert_eq!(missing.status(), StatusCode::CONFLICT);
+        assert!(response_text(missing).await.contains("root_missing"));
+    }
+
+    #[tokio::test]
+    async fn project_scoped_requests_keep_concurrent_contexts_independent() {
+        let (state, first_id, first_root) = project_test_state().await;
+        let second_root = first_root
+            .parent()
+            .unwrap()
+            .join("private-second-project-root");
+        std::fs::create_dir_all(&second_root).unwrap();
+        let second_id = state
+            .project_registry_runtime
+            .register(&second_root, Some("Second"))
+            .await
+            .unwrap()
+            .project_id;
+        let first = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{first_id}/v1/chats"),
+            "",
+            true,
+        );
+        let second = project_request(state, "GET", format!("/p/{second_id}/v1/chats"), "", true);
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first.status(), StatusCode::NOT_IMPLEMENTED);
+        assert_eq!(second.status(), StatusCode::NOT_IMPLEMENTED);
+        let _ = std::fs::remove_dir_all(first_root.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn project_spa_deep_links_are_allowlisted_and_html_is_private() {
+        let _guard = web_ui_test_lock().lock().await;
+        let dist = temp_web_ui_dist();
+        std::fs::write(
+            dist.join("index.html"),
+            r#"<html><body><script type="module" src="/assets/index-test.js"></script></body></html>"#,
+        )
+        .unwrap();
+        std::env::set_var(super::WEB_UI_DIST_DIR_ENV, &dist);
+        let (state, project_id, root) = project_test_state().await;
+
+        for path in ["/projects", "/projects/legacy", "/settings"] {
+            let response = super::router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::HOST, "127.0.0.1:8001")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+        }
+        for path in [
+            format!("/p/{project_id}/"),
+            format!("/p/{project_id}/chat"),
+            format!("/p/{project_id}/chat/chat_1"),
+            format!("/p/{project_id}/memory"),
+            format!("/p/{project_id}/agent"),
+        ] {
+            let response = super::router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri(&path)
+                        .header(header::HOST, "127.0.0.1:8001")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let html = response_text(response).await;
+            assert!(html.contains(&format!("projectId:\"{project_id}\"")));
+            assert!(html.contains(&format!("projectApiBase:\"/p/{project_id}/v1\"")));
+            assert!(!html.contains(root.to_str().unwrap()));
+            assert!(!html.contains("test-token"));
+        }
+        for path in [
+            "/projectz".to_string(),
+            format!("/p/{project_id}/unknown"),
+            "/p/not-a-project/chat".to_string(),
+            format!("/p/{project_id}/chat/../bad"),
+        ] {
+            let response = super::router(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .uri(&path)
+                        .header(header::HOST, "127.0.0.1:8001")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        }
+        std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
+        let _ = std::fs::remove_dir_all(dist);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
     #[tokio::test]

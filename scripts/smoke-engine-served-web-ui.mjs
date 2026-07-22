@@ -59,6 +59,7 @@ try {
   assert(html.includes('runtimeAccess:"same_origin_proxy"'), "Root HTML did not set same-origin proxy runtime access.");
   assert(!html.includes(token), "Root HTML leaked the runtime token.");
   assert(!/sessionToken|Authorization|Bearer\s+/i.test(html), "Root HTML included token-bearing runtime credentials.");
+  await verifySafeDeepLinks(port, html);
   const assetPath = firstAssetPath(html);
   assert(assetPath, "Root HTML did not reference a Vite /assets/ file.");
   const assetResponse = await fetch(`http://127.0.0.1:${port}${assetPath}`);
@@ -192,6 +193,29 @@ async function verifyRuntimeApiAuth(port, cookie) {
     });
     await unauthenticatedResponse.arrayBuffer();
     assert(unauthenticatedResponse.status === 401, `Expected unauthenticated ${runtimePath} without same-origin Web UI proof to reject with 401, got ${unauthenticatedResponse.status}.`);
+  }
+}
+
+async function verifySafeDeepLinks(port, rootHtml) {
+  for (const route of ["/projects", "/projects/legacy", "/settings"]) {
+    const response = await fetch(`http://127.0.0.1:${port}${route}`);
+    const html = await response.text();
+    assert(response.status === 200, `Expected allowlisted SPA route ${route} to return 200, got ${response.status}.`);
+    assert(html.includes("window.__yetAiInitialRuntimeConfig"), `SPA route ${route} omitted runtime config.`);
+    assert(!html.includes(token), `SPA route ${route} leaked the runtime token.`);
+    assert(!html.includes("projectApiBase"), `Global SPA route ${route} unexpectedly selected a project API.`);
+  }
+  for (const route of [
+    "/projectz",
+    "/projects/unknown",
+    "/p/not-a-project/chat",
+    "/p/prj_AAAAAAAAAAAAAAAAAAAAAA/unknown",
+  ]) {
+    const response = await fetch(`http://127.0.0.1:${port}${route}`);
+    const body = await response.text();
+    assert(response.status === 404, `Expected malformed or unknown SPA route ${route} to return 404, got ${response.status}.`);
+    assert(body !== rootHtml, `Unknown SPA route ${route} received the index fallback.`);
+    assert(!body.includes(token), `Unknown SPA route ${route} leaked the runtime token.`);
   }
 }
 
