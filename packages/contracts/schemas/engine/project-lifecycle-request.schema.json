@@ -7,6 +7,6 @@
   "additionalProperties": false,
   "required": ["expectedRevision"],
   "properties": {
-    "expectedRevision": { "type": "string", "pattern": "^(?:0|[1-9][0-9]{0,19})$" }
+    "expectedRevision": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" }
   }
 }

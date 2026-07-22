@@ -465,6 +465,7 @@ fn timestamp_now() -> String {
 
 fn validate_revision(value: &str) -> Result<u64, ProjectRegistryError> {
     if value.is_empty()
+        || value == "0"
         || value.len() > 20
         || !value.bytes().all(|byte| byte.is_ascii_digit())
         || (value.len() > 1 && value.starts_with('0'))
@@ -560,7 +561,6 @@ fn validate_registry(registry: &ProjectRegistry) -> Result<(), ProjectRegistryEr
     if registry.version != REGISTRY_VERSION
         || registry.projects.len() > REGISTRY_MAX_PROJECTS
         || validate_revision(&registry.revision).is_err()
-        || registry.revision == "0"
     {
         return Err(ProjectRegistryError::Storage);
     }
@@ -573,7 +573,6 @@ fn validate_registry(registry: &ProjectRegistry) -> Result<(), ProjectRegistryEr
             || !ids.insert(&entry.project_id)
             || !roots.insert(&entry.canonical_root)
             || validate_revision(&entry.revision).is_err()
-            || entry.revision == "0"
             || !valid_timestamp(&entry.created_at)
             || entry
                 .last_opened_at
@@ -830,7 +829,9 @@ mod tests {
         let again = runtime.register(&first, Some("Ignored")).await.unwrap();
         let two = runtime.register(&second, Some("Same")).await.unwrap();
         assert_eq!(one.project_id, again.project_id);
+        assert_eq!(one.display_name, again.display_name);
         assert_eq!(one.revision, again.revision);
+        assert_eq!(one.created_at, again.created_at);
         assert_eq!(one.last_opened_at, again.last_opened_at);
         assert_ne!(one.project_id, two.project_id);
         assert_eq!(runtime.list_summaries().await.unwrap().len(), 2);
@@ -999,6 +1000,14 @@ mod tests {
         std::fs::create_dir(&root).unwrap();
         let runtime = ProjectRegistryRuntime::new(registry_path(&temp));
         let created = runtime.register(&root, Some("Original")).await.unwrap();
+
+        assert_eq!(
+            runtime
+                .update_display_name(&created.project_id, "Zero", "0")
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::InvalidRequest
+        );
 
         let opened = runtime
             .mark_opened(&created.project_id, &created.revision)

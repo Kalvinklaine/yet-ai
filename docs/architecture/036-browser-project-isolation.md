@@ -53,7 +53,7 @@ A conceptual `ProjectContext` contains the project ID, registry revision, saniti
 
 Project creation accepts an authenticated engine-issued directory handle and a sanitized optional display label. The CLI fallback accepts a local root argument through its own authenticated/local invocation boundary. Neither API accepts a browser-submitted absolute path as a normal registration input.
 
-The engine validates label length and characters, resolves the handle, confirms that the target is a readable directory, canonicalizes it, checks policy, rejects duplicate canonical roots, generates the ID, and atomically records the project. Registration does not scan file contents, index the directory, infer hidden context, or call a provider.
+The engine validates label length and characters, resolves the handle, confirms that the target is a readable directory, canonicalizes it, checks policy, reuses an existing project for the same canonical root or otherwise generates the ID, and atomically records a new project. Registration does not scan file contents, index the directory, infer hidden context, or call a provider.
 
 ### Symlinks and filesystem identity
 
@@ -67,7 +67,7 @@ Canonicalization is repeated during explicit availability checks and before a ro
 
 Successful registration returns safe project metadata: `projectId`, sanitized label, archive state, availability/readiness, `revision`, and safe timestamps or bounded activity summary when present. A newly registered project has `lastOpenedAt: null`; only a later successful project open sets that timestamp. `createdAt` is always present. Normal create/list/open responses do not return the canonical root.
 
-Display labels are not unique. Duplicate labels are allowed and the UI disambiguates rows with safe status and recent-activity metadata, never by exposing roots in the normal hub. Registering the same canonical root twice fails as `invalid_request` with a bounded non-sensitive message; it does not disclose the existing root.
+Display labels are not unique. Duplicate labels are allowed and the UI disambiguates rows with safe status and recent-activity metadata, never by exposing roots in the normal hub. Registering the same canonical root again is a successful idempotent operation: it returns the existing safe summary and consumes the discovery handle without changing the display label, revision, `createdAt`, or `lastOpenedAt`. It does not disclose the root. Distinct canonical roots always create distinct projects.
 
 ## Browser directory discovery
 
@@ -78,7 +78,7 @@ Browser registration uses a bounded, authenticated, engine-owned discovery sessi
 3. The engine roots that session at the user's home directory and returns only opaque handles plus sanitized entry labels and kinds.
 4. The GUI navigates directory entries by presenting an opaque parent handle; it never constructs or submits raw paths.
 5. The user explicitly selects one directory and confirms registration by sending `{directorySessionId,directoryHandle,displayName}` to `POST /v1/projects`.
-6. That one operation resolves the handle inside the same authenticated session, canonicalizes it, rechecks containment and policy, atomically records the project, and consumes the handle only after the record commits successfully.
+6. That one operation resolves the handle inside the same authenticated session, canonicalizes it, rechecks containment and policy, atomically records a new project or resolves the existing same-root project, and consumes the handle only after either outcome succeeds.
 
 Sessions and handles are random, user-session-bound, short-lived, bounded in entry count, page size, navigation depth, and lifetime. A handle remains valid until a successful registration consumes it, the session expires or is cancelled, authentication changes, or the engine restarts. Validation failures do not create a project and do not consume the handle, so the caller may correct a retryable request and retry while the session remains valid. Failures that prove the session or handle invalid return `discovery_expired`; policy and filesystem failures preserve the handle only while it remains safe and valid. Discovery lists directories only. It performs no recursive discovery, file-content read, background scan, indexing, hidden project inference, or provider call. Hidden directories are omitted by default; any future reveal control requires an explicit product decision.
 
@@ -167,7 +167,7 @@ Exact child filenames remain implementation decisions of their owning subsystems
 
 Providers, provider credentials, runtime/browser-session authentication, demo mode, and global preferences remain global. They are not copied into project directories. Project chat, curated memory, agent progress, controlled-run state, and future project-specific indexes are project-scoped. V1 does not place this scoped operational data in the registered repository or use `.yet-ai` as the authoritative browser-project store.
 
-Registry and scoped writes use atomic replacement and private permissions where supported, reject unsafe engine-storage symlinks, and serialize conflicting mutations. Each project summary carries a per-project `revision` encoded as a canonical unsigned decimal string: `0` or a non-zero value without leading zeroes, with at most 20 digits. Registration starts at revision `0`. Rename, archive, and restore require `expectedRevision`; the mutation succeeds only when it exactly matches the current revision and returns the summary or lifecycle response with the revision incremented by exactly one. A mismatch or an unrepresentable increment makes no change and returns `invalid_request` with a bounded non-sensitive conflict message.
+Registry and scoped writes use atomic replacement and private permissions where supported, reject unsafe engine-storage symlinks, and serialize conflicting mutations. Each persisted project summary carries a per-project `revision` encoded as a canonical unsigned decimal string from `1` through 20 digits, without leading zeroes. Registration starts at revision `1`, and v1 registry migration maps every entry to revision `1`; revision `0` is never emitted or accepted as an expected revision. Rename, archive, restore, and successful open require `expectedRevision`; the mutation succeeds only when it exactly matches the current revision and returns the summary or lifecycle response with the revision incremented by exactly one. A mismatch or an unrepresentable increment makes no change and returns `invalid_request` with a bounded non-sensitive conflict message.
 
 ## Project hub information architecture
 
@@ -245,7 +245,7 @@ Errors use stable categories, suitable HTTP status codes, and short sanitized me
 
 | Category | Meaning |
 | --- | --- |
-| `invalid_request` | Malformed or unsafe input, duplicate root, stale revision, unknown field, or exceeded bound. |
+| `invalid_request` | Malformed or unsafe input, stale revision, unknown field, or exceeded bound. |
 | `not_found` | No visible project or nested project resource exists for the scoped request. |
 | `archived` | The operation is unavailable while the project is archived. |
 | `root_missing` | The registered root is missing, moved, inaccessible, or has changed identity. |
