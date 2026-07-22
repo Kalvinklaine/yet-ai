@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createChat, deleteChat, getChat, listChats, authHeaders, isPanelScopedProxyBaseUrl, isSameOriginProxyBaseUrl, isTrustedLocalPageOrigin, isTrustedSameOriginProxyBaseUrl, productIdentityWarning, runtimeFetch, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
+import { createChat, deleteChat, getChat, listChats, authHeaders, chatApiPath, isPanelScopedProxyBaseUrl, isSameOriginProxyBaseUrl, isTrustedLocalPageOrigin, isTrustedSameOriginProxyBaseUrl, productIdentityWarning, runtimeFetch, sendAbort, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
+import { createProjectRuntimeSettings } from "./projectClient";
 
 const fetchMock = vi.fn();
 
@@ -403,6 +404,35 @@ describe("runtimeClient", () => {
   it("has no runtime lifecycle endpoint or launch authority", () => {
     expect(Object.keys({ createChat, deleteChat, getChat, listChats, runtimeFetch, sendUserMessage }).join(" ")).not.toContain("launch");
     expect(Object.keys({ createChat, deleteChat, getChat, listChats, runtimeFetch, sendUserMessage }).join(" ")).not.toContain("restart");
+  });
+
+  it("uses the explicit project API base for chat CRUD and commands", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const projectId = "prj_abcdefghijklmnopqrstuv";
+    const settings = createProjectRuntimeSettings({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, projectId);
+
+    await listChats(settings);
+    await createChat(settings);
+    await getChat(settings, "chat one");
+    await deleteChat(settings, "chat one");
+    await sendUserMessage(settings, "chat one", "hello");
+    await sendAbort(settings, "chat one");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `http://127.0.0.1:8001/p/${projectId}/v1/chats`,
+      `http://127.0.0.1:8001/p/${projectId}/v1/chats`,
+      `http://127.0.0.1:8001/p/${projectId}/v1/chats/chat%20one`,
+      `http://127.0.0.1:8001/p/${projectId}/v1/chats/chat%20one`,
+      `http://127.0.0.1:8001/p/${projectId}/v1/chats/chat%20one/commands`,
+      `http://127.0.0.1:8001/p/${projectId}/v1/chats/chat%20one/commands`,
+    ]);
+  });
+
+  it("rejects incomplete or mismatched project settings instead of falling back", () => {
+    const projectId = "prj_abcdefghijklmnopqrstuv";
+    expect(() => chatApiPath({ baseUrl: "/", token: "", projectScope: { projectId: projectId as never } } as never, "/chats")).toThrow("incomplete");
+    expect(() => chatApiPath({ baseUrl: "/", token: "", projectScope: { projectId: projectId as never }, apiBase: "/v1" } as never, "/chats")).toThrow("invalid");
   });
 
   it("does not let caller headers override runtime Authorization", async () => {

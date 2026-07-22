@@ -22,7 +22,8 @@ import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackCh
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatRuntimeSettings, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createProjectRuntimeSettings } from "./services/projectClient";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity, type EditProposalRejectedDiagnostic } from "./services/editProposal";
@@ -171,7 +172,7 @@ type ProviderPreset = {
 
 type ActiveStream = {
   controller: AbortController;
-  settings: RuntimeSettings;
+  settings: ChatRuntimeSettings;
   revision: number;
   chatId: string;
 };
@@ -394,7 +395,7 @@ export function generateApplyRequestSessionNonce(): string {
   return `s${hex}`;
 }
 
-export function App() {
+export function App({ projectId }: { projectId?: string }) {
   const initialRuntimeSettings = useMemo(() => readInitialRuntimeSettings(), []);
   const [baseUrl, setBaseUrl] = useState(initialRuntimeSettings.baseUrl);
   const [token, setToken] = useState(initialRuntimeSettings.token);
@@ -478,7 +479,7 @@ export function App() {
   const preHostRuntimeRefreshRequestedAtRef = useRef<number | null>(null);
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
-  const settingsRef = useRef<RuntimeSettings>(initialRuntimeSettings);
+  const settingsRef = useRef<ChatRuntimeSettings>(projectId ? createProjectRuntimeSettings(initialRuntimeSettings, projectId) : initialRuntimeSettings);
   const chatIdRef = useRef("chat-001");
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
@@ -588,7 +589,10 @@ export function App() {
   const [controlledTaskExecutionState, setControlledTaskExecutionState] = useState<ControlledTaskExecutionState>(() => createInitialControlledTaskExecutionState());
   const [controlledRunHistory, setControlledRunHistory] = useState<ControlledRunHistoryItem[]>([]);
 
-  const settings = useMemo<RuntimeSettings>(() => ({ baseUrl, token, runtimeAccess }), [baseUrl, runtimeAccess, token]);
+  const settings = useMemo<ChatRuntimeSettings>(() => {
+    const globalSettings: RuntimeSettings = { baseUrl, token, runtimeAccess };
+    return projectId ? createProjectRuntimeSettings(globalSettings, projectId) : globalSettings;
+  }, [baseUrl, projectId, runtimeAccess, token]);
   settingsRef.current = settings;
   chatIdRef.current = chatId;
   chatViewMessagesRef.current = chatView.messages;
@@ -1303,14 +1307,14 @@ export function App() {
     const normalizedSettings: RuntimeSettings = { ...nextSettings, token: nextSettings.token ?? "", runtimeAccess: nextSettings.runtimeAccess ?? "direct" };
     const changed = settingsRef.current.baseUrl !== normalizedSettings.baseUrl || settingsRef.current.token !== normalizedSettings.token || settingsRef.current.runtimeAccess !== normalizedSettings.runtimeAccess;
     if (changed) {
-      settingsRef.current = normalizedSettings;
+      settingsRef.current = projectId ? createProjectRuntimeSettings(normalizedSettings, projectId) : normalizedSettings;
       markSettingsChanged();
     }
     setBaseUrl(normalizedSettings.baseUrl);
     setToken(normalizedSettings.token);
     setRuntimeAccess(normalizedSettings.runtimeAccess);
     return changed;
-  }, [markSettingsChanged]);
+  }, [markSettingsChanged, projectId]);
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
     hostReadyAppliedRef.current = false;

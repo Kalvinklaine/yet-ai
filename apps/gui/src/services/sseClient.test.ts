@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { drainFrames, parseSseFrame, subscribeToChat, validateSseSequence, type SseEvent } from "./sseClient";
+import { createProjectRuntimeSettings } from "./projectClient";
 
 const snapshot: SseEvent = { seq: 0, type: "snapshot", chatId: "chat-1", payload: { messages: [] } };
 const delta: SseEvent = { seq: 1, type: "stream_delta", chatId: "chat-1", payload: { text: "hello" } };
@@ -66,6 +67,19 @@ describe("sseClient", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(onEvent).toHaveBeenCalledTimes(2);
     expect(onEvent.mock.calls.map(([event]) => event.type)).toEqual(["snapshot", "stream_delta"]);
+  });
+
+  it("uses the explicit project API base for chat SSE", async () => {
+    fetchMock.mockResolvedValue(sseResponse([snapshot]));
+    vi.stubGlobal("fetch", fetchMock);
+    const projectId = "prj_abcdefghijklmnopqrstuv";
+    const settings = createProjectRuntimeSettings({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, projectId);
+    vi.stubGlobal("location", new URL(`http://localhost:3000/p/${projectId}/chat`));
+
+    await subscribeToChat(settings, "chat-1", { onEvent: vi.fn(), onError: vi.fn() }, new AbortController().signal);
+
+    expect(fetchMock).toHaveBeenCalledWith(`/p/${projectId}/v1/chats/subscribe?chat_id=chat-1`, expect.any(Object));
+    expect(new Headers(fetchMock.mock.calls[0][1].headers).get("Authorization")).toBeNull();
   });
 
   it("reports sequence gap and does not deliver the invalid event", async () => {

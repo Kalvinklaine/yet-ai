@@ -1,4 +1,4 @@
-import { authHeaders, joinUrl, validateRuntimeSettings, type RuntimeError, type RuntimeSettings } from "./runtimeClient";
+import { authHeaders, chatApiPath, joinUrl, validateRuntimeSettings, type ChatRuntimeSettings, type RuntimeError } from "./runtimeClient";
 
 export type SseEvent = {
   seq: number;
@@ -45,7 +45,7 @@ const maxBufferChars = 1_000_000;
 const maxFrameChars = 250_000;
 
 export async function subscribeToChat(
-  settings: RuntimeSettings,
+  settings: ChatRuntimeSettings,
   chatId: string,
   callbacks: SseCallbacks,
   signal: AbortSignal,
@@ -59,7 +59,7 @@ export async function subscribeToChat(
   let response: Response;
   try {
     response = await fetch(
-      joinUrl(settings.baseUrl, `/v1/chats/subscribe?chat_id=${encodeURIComponent(chatId)}`),
+      joinUrl(settings.baseUrl, `${chatApiPath(settings, "/chats/subscribe")}?chat_id=${encodeURIComponent(chatId)}`),
       {
         headers: {
           ...authHeaders(settings),

@@ -1,4 +1,5 @@
 import { sanitizeErrorText } from "./redaction";
+import { parseProjectId, type ProjectId } from "./projectRouting";
 
 export type RuntimeAccessMode = "direct" | "same_origin_proxy";
 
@@ -7,6 +8,13 @@ export type RuntimeSettings = {
   token: string;
   runtimeAccess?: RuntimeAccessMode;
 };
+
+export type ScopedRuntimeSettings = RuntimeSettings & {
+  readonly projectScope: { readonly projectId: ProjectId };
+  readonly apiBase: `/p/${ProjectId}/v1`;
+};
+
+export type ChatRuntimeSettings = RuntimeSettings | ScopedRuntimeSettings;
 
 export type RuntimeError = {
   status: number | "network" | "timeout" | "parse" | "protocol" | "sequence" | "configuration";
@@ -425,23 +433,23 @@ export function setDemoMode(settings: RuntimeSettings, enabled: boolean): Promis
   });
 }
 
-export function listChats(settings: RuntimeSettings): Promise<RuntimeResult<ChatListResponse>> {
-  return runtimeFetch<ChatListResponse>(settings, "/v1/chats");
+export function listChats(settings: ChatRuntimeSettings): Promise<RuntimeResult<ChatListResponse>> {
+  return runtimeFetch<ChatListResponse>(settings, chatApiPath(settings, "/chats"));
 }
 
-export function createChat(settings: RuntimeSettings): Promise<RuntimeResult<ChatThread>> {
-  return runtimeFetch<ChatThread>(settings, "/v1/chats", {
+export function createChat(settings: ChatRuntimeSettings): Promise<RuntimeResult<ChatThread>> {
+  return runtimeFetch<ChatThread>(settings, chatApiPath(settings, "/chats"), {
     method: "POST",
     body: JSON.stringify({}),
   });
 }
 
-export function getChat(settings: RuntimeSettings, chatId: string): Promise<RuntimeResult<ChatThread>> {
-  return runtimeFetch<ChatThread>(settings, `/v1/chats/${encodeURIComponent(chatId)}`);
+export function getChat(settings: ChatRuntimeSettings, chatId: string): Promise<RuntimeResult<ChatThread>> {
+  return runtimeFetch<ChatThread>(settings, chatApiPath(settings, `/chats/${encodeURIComponent(chatId)}`));
 }
 
-export function deleteChat(settings: RuntimeSettings, chatId: string): Promise<RuntimeResult<{ deleted: boolean; chatId: string }>> {
-  return runtimeFetch<{ deleted: boolean; chatId: string }>(settings, `/v1/chats/${encodeURIComponent(chatId)}`, {
+export function deleteChat(settings: ChatRuntimeSettings, chatId: string): Promise<RuntimeResult<{ deleted: boolean; chatId: string }>> {
+  return runtimeFetch<{ deleted: boolean; chatId: string }>(settings, chatApiPath(settings, `/chats/${encodeURIComponent(chatId)}`), {
     method: "DELETE",
   });
 }
@@ -451,7 +459,7 @@ export function getAgentProgress(settings: RuntimeSettings, signal?: AbortSignal
 }
 
 export function sendUserMessage(
-  settings: RuntimeSettings,
+  settings: ChatRuntimeSettings,
   chatId: string,
   content: string,
   context?: ChatContext,
@@ -461,21 +469,21 @@ export function sendUserMessage(
     type: "user_message",
     payload: context ? { content, context } : { content },
   };
-  return runtimeFetch<ChatCommandResponse>(settings, `/v1/chats/${encodeURIComponent(chatId)}/commands`, {
+  return runtimeFetch<ChatCommandResponse>(settings, chatApiPath(settings, `/chats/${encodeURIComponent(chatId)}/commands`), {
     method: "POST",
     body: JSON.stringify(command),
   });
 }
 
 export function sendAbort(
-  settings: RuntimeSettings,
+  settings: ChatRuntimeSettings,
   chatId: string,
 ): Promise<RuntimeResult<ChatCommandResponse>> {
   const command: ChatCommand = {
     requestId: crypto.randomUUID(),
     type: "abort",
   };
-  return runtimeFetch<ChatCommandResponse>(settings, `/v1/chats/${encodeURIComponent(chatId)}/commands`, {
+  return runtimeFetch<ChatCommandResponse>(settings, chatApiPath(settings, `/chats/${encodeURIComponent(chatId)}/commands`), {
     method: "POST",
     body: JSON.stringify(command),
   });
@@ -483,6 +491,21 @@ export function sendAbort(
 
 export function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+export function chatApiPath(settings: ChatRuntimeSettings, resourcePath: string): string {
+  if (!("projectScope" in settings) && !("apiBase" in settings)) {
+    return `/v1/${resourcePath.replace(/^\/+/, "")}`;
+  }
+  if (!("projectScope" in settings) || !("apiBase" in settings)) {
+    throw new TypeError("Project runtime settings are incomplete.");
+  }
+  const projectId = parseProjectId(settings.projectScope.projectId);
+  const expectedApiBase = projectId ? `/p/${projectId}/v1` : null;
+  if (!expectedApiBase || settings.apiBase !== expectedApiBase) {
+    throw new TypeError("Project runtime settings are invalid.");
+  }
+  return `${settings.apiBase}/${resourcePath.replace(/^\/+/, "")}`;
 }
 
 export function isPanelScopedProxyBaseUrl(baseUrl: string): boolean {
@@ -619,7 +642,7 @@ function sanitizeRuntimeTraceConnectionSource(value: string): string {
 
 function sanitizeRuntimeTraceEndpoint(path: string): string {
   const pathname = path.split(/[?#]/, 1)[0] || "/";
-  if (/^\/v1\/[A-Za-z0-9/_-]*$/.test(pathname)) {
+  if (/^(?:\/v1|\/p\/prj_[A-Za-z0-9_-]{22}\/v1)\/[A-Za-z0-9/_-]*$/.test(pathname)) {
     return pathname.length > 80 ? `${pathname.slice(0, 80)}…` : pathname;
   }
   return "/v1/[redacted]";
