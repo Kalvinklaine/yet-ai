@@ -7,7 +7,11 @@ import { ProjectLink, navigateProjectRoute, parseProjectRoute, subscribeToProjec
 import { useLiveRuntimeSettings } from "./services/useLiveRuntimeSettings";
 
 export function ProjectRouterShell() {
+  const hostedChatEntry = isHostedChatEntry(window.location.pathname);
   const [route, setRoute] = useState<AppRoute>(() => {
+    if (hostedChatEntry) {
+      return { kind: "legacy" };
+    }
     if (window.location.pathname === "/") {
       navigateProjectRoute(window, { kind: "projects" }, true);
       return { kind: "projects" };
@@ -19,6 +23,9 @@ export function ProjectRouterShell() {
 
   useEffect(() => subscribeToProjectRoute(window, setRoute), []);
 
+  if (hostedChatEntry) {
+    return <App route={{ kind: "legacy" }} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
+  }
   if (route.kind === "not_found") {
     return <RouteStatus title="Not Found" detail="This Yet AI route is not recognized." navigate={navigate} />;
   }
@@ -30,6 +37,10 @@ export function ProjectRouterShell() {
   }
   if (route.kind === "legacy") return <LegacyData settings={settings} navigate={navigate} />;
   return <App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
+}
+
+export function isHostedChatEntry(pathname: string): boolean {
+  return /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(pathname);
 }
 
 function RouteStatus({ title, detail, navigate }: { title: string; detail: string; navigate: ProjectNavigation }) {

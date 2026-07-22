@@ -47,6 +47,23 @@ describe("ProjectRouterShell", () => {
     replaceState.mockRestore();
   });
 
+  it("renders the wrapper-owned hosted chat entry without redirecting to projects", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    const replaceState = vi.spyOn(window.history, "replaceState");
+    const container = document.createElement("div");
+    document.body.append(container);
+
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    expect(replaceState).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/panel/panel-test/hosted-chat");
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("legacy");
+    replaceState.mockRestore();
+  });
+
   it("applies trusted live host runtime settings to the hub", async () => {
     window.history.replaceState(null, "", "/projects");
     const container = document.createElement("div");

@@ -28,9 +28,9 @@ class YetToolWindowFactoryTest {
             packagedGui,
         )
 
-        assertContains(html, "<iframe title=\"Yet AI GUI\" src=\"http://127.0.0.1:49221/panel/panel-1/index.html\"></iframe>")
+        assertContains(html, "<iframe title=\"Yet AI GUI\" src=\"http://127.0.0.1:49221/panel/panel-1/hosted-chat\"></iframe>")
         assertContains(html, "const frameTargetOrigin = \"http://127.0.0.1:49221\";")
-        assertContains(html, "Installed plugin packaged panel: <code>http://127.0.0.1:49221/panel/panel-1/index.html</code>")
+        assertContains(html, "Installed plugin packaged panel: <code>http://127.0.0.1:49221/panel/panel-1/hosted-chat</code>")
         assertTrue(java.net.URI(packagedGui.wrapperOrigin).authority != java.net.URI(packagedGui.indexUrl).authority)
         assertContains(html, "Engine-served Web UI: <code>http://127.0.0.1:8001/</code>")
         assertContains(html, "Connecting to Yet AI local runtime")
@@ -267,7 +267,7 @@ class YetToolWindowFactoryTest {
 
         val html = renderHtml(connection, "console.log('bridge')", packagedGui)
 
-        assertContains(html, "Installed plugin packaged panel: <code>http://127.0.0.1:49221/panel/panel-1/index.html</code>")
+        assertContains(html, "Installed plugin packaged panel: <code>http://127.0.0.1:49221/panel/panel-1/hosted-chat</code>")
         assertContains(html, "Engine-served Web UI: <code>http://127.0.0.1:8123/</code>")
         assertContains(html, "Open the engine-served Web UI at <code>http://127.0.0.1:8123/</code>")
         assertFalse(html.contains("must-not-leak"), html)

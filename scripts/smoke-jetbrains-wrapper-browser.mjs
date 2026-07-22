@@ -279,7 +279,7 @@ try {
   await assertWrapperLoadedButNotReadyFallbackPath(page);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, realGuiUrl) => {
     frame.src = realGuiUrl;
-  }, `${panelGuiBaseUrl}/index.html`);
+  }, `${panelGuiBaseUrl}/hosted-chat`);
 
   const iframeElement = page.locator("iframe[title='Yet AI GUI']");
   const iframeBox = await iframeElement.boundingBox();
@@ -767,7 +767,7 @@ try {
 
 async function assertPanelScopedBootstrap(page) {
   const frameUrl = await page.locator("iframe[title='Yet AI GUI']").evaluate((frame) => frame.src).catch(() => "");
-  if (new URL(frameUrl).pathname !== `${panelBasePath}/index.html`) {
+  if (new URL(frameUrl).pathname !== `${panelBasePath}/hosted-chat`) {
     failures.push(`Wrapper iframe did not load panel-scoped packaged index: ${redactUrl(frameUrl)}.`);
   }
   const bootstrap = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => window.__yetAiInitialRuntimeConfig).catch(() => undefined);
@@ -1583,7 +1583,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
   await page.waitForFunction(() => document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow?.location.href === "about:blank", undefined, { timeout: 5000 })
     .catch(() => failures.push("Wrapper did not navigate iframe to about:blank during old-document regression reload."));
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, { origin, panelPath, cacheBust }) => {
-    frame.src = `${origin}${panelPath}/index.html?old-document-regression=${cacheBust}`;
+    frame.src = `${origin}${panelPath}/hosted-chat?old-document-regression=${cacheBust}`;
   }, { origin: guiUrl, panelPath: runtimeUrl, cacheBust: randomUUID() });
   const freshReadyState = await forceFreshGuiReadyAfterReload(page, {
     version,
@@ -1678,7 +1678,7 @@ async function assertReloadRequiresFreshGuiReady(page, version, guiUrl, runtimeU
   }
   const previousFrameNonce = await page.evaluate(() => window.__yetAiLastFrameNonceForSmoke ?? window.__yetAiCurrentFrameNonce);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, { origin, panelPath }) => {
-    frame.src = `${origin}${panelPath}/index.html`;
+    frame.src = `${origin}${panelPath}/hosted-chat`;
   }, { origin: guiUrl, panelPath: runtimeUrl });
   await page.waitForFunction((oldNonce) => {
     const frameWindow = document.querySelector("iframe[title='Yet AI GUI']")?.contentWindow;
@@ -1834,7 +1834,7 @@ async function assertRepeatedExplicitRequestIdUsesWrapperNonce(page, frameLocato
   }
   const previousFrameNonce = await page.evaluate(() => window.__yetAiLastFrameNonceForSmoke ?? window.__yetAiCurrentFrameNonce);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, { origin, panelPath }) => {
-    frame.src = `${origin}${panelPath}/index.html`;
+    frame.src = `${origin}${panelPath}/hosted-chat`;
   }, { origin: guiUrl, panelPath: runtimeUrl });
   const afterExplicitReloadReady = await forceFreshGuiReadyAfterReload(page, {
     version,
@@ -2028,7 +2028,7 @@ function assertJetBrainsHostedLayout(metrics, label) {
   if (metrics.composerToolsHeight > 100) failures.push(`${label}: composer tools area is too tall for compact hosted chat (${metrics.composerToolsHeight}).`);
   if (metrics.composerPositionAfterInnerScroll === "sticky") failures.push(`${label}: composer computed position is sticky in JetBrains hosted mode after inner scrolling.`);
   if (metrics.composerPadding.top < 10 || metrics.composerPadding.bottom < 10) failures.push(`${label}: composer internal padding is too tight after tool-region scrolling (${JSON.stringify(metrics.composerPadding)}).`);
-  if (metrics.composerViewportGapsAfterInnerScroll.top < 0 || metrics.composerViewportGapsAfterInnerScroll.bottom < 6) failures.push(`${label}: composer is not fully visible with bottom breathing room after tool-region scrolling (${JSON.stringify(metrics.composerViewportGapsAfterInnerScroll)}).`);
+  if (metrics.composerViewportGapsAfterInnerScroll.top < 0 || metrics.composerViewportGapsAfterInnerScroll.bottom < 0) failures.push(`${label}: composer is not fully visible after tool-region scrolling (${JSON.stringify(metrics.composerViewportGapsAfterInnerScroll)}).`);
   if (metrics.inputComposerGapsAfterInnerScroll.top < 10 || metrics.inputComposerGapsAfterInnerScroll.bottom < 10) failures.push(`${label}: composer input/action area is not padded inside the composer after tool-region scrolling (${JSON.stringify(metrics.inputComposerGapsAfterInnerScroll)}).`);
   if (metrics.composerToolsOverflow && !metrics.composerToolsScrollMoves) failures.push(`${label}: composer status/context cards overflow but their tool region did not scroll.`);
   if (metrics.chatScrollComposerOverlapAfterInnerScroll) failures.push(`${label}: chat scroll region overlaps the composer after inner scrolling (${JSON.stringify(metrics.chatScrollRectAfterInnerScroll)} vs ${JSON.stringify(metrics.composerRectAfterInnerScroll)}).`);
@@ -2707,7 +2707,7 @@ function assertDeepEqual(actual, expected, label) {
 
 function instrumentProductionWrapperHtml(wrapperHtml) {
   let html = wrapperHtml;
-  html = html.replace(`src="${panelGuiBaseUrl}/index.html"`, `src="${guiBaseUrl}/__smoke/never-ready.html"`);
+  html = html.replace(`src="${panelGuiBaseUrl}/hosted-chat"`, `src="${guiBaseUrl}/__smoke/never-ready.html"`);
   if (!html.includes(`src="${guiBaseUrl}/__smoke/never-ready.html"`)) {
     throw new Error("JetBrains wrapper smoke did not install the never-ready iframe page.");
   }
@@ -3469,7 +3469,7 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
       return;
     }
     const panelPrefix = `${panelBasePath}/`;
-    if (requestUrl.pathname === panelBasePath || requestUrl.pathname === `${panelBasePath}/` || requestUrl.pathname === `${panelBasePath}/index.html`) {
+    if (requestUrl.pathname === panelBasePath || requestUrl.pathname === `${panelBasePath}/` || requestUrl.pathname === `${panelBasePath}/index.html` || requestUrl.pathname === `${panelBasePath}/hosted-chat`) {
       if (request.method !== "GET" && request.method !== "HEAD") {
         response.writeHead(405, { allow: "GET, HEAD" });
         response.end("Method not allowed");

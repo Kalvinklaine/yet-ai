@@ -126,7 +126,7 @@ class PackagedGuiServerTest {
         val panel = PackagedGuiPanel("panel-1", "/panel/panel-1")
         val panelGui = gui.forPanel(panel)
 
-        assertEquals("http://127.0.0.1:49221/panel/panel-1/index.html", panelGui.indexUrl)
+        assertEquals("http://127.0.0.1:49221/panel/panel-1/hosted-chat", panelGui.indexUrl)
         assertEquals("http://127.0.0.1:49222/panel/panel-1/wrapper.html", panelGui.wrapperUrl(panel))
         assertEquals(gui.origin, panelGui.origin)
         assertTrue(URI(panelGui.wrapperUrl(panel)).authority != URI(panelGui.indexUrl).authority)

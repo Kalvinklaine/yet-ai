@@ -125,7 +125,7 @@ class PackagedGuiServer internal constructor(
 }
 
 data class PackagedGui(val indexUrl: String, val origin: String, val wrapperOrigin: String) {
-    fun forPanel(panel: PackagedGuiPanel): PackagedGui = copy(indexUrl = origin + panel.proxyBaseUrl + "/index.html")
+    fun forPanel(panel: PackagedGuiPanel): PackagedGui = copy(indexUrl = origin + panel.proxyBaseUrl + "/hosted-chat")
     fun wrapperUrl(panel: PackagedGuiPanel): String = wrapperOrigin + panel.proxyBaseUrl + "/wrapper.html"
 }
 
@@ -261,7 +261,7 @@ private fun panelIndexRoute(rawPath: String): String? {
     val panelId = remainder.substring(0, separator)
     val path = remainder.substring(separator)
     if (!isValidPanelId(panelId)) return null
-    if (path != "/" && path != "/index.html") return null
+    if (path != "/" && path != "/index.html" && path != "/hosted-chat") return null
     return panelId
 }
 
