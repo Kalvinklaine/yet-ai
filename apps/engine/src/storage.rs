@@ -47,8 +47,8 @@ impl StoragePaths {
         let cache_projects = self.cache_dir.join("projects");
         let config_root = config_projects.join(project_id);
         let cache_root = cache_projects.join(project_id);
-        validate_namespace(&config_projects, &config_root)?;
-        validate_namespace(&cache_projects, &cache_root)?;
+        validate_namespace(&self.config_dir, &config_projects, &config_root)?;
+        validate_namespace(&self.cache_dir, &cache_projects, &cache_root)?;
         Ok(ProjectStoragePaths {
             chat_history: config_root.join("chat-history"),
             project_memory: config_root.join("project-memory"),
@@ -64,14 +64,22 @@ fn valid_project_id(value: &str) -> bool {
     crate::projects::is_valid_project_id(value)
 }
 
-fn validate_namespace(parent: &Path, namespace: &Path) -> Result<(), ProjectStorageError> {
+fn validate_namespace(
+    trusted_root: &Path,
+    parent: &Path,
+    namespace: &Path,
+) -> Result<(), ProjectStorageError> {
     if namespace.parent() != Some(parent) || !namespace.starts_with(parent) {
         return Err(ProjectStorageError);
     }
-    reject_existing_ancestor_symlinks(namespace)
+    validate_storage_chain(trusted_root)?;
+    validate_storage_chain(namespace)
 }
 
-fn reject_existing_ancestor_symlinks(path: &Path) -> Result<(), ProjectStorageError> {
+pub(crate) fn validate_storage_chain(path: &Path) -> Result<(), ProjectStorageError> {
+    if !path.is_absolute() {
+        return Err(ProjectStorageError);
+    }
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
@@ -96,6 +104,27 @@ fn reject_existing_ancestor_symlinks(path: &Path) -> Result<(), ProjectStorageEr
         }
     }
     Ok(())
+}
+
+pub(crate) fn canonical_storage_boundary(path: &Path) -> Result<PathBuf, ProjectStorageError> {
+    validate_storage_chain(path)?;
+    let mut existing = path;
+    let mut missing = Vec::new();
+    while !existing.exists() {
+        missing.push(existing.file_name().ok_or(ProjectStorageError)?.to_owned());
+        existing = existing.parent().ok_or(ProjectStorageError)?;
+    }
+    let metadata = std::fs::symlink_metadata(existing).map_err(|_| ProjectStorageError)?;
+    if !metadata.is_dir()
+        || (metadata.file_type().is_symlink() && !is_platform_root_alias(existing))
+    {
+        return Err(ProjectStorageError);
+    }
+    let mut canonical = std::fs::canonicalize(existing).map_err(|_| ProjectStorageError)?;
+    for component in missing.iter().rev() {
+        canonical.push(component);
+    }
+    Ok(canonical)
 }
 
 fn is_platform_root_alias(path: &Path) -> bool {
@@ -229,5 +258,47 @@ mod tests {
         assert!(paths
             .project_storage_paths("prj_AAAAAAAAAAAAAAAAAAAAAA")
             .is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn storage_config_cache_and_ancestor_symlinks_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let identity = ProductIdentity::load().unwrap();
+        for target in ["config", "cache"] {
+            let base = temp.path().join(target);
+            std::os::unix::fs::symlink(outside.path(), &base).unwrap();
+            let paths = resolve_storage_paths(
+                &identity,
+                &temp.path().join("workspace"),
+                &temp.path().join("config"),
+                &temp.path().join("cache"),
+            );
+            assert!(paths
+                .project_storage_paths("prj_AAAAAAAAAAAAAAAAAAAAAA")
+                .is_err());
+            std::fs::remove_file(base).unwrap();
+        }
+
+        let redirected = temp.path().join("redirected");
+        std::os::unix::fs::symlink(outside.path(), &redirected).unwrap();
+        let paths = resolve_storage_paths(
+            &identity,
+            &temp.path().join("workspace"),
+            &redirected.join("config"),
+            &temp.path().join("cache"),
+        );
+        assert!(paths
+            .project_storage_paths("prj_AAAAAAAAAAAAAAAAAAAAAA")
+            .is_err());
+        assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn storage_allows_only_the_macos_var_platform_alias() {
+        assert!(super::validate_storage_chain(Path::new("/var/folders")).is_ok());
+        assert!(super::validate_storage_chain(Path::new("/private/var/folders")).is_ok());
     }
 }

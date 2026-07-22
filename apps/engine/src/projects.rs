@@ -8,7 +8,9 @@ use base64::Engine;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::storage::{ProjectStoragePaths, StoragePaths};
+use crate::storage::{
+    canonical_storage_boundary, validate_storage_chain, ProjectStoragePaths, StoragePaths,
+};
 
 const REGISTRY_VERSION: u32 = 2;
 const INITIAL_REVISION: &str = "1";
@@ -18,12 +20,22 @@ const DISPLAY_NAME_MAX_CHARS: usize = 120;
 const PROJECT_ID_RANDOM_BYTES: usize = 16;
 static TEMP_REGISTRY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ProjectRegistryRuntime {
     registry_path: PathBuf,
+    config_dir: PathBuf,
+    cache_dir: PathBuf,
     state: Arc<tokio::sync::Mutex<Option<ProjectRegistry>>>,
     #[cfg(test)]
     fail_writes: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl std::fmt::Debug for ProjectRegistryRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProjectRegistryRuntime")
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -48,7 +60,7 @@ pub enum ProjectStatus {
     Archived,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PrivateProjectEntry {
     pub project_id: String,
     pub display_name: String,
@@ -57,6 +69,20 @@ pub struct PrivateProjectEntry {
     pub last_opened_at: Option<String>,
     pub archived: bool,
     canonical_root: PathBuf,
+}
+
+impl std::fmt::Debug for PrivateProjectEntry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PrivateProjectEntry")
+            .field("project_id", &self.project_id)
+            .field("display_name", &self.display_name)
+            .field("revision", &self.revision)
+            .field("created_at", &self.created_at)
+            .field("last_opened_at", &self.last_opened_at)
+            .field("archived", &self.archived)
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -119,7 +145,7 @@ impl PrivateProjectEntry {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProjectRegistry {
     version: u32,
@@ -127,7 +153,7 @@ struct ProjectRegistry {
     projects: Vec<StoredProjectEntry>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct StoredProjectEntry {
     project_id: String,
@@ -139,14 +165,14 @@ struct StoredProjectEntry {
     archived: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LegacyProjectRegistry {
     version: u32,
     projects: Vec<LegacyStoredProjectEntry>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct LegacyStoredProjectEntry {
     project_id: String,
@@ -176,9 +202,11 @@ pub enum ProjectRegistryError {
 }
 
 impl ProjectRegistryRuntime {
-    pub fn new(registry_path: impl Into<PathBuf>) -> Self {
+    pub fn new(storage_paths: &StoragePaths) -> Self {
         Self {
-            registry_path: registry_path.into(),
+            registry_path: storage_paths.project_registry_path(),
+            config_dir: storage_paths.config_dir.clone(),
+            cache_dir: storage_paths.cache_dir.clone(),
             state: Arc::new(tokio::sync::Mutex::new(None)),
             #[cfg(test)]
             fail_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -190,12 +218,14 @@ impl ProjectRegistryRuntime {
     }
 
     pub async fn load(&self) -> Result<(), ProjectRegistryError> {
+        self.validate_registry_storage()?;
         let mut state = self.state.lock().await;
         *state = Some(load_registry(&self.registry_path).await?);
         Ok(())
     }
 
     pub async fn list_summaries(&self) -> Result<Vec<ProjectSummary>, ProjectRegistryError> {
+        self.validate_registry_storage()?;
         let mut state = self.state.lock().await;
         let registry = ensure_loaded(&self.registry_path, &mut state).await?;
         Ok(registry.projects.iter().map(project_summary).collect())
@@ -206,6 +236,7 @@ impl ProjectRegistryRuntime {
         project_id: &str,
     ) -> Result<PrivateProjectEntry, ProjectRegistryError> {
         validate_project_id(project_id)?;
+        self.validate_registry_storage()?;
         let mut state = self.state.lock().await;
         let registry = ensure_loaded(&self.registry_path, &mut state).await?;
         registry
@@ -223,6 +254,8 @@ impl ProjectRegistryRuntime {
         let entry = self.get_private_entry(project_id).await?;
         if entry.archived {
             Err(ProjectRegistryError::Archived)
+        } else if !root_is_readable_and_same(entry.canonical_root()) {
+            Err(ProjectRegistryError::RootUnavailable)
         } else {
             Ok(entry)
         }
@@ -235,6 +268,10 @@ impl ProjectRegistryRuntime {
     ) -> Result<ProjectContext, ProjectContextError> {
         if !is_valid_project_id(project_id) {
             return Err(ProjectContextError::NotFound);
+        }
+        if storage_paths.config_dir != self.config_dir || storage_paths.cache_dir != self.cache_dir
+        {
+            return Err(ProjectContextError::StorageUnavailable);
         }
         let entry = self
             .get_private_entry(project_id)
@@ -269,6 +306,7 @@ impl ProjectRegistryRuntime {
         display_name: Option<&str>,
     ) -> Result<ProjectSummary, ProjectRegistryError> {
         let canonical_root = canonical_directory(root.as_ref()).await?;
+        self.validate_registration_root(&canonical_root)?;
         let display_name = match display_name {
             Some(value) => validate_display_name(value)?.to_string(),
             None => default_display_name(&canonical_root),
@@ -379,6 +417,7 @@ impl ProjectRegistryRuntime {
         change: impl FnOnce(&mut StoredProjectEntry) -> Result<(), ProjectRegistryError>,
     ) -> Result<ProjectSummary, ProjectRegistryError> {
         validate_revision(expected_revision).map_err(|_| ProjectRegistryError::InvalidRequest)?;
+        self.validate_registry_storage()?;
         let mut state = self.state.lock().await;
         let registry = ensure_loaded(&self.registry_path, &mut state).await?;
         let mut candidate = registry.clone();
@@ -409,7 +448,33 @@ impl ProjectRegistryRuntime {
         if self.fail_writes.load(Ordering::SeqCst) {
             return Err(ProjectRegistryError::Storage);
         }
+        self.validate_registry_storage()?;
         persist_registry(&self.registry_path, registry).await
+    }
+
+    fn validate_registry_storage(&self) -> Result<(), ProjectRegistryError> {
+        validate_storage_chain(&self.config_dir).map_err(|_| ProjectRegistryError::Storage)?;
+        validate_storage_chain(&self.cache_dir).map_err(|_| ProjectRegistryError::Storage)?;
+        validate_storage_chain(
+            self.registry_path
+                .parent()
+                .ok_or(ProjectRegistryError::Storage)?,
+        )
+        .map_err(|_| ProjectRegistryError::Storage)
+    }
+
+    fn validate_registration_root(&self, root: &Path) -> Result<(), ProjectRegistryError> {
+        let config = canonical_storage_boundary(&self.config_dir)
+            .map_err(|_| ProjectRegistryError::Storage)?;
+        let cache = canonical_storage_boundary(&self.cache_dir)
+            .map_err(|_| ProjectRegistryError::Storage)?;
+        if [config.as_path(), cache.as_path()]
+            .into_iter()
+            .any(|boundary| root.starts_with(boundary) || boundary.starts_with(root))
+        {
+            return Err(ProjectRegistryError::InvalidRequest);
+        }
+        Ok(())
     }
 }
 
@@ -879,6 +944,15 @@ mod tests {
             .join("registry.json")
     }
 
+    fn paths_for_registry_path(path: &Path) -> StoragePaths {
+        let config_dir = path.parent().unwrap().parent().unwrap().to_path_buf();
+        StoragePaths {
+            project_dir: config_dir.join("legacy"),
+            cache_dir: config_dir.parent().unwrap().join("cache"),
+            config_dir,
+        }
+    }
+
     #[test]
     fn projects_id_uses_exact_random_byte_contract() {
         for _ in 0..32 {
@@ -901,7 +975,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("private-root-marker");
         std::fs::create_dir(&root).unwrap();
-        let runtime = ProjectRegistryRuntime::new(registry_path(&temp));
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
         let created = runtime.register(&root, Some("Example")).await.unwrap();
         assert_eq!(created.revision, INITIAL_REVISION);
         assert_eq!(created.last_opened_at, None);
@@ -909,7 +983,7 @@ mod tests {
         assert!(!json.contains("private-root-marker"));
         assert!(!json.contains("canonical"));
 
-        let reloaded = ProjectRegistryRuntime::new(registry_path(&temp));
+        let reloaded = ProjectRegistryRuntime::new(&storage_paths(&temp));
         reloaded.load().await.unwrap();
         let summaries = reloaded.list_summaries().await.unwrap();
         assert_eq!(summaries.len(), 1);
@@ -931,7 +1005,7 @@ mod tests {
         let second = temp.path().join("second");
         std::fs::create_dir(&first).unwrap();
         std::fs::create_dir(&second).unwrap();
-        let runtime = ProjectRegistryRuntime::new(registry_path(&temp));
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
         let one = runtime
             .register(first.join("..").join("first"), Some("Same"))
             .await
@@ -955,7 +1029,7 @@ mod tests {
         let link = temp.path().join("link");
         std::fs::create_dir(&target).unwrap();
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let runtime = ProjectRegistryRuntime::new(registry_path(&temp));
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
         let linked = runtime.register(&link, Some("Linked")).await.unwrap();
         let direct = runtime.register(&target, Some("Direct")).await.unwrap();
         assert_eq!(linked.project_id, direct.project_id);
@@ -966,7 +1040,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
-        let runtime = ProjectRegistryRuntime::new(registry_path(&temp));
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
         let mut tasks = Vec::new();
         for _ in 0..16 {
             let runtime = runtime.clone();
@@ -992,7 +1066,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
-        let runtime = ProjectRegistryRuntime::new(registry_path(&temp));
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
         let created = runtime.register(&root, Some("Lifecycle")).await.unwrap();
         let archived = runtime
             .archive(&created.project_id, &created.revision)
@@ -1015,9 +1089,40 @@ mod tests {
             ProjectStatus::Available
         );
         std::fs::remove_dir(&root).unwrap();
+        assert_eq!(
+            runtime
+                .get_active_private_entry(&created.project_id)
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
         let summary = runtime.list_summaries().await.unwrap().pop().unwrap();
         assert_eq!(summary.status, ProjectStatus::Missing);
         assert!(!summary.root_available);
+    }
+
+    #[tokio::test]
+    async fn projects_reject_private_storage_roots_and_accept_siblings() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = storage_paths(&temp);
+        std::fs::create_dir_all(paths.config_dir.join("projects")).unwrap();
+        std::fs::create_dir_all(&paths.cache_dir).unwrap();
+        let sibling = temp.path().join("workspace");
+        std::fs::create_dir(&sibling).unwrap();
+        let runtime = ProjectRegistryRuntime::new(&paths);
+
+        for root in [
+            temp.path().to_path_buf(),
+            paths.config_dir.clone(),
+            paths.config_dir.join("projects"),
+            paths.cache_dir.clone(),
+        ] {
+            assert_eq!(
+                runtime.register(&root, Some("Private")).await.unwrap_err(),
+                ProjectRegistryError::InvalidRequest
+            );
+        }
+        assert!(runtime.register(&sibling, Some("Sibling")).await.is_ok());
     }
 
     #[tokio::test]
@@ -1027,7 +1132,7 @@ mod tests {
             let path = registry_path(&temp);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, content).unwrap();
-            let runtime = ProjectRegistryRuntime::new(&path);
+            let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
             assert_eq!(
                 runtime.load().await.unwrap_err(),
                 ProjectRegistryError::Storage
@@ -1045,7 +1150,7 @@ mod tests {
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
         let path = registry_path(&temp);
-        let runtime = ProjectRegistryRuntime::new(&path);
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
         runtime.register(&root, Some("Private")).await.unwrap();
         assert_eq!(
             std::fs::metadata(path.parent().unwrap())
@@ -1070,7 +1175,7 @@ mod tests {
         let outside = other.path().join("outside");
         std::fs::create_dir(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, escaped_path.parent().unwrap()).unwrap();
-        let escaped = ProjectRegistryRuntime::new(escaped_path);
+        let escaped = ProjectRegistryRuntime::new(&paths_for_registry_path(&escaped_path));
         assert_eq!(
             escaped
                 .register(&root, Some("No escape"))
@@ -1081,6 +1186,35 @@ mod tests {
         assert!(std::fs::read_dir(outside).unwrap().next().is_none());
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn projects_registry_rejects_symlinked_trusted_storage_chain() {
+        let root_temp = tempfile::tempdir().unwrap();
+        let root = root_temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+
+        for boundary in ["config", "cache", "ancestor"] {
+            let temp = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let mut paths = storage_paths(&temp);
+            match boundary {
+                "config" => std::os::unix::fs::symlink(outside.path(), &paths.config_dir).unwrap(),
+                "cache" => std::os::unix::fs::symlink(outside.path(), &paths.cache_dir).unwrap(),
+                _ => {
+                    let ancestor = temp.path().join("redirected");
+                    std::os::unix::fs::symlink(outside.path(), &ancestor).unwrap();
+                    paths.config_dir = ancestor.join("config");
+                }
+            }
+            let runtime = ProjectRegistryRuntime::new(&paths);
+            assert_eq!(
+                runtime.register(&root, Some("Blocked")).await.unwrap_err(),
+                ProjectRegistryError::Storage
+            );
+            assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none());
+        }
+    }
+
     #[tokio::test]
     async fn projects_failed_write_leaves_memory_and_disk_unchanged() {
         let temp = tempfile::tempdir().unwrap();
@@ -1089,7 +1223,7 @@ mod tests {
         std::fs::create_dir(&first).unwrap();
         std::fs::create_dir(&second).unwrap();
         let path = registry_path(&temp);
-        let runtime = ProjectRegistryRuntime::new(&path);
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
         let created = runtime.register(&first, Some("First")).await.unwrap();
         let before = std::fs::read(&path).unwrap();
         runtime.fail_writes.store(true, Ordering::SeqCst);
@@ -1108,7 +1242,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
-        let runtime = ProjectRegistryRuntime::new(registry_path(&temp));
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
         let created = runtime.register(&root, Some("Original")).await.unwrap();
 
         assert_eq!(
@@ -1152,7 +1286,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
-        let runtime = ProjectRegistryRuntime::new(registry_path(&temp));
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
         let created = runtime.register(&root, Some("Original")).await.unwrap();
         let first = runtime.update_display_name(&created.project_id, "First", &created.revision);
         let second = runtime.update_display_name(&created.project_id, "Second", &created.revision);
@@ -1175,7 +1309,7 @@ mod tests {
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
         let path = registry_path(&temp);
-        let runtime = ProjectRegistryRuntime::new(&path);
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
         let created = runtime.register(&root, Some("Original")).await.unwrap();
         let before = std::fs::read(&path).unwrap();
         runtime.fail_writes.store(true, Ordering::SeqCst);
@@ -1217,7 +1351,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let runtime = ProjectRegistryRuntime::new(&path);
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
         runtime.load().await.unwrap();
         let migrated = runtime.list_summaries().await.unwrap().pop().unwrap();
         assert_eq!(migrated.revision, INITIAL_REVISION);
@@ -1243,7 +1377,7 @@ mod tests {
             .unwrap();
             value["projects"][0]["revision"] = serde_json::json!(revision);
             std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-            let invalid = ProjectRegistryRuntime::new(&path);
+            let invalid = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
             assert_eq!(
                 invalid.load().await.unwrap_err(),
                 ProjectRegistryError::Storage
@@ -1259,7 +1393,7 @@ mod tests {
         std::fs::create_dir(&first_root).unwrap();
         std::fs::create_dir(&second_root).unwrap();
         let paths = storage_paths(&temp);
-        let runtime = ProjectRegistryRuntime::new(paths.project_registry_path());
+        let runtime = ProjectRegistryRuntime::new(&paths);
         let first = runtime.register(&first_root, Some("First")).await.unwrap();
         let second = runtime
             .register(&second_root, Some("Second"))
@@ -1308,7 +1442,7 @@ mod tests {
         let root = temp.path().join("private-root-marker");
         std::fs::create_dir(&root).unwrap();
         let paths = storage_paths(&temp);
-        let runtime = ProjectRegistryRuntime::new(paths.project_registry_path());
+        let runtime = ProjectRegistryRuntime::new(&paths);
         let created = runtime.register(&root, Some("Lifecycle")).await.unwrap();
 
         assert_eq!(
@@ -1353,7 +1487,7 @@ mod tests {
         let corrupt_paths = storage_paths(&corrupt);
         std::fs::create_dir_all(corrupt_paths.project_registry_path().parent().unwrap()).unwrap();
         std::fs::write(corrupt_paths.project_registry_path(), b"{").unwrap();
-        let corrupt_runtime = ProjectRegistryRuntime::new(corrupt_paths.project_registry_path());
+        let corrupt_runtime = ProjectRegistryRuntime::new(&corrupt_paths);
         assert_eq!(
             corrupt_runtime
                 .resolve_context(&corrupt_paths, &created.project_id)
@@ -1371,7 +1505,7 @@ mod tests {
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
         let paths = storage_paths(&temp);
-        let runtime = ProjectRegistryRuntime::new(paths.project_registry_path());
+        let runtime = ProjectRegistryRuntime::new(&paths);
         let created = runtime
             .register(&root, Some("Unsafe storage"))
             .await

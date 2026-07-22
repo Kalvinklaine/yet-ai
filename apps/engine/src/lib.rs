@@ -52,8 +52,7 @@ impl AppState {
     ) -> Self {
         let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let storage_paths = resolve_default_storage_paths(&identity, &project_root);
-        let project_registry_runtime =
-            ProjectRegistryRuntime::new(storage_paths.project_registry_path());
+        let project_registry_runtime = ProjectRegistryRuntime::new(&storage_paths);
         Self {
             identity,
             auth_token,
@@ -71,8 +70,7 @@ impl AppState {
         auth_token: AuthToken,
         storage_paths: StoragePaths,
     ) -> Self {
-        let project_registry_runtime =
-            ProjectRegistryRuntime::new(storage_paths.project_registry_path());
+        let project_registry_runtime = ProjectRegistryRuntime::new(&storage_paths);
         Self {
             identity,
             auth_token,
