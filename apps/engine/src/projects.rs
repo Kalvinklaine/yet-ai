@@ -32,7 +32,7 @@ pub struct ProjectRegistryRuntime {
     registry_path: PathBuf,
     config_dir: PathBuf,
     cache_dir: PathBuf,
-    state: Arc<tokio::sync::Mutex<Option<ProjectRegistry>>>,
+    ordering: Arc<tokio::sync::Mutex<()>>,
     #[cfg(test)]
     fail_writes: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -272,7 +272,7 @@ impl ProjectRegistryRuntime {
             registry_path: storage_paths.project_registry_path(),
             config_dir: storage_paths.config_dir.clone(),
             cache_dir: storage_paths.cache_dir.clone(),
-            state: Arc::new(tokio::sync::Mutex::new(None)),
+            ordering: Arc::new(tokio::sync::Mutex::new(())),
             #[cfg(test)]
             fail_writes: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
@@ -284,19 +284,17 @@ impl ProjectRegistryRuntime {
 
     pub async fn load(&self) -> Result<(), ProjectRegistryError> {
         self.validate_registry_storage()?;
-        let mut state = self.state.lock().await;
-        let (registry, ()) = self.transaction(|_| Ok(())).await?;
-        *state = Some(registry);
+        let _ordering = self.ordering.lock().await;
+        self.transaction(|_| Ok(())).await?;
         Ok(())
     }
 
     pub async fn list_summaries(&self) -> Result<Vec<ProjectSummary>, ProjectRegistryError> {
         self.validate_registry_storage()?;
-        let mut state = self.state.lock().await;
-        let (registry, summaries) = self
+        let _ordering = self.ordering.lock().await;
+        let summaries = self
             .transaction(|registry| Ok(registry.projects.iter().map(project_summary).collect()))
             .await?;
-        *state = Some(registry);
         Ok(summaries)
     }
 
@@ -306,9 +304,9 @@ impl ProjectRegistryRuntime {
     ) -> Result<PrivateProjectEntry, ProjectRegistryError> {
         validate_project_id(project_id)?;
         self.validate_registry_storage()?;
-        let mut state = self.state.lock().await;
+        let _ordering = self.ordering.lock().await;
         let project_id = project_id.to_string();
-        let (registry, entry) = self
+        let entry = self
             .transaction(move |registry| {
                 registry
                     .projects
@@ -318,7 +316,6 @@ impl ProjectRegistryRuntime {
                     .ok_or(ProjectRegistryError::NotFound)
             })
             .await?;
-        *state = Some(registry);
         Ok(entry)
     }
 
@@ -387,8 +384,8 @@ impl ProjectRegistryRuntime {
             Some(value) => validate_display_name(value)?.to_string(),
             None => default_display_name(&canonical_root),
         };
-        let mut state = self.state.lock().await;
-        let (registry, summary) = self
+        let _ordering = self.ordering.lock().await;
+        let summary = self
             .transaction(move |registry| {
                 if let Some(entry) = registry
                     .projects
@@ -425,7 +422,6 @@ impl ProjectRegistryRuntime {
                 ))
             })
             .await?;
-        *state = Some(registry);
         Ok(summary)
     }
 
@@ -508,10 +504,10 @@ impl ProjectRegistryRuntime {
     ) -> Result<ProjectSummary, ProjectRegistryError> {
         validate_revision(expected_revision).map_err(|_| ProjectRegistryError::InvalidRequest)?;
         self.validate_registry_storage()?;
-        let mut state = self.state.lock().await;
+        let _ordering = self.ordering.lock().await;
         let project_id = project_id.to_string();
         let expected_revision = expected_revision.to_string();
-        let (registry, summary) = self
+        let summary = self
             .transaction(move |registry| {
                 let entry = registry
                     .projects
@@ -528,26 +524,26 @@ impl ProjectRegistryRuntime {
                 Ok(summary)
             })
             .await?;
-        *state = Some(registry);
         Ok(summary)
     }
 
-    async fn transaction<T, F>(
-        &self,
-        operation: F,
-    ) -> Result<(ProjectRegistry, T), ProjectRegistryError>
+    async fn transaction<T, F>(&self, operation: F) -> Result<T, ProjectRegistryError>
     where
         T: Send + 'static,
         F: FnOnce(&mut ProjectRegistry) -> Result<T, ProjectRegistryError> + Send + 'static,
     {
         let path = self.registry_path.clone();
+        let config_dir = self.config_dir.clone();
+        let cache_dir = self.cache_dir.clone();
         #[cfg(test)]
         let fail_writes = self.fail_writes.load(Ordering::SeqCst);
         #[cfg(not(test))]
         let fail_writes = false;
-        tokio::task::spawn_blocking(move || registry_transaction(&path, fail_writes, operation))
-            .await
-            .map_err(|_| ProjectRegistryError::Storage)?
+        tokio::task::spawn_blocking(move || {
+            registry_transaction(&path, &config_dir, &cache_dir, fail_writes, operation)
+        })
+        .await
+        .map_err(|_| ProjectRegistryError::Storage)?
     }
 
     fn validate_registry_storage(&self) -> Result<(), ProjectRegistryError> {
@@ -781,10 +777,28 @@ fn increment_revision(value: &str) -> Result<String, ProjectRegistryError> {
 
 fn registry_transaction<T>(
     path: &Path,
+    config_dir: &Path,
+    cache_dir: &Path,
     fail_writes: bool,
     operation: impl FnOnce(&mut ProjectRegistry) -> Result<T, ProjectRegistryError>,
-) -> Result<(ProjectRegistry, T), ProjectRegistryError> {
+) -> Result<T, ProjectRegistryError> {
+    registry_transaction_after(path, config_dir, cache_dir, fail_writes, operation, || {
+        Ok(())
+    })
+}
+
+fn registry_transaction_after<T>(
+    path: &Path,
+    config_dir: &Path,
+    cache_dir: &Path,
+    fail_writes: bool,
+    operation: impl FnOnce(&mut ProjectRegistry) -> Result<T, ProjectRegistryError>,
+    before_validation: impl FnOnce() -> Result<(), ProjectRegistryError>,
+) -> Result<T, ProjectRegistryError> {
+    before_validation()?;
+    validate_registry_storage_sync(path, config_dir, cache_dir)?;
     let lock = acquire_registry_lock(path)?;
+    validate_registry_storage_sync(path, config_dir, cache_dir)?;
     let mut registry = load_registry_sync(path)?;
     let before = registry.clone();
     let result = operation(&mut registry)?;
@@ -795,7 +809,18 @@ fn registry_transaction<T>(
         persist_registry_sync(path, &registry)?;
     }
     drop(lock);
-    Ok((registry, result))
+    Ok(result)
+}
+
+fn validate_registry_storage_sync(
+    path: &Path,
+    config_dir: &Path,
+    cache_dir: &Path,
+) -> Result<(), ProjectRegistryError> {
+    validate_storage_chain(config_dir).map_err(|_| ProjectRegistryError::Storage)?;
+    validate_storage_chain(cache_dir).map_err(|_| ProjectRegistryError::Storage)?;
+    validate_storage_chain(path.parent().ok_or(ProjectRegistryError::Storage)?)
+        .map_err(|_| ProjectRegistryError::Storage)
 }
 
 fn acquire_registry_lock(path: &Path) -> Result<std::fs::File, ProjectRegistryError> {
@@ -812,6 +837,7 @@ fn acquire_registry_lock(path: &Path) -> Result<std::fs::File, ProjectRegistryEr
     let lock = options
         .open(&lock_path)
         .map_err(|_| ProjectRegistryError::Storage)?;
+    verify_open_regular_file(&lock_path, &lock)?;
     set_private_file(&lock)?;
     let deadline = Instant::now() + REGISTRY_LOCK_TIMEOUT;
     loop {
@@ -837,6 +863,7 @@ fn load_registry_sync(path: &Path) -> Result<ProjectRegistry, ProjectRegistryErr
             projects: Vec::new(),
         });
     };
+    verify_open_regular_file(path, &file)?;
     set_private_file(&file)?;
     if file
         .metadata()
@@ -1072,11 +1099,19 @@ fn ensure_existing_registry_directory(path: &Path) -> Result<(), ProjectRegistry
 }
 
 fn ensure_registry_directory(path: &Path) -> Result<(), ProjectRegistryError> {
+    ensure_registry_directory_with_sync(path, sync_directory)
+}
+
+fn ensure_registry_directory_with_sync(
+    path: &Path,
+    mut sync: impl FnMut(&Path) -> Result<(), ProjectRegistryError>,
+) -> Result<(), ProjectRegistryError> {
     let directory = path.parent().ok_or(ProjectRegistryError::Storage)?;
     let parent = directory.parent().ok_or(ProjectRegistryError::Storage)?;
-    std::fs::create_dir_all(parent).map_err(|_| ProjectRegistryError::Storage)?;
+    create_missing_directories_durable(parent, &mut sync)?;
+    let mut created = false;
     match std::fs::create_dir(directory) {
-        Ok(()) => {}
+        Ok(()) => created = true,
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(_) => return Err(ProjectRegistryError::Storage),
     }
@@ -1085,7 +1120,35 @@ fn ensure_registry_directory(path: &Path) -> Result<(), ProjectRegistryError> {
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
         return Err(ProjectRegistryError::Storage);
     }
-    set_private_directory(directory)
+    set_private_directory(directory)?;
+    if created {
+        sync(parent)?;
+    }
+    Ok(())
+}
+
+fn create_missing_directories_durable(
+    directory: &Path,
+    sync: &mut impl FnMut(&Path) -> Result<(), ProjectRegistryError>,
+) -> Result<(), ProjectRegistryError> {
+    let mut missing = Vec::new();
+    let mut existing = directory;
+    loop {
+        match std::fs::symlink_metadata(existing) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => break,
+            Ok(_) => return Err(ProjectRegistryError::Storage),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(existing.to_path_buf());
+                existing = existing.parent().ok_or(ProjectRegistryError::Storage)?;
+            }
+            Err(_) => return Err(ProjectRegistryError::Storage),
+        }
+    }
+    for child in missing.iter().rev() {
+        std::fs::create_dir(child).map_err(|_| ProjectRegistryError::Storage)?;
+        sync(child.parent().ok_or(ProjectRegistryError::Storage)?)?;
+    }
+    Ok(())
 }
 
 fn reject_registry_file_symlink(path: &Path) -> Result<(), ProjectRegistryError> {
@@ -1096,6 +1159,22 @@ fn reject_registry_file_symlink(path: &Path) -> Result<(), ProjectRegistryError>
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(_) => Err(ProjectRegistryError::Storage),
     }
+}
+
+fn verify_open_regular_file(path: &Path, file: &std::fs::File) -> Result<(), ProjectRegistryError> {
+    let opened = file.metadata().map_err(|_| ProjectRegistryError::Storage)?;
+    let current = std::fs::symlink_metadata(path).map_err(|_| ProjectRegistryError::Storage)?;
+    if !opened.is_file() || !current.is_file() || current.file_type().is_symlink() {
+        return Err(ProjectRegistryError::Storage);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if opened.dev() != current.dev() || opened.ino() != current.ino() {
+            return Err(ProjectRegistryError::Storage);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -1479,6 +1558,97 @@ mod tests {
         );
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(std::fs::read(outside).unwrap(), b"untouched");
+    }
+
+    #[tokio::test]
+    async fn projects_non_file_lock_is_rejected_without_registry_damage() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let path = registry_path(&temp);
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
+        runtime.register(&root, Some("Original")).await.unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let lock_path = path.with_file_name("registry.lock");
+        std::fs::remove_file(&lock_path).unwrap();
+        std::fs::create_dir(&lock_path).unwrap();
+
+        assert_eq!(
+            runtime.list_summaries().await.unwrap_err(),
+            ProjectRegistryError::Storage
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn projects_transaction_revalidates_chain_after_caller_check() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = registry_path(&temp);
+        let paths = paths_for_registry_path(&path);
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::create_dir_all(&paths.cache_dir).unwrap();
+        validate_registry_storage_sync(&path, &paths.config_dir, &paths.cache_dir).unwrap();
+        let redirected = paths.config_dir.clone();
+
+        let error = registry_transaction_after(
+            &path,
+            &paths.config_dir,
+            &paths.cache_dir,
+            false,
+            |_| Ok(()),
+            || {
+                std::fs::remove_dir(&redirected).unwrap();
+                std::os::unix::fs::symlink(outside.path(), &redirected).unwrap();
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error, ProjectRegistryError::Storage);
+        assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn projects_first_directory_creation_syncs_each_existing_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp
+            .path()
+            .join("missing-config")
+            .join("projects")
+            .join("registry.json");
+        let mut synced = Vec::new();
+
+        ensure_registry_directory_with_sync(&path, |parent| {
+            synced.push(parent.to_path_buf());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            synced,
+            vec![
+                temp.path().to_path_buf(),
+                temp.path().join("missing-config"),
+            ]
+        );
+    }
+
+    #[test]
+    fn projects_first_directory_creation_surfaces_unexpected_parent_sync_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp
+            .path()
+            .join("config")
+            .join("projects")
+            .join("registry.json");
+
+        assert_eq!(
+            ensure_registry_directory_with_sync(&path, |_| Err(ProjectRegistryError::Storage)),
+            Err(ProjectRegistryError::Storage)
+        );
+        assert!(!path.parent().unwrap().exists());
     }
 
     #[test]
@@ -1916,6 +2086,49 @@ mod tests {
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(migrated["version"], REGISTRY_VERSION);
         assert_eq!(migrated["revision"], "7");
+        assert_eq!(migrated["projects"][0]["rootBinding"]["state"], "unbound");
+    }
+
+    #[tokio::test]
+    async fn projects_v3_null_identity_leaves_readable_root_unbound() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = registry_path(&temp);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let project_id = new_project_id().unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 3,
+                "revision": "9",
+                "projects": [{
+                    "projectId": project_id,
+                    "displayName": "Ambiguous",
+                    "canonicalRoot": std::fs::canonicalize(&root).unwrap(),
+                    "revision": "6",
+                    "createdAt": timestamp_now(),
+                    "lastOpenedAt": null,
+                    "archived": false,
+                    "rootIdentity": null
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
+        runtime.load().await.unwrap();
+        let summary = runtime.list_summaries().await.unwrap().pop().unwrap();
+        assert_eq!(summary.status, ProjectStatus::Missing);
+        assert!(!summary.root_available);
+        assert_eq!(
+            runtime.register(&root, Some("Rebind")).await.unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
+        let migrated: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(migrated["version"], REGISTRY_VERSION);
         assert_eq!(migrated["projects"][0]["rootBinding"]["state"], "unbound");
     }
 
