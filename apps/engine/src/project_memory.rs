@@ -129,18 +129,18 @@ struct ProjectMemoryStore {
     notes: Vec<ProjectMemoryNote>,
 }
 
-pub async fn list(config_dir: &Path) -> Result<ProjectMemoryListResponse, ProjectMemoryError> {
-    let mut notes = load_notes(config_dir).await?;
+pub async fn list(storage_root: &Path) -> Result<ProjectMemoryListResponse, ProjectMemoryError> {
+    let mut notes = load_notes(storage_root).await?;
     sort_notes(&mut notes);
     Ok(list_response(notes))
 }
 
 pub async fn get(
-    config_dir: &Path,
+    storage_root: &Path,
     note_id: &str,
 ) -> Result<ProjectMemoryNote, ProjectMemoryError> {
     validate_note_id(note_id)?;
-    load_notes(config_dir)
+    load_notes(storage_root)
         .await?
         .into_iter()
         .find(|note| note.id == note_id)
@@ -148,11 +148,11 @@ pub async fn get(
 }
 
 pub async fn create(
-    config_dir: &Path,
+    storage_root: &Path,
     request: ProjectMemoryCreateRequest,
 ) -> Result<ProjectMemoryNote, ProjectMemoryError> {
     validate_create_request(&request)?;
-    let mut notes = load_notes(config_dir).await?;
+    let mut notes = load_notes(storage_root).await?;
     if notes.len() >= MAX_NOTES {
         return Err(ProjectMemoryError::LimitReached);
     }
@@ -167,18 +167,18 @@ pub async fn create(
         updated_at: now,
     };
     notes.push(note.clone());
-    store_notes(config_dir, &notes).await?;
+    store_notes(storage_root, &notes).await?;
     Ok(note)
 }
 
 pub async fn update(
-    config_dir: &Path,
+    storage_root: &Path,
     note_id: &str,
     request: ProjectMemoryUpdateRequest,
 ) -> Result<ProjectMemoryNote, ProjectMemoryError> {
     validate_note_id(note_id)?;
     validate_update_request(&request)?;
-    let mut notes = load_notes(config_dir).await?;
+    let mut notes = load_notes(storage_root).await?;
     let Some(note) = notes.iter_mut().find(|note| note.id == note_id) else {
         return Err(ProjectMemoryError::NotFound);
     };
@@ -187,33 +187,33 @@ pub async fn update(
     note.tags = normalize_tags(request.tags)?;
     note.updated_at = now_timestamp();
     let updated = note.clone();
-    store_notes(config_dir, &notes).await?;
+    store_notes(storage_root, &notes).await?;
     Ok(updated)
 }
 
-pub async fn delete(config_dir: &Path, note_id: &str) -> Result<(), ProjectMemoryError> {
+pub async fn delete(storage_root: &Path, note_id: &str) -> Result<(), ProjectMemoryError> {
     validate_note_id(note_id)?;
-    let mut notes = load_notes(config_dir).await?;
+    let mut notes = load_notes(storage_root).await?;
     let before = notes.len();
     notes.retain(|note| note.id != note_id);
     if notes.len() == before {
         return Err(ProjectMemoryError::NotFound);
     }
-    store_notes(config_dir, &notes).await
+    store_notes(storage_root, &notes).await
 }
 
 pub async fn delete_with_request(
-    config_dir: &Path,
+    storage_root: &Path,
     request: ProjectMemoryDeleteRequest,
 ) -> Result<(), ProjectMemoryError> {
     if request.protocol_version != PROTOCOL_VERSION {
         return Err(ProjectMemoryError::InvalidRequest);
     }
-    delete(config_dir, &request.note_id).await
+    delete(storage_root, &request.note_id).await
 }
 
 pub async fn search(
-    config_dir: &Path,
+    storage_root: &Path,
     request: ProjectMemorySearchRequest,
 ) -> Result<ProjectMemorySearchResponse, ProjectMemoryError> {
     if request.protocol_version != PROTOCOL_VERSION
@@ -229,7 +229,7 @@ pub async fn search(
     }
     let query = request.query.to_lowercase();
     let mut matches = Vec::new();
-    let mut notes = load_notes(config_dir).await?;
+    let mut notes = load_notes(storage_root).await?;
     sort_notes(&mut notes);
     for note in notes {
         if !tags.iter().all(|tag| note.tags.contains(tag)) {
@@ -439,8 +439,8 @@ fn new_note_id() -> Result<String, ProjectMemoryError> {
     ))
 }
 
-async fn load_notes(config_dir: &Path) -> Result<Vec<ProjectMemoryNote>, ProjectMemoryError> {
-    let path = project_memory_path(config_dir);
+async fn load_notes(storage_root: &Path) -> Result<Vec<ProjectMemoryNote>, ProjectMemoryError> {
+    let path = project_memory_path(storage_root);
     if !ensure_existing_project_memory_root(&path).await? {
         return Ok(Vec::new());
     }
@@ -480,13 +480,13 @@ fn valid_timestamp(value: &str) -> bool {
 }
 
 async fn store_notes(
-    config_dir: &Path,
+    storage_root: &Path,
     notes: &[ProjectMemoryNote],
 ) -> Result<(), ProjectMemoryError> {
     if notes.len() > MAX_NOTES {
         return Err(ProjectMemoryError::LimitReached);
     }
-    let path = project_memory_path(config_dir);
+    let path = project_memory_path(storage_root);
     ensure_project_memory_directory(&path).await?;
     reject_project_memory_file_symlink(&path).await?;
     let store = ProjectMemoryStore {
@@ -497,8 +497,8 @@ async fn store_notes(
     atomic_write_project_memory(&path, &bytes).await
 }
 
-fn project_memory_path(config_dir: &Path) -> PathBuf {
-    config_dir.join("project-memory").join("notes.json")
+fn project_memory_path(storage_root: &Path) -> PathBuf {
+    storage_root.join("notes.json")
 }
 
 async fn ensure_project_memory_directory(path: &Path) -> Result<(), ProjectMemoryError> {

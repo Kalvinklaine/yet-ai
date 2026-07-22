@@ -898,7 +898,7 @@ async fn agent_progress_event(
 }
 
 async fn project_memory_list(_auth: Authenticated, State(state): State<AppState>) -> Response {
-    match project_memory::list(&state.storage_paths.config_dir).await {
+    match project_memory::list(&state.storage_paths.config_dir.join("project-memory")).await {
         Ok(response) => Json(response).into_response(),
         Err(error) => project_memory_error(error),
     }
@@ -913,7 +913,12 @@ async fn project_memory_create(
         Ok(request) => request,
         Err(rejection) => return invalid_json_body(rejection),
     };
-    match project_memory::create(&state.storage_paths.config_dir, request).await {
+    match project_memory::create(
+        &state.storage_paths.config_dir.join("project-memory"),
+        request,
+    )
+    .await
+    {
         Ok(note) => (StatusCode::CREATED, Json(note)).into_response(),
         Err(error) => project_memory_error(error),
     }
@@ -924,7 +929,12 @@ async fn project_memory_get(
     State(state): State<AppState>,
     Path(note_id): Path<String>,
 ) -> Response {
-    match project_memory::get(&state.storage_paths.config_dir, &note_id).await {
+    match project_memory::get(
+        &state.storage_paths.config_dir.join("project-memory"),
+        &note_id,
+    )
+    .await
+    {
         Ok(note) => Json(note).into_response(),
         Err(error) => project_memory_error(error),
     }
@@ -940,7 +950,13 @@ async fn project_memory_update(
         Ok(request) => request,
         Err(rejection) => return invalid_json_body(rejection),
     };
-    match project_memory::update(&state.storage_paths.config_dir, &note_id, request).await {
+    match project_memory::update(
+        &state.storage_paths.config_dir.join("project-memory"),
+        &note_id,
+        request,
+    )
+    .await
+    {
         Ok(note) => Json(note).into_response(),
         Err(error) => project_memory_error(error),
     }
@@ -951,7 +967,12 @@ async fn project_memory_delete(
     State(state): State<AppState>,
     Path(note_id): Path<String>,
 ) -> Response {
-    match project_memory::delete(&state.storage_paths.config_dir, &note_id).await {
+    match project_memory::delete(
+        &state.storage_paths.config_dir.join("project-memory"),
+        &note_id,
+    )
+    .await
+    {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => project_memory_error(error),
     }
@@ -966,13 +987,18 @@ async fn project_memory_search(
         Ok(request) => request,
         Err(rejection) => return invalid_json_body(rejection),
     };
-    match project_memory::search(&state.storage_paths.config_dir, request).await {
+    match project_memory::search(
+        &state.storage_paths.config_dir.join("project-memory"),
+        request,
+    )
+    .await
+    {
         Ok(response) => Json(response).into_response(),
         Err(error) => project_memory_error(error),
     }
 }
 
-fn project_memory_error(error: project_memory::ProjectMemoryError) -> Response {
+pub(super) fn project_memory_error(error: project_memory::ProjectMemoryError) -> Response {
     (error.status(), Json(json!({ "error": error.to_string() }))).into_response()
 }
 
@@ -1508,6 +1534,36 @@ mod project_tests {
             .unwrap()
     }
 
+    async fn project_json_request(
+        state: AppState,
+        method: &str,
+        uri: String,
+        body: serde_json::Value,
+    ) -> Response {
+        super::router(state)
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    fn memory_create_body(title: &str, text: &str, tags: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "protocolVersion": "2026-06-17",
+            "title": title,
+            "text": text,
+            "tags": tags,
+            "source": "manual"
+        })
+    }
+
     #[tokio::test]
     async fn project_control_routes_require_auth_and_apply_revision_lifecycle() {
         let (state, project_id, root) = project_test_state().await;
@@ -1695,6 +1751,190 @@ mod project_tests {
         let (first, second) = tokio::join!(first, second);
         assert_eq!(first.status(), StatusCode::NOT_IMPLEMENTED);
         assert_eq!(second.status(), StatusCode::NOT_IMPLEMENTED);
+        let _ = std::fs::remove_dir_all(first_root.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn project_memory_http_crud_search_and_namespaces_are_isolated() {
+        let (state, first_id, first_root) = project_test_state().await;
+        let second_root = first_root.parent().unwrap().join("memory-second-root");
+        std::fs::create_dir_all(&second_root).unwrap();
+        let second_id = state
+            .project_registry_runtime
+            .register(&second_root, Some("Second memory project"))
+            .await
+            .unwrap()
+            .project_id;
+
+        let legacy = project_json_request(
+            state.clone(),
+            "POST",
+            "/v1/project-memory".to_string(),
+            memory_create_body("Legacy only", "legacy-memory-sentinel", &["legacy"]),
+        )
+        .await;
+        assert_eq!(legacy.status(), StatusCode::CREATED);
+
+        let (first_created, second_created) = tokio::join!(
+            project_json_request(
+                state.clone(),
+                "POST",
+                format!("/p/{first_id}/v1/project-memory"),
+                memory_create_body("First only", "first-memory-sentinel", &["shared"]),
+            ),
+            project_json_request(
+                state.clone(),
+                "POST",
+                format!("/p/{second_id}/v1/project-memory"),
+                memory_create_body("Second only", "second-memory-sentinel", &["shared"]),
+            )
+        );
+        assert_eq!(first_created.status(), StatusCode::CREATED);
+        assert_eq!(second_created.status(), StatusCode::CREATED);
+        let first_note: serde_json::Value =
+            serde_json::from_str(&response_text(first_created).await).unwrap();
+        let first_note_id = first_note["id"].as_str().unwrap();
+
+        let first_list = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{first_id}/v1/project-memory"),
+            "",
+            true,
+        )
+        .await;
+        let first_list = response_text(first_list).await;
+        assert!(first_list.contains("first-memory-sentinel"));
+        assert!(!first_list.contains("second-memory-sentinel"));
+        assert!(!first_list.contains("legacy-memory-sentinel"));
+
+        let wrong_project = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{second_id}/v1/project-memory/{first_note_id}"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(wrong_project.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response_text(wrong_project).await,
+            r#"{"error":"project memory note not found"}"#
+        );
+
+        let second_store_path = state
+            .storage_paths
+            .config_dir
+            .join("projects")
+            .join(&second_id)
+            .join("project-memory/notes.json");
+        let mut second_store: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&second_store_path).unwrap()).unwrap();
+        second_store["notes"][0]["id"] = serde_json::json!(first_note_id);
+        std::fs::write(
+            &second_store_path,
+            serde_json::to_vec_pretty(&second_store).unwrap(),
+        )
+        .unwrap();
+        let same_id_in_second = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{second_id}/v1/project-memory/{first_note_id}"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(same_id_in_second.status(), StatusCode::OK);
+        let same_id_in_second = response_text(same_id_in_second).await;
+        assert!(same_id_in_second.contains("second-memory-sentinel"));
+        assert!(!same_id_in_second.contains("first-memory-sentinel"));
+
+        let search = project_json_request(
+            state.clone(),
+            "POST",
+            format!("/p/{first_id}/v1/project-memory/search"),
+            serde_json::json!({
+                "protocolVersion": "2026-06-17",
+                "query": "first-memory-sentinel",
+                "tags": [],
+                "limit": 20
+            }),
+        )
+        .await;
+        assert_eq!(search.status(), StatusCode::OK);
+        let search = response_text(search).await;
+        assert!(search.contains(first_note_id));
+        assert!(!search.contains("second-memory-sentinel"));
+        assert!(!search.contains("legacy-memory-sentinel"));
+
+        let updated = project_json_request(
+            state.clone(),
+            "PATCH",
+            format!("/p/{first_id}/v1/project-memory/{first_note_id}"),
+            memory_create_body("Updated first", "updated-memory-sentinel", &["updated"]),
+        )
+        .await;
+        assert_eq!(updated.status(), StatusCode::OK);
+        assert!(response_text(updated)
+            .await
+            .contains("updated-memory-sentinel"));
+
+        let deleted = project_request(
+            state.clone(),
+            "DELETE",
+            format!("/p/{first_id}/v1/project-memory/{first_note_id}"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+
+        assert!(state
+            .storage_paths
+            .config_dir
+            .join("projects")
+            .join(&first_id)
+            .join("project-memory/notes.json")
+            .is_file());
+        assert!(state
+            .storage_paths
+            .config_dir
+            .join("projects")
+            .join(&second_id)
+            .join("project-memory/notes.json")
+            .is_file());
+        assert!(state
+            .storage_paths
+            .config_dir
+            .join("project-memory/notes.json")
+            .is_file());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let first_memory_root = state
+                .storage_paths
+                .config_dir
+                .join("projects")
+                .join(&first_id)
+                .join("project-memory");
+            assert_eq!(
+                std::fs::metadata(&first_memory_root)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(first_memory_root.join("notes.json"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
         let _ = std::fs::remove_dir_all(first_root.parent().unwrap());
     }
 
@@ -1978,8 +2218,7 @@ mod project_tests {
         crate::logging::test_log_lines()
             .into_iter()
             .filter(|line| {
-                line.contains("http.auth.reject")
-                    && line.contains(&format!("endpoint={endpoint}"))
+                line.contains("http.auth.reject") && line.contains(&format!("endpoint={endpoint}"))
             })
             .collect()
     }

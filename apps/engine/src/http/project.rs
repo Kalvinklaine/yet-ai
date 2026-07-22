@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
+use crate::project_memory;
 use crate::projects::{
     is_valid_project_id, ProjectContext, ProjectContextError, ProjectRegistryError, ProjectSummary,
 };
@@ -157,6 +158,111 @@ pub(super) async fn scoped_placeholder(
     }
 }
 
+pub(super) async fn memory_list(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match project_memory::list(&context.storage().project_memory).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => super::project_memory_error(error),
+    }
+}
+
+pub(super) async fn memory_create(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    request: Result<Json<project_memory::ProjectMemoryCreateRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return super::invalid_json_body(rejection),
+    };
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match project_memory::create(&context.storage().project_memory, request).await {
+        Ok(note) => (StatusCode::CREATED, Json(note)).into_response(),
+        Err(error) => super::project_memory_error(error),
+    }
+}
+
+pub(super) async fn memory_get(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path((project_id, note_id)): Path<(String, String)>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match project_memory::get(&context.storage().project_memory, &note_id).await {
+        Ok(note) => Json(note).into_response(),
+        Err(error) => super::project_memory_error(error),
+    }
+}
+
+pub(super) async fn memory_update(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path((project_id, note_id)): Path<(String, String)>,
+    request: Result<Json<project_memory::ProjectMemoryUpdateRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return super::invalid_json_body(rejection),
+    };
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match project_memory::update(&context.storage().project_memory, &note_id, request).await {
+        Ok(note) => Json(note).into_response(),
+        Err(error) => super::project_memory_error(error),
+    }
+}
+
+pub(super) async fn memory_delete(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path((project_id, note_id)): Path<(String, String)>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match project_memory::delete(&context.storage().project_memory, &note_id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => super::project_memory_error(error),
+    }
+}
+
+pub(super) async fn memory_search(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    request: Result<Json<project_memory::ProjectMemorySearchRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return super::invalid_json_body(rejection),
+    };
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match project_memory::search(&context.storage().project_memory, request).await {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => super::project_memory_error(error),
+    }
+}
+
 pub(super) async fn resolve_context(
     state: &AppState,
     project_id: &str,
@@ -267,10 +373,16 @@ pub(super) fn scoped_router() -> Router<AppState> {
     Router::new()
         .route("/chats", axum::routing::any(scoped_placeholder))
         .route("/chats/*resource", axum::routing::any(scoped_placeholder))
-        .route("/project-memory", axum::routing::any(scoped_placeholder))
         .route(
-            "/project-memory/*resource",
-            axum::routing::any(scoped_placeholder),
+            "/project-memory",
+            axum::routing::get(memory_list).post(memory_create),
+        )
+        .route("/project-memory/search", axum::routing::post(memory_search))
+        .route(
+            "/project-memory/:note_id",
+            axum::routing::get(memory_get)
+                .patch(memory_update)
+                .delete(memory_delete),
         )
         .route("/agent-progress", axum::routing::any(scoped_placeholder))
         .route(

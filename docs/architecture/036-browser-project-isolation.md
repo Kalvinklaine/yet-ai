@@ -134,6 +134,8 @@ The concrete discovery response schemas may be refined before implementation, bu
 
 A nested resource ID is insufficient authority by itself. For example, a chat ID found under project A must return a sanitized not-found or ownership error when requested under project B.
 
+Project memory exposes `GET` and `POST /p/:projectId/v1/project-memory`, `POST /p/:projectId/v1/project-memory/search`, and `GET`, `PATCH`, and `DELETE /p/:projectId/v1/project-memory/:noteId`. These handlers retain the manual-only payload and explicit attachment contract and store notes only at `<configDir>/projects/<projectId>/project-memory/notes.json`. Note IDs are local to their project namespace; another project returns the generic note-not-found response. Legacy unscoped memory remains at `<configDir>/project-memory/notes.json` and is never searched, merged, migrated, or attached by project-scoped routes.
+
 ### Legacy compatibility routes
 
 | Route family | Rollout behavior |
