@@ -189,6 +189,36 @@ const pendingWorkspaceSnippetSearchQueries = new Set<string>();
 export const vscodeHostedChatPath = "/vscode/hosted-chat";
 export const hostedBootstrapTimeoutMs = 3000;
 
+export type DevBootstrapPhase = "pending" | "ready" | "fallen_back";
+
+export function createDevBootstrapLifecycle(
+  clearFallbackTimer: () => void,
+  mountFallback: () => void,
+): { complete(): boolean; fallBack(): boolean; phase(): DevBootstrapPhase } {
+  let currentPhase: DevBootstrapPhase = "pending";
+  return {
+    complete() {
+      if (currentPhase !== "pending") {
+        return false;
+      }
+      currentPhase = "ready";
+      clearFallbackTimer();
+      return true;
+    },
+    fallBack() {
+      if (currentPhase !== "pending") {
+        return false;
+      }
+      currentPhase = "fallen_back";
+      mountFallback();
+      return true;
+    },
+    phase() {
+      return currentPhase;
+    },
+  };
+}
+
 export function openYetAiWebview(
   context: vscode.ExtensionContext,
   identity: ProductIdentity,
@@ -1731,6 +1761,7 @@ let frameReady = false;
 let frameReadyRequestId;
 let activeGui = frame ? "dev" : "packaged";
 let hostedFallbackTimer;
+const createDevBootstrapLifecycle = ${createDevBootstrapLifecycle.toString()};
 const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const hasSecretRequestIdMarker = (value) => /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value);
 const isBoundedRequestId = (value) => value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(value) && !hasSecretRequestIdMarker(value));
@@ -1852,8 +1883,7 @@ const replayHostReady = () => {
     sendToFrame(latestHostReady);
   }
 };
-const activatePackagedFallback = () => {
-  if (activeGui !== "dev") return;
+const mountPackagedFallback = () => {
   activeGui = packagedFallbackHtml ? "packaged" : "unavailable";
   frameReady = false;
   frameReadyRequestId = undefined;
@@ -1882,14 +1912,14 @@ const activatePackagedFallback = () => {
   }
   document.body.append(content);
 };
-const completeDevBootstrap = () => {
-  if (activeGui !== "dev") return false;
+const devBootstrapLifecycle = createDevBootstrapLifecycle(() => {
   if (hostedFallbackTimer !== undefined) {
     clearTimeout(hostedFallbackTimer);
     hostedFallbackTimer = undefined;
   }
-  return true;
-};
+}, mountPackagedFallback);
+const activatePackagedFallback = () => devBootstrapLifecycle.fallBack();
+const completeDevBootstrap = () => devBootstrapLifecycle.complete();
 if (activeGui === "dev") hostedFallbackTimer = setTimeout(activatePackagedFallback, ${hostedBootstrapTimeoutMs});
 vscode.postMessage({ version: bootstrap.bridgeVersion, type: "gui.ready", requestId: bootstrap.requestId, payload: { supportedBridgeVersion: bootstrap.bridgeVersion } });
 window.addEventListener("message", (event) => {

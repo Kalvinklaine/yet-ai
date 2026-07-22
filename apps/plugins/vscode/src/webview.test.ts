@@ -49,6 +49,7 @@ async function main(): Promise<void> {
     await assertVerificationHandlerRejectsWithoutExecution(webview);
     assertIframeValidatorRejectsVerificationRequests(webview);
     assertHostedChatBootstrapPrecedesPackagedGui(webview);
+    assertDevBootstrapLifecycleIsTerminal(webview);
     assertDevFallbackKeepsPackageInert(webview);
     assertDevFallbackWithoutPackageIsBounded(webview);
     assertHostedChatUrlStripsQueryAndHash(webview);
@@ -62,6 +63,35 @@ async function main(): Promise<void> {
   }
 }
 
+function assertDevBootstrapLifecycleIsTerminal(webview: typeof import("./webview")): void {
+  let clearCount = 0;
+  let mountCount = 0;
+  const queuedTimeoutAfterReady = webview.createDevBootstrapLifecycle(
+    () => { clearCount += 1; },
+    () => { mountCount += 1; },
+  );
+  const queuedTimeoutCallback = () => queuedTimeoutAfterReady.fallBack();
+  assert.equal(queuedTimeoutAfterReady.complete(), true);
+  assert.equal(queuedTimeoutAfterReady.phase(), "ready");
+  assert.equal(queuedTimeoutCallback(), false);
+  assert.equal(queuedTimeoutAfterReady.complete(), false);
+  assert.equal(clearCount, 1);
+  assert.equal(mountCount, 0);
+
+  clearCount = 0;
+  mountCount = 0;
+  const timeoutBeforeReady = webview.createDevBootstrapLifecycle(
+    () => { clearCount += 1; },
+    () => { mountCount += 1; },
+  );
+  assert.equal(timeoutBeforeReady.fallBack(), true);
+  assert.equal(timeoutBeforeReady.phase(), "fallen_back");
+  assert.equal(timeoutBeforeReady.fallBack(), false);
+  assert.equal(timeoutBeforeReady.complete(), false);
+  assert.equal(clearCount, 0);
+  assert.equal(mountCount, 1);
+}
+
 function assertDevFallbackKeepsPackageInert(webview: typeof import("./webview")): void {
   const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-fallback-"));
   try {
@@ -73,6 +103,8 @@ function assertDevFallbackKeepsPackageInert(webview: typeof import("./webview"))
     assert.equal((html.match(/id=\\?"packaged-fallback-marker\\?"/g) ?? []).length, 1);
     assert.equal(html.includes('<main id="packaged-fallback-marker">Packaged fallback</main>\n<script nonce='), false);
     assert.equal(html.includes("setTimeout(activatePackagedFallback, 3000)"), true);
+    assert.equal(html.includes('currentPhase = "ready"'), true);
+    assert.equal(html.includes('currentPhase = "fallen_back"'), true);
     assert.equal(html.includes('activeGui !== "dev"'), true);
     assert.equal(html.includes("frame.removeAttribute(\"src\")"), true);
     assert.equal(html.includes("frame.remove()"), true);
