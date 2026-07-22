@@ -93,6 +93,15 @@ export async function subscribeToChat(
   const decoder = new TextDecoder();
   let buffer = "";
   let expectedSeq: number | null = null;
+  let cancellation: Promise<void> | null = null;
+  const cancelOnce = () => {
+    cancellation ??= cancelReader(reader);
+    return cancellation;
+  };
+  const onAbort = () => {
+    void cancelOnce();
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
 
   try {
     while (!signal.aborted) {
@@ -100,10 +109,13 @@ export async function subscribeToChat(
       if (done) {
         break;
       }
+      if (signal.aborted) {
+        break;
+      }
       buffer += decoder.decode(value, { stream: true });
       if (buffer.length > maxBufferChars) {
         callbacks.onError({ status: "protocol", message: "SSE buffer exceeded maximum size." });
-        await cancelReader(reader);
+        await cancelOnce();
         return;
       }
       const parsed = drainFrames(buffer);
@@ -112,23 +124,26 @@ export async function subscribeToChat(
         const result = parseSseFrame(frame);
         if (!result.ok) {
           callbacks.onError(result.error);
-          await cancelReader(reader);
+          await cancelOnce();
           return;
         }
         const event = result.data;
         if (!event) {
           continue;
         }
+        if (signal.aborted) {
+          break;
+        }
         if (event.chatId !== chatId) {
           callbacks.onError({ status: "protocol", message: "SSE event chat id did not match subscription." });
-          await cancelReader(reader);
+          await cancelOnce();
           return;
         }
         const sequenceError = validateSseSequence(event, expectedSeq);
         expectedSeq = sequenceError.nextExpectedSeq;
         if (sequenceError.error) {
           callbacks.onError(sequenceError.error);
-          await cancelReader(reader);
+          await cancelOnce();
           return;
         }
         callbacks.onEvent(event);
@@ -142,7 +157,13 @@ export async function subscribeToChat(
       });
     }
   } finally {
-    reader.releaseLock();
+    signal.removeEventListener("abort", onAbort);
+    if (signal.aborted) {
+      await cancelOnce();
+    }
+    try {
+      reader.releaseLock();
+    } catch {}
   }
 }
 
@@ -193,10 +214,25 @@ export function validateSseSequence(
   expectedSeq: number | null,
 ): { nextExpectedSeq: number | null; error?: RuntimeError } {
   if (event.type === "snapshot") {
+    if (expectedSeq !== null) {
+      return {
+        nextExpectedSeq: expectedSeq,
+        error: { status: "sequence", message: "SSE snapshot received after sequencing began." },
+      };
+    }
+    if (event.seq !== 0) {
+      return {
+        nextExpectedSeq: null,
+        error: { status: "sequence", message: `SSE snapshot must reset sequence to 0, received ${event.seq}` },
+      };
+    }
     return { nextExpectedSeq: 1 };
   }
   if (expectedSeq === null) {
-    return { nextExpectedSeq: null };
+    return {
+      nextExpectedSeq: null,
+      error: { status: "sequence", message: "SSE subscription must begin with a snapshot." },
+    };
   }
   if (event.seq !== expectedSeq) {
     return {

@@ -56,6 +56,35 @@ describe("sseClient", () => {
     expect(gap.nextExpectedSeq).toBe(4);
   });
 
+  it("rejects a delta before the initial snapshot", async () => {
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(sseResponse([delta, snapshot], cancel, false));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await subscribeToChat({ baseUrl: "http://127.0.0.1:8001", token: "token" }, "chat-1", { onEvent, onError }, new AbortController().signal);
+
+    expect(onError).toHaveBeenCalledWith({ status: "sequence", message: "SSE subscription must begin with a snapshot." });
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a second snapshot after sequencing begins", async () => {
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const cancel = vi.fn();
+    fetchMock.mockResolvedValue(sseResponse([snapshot, snapshot, delta], cancel, false));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await subscribeToChat({ baseUrl: "http://127.0.0.1:8001", token: "token" }, "chat-1", { onEvent, onError }, new AbortController().signal);
+
+    expect(onError).toHaveBeenCalledWith({ status: "sequence", message: "SSE snapshot received after sequencing began." });
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith(snapshot);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
   it("delivers normal snapshot and sequence path", async () => {
     const onEvent = vi.fn();
     const onError = vi.fn();
@@ -67,6 +96,43 @@ describe("sseClient", () => {
     expect(onError).not.toHaveBeenCalled();
     expect(onEvent).toHaveBeenCalledTimes(2);
     expect(onEvent.mock.calls.map(([event]) => event.type)).toEqual(["snapshot", "stream_delta"]);
+  });
+
+  it("cancels once on abort and does not deliver later buffered events", async () => {
+    const controller = new AbortController();
+    const cancel = vi.fn();
+    const onError = vi.fn();
+    const onEvent = vi.fn(() => controller.abort());
+    fetchMock.mockResolvedValue(sseResponse([snapshot, delta], cancel, false));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await subscribeToChat({ baseUrl: "http://127.0.0.1:8001", token: "token" }, "chat-1", { onEvent, onError }, controller.signal);
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onEvent).toHaveBeenCalledTimes(1);
+    expect(onEvent).toHaveBeenCalledWith(snapshot);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds reader cancellation failure", async () => {
+    const onEvent = vi.fn();
+    const onError = vi.fn();
+    const cancel = vi.fn(() => {
+      throw new Error("cancel failed");
+    });
+    fetchMock.mockResolvedValue(sseResponse([delta], cancel, false));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(subscribeToChat(
+      { baseUrl: "http://127.0.0.1:8001", token: "token" },
+      "chat-1",
+      { onEvent, onError },
+      new AbortController().signal,
+    )).resolves.toBeUndefined();
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ status: "sequence" }));
+    expect(onEvent).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 
   it("uses the explicit project API base for chat SSE", async () => {
