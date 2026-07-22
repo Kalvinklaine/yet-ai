@@ -790,7 +790,7 @@ fn migrate_version_two_registry(
             .projects
             .into_iter()
             .map(|entry| StoredProjectEntry {
-                root_identity: backfill_root_identity(&entry.canonical_root),
+                root_identity: None,
                 project_id: entry.project_id,
                 display_name: entry.display_name,
                 canonical_root: entry.canonical_root,
@@ -813,7 +813,7 @@ fn migrate_legacy_registry(
         .projects
         .into_iter()
         .map(|entry| StoredProjectEntry {
-            root_identity: backfill_root_identity(&entry.canonical_root),
+            root_identity: None,
             project_id: entry.project_id,
             display_name: entry.display_name,
             canonical_root: entry.canonical_root,
@@ -828,14 +828,6 @@ fn migrate_legacy_registry(
         revision: INITIAL_REVISION.to_string(),
         projects,
     })
-}
-
-fn backfill_root_identity(root: &Path) -> Option<RootIdentity> {
-    std::fs::canonicalize(root)
-        .ok()
-        .filter(|current| current == root)
-        .and_then(|current| readable_root_identity(&current).ok())
-        .flatten()
 }
 
 fn validate_registry(registry: &ProjectRegistry) -> Result<(), ProjectRegistryError> {
@@ -1529,13 +1521,37 @@ mod tests {
         let migrated = runtime.list_summaries().await.unwrap().pop().unwrap();
         assert_eq!(migrated.revision, INITIAL_REVISION);
         assert!(migrated.last_opened_at.is_some());
+        assert_eq!(migrated.status, ProjectStatus::Missing);
+        assert!(!migrated.root_available);
+        assert_eq!(
+            runtime
+                .get_active_private_entry(&project_id)
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
+        assert_eq!(
+            runtime
+                .resolve_context(&paths_for_registry_path(&path), &project_id)
+                .await
+                .unwrap_err(),
+            ProjectContextError::RootMissing
+        );
+        assert_eq!(
+            runtime
+                .mark_opened(&project_id, INITIAL_REVISION)
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
+        assert_eq!(
+            runtime.register(&root, Some("Rebind")).await.unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
         let migrated_json: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(migrated_json["version"], REGISTRY_VERSION);
-        #[cfg(unix)]
-        assert!(migrated_json["projects"][0]["rootIdentity"]["device"].is_u64());
-        #[cfg(unix)]
-        assert!(migrated_json["projects"][0]["rootIdentity"]["inode"].is_u64());
+        assert!(migrated_json["projects"][0]["rootIdentity"].is_null());
 
         for revision in ["0", "01", "18446744073709551616"] {
             let mut value: serde_json::Value = serde_json::from_slice(
@@ -1567,12 +1583,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn projects_v2_migration_leaves_unavailable_root_unbound() {
+    async fn projects_v2_migration_leaves_readable_root_unbound() {
         let temp = tempfile::tempdir().unwrap();
         let path = registry_path(&temp);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let missing = temp.path().join("missing");
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
         let project_id = new_project_id().unwrap();
+        let created_at = timestamp_now();
         std::fs::write(
             &path,
             serde_json::to_vec(&serde_json::json!({
@@ -1580,10 +1598,10 @@ mod tests {
                 "revision": "7",
                 "projects": [{
                     "projectId": project_id,
-                    "displayName": "Missing",
-                    "canonicalRoot": missing,
+                    "displayName": "Readable",
+                    "canonicalRoot": std::fs::canonicalize(&root).unwrap(),
                     "revision": "4",
-                    "createdAt": timestamp_now(),
+                    "createdAt": created_at,
                     "lastOpenedAt": null,
                     "archived": false
                 }]
@@ -1596,10 +1614,81 @@ mod tests {
         runtime.load().await.unwrap();
         let summary = runtime.list_summaries().await.unwrap().pop().unwrap();
         assert_eq!(summary.status, ProjectStatus::Missing);
+        assert!(!summary.root_available);
+        assert_eq!(summary.revision, "4");
+        assert_eq!(summary.created_at, created_at);
+        assert_eq!(
+            runtime.register(&root, Some("Rebind")).await.unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
         let migrated: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         assert_eq!(migrated["version"], REGISTRY_VERSION);
+        assert_eq!(migrated["revision"], "7");
         assert!(migrated["projects"][0]["rootIdentity"].is_null());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn projects_v1_and_v2_migration_do_not_bind_same_path_replacements() {
+        for version in [1, 2] {
+            let temp = tempfile::tempdir().unwrap();
+            let path = registry_path(&temp);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let root = temp.path().join("root");
+            let old_root = temp.path().join("old-root");
+            std::fs::create_dir(&root).unwrap();
+            let canonical_root = std::fs::canonicalize(&root).unwrap();
+            let project_id = new_project_id().unwrap();
+            let timestamp = timestamp_now();
+            let registry = if version == 1 {
+                serde_json::json!({
+                    "version": 1,
+                    "projects": [{
+                        "projectId": project_id,
+                        "displayName": "Legacy",
+                        "canonicalRoot": canonical_root,
+                        "createdAt": timestamp,
+                        "lastOpenedAt": timestamp,
+                        "archived": false
+                    }]
+                })
+            } else {
+                serde_json::json!({
+                    "version": 2,
+                    "revision": "8",
+                    "projects": [{
+                        "projectId": project_id,
+                        "displayName": "Legacy",
+                        "canonicalRoot": canonical_root,
+                        "revision": "5",
+                        "createdAt": timestamp,
+                        "lastOpenedAt": null,
+                        "archived": false
+                    }]
+                })
+            };
+            std::fs::write(&path, serde_json::to_vec(&registry).unwrap()).unwrap();
+            std::fs::rename(&root, &old_root).unwrap();
+            std::fs::create_dir(&root).unwrap();
+
+            let runtime = ProjectRegistryRuntime::new(&paths_for_registry_path(&path));
+            runtime.load().await.unwrap();
+            let summary = runtime.list_summaries().await.unwrap().pop().unwrap();
+            assert_eq!(summary.status, ProjectStatus::Missing);
+            assert!(!summary.root_available);
+            assert_eq!(summary.project_id, project_id);
+            assert_eq!(
+                runtime
+                    .register(&root, Some("Replacement"))
+                    .await
+                    .unwrap_err(),
+                ProjectRegistryError::RootUnavailable
+            );
+            let migrated: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert!(migrated["projects"][0]["rootIdentity"].is_null());
+        }
     }
 
     #[tokio::test]
