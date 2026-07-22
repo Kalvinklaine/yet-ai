@@ -64,6 +64,19 @@ describe("ProjectScopeController", () => {
     expect(scope.accepts(correlationB)).toBe(true);
   });
 
+  it("rejects a same-chat-id A stream after switching to B", () => {
+    const sharedChatId = "shared-chat";
+    const scope = new ProjectScopeController(projectA);
+    const streamA = { chatId: sharedChatId, scope: createProjectScopeCorrelation(scope.current()) };
+
+    scope.transition(projectB, resetters());
+    const streamB = { chatId: sharedChatId, scope: createProjectScopeCorrelation(scope.current()) };
+
+    expect(streamA.chatId).toBe(streamB.chatId);
+    expect(scope.accepts(streamA.scope)).toBe(false);
+    expect(scope.accepts(streamB.scope)).toBe(true);
+  });
+
   it("does not let an old SSE cleanup terminate the newer project stream", () => {
     const scope = new ProjectScopeController(projectA);
     const closeA = vi.fn();

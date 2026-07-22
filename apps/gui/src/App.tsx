@@ -401,6 +401,9 @@ export function generateApplyRequestSessionNonce(): string {
 
 export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }> }) {
   const projectId = route.kind === "project" ? route.projectId : undefined;
+  const projectPage = route.kind === "project" ? route.page : undefined;
+  const routedChatId = route.kind === "project" && route.page === "chat" ? route.chatId : undefined;
+  const initialChatId = routedChatId ?? "chat-001";
   const projectScopeControllerRef = useRef<ProjectScopeController>();
   if (!projectScopeControllerRef.current) {
     projectScopeControllerRef.current = new ProjectScopeController(projectId);
@@ -432,7 +435,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   const [chatError, setChatError] = useState<RuntimeError | null>(null);
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>();
-  const [chatId, setChatId] = useState("chat-001");
+  const [chatId, setChatId] = useState(initialChatId);
   const [chatSummaries, setChatSummaries] = useState<ChatSummary[]>([]);
   const [chatHistoryError, setChatHistoryError] = useState<RuntimeError | null>(null);
   const [chatHistoryRevision, setChatHistoryRevision] = useState<number | null>(null);
@@ -446,7 +449,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   const [modelProposalDraft, setModelProposalDraft] = useState<ModelProposalDraftState | null>(null);
   const [submittedModelProposalPrompt, setSubmittedModelProposalPrompt] = useState<SubmittedModelProposalPrompt | null>(null);
   const [adoptedProviderProposalState, setAdoptedProviderProposalState] = useState<AgentRunModelProviderProposalState | undefined>(undefined);
-  const [chatView, setChatView] = useState(() => createInitialChatViewState("chat-001"));
+  const [chatView, setChatView] = useState(() => createInitialChatViewState(initialChatId));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const [timeline, setTimeline] = useState<string[]>([]);
   const [codingSessionTrace, setCodingSessionTrace] = useState<CodingSessionTraceEntry[]>([]);
@@ -491,7 +494,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
   const settingsRef = useRef<ChatRuntimeSettings>(projectId ? createProjectRuntimeSettings(initialRuntimeSettings, projectId, projectScopeController.current()) : initialRuntimeSettings);
-  const chatIdRef = useRef("chat-001");
+  const chatIdRef = useRef(initialChatId);
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
   const providerAuthExchangeInFlightRef = useRef(false);
@@ -1324,7 +1327,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       active_chat: () => {
         abortActiveStream("SSE stopped for previous project", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
         chatHistoryAttemptRef.current += 1;
-        const nextChatId = route.kind === "project" && route.chatId ? route.chatId : "chat-001";
+        const nextChatId = route.kind === "project" && route.page === "chat" && route.chatId ? route.chatId : "chat-001";
         setChatId(nextChatId); setChatView(resetChatViewState(nextChatId)); setChatSummaries([]); setChatHistoryRevision(null);
         setChatHistoryError(null); setChatHistoryLoading(false); setDeletingChatId(null); setConversationNotice(null); setChatInput(""); setTimeline([]); setChatLifecycleState("idle");
       },
@@ -1355,7 +1358,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       setSettingsRevision(settingsRevisionRef.current);
       setProjectScopeRevision((current) => current + 1);
     }
-  }, [abortActiveStream, clearControlledCommandRunState, clearControlledEditState, clearControlledFileReadState, clearControlledMultifileApplyState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, projectId, projectScopeController, route.kind]);
+  }, [abortActiveStream, clearControlledCommandRunState, clearControlledEditState, clearControlledFileReadState, clearControlledMultifileApplyState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, projectId, projectScopeController]);
 
   useEffect(() => () => projectScopeController.dispose(), [projectScopeController]);
 
@@ -2154,7 +2157,9 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       const summaries = result.data.chats ?? [];
       setChatSummaries(summaries);
       setChatHistoryRevision(revision);
-      const resolution = resolveChatAfterList({ currentChatId: chatIdRef.current, summaries, defaultChatId: "chat-001" });
+      const resolution = routedChatId
+        ? { nextChatId: routedChatId, shouldResetView: chatIdRef.current !== routedChatId, reason: "current_present" as const }
+        : resolveChatAfterList({ currentChatId: chatIdRef.current, summaries, defaultChatId: "chat-001" });
       if (resolution.reason === "first_summary") {
         setConversationNotice(`Selected ${sanitizeDisplayText(summaries[0]?.title || resolution.nextChatId)} because the previous chat is not in this local runtime list.`);
       } else if (resolution.reason === "default_chat") {
@@ -2175,7 +2180,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       setChatHistoryRevision(revision);
     }
     setChatHistoryLoading(false);
-  }, [clearEditProposalState, clearIdeActionState, isCurrentRefresh]);
+  }, [clearEditProposalState, clearIdeActionState, isCurrentRefresh, routedChatId]);
 
   const loadChatThread = useCallback(async (targetChatId: string, targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = chatHistoryAttemptRef.current + 1;
@@ -2259,6 +2264,13 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
     setChatView(resetChatViewState(nextChatId));
     void loadChatThread(nextChatId);
   }, [abortActiveStream, chatSummaries, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, loadChatThread]);
+
+  useEffect(() => {
+    if (!routedChatId || routedChatId === chatIdRef.current) {
+      return;
+    }
+    selectChat(routedChatId);
+  }, [routedChatId, selectChat]);
 
   const updateDirectChatId = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const nextChatId = event.target.value;
@@ -2692,10 +2704,10 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
     clearEditProposalState();
     clearModelProposalState();
     clearIdeActionState();
-    if (activeChatSummary) {
+    if (activeChatSummary || routedChatId === chatId) {
       void loadChatThread(chatId);
     }
-  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, clearModelProposalState, loadChatThread]);
+  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, clearModelProposalState, loadChatThread, routedChatId]);
 
   useEffect(() => () => {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
@@ -3752,7 +3764,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, controlledHostCapabilityDisplayHost(controlledHostCapabilities, bridgeHost)), [bridgeHost, controlledHostCapabilities]);
 
   return (
-    <main className={`app-shell host-${bridgeHost} ${activeChatSummaries.length <= 1 ? "single-conversation" : "multi-conversation"}`}>
+    <main className={`app-shell host-${bridgeHost} ${activeChatSummaries.length <= 1 ? "single-conversation" : "multi-conversation"}`} data-project-page={projectPage}>
       <section className="hero">
         <div>
           <span className="badge ok">local-first</span>
@@ -3764,6 +3776,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
             runtime {connectionStatus}
           </span>
           <span className="badge">bridge {bridgeHost}</span>
+          {projectPage && <span className="badge" data-testid="project-page-mode">project {projectPage}</span>}
         </div>
       </section>
 

@@ -155,6 +155,107 @@ describe("project lifecycle scope", () => {
   const projectA = "prj_AAAAAAAAAAAAAAAAAAAAAA" as never;
   const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBB" as never;
 
+  it("uses a direct project chat route as the initial selected and loaded chat", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-x", "Routed chat", 1)],
+      chatThreads: { "chat-x": chatThread("chat-x", "Routed chat", [chatMessage("chat-x", "msg-x", "assistant", "Loaded from the deep link")]) },
+    });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-x" });
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.querySelector("main")?.getAttribute("data-project-page")).toBe("chat");
+    expect(container?.querySelector("[data-testid='project-page-mode']")?.textContent).toBe("project chat");
+    expect(findInputValue("chat-x")).toBeDefined();
+    expect(container?.textContent).toContain("Loaded from the deep link");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/p/${projectA}/v1/chats/chat-x`))).toBe(true);
+  });
+
+  it("treats same-project route chat changes like chat selection without resetting the project", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-a", "Chat A", 1), chatSummary("chat-b", "Chat B", 1)],
+      chatThreads: {
+        "chat-a": chatThread("chat-a", "Chat A", [chatMessage("chat-a", "msg-a", "assistant", "Project A chat message")]),
+        "chat-b": chatThread("chat-b", "Chat B", [chatMessage("chat-b", "msg-b", "assistant", "Project B chat message")]),
+      },
+    });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-a" });
+    await flushAsync();
+    await flushAsync();
+    await act(async () => setInputValue(sessionTokenInput(), "global-session-token"));
+    expect(container?.textContent).toContain("Project A chat message");
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat", chatId: "chat-b" }} />));
+    await flushAsync();
+
+    expect(findInputValue("chat-b")).toBeDefined();
+    expect(container?.textContent).toContain("Project B chat message");
+    expect(container?.textContent).not.toContain("Project A chat message");
+    expect(sessionTokenInput().value).toBe("global-session-token");
+  });
+
+  it("resets identical chat ids across projects and exposes back-forward page changes", async () => {
+    let activeProject = projectA;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(`/p/${projectB}/`)) activeProject = projectB;
+      const message = activeProject === projectA ? "Same id in project A" : "Same id in project B";
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("shared-chat", "Shared chat", 1)],
+        chatThreads: { "shared-chat": chatThread("shared-chat", "Shared chat", [chatMessage("shared-chat", `msg-${activeProject}`, "assistant", message)]) },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "shared-chat" });
+    await flushAsync();
+    await flushAsync();
+    expect(container?.textContent).toContain("Same id in project A");
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat", chatId: "shared-chat" }} />));
+    await flushAsync();
+    await flushAsync();
+    expect(container?.textContent).toContain("Same id in project B");
+    expect(container?.textContent).not.toContain("Same id in project A");
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "memory" }} />));
+    expect(container?.querySelector("main")?.getAttribute("data-project-page")).toBe("memory");
+    expect(container?.querySelector("[data-testid='project-page-mode']")?.textContent).toBe("project memory");
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat", chatId: "shared-chat" }} />));
+    expect(container?.querySelector("main")?.getAttribute("data-project-page")).toBe("chat");
+  });
+
+  it("ignores project A memory after the generation changes and accepts project B memory", async () => {
+    const projectAMemory = deferred<Response>();
+    const noteA = projectMemoryNote({ id: "mem-a", title: "Late project A memory", text: "Must stay in A." });
+    const noteB = projectMemoryNote({ id: "mem-b", title: "Current project B memory", text: "Belongs in B." });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === `http://127.0.0.1:8001/p/${projectA}/v1/project-memory` && !init?.method) {
+        return projectAMemory.promise;
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        projectMemoryNotes: url.includes(`/p/${projectB}/`) ? [noteB] : [noteA],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "memory" });
+    await flushAsync();
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "memory" }} />));
+    await flushAsync();
+    await flushAsync();
+    expect(container?.textContent).toContain("Current project B memory");
+
+    projectAMemory.resolve(jsonResponse({ notes: [noteA], cloudRequired: false, providerAccess: "direct" }));
+    await flushAsync();
+    expect(container?.textContent).toContain("Current project B memory");
+    expect(container?.textContent).not.toContain("Late project A memory");
+  });
+
   it("resets project state on A to B while preserving same-project subroutes and global runtime settings", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
