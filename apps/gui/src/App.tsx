@@ -25,6 +25,7 @@ import { listProviders, saveProvider, testProvider, type ProviderSummary, type P
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatRuntimeSettings, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { createProjectRuntimeSettings } from "./services/projectClient";
 import type { AppRoute } from "./services/projectRouting";
+import { ProjectScopeController, createProjectScopeCorrelation, type ProjectScopeCorrelation, type ProjectScopeResetters } from "./services/projectScope";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity, type EditProposalRejectedDiagnostic } from "./services/editProposal";
@@ -176,6 +177,8 @@ type ActiveStream = {
   settings: ChatRuntimeSettings;
   revision: number;
   chatId: string;
+  scopeCorrelation: ProjectScopeCorrelation;
+  unregisterScopeCancellation: () => void;
 };
 
 type AbortActiveStreamOptions = {
@@ -398,6 +401,12 @@ export function generateApplyRequestSessionNonce(): string {
 
 export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }> }) {
   const projectId = route.kind === "project" ? route.projectId : undefined;
+  const projectScopeControllerRef = useRef<ProjectScopeController>();
+  if (!projectScopeControllerRef.current) {
+    projectScopeControllerRef.current = new ProjectScopeController(projectId);
+  }
+  const projectScopeController = projectScopeControllerRef.current;
+  const [projectScopeRevision, setProjectScopeRevision] = useState(0);
   const initialRuntimeSettings = useMemo(() => readInitialRuntimeSettings(), []);
   const [baseUrl, setBaseUrl] = useState(initialRuntimeSettings.baseUrl);
   const [token, setToken] = useState(initialRuntimeSettings.token);
@@ -481,7 +490,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   const preHostRuntimeRefreshRequestedAtRef = useRef<number | null>(null);
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
-  const settingsRef = useRef<ChatRuntimeSettings>(projectId ? createProjectRuntimeSettings(initialRuntimeSettings, projectId) : initialRuntimeSettings);
+  const settingsRef = useRef<ChatRuntimeSettings>(projectId ? createProjectRuntimeSettings(initialRuntimeSettings, projectId, projectScopeController.current()) : initialRuntimeSettings);
   const chatIdRef = useRef("chat-001");
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
@@ -593,8 +602,8 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
 
   const settings = useMemo<ChatRuntimeSettings>(() => {
     const globalSettings: RuntimeSettings = { baseUrl, token, runtimeAccess };
-    return projectId ? createProjectRuntimeSettings(globalSettings, projectId) : globalSettings;
-  }, [baseUrl, projectId, runtimeAccess, token]);
+    return projectId ? createProjectRuntimeSettings(globalSettings, projectId, projectScopeController.current()) : globalSettings;
+  }, [baseUrl, projectId, projectScopeController, projectScopeRevision, runtimeAccess, token]);
   settingsRef.current = settings;
   chatIdRef.current = chatId;
   chatViewMessagesRef.current = chatView.messages;
@@ -1240,6 +1249,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
     if (!activeStream) {
       return null;
     }
+    activeStream.unregisterScopeCancellation();
     activeStream.controller.abort();
     activeStreamRef.current = null;
     if (finalizeStreaming) {
@@ -1305,18 +1315,62 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
     clearControlledCommandRunState(null);
   }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState]);
 
+  useEffect(() => {
+    const resetters: ProjectScopeResetters = {
+      project_memory: () => {
+        setProjectMemoryTitle(""); setProjectMemoryText(""); setProjectMemoryTags(""); setProjectMemoryQuery("");
+        setProjectMemory({ state: "idle", notes: [], error: null }); setProjectMemoryStatus(null);
+      },
+      active_chat: () => {
+        abortActiveStream("SSE stopped for previous project", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
+        chatHistoryAttemptRef.current += 1;
+        const nextChatId = route.kind === "project" && route.chatId ? route.chatId : "chat-001";
+        setChatId(nextChatId); setChatView(resetChatViewState(nextChatId)); setChatSummaries([]); setChatHistoryRevision(null);
+        setChatHistoryError(null); setChatHistoryLoading(false); setDeletingChatId(null); setConversationNotice(null); setChatInput(""); setTimeline([]); setChatLifecycleState("idle");
+      },
+      active_editor_context: () => {
+        setAttachedContext(null); setIncludeAttachedContext(false); setAttachedContextAcknowledged(false); setAttachedContextStatus(null); clearExplicitContextBundle(null);
+      },
+      workspace_search_snippets: () => {
+        setWorkspaceSnippetQuery(""); setWorkspaceSnippetResult(null); setSelectedWorkspaceSnippetKeys([]); setWorkspaceSnippetStatus(null);
+      },
+      task_draft_goal: () => {
+        setManualRunnerDraftPlan(""); setCodingTaskGoal(""); setControlledVerificationFollowupDraft(null);
+      },
+      proposals: () => { clearEditProposalState(); clearModelProposalState(); clearIdeActionState(); },
+      controlled_action_correlations: () => {
+        clearControlledFileReadState(null); clearControlledEditState(null); clearControlledCommandRunState(null); clearControlledMultifileApplyState(null);
+        controlledLexicalSearchCorrelationRef.current = null; controlledVerificationBundleCorrelationRef.current = null;
+        setControlledLexicalSearchResult(undefined); setControlledLexicalSearchResultId(undefined); setSelectedControlledSearchResultIds([]); setPendingControlledVerificationBundleRequestId(null);
+      },
+      controlled_run_recovery: () => {
+        setControlledAgentRunState(initializeControlledAgentRunState(undefined)); setOneStepLoopState(createControlledOneStepAgentLoopState());
+        setControlledTaskExecutionState(createInitialControlledTaskExecutionState()); setControlledRunHistory([]); setControlledExecutionContextSnapshot(null);
+        setAgentProgress({ state: "not_checked", response: null, error: null }); setAgentRunVerificationFixDraft(null);
+      },
+      project_errors: () => { setChatError(null); setProjectMemoryStatus(null); setWorkspaceSnippetStatus(null); setApplyNote(null); setIdeActionNote(null); },
+    };
+    if (projectScopeController.transition(projectId, resetters)) {
+      settingsRevisionRef.current += 1;
+      setSettingsRevision(settingsRevisionRef.current);
+      setProjectScopeRevision((current) => current + 1);
+    }
+  }, [abortActiveStream, clearControlledCommandRunState, clearControlledEditState, clearControlledFileReadState, clearControlledMultifileApplyState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, projectId, projectScopeController, route.kind]);
+
+  useEffect(() => () => projectScopeController.dispose(), [projectScopeController]);
+
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const normalizedSettings: RuntimeSettings = { ...nextSettings, token: nextSettings.token ?? "", runtimeAccess: nextSettings.runtimeAccess ?? "direct" };
     const changed = settingsRef.current.baseUrl !== normalizedSettings.baseUrl || settingsRef.current.token !== normalizedSettings.token || settingsRef.current.runtimeAccess !== normalizedSettings.runtimeAccess;
     if (changed) {
-      settingsRef.current = projectId ? createProjectRuntimeSettings(normalizedSettings, projectId) : normalizedSettings;
+      settingsRef.current = projectId ? createProjectRuntimeSettings(normalizedSettings, projectId, projectScopeController.current()) : normalizedSettings;
       markSettingsChanged();
     }
     setBaseUrl(normalizedSettings.baseUrl);
     setToken(normalizedSettings.token);
     setRuntimeAccess(normalizedSettings.runtimeAccess);
     return changed;
-  }, [markSettingsChanged, projectId]);
+  }, [markSettingsChanged, projectId, projectScopeController]);
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
     hostReadyAppliedRef.current = false;
@@ -2660,11 +2714,14 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       return;
     }
     const controller = new AbortController();
+    const scopeCorrelation = createProjectScopeCorrelation(projectScopeController.current());
     const stream: ActiveStream = {
       controller,
       settings: settingsRef.current,
       revision: settingsRevisionRef.current,
       chatId: targetChatId,
+      scopeCorrelation,
+      unregisterScopeCancellation: projectScopeController.registerCancellation(() => controller.abort()),
     };
     activeStreamRef.current = stream;
     setChatLifecycleState("sse_connecting");
@@ -2676,7 +2733,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       {
         onEvent: (event: SseEvent) => {
           const activeStream = activeStreamRef.current;
-          if (activeStream !== stream || stream.revision !== settingsRevisionRef.current || event.chatId !== stream.chatId) {
+          if (activeStream !== stream || stream.revision !== settingsRevisionRef.current || !projectScopeController.accepts(stream.scopeCorrelation) || event.chatId !== stream.chatId) {
             return;
           }
           const safeEvent = sanitizeSseEvent(event);
@@ -2701,7 +2758,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
         },
         onError: (error) => {
           const activeStream = activeStreamRef.current;
-          if (activeStream !== stream || stream.revision !== settingsRevisionRef.current) {
+          if (activeStream !== stream || stream.revision !== settingsRevisionRef.current || !projectScopeController.accepts(stream.scopeCorrelation)) {
             return;
           }
           setChatError(error);
@@ -2713,11 +2770,12 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       },
       controller.signal,
     ).finally(() => {
+      stream.unregisterScopeCancellation();
       if (activeStreamRef.current === stream) {
         activeStreamRef.current = null;
       }
     });
-  }, [addTimeline, appendChatError, appendTrace, chatId]);
+  }, [addTimeline, appendChatError, appendTrace, chatId, projectScopeController]);
 
   const stopSse = () => {
     if (!abortActiveStream("SSE stopped and abort requested")) {

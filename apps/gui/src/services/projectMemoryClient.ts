@@ -1,4 +1,4 @@
-import { runtimeFetch, type RuntimeResult, type RuntimeSettings } from "./runtimeClient";
+import { chatApiPath, runtimeFetch, type ChatRuntimeSettings, type RuntimeResult } from "./runtimeClient";
 
 export type ProjectMemoryNote = {
   id: string;
@@ -32,26 +32,26 @@ export type ProjectMemoryCreateRequest = {
   sessionLabel?: string;
 };
 
-export function listProjectMemory(settings: RuntimeSettings): Promise<RuntimeResult<ProjectMemoryListResponse>> {
-  return runtimeFetch<ProjectMemoryListResponse>(settings, "/v1/project-memory");
+export function listProjectMemory(settings: ChatRuntimeSettings): Promise<RuntimeResult<ProjectMemoryListResponse>> {
+  return runtimeFetch<ProjectMemoryListResponse>(settings, chatApiPath(settings, "/project-memory"));
 }
 
-export function createProjectMemory(settings: RuntimeSettings, request: ProjectMemoryCreateRequest): Promise<RuntimeResult<ProjectMemoryNote>> {
-  return runtimeFetch<ProjectMemoryNote>(settings, "/v1/project-memory", {
+export function createProjectMemory(settings: ChatRuntimeSettings, request: ProjectMemoryCreateRequest): Promise<RuntimeResult<ProjectMemoryNote>> {
+  return runtimeFetch<ProjectMemoryNote>(settings, chatApiPath(settings, "/project-memory"), {
     method: "POST",
     body: JSON.stringify({ protocolVersion: "2026-06-17", ...request }),
   });
 }
 
-export function searchProjectMemory(settings: RuntimeSettings, query: string): Promise<RuntimeResult<ProjectMemorySearchResponse>> {
-  return runtimeFetch<ProjectMemorySearchResponse>(settings, "/v1/project-memory/search", {
+export function searchProjectMemory(settings: ChatRuntimeSettings, query: string): Promise<RuntimeResult<ProjectMemorySearchResponse>> {
+  return runtimeFetch<ProjectMemorySearchResponse>(settings, chatApiPath(settings, "/project-memory/search"), {
     method: "POST",
     body: JSON.stringify({ protocolVersion: "2026-06-17", query }),
   });
 }
 
-export function deleteProjectMemory(settings: RuntimeSettings, noteId: string): Promise<RuntimeResult<void>> {
-  return runtimeFetch<void>(settings, `/v1/project-memory/${encodeURIComponent(noteId)}`, {
+export function deleteProjectMemory(settings: ChatRuntimeSettings, noteId: string): Promise<RuntimeResult<void>> {
+  return runtimeFetch<void>(settings, chatApiPath(settings, `/project-memory/${encodeURIComponent(noteId)}`), {
     method: "DELETE",
   });
 }

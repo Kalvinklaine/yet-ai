@@ -1,7 +1,8 @@
 import { runtimeFetch, type RuntimeResult, type RuntimeSettings } from "./runtimeClient";
 import { parseProjectId, type ProjectId } from "./projectRouting";
+import type { ProjectScopeSnapshot } from "./projectScope";
 
-export type ProjectScope = { readonly projectId: ProjectId };
+export type ProjectScope = ProjectScopeSnapshot & { readonly projectId: ProjectId };
 
 export type ProjectRuntimeSettings = RuntimeSettings & {
   readonly projectScope: ProjectScope;
@@ -51,14 +52,14 @@ export type ProjectLifecycleResponse = {
   updatedAt: string;
 };
 
-export function createProjectScope(projectId: string): ProjectScope {
+export function createProjectScope(projectId: string, generation = 0, abortSignal = new AbortController().signal): ProjectScope {
   const validated = parseProjectId(projectId);
   if (!validated) throw new TypeError("Invalid project id.");
-  return Object.freeze({ projectId: validated });
+  return Object.freeze({ projectId: validated, generation, abortSignal });
 }
 
-export function createProjectRuntimeSettings(globalSettings: RuntimeSettings, projectId: string): ProjectRuntimeSettings {
-  const projectScope = createProjectScope(projectId);
+export function createProjectRuntimeSettings(globalSettings: RuntimeSettings, projectId: string, lifecycle?: Pick<ProjectScopeSnapshot, "generation" | "abortSignal">): ProjectRuntimeSettings {
+  const projectScope = createProjectScope(projectId, lifecycle?.generation, lifecycle?.abortSignal);
   return Object.freeze({
     ...globalSettings,
     projectScope,

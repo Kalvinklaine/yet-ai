@@ -435,6 +435,26 @@ describe("runtimeClient", () => {
     expect(() => chatApiPath({ baseUrl: "/", token: "", projectScope: { projectId: projectId as never }, apiBase: "/v1" } as never, "/chats")).toThrow("invalid");
   });
 
+  it("aborts project fetches when their lifecycle scope is invalidated", async () => {
+    const controller = new AbortController();
+    const projectId = "prj_abcdefghijklmnopqrstuv";
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = runtimeFetch({
+      baseUrl: "http://127.0.0.1:8001",
+      token: "",
+      projectScope: { projectId: projectId as never, generation: 0, abortSignal: controller.signal },
+      apiBase: `/p/${projectId}/v1` as `/p/${never}/v1`,
+    }, `/p/${projectId}/v1/chats`);
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({ ok: false, error: { status: "network" } });
+    expect((fetchMock.mock.calls[0][1] as RequestInit).signal?.aborted).toBe(true);
+  });
+
   it("does not let caller headers override runtime Authorization", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);

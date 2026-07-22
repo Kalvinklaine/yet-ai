@@ -11,11 +11,11 @@ afterEach(() => {
 
 describe("projectClient", () => {
   it("constructs explicit direct and same-origin project API bases", () => {
-    expect(createProjectRuntimeSettings({ baseUrl: "http://127.0.0.1:8001", token: "secret", runtimeAccess: "direct" }, projectId)).toEqual({
-      baseUrl: "http://127.0.0.1:8001", token: "secret", runtimeAccess: "direct", projectScope: { projectId }, apiBase: `/p/${projectId}/v1`,
+    expect(createProjectRuntimeSettings({ baseUrl: "http://127.0.0.1:8001", token: "secret", runtimeAccess: "direct" }, projectId)).toMatchObject({
+      baseUrl: "http://127.0.0.1:8001", token: "secret", runtimeAccess: "direct", projectScope: { projectId, generation: 0 }, apiBase: `/p/${projectId}/v1`,
     });
-    expect(createProjectRuntimeSettings({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, projectId)).toEqual({
-      baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy", projectScope: { projectId }, apiBase: `/p/${projectId}/v1`,
+    expect(createProjectRuntimeSettings({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, projectId)).toMatchObject({
+      baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy", projectScope: { projectId, generation: 0 }, apiBase: `/p/${projectId}/v1`,
     });
     expect(() => createProjectRuntimeSettings({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, "../root")).toThrow("Invalid project id");
   });

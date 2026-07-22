@@ -10,7 +10,7 @@ export type RuntimeSettings = {
 };
 
 export type ScopedRuntimeSettings = RuntimeSettings & {
-  readonly projectScope: { readonly projectId: ProjectId };
+  readonly projectScope: { readonly projectId: ProjectId; readonly generation: number; readonly abortSignal: AbortSignal };
   readonly apiBase: `/p/${ProjectId}/v1`;
 };
 
@@ -331,7 +331,7 @@ export function authHeaders(settings: RuntimeSettings): HeadersInit {
 }
 
 export async function runtimeFetch<T>(
-  settings: RuntimeSettings,
+  settings: ChatRuntimeSettings,
   path: string,
   init: RequestInit = {},
 ): Promise<RuntimeResult<T>> {
@@ -353,7 +353,8 @@ export async function runtimeFetch<T>(
 
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(), runtimeFetchTimeoutMs);
-  const combinedSignal = combineSignals(init.signal, timeoutController.signal);
+  const scopeSignal = isScopedRuntimeSettings(settings) ? settings.projectScope.abortSignal : undefined;
+  const combinedSignal = combineSignals(combineSignals(init.signal, scopeSignal), timeoutController.signal);
 
   let response: Response;
   try {
@@ -506,6 +507,14 @@ export function chatApiPath(settings: ChatRuntimeSettings, resourcePath: string)
     throw new TypeError("Project runtime settings are invalid.");
   }
   return `${settings.apiBase}/${resourcePath.replace(/^\/+/, "")}`;
+}
+
+function isScopedRuntimeSettings(settings: ChatRuntimeSettings): settings is ScopedRuntimeSettings {
+  if (!("projectScope" in settings) || !("apiBase" in settings)) {
+    return false;
+  }
+  const scope = settings.projectScope;
+  return typeof scope === "object" && scope !== null && "abortSignal" in scope && scope.abortSignal instanceof AbortSignal;
 }
 
 export function isPanelScopedProxyBaseUrl(baseUrl: string): boolean {
@@ -695,7 +704,10 @@ async function errorMessage(response: Response): Promise<string> {
   }
 }
 
-function combineSignals(callerSignal: AbortSignal | null | undefined, timeoutSignal: AbortSignal): AbortSignal {
+function combineSignals(callerSignal: AbortSignal | null | undefined, timeoutSignal: AbortSignal | null | undefined): AbortSignal {
+  if (!timeoutSignal) {
+    return callerSignal ?? new AbortController().signal;
+  }
   if (!callerSignal) {
     return timeoutSignal;
   }

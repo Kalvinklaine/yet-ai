@@ -6,7 +6,20 @@ const projectA = parseProjectId("prj_AAAAAAAAAAAAAAAAAAAAAA")!;
 const projectB = parseProjectId("prj_BBBBBBBBBBBBBBBBBBBBBB")!;
 
 function resetters(calls: string[] = []): ProjectScopeResetters {
-  return Object.fromEntries(projectBoundStateFamilies.map((family) => [family, () => calls.push(family)])) as ProjectScopeResetters;
+  return projectBoundStateFamilies.reduce<ProjectScopeResetters>((result, family) => {
+    result[family] = () => calls.push(family);
+    return result;
+  }, {
+    project_memory: () => undefined,
+    active_chat: () => undefined,
+    active_editor_context: () => undefined,
+    workspace_search_snippets: () => undefined,
+    task_draft_goal: () => undefined,
+    proposals: () => undefined,
+    controlled_action_correlations: () => undefined,
+    controlled_run_recovery: () => undefined,
+    project_errors: () => undefined,
+  });
 }
 
 describe("ProjectScopeController", () => {

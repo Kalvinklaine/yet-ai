@@ -1,15 +1,15 @@
 import type { ProjectId } from "./projectRouting";
 
 export const projectBoundStateFamilies = [
+  "project_memory",
   "active_chat",
   "active_editor_context",
-  "workspace_search",
-  "project_memory",
-  "task_drafts",
+  "workspace_search_snippets",
+  "task_draft_goal",
   "proposals",
-  "bridge_correlations",
-  "controlled_run",
-  "recovery_followup",
+  "controlled_action_correlations",
+  "controlled_run_recovery",
+  "project_errors",
 ] as const;
 
 export type ProjectBoundStateFamily = typeof projectBoundStateFamilies[number];

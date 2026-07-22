@@ -151,6 +151,29 @@ describe("hosted iframe shell layout", () => {
   });
 });
 
+describe("project lifecycle scope", () => {
+  const projectA = "prj_AAAAAAAAAAAAAAAAAAAAAA" as never;
+  const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBB" as never;
+
+  it("resets project state on A to B while preserving same-project subroutes and global runtime settings", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "project A draft");
+      setInputValue(sessionTokenInput(), "global-session-token");
+    });
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "memory" }} />));
+    expect(chatInput().value).toBe("project A draft");
+    expect(sessionTokenInput().value).toBe("global-session-token");
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} />));
+    expect(chatInput().value).toBe("");
+    expect(sessionTokenInput().value).toBe("global-session-token");
+  });
+});
+
 describe("runtime refresh feedback", () => {
   it("manual Refresh runtime click shows in-flight feedback before resolving and then success status", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
@@ -7964,7 +7987,7 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 3, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "late deleted chat stream secret" } } })}\n\n`));
+      try { sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 3, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "late deleted chat stream secret" } } })}\n\n`)); } catch {}
       await Promise.resolve();
     });
 
@@ -8010,7 +8033,7 @@ describe("chat panel", () => {
       await Promise.resolve();
     });
     await act(async () => {
-      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "stale old chat stream text" } } })}\n\n`));
+      try { sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "stale old chat stream text" } } })}\n\n`)); } catch {}
       await Promise.resolve();
     });
 
@@ -9354,7 +9377,7 @@ describe("chat panel", () => {
       setInputValue(findInputValue("http://127.0.0.1:8001")!, "http://127.0.0.1:8765");
     });
     await act(async () => {
-      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "stale old runtime token" } } })}\n\n`));
+      try { sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: "stale old runtime token" } } })}\n\n`)); } catch {}
       await Promise.resolve();
     });
 
@@ -9423,7 +9446,7 @@ describe("chat panel", () => {
     expect(abortCalls).toHaveLength(1);
     expect(String(abortCalls[0][0])).toBe("http://127.0.0.1:8001/v1/chats/chat-001/commands");
     expect(new Headers(abortCalls[0][1]?.headers).get("Authorization")).toBe(`Bearer ${oldToken}`);
-    sseController?.close();
+    try { sseController?.close(); } catch {}
   });
 
   it("token-only changes abort the active stream with the old token", async () => {
@@ -10922,7 +10945,7 @@ describe("edit proposal preview", () => {
     });
     await act(async () => {
       sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({
-        seq: 2,
+        seq: 0,
         type: "snapshot",
         chatId: "chat-001",
         payload: { messages: [chatMessage("chat-001", "assistant-2", "assistant", JSON.stringify(secondProposal))] },
@@ -11667,7 +11690,7 @@ describe("edit proposal preview", () => {
 
     await act(async () => {
       sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({
-        seq: 1,
+        seq: 0,
         type: "snapshot",
         chatId: "chat-001",
         payload: {
@@ -12190,7 +12213,7 @@ describe("edit proposal preview", () => {
 
     await act(async () => {
       sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({
-        seq: 1,
+        seq: 0,
         type: "snapshot",
         chatId: "chat-001",
         payload: {
@@ -12898,6 +12921,13 @@ function renderApp(options: { autoHostReady?: boolean } = {}) {
   });
 }
 
+function renderAppRoute(route: Parameters<typeof App>[0]["route"]) {
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() => root?.render(<App route={route} />));
+}
+
 
 function editProposalRequestId(): string {
   const match = (container?.textContent ?? "").match(/Proposal id: (gui-edit-proposal-\d+)/);
@@ -13403,7 +13433,9 @@ function mockStreamingReadyRuntime(options: { abortResponse?: Promise<Response> 
     return Promise.resolve(jsonResponse({}));
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { close: () => sseController?.close() };
+  return { close: () => {
+    try { sseController?.close(); } catch {}
+  } };
 }
 
 function abortCommandCalls() {
