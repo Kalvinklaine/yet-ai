@@ -49,8 +49,6 @@ export type ProjectLifecycleResponse = {
   revision: string;
   rootAvailable: boolean;
   updatedAt: string;
-  cloudRequired: false;
-  providerAccess: "direct";
 };
 
 export function createProjectScope(projectId: string): ProjectScope {

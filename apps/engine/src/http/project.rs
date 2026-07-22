@@ -3,6 +3,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router};
+use chrono::{SecondsFormat, Utc};
 use http::{Request, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -11,7 +12,8 @@ use std::collections::HashMap;
 use crate::agent_progress;
 use crate::project_memory;
 use crate::projects::{
-    is_valid_project_id, ProjectContext, ProjectContextError, ProjectRegistryError, ProjectSummary,
+    is_valid_project_id, ProjectContext, ProjectContextError, ProjectRegistryError, ProjectStatus,
+    ProjectSummary,
 };
 use crate::security::Authenticated;
 use crate::AppState;
@@ -36,6 +38,28 @@ pub(super) struct ProjectUpdateRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct ProjectLifecycleRequest {
     expected_revision: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectLifecycleResponse {
+    project_id: String,
+    status: ProjectStatus,
+    revision: String,
+    root_available: bool,
+    updated_at: String,
+}
+
+impl From<ProjectSummary> for ProjectLifecycleResponse {
+    fn from(summary: ProjectSummary) -> Self {
+        Self {
+            project_id: summary.project_id,
+            status: summary.status,
+            revision: summary.revision,
+            root_available: summary.root_available,
+            updated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true),
+        }
+    }
 }
 
 pub(super) async fn list(_auth: Authenticated, State(state): State<AppState>) -> Response {
@@ -136,7 +160,7 @@ async fn lifecycle(
             .await
     };
     match result {
-        Ok(summary) => Json(summary).into_response(),
+        Ok(summary) => Json(ProjectLifecycleResponse::from(summary)).into_response(),
         Err(error) => registry_error(error),
     }
 }
@@ -461,4 +485,35 @@ pub(super) fn scoped_router() -> Router<AppState> {
             "/agent-progress/*resource",
             axum::routing::any(scoped_placeholder),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProjectLifecycleResponse;
+    use crate::projects::{ProjectStatus, ProjectSummary};
+
+    #[test]
+    fn lifecycle_response_is_dedicated_and_has_bounded_utc_timestamp() {
+        let value = serde_json::to_value(ProjectLifecycleResponse::from(ProjectSummary {
+            project_id: "prj_abcdefghijklmnopqrstuv".to_string(),
+            display_name: "Local".to_string(),
+            status: ProjectStatus::Archived,
+            revision: "2".to_string(),
+            created_at: "2026-07-21T12:00:00Z".to_string(),
+            last_opened_at: None,
+            root_available: true,
+            cloud_required: false,
+            provider_access: "direct".to_string(),
+        }))
+        .unwrap();
+
+        assert_eq!(value["projectId"], "prj_abcdefghijklmnopqrstuv");
+        assert_eq!(value["status"], "archived");
+        assert_eq!(value["revision"], "2");
+        assert_eq!(value["rootAvailable"], true);
+        assert_eq!(value.as_object().unwrap().len(), 5);
+        let updated_at = value["updatedAt"].as_str().unwrap();
+        assert!(updated_at.ends_with('Z'));
+        assert!((20..=32).contains(&updated_at.len()));
+    }
 }

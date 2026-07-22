@@ -24,6 +24,7 @@ import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatus
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatRuntimeSettings, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { createProjectRuntimeSettings } from "./services/projectClient";
+import type { AppRoute } from "./services/projectRouting";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
 import { analyzeEditProposalContent, editProposalCandidateIdentityMatches, editProposalPayloadKey, isCompleteAssistantEditProposalStatus, latestEditProposalCandidateFromMessages, latestEditProposalReviewFromMessages, parseEditProposalContent, type EditProposalIdentity, type EditProposalRejectedDiagnostic } from "./services/editProposal";
@@ -395,7 +396,8 @@ export function generateApplyRequestSessionNonce(): string {
   return `s${hex}`;
 }
 
-export function App({ projectId }: { projectId?: string }) {
+export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }> }) {
+  const projectId = route.kind === "project" ? route.projectId : undefined;
   const initialRuntimeSettings = useMemo(() => readInitialRuntimeSettings(), []);
   const [baseUrl, setBaseUrl] = useState(initialRuntimeSettings.baseUrl);
   const [token, setToken] = useState(initialRuntimeSettings.token);

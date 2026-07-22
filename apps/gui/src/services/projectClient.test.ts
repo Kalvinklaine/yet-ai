@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createProjectRuntimeSettings, listProjects, registerProject, startDirectoryDiscovery } from "./projectClient";
+import { archiveProject, createProjectRuntimeSettings, listProjects, registerProject, restoreProject, startDirectoryDiscovery } from "./projectClient";
 
 const projectId = "prj_abcdefghijklmnopqrstuv";
 const fetchMock = vi.fn();
@@ -31,6 +31,20 @@ describe("projectClient", () => {
     await startDirectoryDiscovery(settings);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/v1/projects", "/v1/projects", "/v1/project-browser/sessions"]);
+  });
+
+  it("uses the dedicated lifecycle response contract for archive and restore", async () => {
+    const lifecycle = { projectId, status: "archived", revision: "2", rootAvailable: true, updatedAt: "2026-07-21T13:00:00.000000Z" };
+    fetchMock.mockResolvedValue(new Response(JSON.stringify(lifecycle), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    expect(await archiveProject({ baseUrl: "http://127.0.0.1:8001", token: "secret", runtimeAccess: "direct" }, projectId, "1")).toEqual({ ok: true, data: lifecycle });
+    await restoreProject({ baseUrl: "http://127.0.0.1:8001", token: "secret", runtimeAccess: "direct" }, projectId, "2");
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method, init.body])).toEqual([
+      [`http://127.0.0.1:8001/v1/projects/${projectId}/archive`, "POST", JSON.stringify({ expectedRevision: "1" })],
+      [`http://127.0.0.1:8001/v1/projects/${projectId}/restore`, "POST", JSON.stringify({ expectedRevision: "2" })],
+    ]);
   });
 
   it("does not install fetch or EventSource shims", () => {

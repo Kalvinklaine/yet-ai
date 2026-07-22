@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
 import { App } from "./App";
-import { buildProjectRoute, parseProjectRoute, subscribeToProjectRoute, type AppRoute } from "./services/projectRouting";
+import { buildProjectRoute, navigateProjectRoute, parseProjectRoute, subscribeToProjectRoute, type AppRoute } from "./services/projectRouting";
 
 export function ProjectRouterShell() {
-  const [route, setRoute] = useState<AppRoute>(() => parseProjectRoute(window.location.pathname));
+  const [route, setRoute] = useState<AppRoute>(() => {
+    if (window.location.pathname === "/") {
+      navigateProjectRoute(window, { kind: "projects" }, true);
+      return { kind: "projects" };
+    }
+    return parseProjectRoute(window.location.pathname);
+  });
 
   useEffect(() => subscribeToProjectRoute(window, setRoute), []);
 
@@ -13,10 +19,7 @@ export function ProjectRouterShell() {
   if (route.kind === "projects") {
     return <RouteStatus title="Projects" detail="Choose or register a local project." />;
   }
-  if (route.kind === "project") {
-    return <App projectId={route.projectId} />;
-  }
-  return <App />;
+  return <App route={route} />;
 }
 
 function RouteStatus({ title, detail }: { title: string; detail: string }) {
