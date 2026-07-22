@@ -1974,10 +1974,13 @@ mod project_tests {
         status
     }
 
-    fn auth_reject_lines() -> Vec<String> {
+    fn auth_reject_lines(endpoint: &str) -> Vec<String> {
         crate::logging::test_log_lines()
             .into_iter()
-            .filter(|line| line.contains("http.auth.reject"))
+            .filter(|line| {
+                line.contains("http.auth.reject")
+                    && line.contains(&format!("endpoint={endpoint}"))
+            })
             .collect()
     }
 
@@ -2006,7 +2009,9 @@ mod project_tests {
 
             assert_ne!(status, StatusCode::UNAUTHORIZED, "{path}");
         }
-        assert!(auth_reject_lines().is_empty());
+        for endpoint in ["/v1/ping", "/v1/models", "/v1/caps", "/v1/demo-mode"] {
+            assert!(auth_reject_lines(endpoint).is_empty(), "{endpoint}");
+        }
     }
 
     #[tokio::test]
@@ -2094,7 +2099,7 @@ mod project_tests {
         let _guard = http_log_test_lock().lock().await;
         crate::logging::clear_test_log_lines();
         let status = get_models_with_auth(None).await;
-        let lines = auth_reject_lines();
+        let lines = auth_reject_lines("/v1/models");
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(lines.len(), 1);
@@ -2108,7 +2113,7 @@ mod project_tests {
         let _guard = http_log_test_lock().lock().await;
         crate::logging::clear_test_log_lines();
         let status = get_models_with_auth(Some("Basic raw-token")).await;
-        let lines = auth_reject_lines();
+        let lines = auth_reject_lines("/v1/models");
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(lines.len(), 1);
@@ -2121,7 +2126,7 @@ mod project_tests {
         let _guard = http_log_test_lock().lock().await;
         crate::logging::clear_test_log_lines();
         let status = get_models_with_auth(Some("Bearer ")).await;
-        let lines = auth_reject_lines();
+        let lines = auth_reject_lines("/v1/models");
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(lines.len(), 1);
@@ -2134,7 +2139,7 @@ mod project_tests {
         let _guard = http_log_test_lock().lock().await;
         crate::logging::clear_test_log_lines();
         let status = get_models_with_auth(Some("Bearer wrong-token")).await;
-        let lines = auth_reject_lines();
+        let lines = auth_reject_lines("/v1/models");
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(lines.len(), 1);
@@ -2148,7 +2153,7 @@ mod project_tests {
         let _guard = http_log_test_lock().lock().await;
         crate::logging::clear_test_log_lines();
         let status = get_models_with_auth_and_caller(None, Some("gui_runtime_client")).await;
-        let lines = auth_reject_lines();
+        let lines = auth_reject_lines("/v1/models");
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(lines.len(), 1);
@@ -2161,7 +2166,7 @@ mod project_tests {
         let _guard = http_log_test_lock().lock().await;
         crate::logging::clear_test_log_lines();
         let status = get_models_with_auth_and_caller(None, Some("jetbrains_health_evil")).await;
-        let lines = auth_reject_lines();
+        let lines = auth_reject_lines("/v1/models");
 
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(lines.len(), 1);
@@ -2174,7 +2179,7 @@ mod project_tests {
         let _guard = http_log_test_lock().lock().await;
         crate::logging::clear_test_log_lines();
         let status = get_models_with_auth(Some("Bearer test-token")).await;
-        let lines = auth_reject_lines();
+        let lines = auth_reject_lines("/v1/models");
 
         assert_ne!(status, StatusCode::UNAUTHORIZED);
         assert!(lines.is_empty());
