@@ -66,6 +66,30 @@ describe("ProjectRouterShell", () => {
     expect(container.textContent).not.toContain("hidden-session");
   });
 
+  it("prefers proxy host settings and ignores a stale direct downgrade", async () => {
+    window.history.replaceState(null, "", "/projects");
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+      version: "2026-05-15",
+      type: "host.ready",
+      payload: { runtimeUrl: "http://127.0.0.1:9123", runtimeProxyBaseUrl: "/panel/panel-projects", sessionToken: "server-side" },
+    } })));
+    expect(hubSettings).toEqual({ baseUrl: "/panel/panel-projects", token: "", runtimeAccess: "same_origin_proxy" });
+
+    await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+      version: "2026-05-15",
+      type: "host.ready",
+      payload: { runtimeUrl: "http://127.0.0.1:9777", sessionToken: "stale-direct" },
+    } })));
+    expect(hubSettings).toEqual({ baseUrl: "/panel/panel-projects", token: "", runtimeAccess: "same_origin_proxy" });
+  });
+
   it("renders programmatic navigation immediately", () => {
     window.history.replaceState(null, "", "/projects/legacy");
     const container = document.createElement("div");

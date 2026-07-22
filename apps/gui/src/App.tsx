@@ -71,6 +71,7 @@ import { addControlledRunContextItem, buildControlledRunContextReport, createCon
 import { appendControlledRunHistoryItem, createControlledRunHistoryItem, type ControlledRunHistoryHostLabel, type ControlledRunHistoryItem, type ControlledRunHistoryPhaseLabel, type ControlledRunHistoryResultLabel } from "./services/controlledRunHistory";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
+import { resolveHostReadyRuntimeSettings } from "./services/useLiveRuntimeSettings";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -1400,32 +1401,17 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [updateRuntimeSettings]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
-    if (!payload) {
-      return;
-    }
+    const resolvedSettings = resolveHostReadyRuntimeSettings(settingsRef.current, payload);
+    if (!payload || !resolvedSettings) return;
     const readyPayload = payload;
-    const hostRuntimeUrl = readyPayload.runtimeProxyBaseUrl ?? readyPayload.runtimeUrl;
-    if (!hostRuntimeUrl || !isLoopbackRuntimeUrl(hostRuntimeUrl)) {
-      return;
-    }
-    const proxyMode = Boolean(readyPayload.runtimeProxyBaseUrl);
+    const hostRuntimeUrl = resolvedSettings.baseUrl;
     setControlledHostCapabilities(readyPayload.controlledCapabilities);
-    if (!proxyMode && settingsRef.current.runtimeAccess === "same_origin_proxy") {
-      return;
-    }
-    const currentBaseUrl = settingsRef.current.baseUrl;
-    const nextToken = proxyMode
-      ? ""
-      : readyPayload.sessionToken
-      ? readyPayload.sessionToken
-      : normalizeRuntimeUrl(hostRuntimeUrl) !== normalizeRuntimeUrl(currentBaseUrl)
-        ? ""
-        : settingsRef.current.token;
+    const nextToken = resolvedSettings.token;
     const wasHostReadyApplied = hostReadyAppliedRef.current;
     hostReadyAppliedRef.current = true;
     preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("host.ready");
-    const changed = updateRuntimeSettings({ baseUrl: hostRuntimeUrl, token: nextToken, runtimeAccess: proxyMode ? "same_origin_proxy" : "direct" });
+    const changed = updateRuntimeSettings(resolvedSettings);
     appendTrace({
       family: "runtime.settings.applied",
       title: "Runtime settings applied",
@@ -2452,8 +2438,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [isCurrentRefresh]);
 
   useEffect(() => {
-    void connect();
-  }, [connect, settings, hostReadyRefreshNonce]);
+    if (!showMemoryPage && !showAgentPage) void connect();
+  }, [connect, hostReadyRefreshNonce, settings, showAgentPage, showMemoryPage]);
 
   const submitProvider = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -3357,17 +3343,17 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   };
 
   useEffect(() => {
-    if (runtimeConnected) {
+    if (showMemoryPage || projectPage === undefined && runtimeConnected) {
       void refreshProjectMemory();
     } else {
       setProjectMemory({ state: "idle", notes: [], error: null });
       setProjectMemoryStatus(null);
     }
-  }, [refreshProjectMemory, runtimeConnected, settingsRevision]);
+  }, [projectPage, refreshProjectMemory, runtimeConnected, settingsRevision, showMemoryPage]);
 
   useEffect(() => {
-    if (showAgentPage && runtimeConnected) void refreshAgentProgress();
-  }, [refreshAgentProgress, runtimeConnected, settingsRevision, showAgentPage]);
+    if (showAgentPage) void refreshAgentProgress();
+  }, [refreshAgentProgress, settingsRevision, showAgentPage]);
 
   useEffect(() => {
     if (ideActionProposalReview.state !== "valid") {
@@ -3792,7 +3778,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
 
   return (
     <main className={`app-shell host-${bridgeHost} ${activeChatSummaries.length <= 1 ? "single-conversation" : "multi-conversation"}`} data-project-page={projectPage}>
-      <section className="hero">
+      {projectPage === undefined && <section className="hero">
         <div>
           <span className="badge ok">local-first</span>
           <h1>{productName}</h1>
@@ -3805,9 +3791,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           <span className="badge">bridge {bridgeHost}</span>
           {projectPage && <span className="badge" data-testid="project-page-mode">project {projectPage}</span>}
         </div>
-      </section>
+      </section>}
 
-      {!hostedWebview && (
+      {projectPage === undefined && !hostedWebview && (
         <section className="readiness-card warn browser-preview-card" role="status" aria-label="Browser preview limits">
           <div className="row">
             <strong>Browser standalone mode</strong>
@@ -3818,7 +3804,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         </section>
       )}
 
-      {activeRuntimeLifecycle && <section className="readiness-card warn" role="status" aria-label="Host capability metadata authority">
+      {projectPage === undefined && activeRuntimeLifecycle && <section className="readiness-card warn" role="status" aria-label="Host capability metadata authority">
         <div className="row">
           <strong>Host capability metadata</strong>
           <span className="badge warn">metadata only</span>
@@ -3837,8 +3823,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
 
       {showMemoryPage && <section className="card stack" aria-label="Project memory page"><ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} /></section>}
 
-      <div hidden={!showChatPage}>
-      <CodingSessionTracePanel entries={tracePanelEntries} />
+      {showChatPage && <div>
+      {projectPage === undefined && <CodingSessionTracePanel entries={tracePanelEntries} />}
 
       <section className="card stack chat-primary-card">
         <div className="chat-hero-row">
@@ -3852,7 +3838,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
             <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
           </div>
         </div>
-        <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`}>
+        {projectPage === undefined && <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`}>
           <div className="row">
             <strong>Chat readiness</strong>
             <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
@@ -3892,8 +3878,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
             onTestProvider={(providerId) => void runProviderTest(providerId)}
             onFocusPrompt={() => chatInputRef.current?.focus()}
           />
-        </div>
-        {hostedWebview && (
+        </div>}
+        {projectPage === undefined && hostedWebview && (
           <details className="compact-host-setup" data-testid="compact-host-setup">
             <summary>
               <span className="compact-summary-title">Provider setup</span>
@@ -3967,7 +3953,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                     <span className="subtle">The URL still names {sanitizeDisplayText(routedChatId ?? chatId)}. No other conversation was loaded in its place.</span>
                     {projectId && <a href={buildProjectRoute({ kind: "project", projectId, page: "chat" })}>Back to project chat list</a>}
                   </section>
-                ) : chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect(true)} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
+                ) : chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect(true)} showSetupActions={projectPage === undefined} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
                 <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
                 {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
               </div>
@@ -3990,7 +3976,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>
                 </div>
               </div>
-              <div className="composer-tools">
+              {projectPage === undefined && <div className="composer-tools">
                 <details className="composer-tool-drawer" data-testid="task-agent-tools-drawer">
                   <summary>
                     <span className="compact-summary-title">Task / Agent tools</span>
@@ -4031,7 +4017,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                     <IdeActionsPanel host={bridgeHost} attempt={ideActionAttempt} note={ideActionNote} workspaceRelativePath={safeActiveWorkspacePath} range={safeActiveRange} onGetContext={() => requestIdeAction({ action: "getContextSnapshot" })} onOpenFile={(workspaceRelativePath) => requestIdeAction({ action: "openWorkspaceFile", workspaceRelativePath })} onRevealRange={(workspaceRelativePath, range) => requestIdeAction({ action: "revealWorkspaceRange", workspaceRelativePath, range })} onClearPendingIdeAction={clearPendingIdeActionState} />
                   </div>
                 </details>
-              </div>
+              </div>}
             </form>}
             {!hostedWebview && <details className="debug-details chat-secondary-debug" data-testid="sse-debug-details">
               <summary>SSE debug details</summary>
@@ -4042,10 +4028,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           </section>
         </div>
       </section>
-      </div>
+      </div>}
 
 
-      <section className="card stack secondary-card runtime-card">
+      {projectPage === undefined && <section className="card stack secondary-card runtime-card">
         <details className="debug-details" data-testid="runtime-connection-details" open={runtimeDetailsOpen} onToggle={(event) => setRuntimeDetailsOpen(event.currentTarget.open)}>
           <summary><h2>Local runtime connection</h2></summary>
         <div className="form-grid">
@@ -4094,7 +4080,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           <StatusBlock title="/v1/caps" value={activeCaps ? { protocolVersion: activeCaps.protocolVersion, capabilities: activeCaps.capabilities, runtime: activeCaps.runtime, providers: activeCaps.providers.length } : null} />
         </div>
         </details>
-      </section>
+      </section>}
 
       {(showAgentPage || projectPage === undefined) && <section className="card stack secondary-card agent-progress-card" aria-label="Agent progress">
         <details className="debug-details" data-testid="agent-progress-details">
@@ -4266,7 +4252,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       </section>}
 
 
-      <section className="card stack secondary-card debug-card">
+      {projectPage === undefined && <section className="card stack secondary-card debug-card">
         <details className="debug-details" data-testid="bridge-debug-details">
           <summary>Diagnostics / bridge debug</summary>
           <p className="subtle">Compact UI keeps bridge internals collapsed. Browser mock mode is non-privileged and logs sanitized bridge messages only.</p>
@@ -4277,7 +4263,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
             </div>
           </details>
         </details>
-      </section>
+      </section>}
     </main>
   );
 }
@@ -5169,14 +5155,14 @@ export function rememberCompletedApplyRequest(completedRequests: Map<string, str
   }
 }
 
-function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDemoMode, selectedModelDisplayName, selectedModelProviderId, context, hasLocalConversations, onProviderSetup, onRefreshRuntime }: { runtimeConnected: boolean; canSendChat: boolean; providerReady: boolean; activeDemoMode: boolean; selectedModelDisplayName?: string; selectedModelProviderId?: string; context: HostContextSnapshotPayload | null; hasLocalConversations: boolean; onProviderSetup: () => void; onRefreshRuntime: () => void }) {
+function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDemoMode, selectedModelDisplayName, selectedModelProviderId, context, hasLocalConversations, onProviderSetup, onRefreshRuntime, showSetupActions = true }: { runtimeConnected: boolean; canSendChat: boolean; providerReady: boolean; activeDemoMode: boolean; selectedModelDisplayName?: string; selectedModelProviderId?: string; context: HostContextSnapshotPayload | null; hasLocalConversations: boolean; onProviderSetup: () => void; onRefreshRuntime: () => void; showSetupActions?: boolean }) {
   if (!runtimeConnected) {
     return (
       <div className="chat-empty-state" role="status">
         <span className="badge warn">Runtime unavailable</span>
         <strong>Start here: connect the local runtime.</strong>
         <span>Click Refresh runtime, or start the IDE-managed local runtime if this installed host did not start it. Chat, providers, and history stay local-first; no hosted Yet AI backend, account, cloud workspace, or credit balance is required.</span>
-        <button type="button" onClick={onRefreshRuntime}>Refresh runtime</button>
+        {showSetupActions && <button type="button" onClick={onRefreshRuntime}>Refresh runtime</button>}
       </div>
     );
   }
@@ -5186,7 +5172,7 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDe
         <span className="badge warn">Provider required</span>
         <strong>Choose how this first chat should answer.</strong>
         <span>Try Demo Mode from Chat readiness for local canned responses with no API key, configure Ollama local for direct loopback model answers with auth None, or configure a BYOK OpenAI-compatible provider. Provider credentials are sent only to the local runtime and are not stored by the GUI.</span>
-        <button type="button" onClick={onProviderSetup}>Use OpenAI API key fallback</button>
+        {showSetupActions && <button type="button" onClick={onProviderSetup}>Use OpenAI API key fallback</button>}
       </div>
     );
   }
@@ -6883,15 +6869,6 @@ function runtimeOriginLabel(value: string): string {
     return `${url.protocol}//${url.host}`;
   } catch {
     return "invalid";
-  }
-}
-
-function normalizeRuntimeUrl(value: string): string {
-  try {
-    const url = new URL(value);
-    return url.href.replace(/\/+$/, "");
-  } catch {
-    return value.trim().replace(/\/+$/, "");
   }
 }
 

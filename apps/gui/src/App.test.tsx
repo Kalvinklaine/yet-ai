@@ -155,6 +155,22 @@ describe("project lifecycle scope", () => {
   const projectA = "prj_AAAAAAAAAAAAAAAAAAAAAA" as never;
   const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBB" as never;
 
+  it.each([
+    ["chat", "Project chat", "Local runtime connection", "Provider setup", "Local project memory", "Agent progress"],
+    ["memory", "Project memory", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Agent progress"],
+    ["agent", "Project agent", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Local project memory"],
+  ] as const)("isolates the project %s page from global and unrelated chrome", async (page, expected, ...absent) => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderAppRoute({ kind: "project", projectId: projectA, page });
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain(expected);
+    for (const label of absent) expect(container?.textContent).not.toContain(label);
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
+    expect(container?.querySelector("[data-testid='provider-setup-details']")).toBeNull();
+  });
+
   it("uses a direct project chat route as the initial selected and loaded chat", async () => {
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
@@ -166,7 +182,7 @@ describe("project lifecycle scope", () => {
     await flushAsync();
 
     expect(container?.querySelector("main")?.getAttribute("data-project-page")).toBe("chat");
-    expect(container?.querySelector("[data-testid='project-page-mode']")?.textContent).toBe("project chat");
+    expect(container?.querySelector("[data-testid='project-chat-boundary']")?.textContent).toContain("Project chat");
     expect(findInputValue("chat-x")).toBeDefined();
     expect(container?.textContent).toContain("Loaded from the deep link");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/p/${projectA}/v1/chats/chat-x`))).toBe(true);
@@ -233,7 +249,6 @@ describe("project lifecycle scope", () => {
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-a" });
     await flushAsync();
     await flushAsync();
-    await act(async () => setInputValue(sessionTokenInput(), "global-session-token"));
     expect(container?.textContent).toContain("Project A chat message");
 
     await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat", chatId: "chat-b" }} />));
@@ -242,7 +257,7 @@ describe("project lifecycle scope", () => {
     expect(findInputValue("chat-b")).toBeDefined();
     expect(container?.textContent).toContain("Project B chat message");
     expect(container?.textContent).not.toContain("Project A chat message");
-    expect(sessionTokenInput().value).toBe("global-session-token");
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
   });
 
   it("resets identical chat ids across projects and exposes back-forward page changes", async () => {
@@ -271,7 +286,7 @@ describe("project lifecycle scope", () => {
 
     await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "memory" }} />));
     expect(container?.querySelector("main")?.getAttribute("data-project-page")).toBe("memory");
-    expect(container?.querySelector("[data-testid='project-page-mode']")?.textContent).toBe("project memory");
+    expect(container?.querySelector("[data-testid='project-memory-boundary']")?.textContent).toContain("Project memory");
     await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat", chatId: "shared-chat" }} />));
     expect(container?.querySelector("main")?.getAttribute("data-project-page")).toBe("chat");
   });
@@ -309,18 +324,15 @@ describe("project lifecycle scope", () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
     await flushAsync();
-    await act(async () => {
-      setTextareaValue(chatInput(), "project A draft");
-      setInputValue(sessionTokenInput(), "global-session-token");
-    });
+    await act(async () => setTextareaValue(chatInput(), "project A draft"));
 
     await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "memory" }} />));
-    expect(chatInput().value).toBe("project A draft");
-    expect(sessionTokenInput().value).toBe("global-session-token");
+    expect(container?.querySelector(".composer-input-area textarea")).toBeNull();
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
 
     await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} />));
     expect(chatInput().value).toBe("");
-    expect(sessionTokenInput().value).toBe("global-session-token");
+    expect(runtimeSessionTokenInputOptional()).toBeUndefined();
   });
 });
 

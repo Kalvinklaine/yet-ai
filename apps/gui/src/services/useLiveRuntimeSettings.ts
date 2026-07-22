@@ -14,6 +14,20 @@ export function readInitialRuntimeSettings(): RuntimeSettings {
   return defaultSettings;
 }
 
+export function resolveHostReadyRuntimeSettings(current: RuntimeSettings, payload: HostReadyPayload | undefined): RuntimeSettings | null {
+  if (!payload) return null;
+  if (payload.runtimeProxyBaseUrl !== undefined) {
+    if (!isSameOriginProxyBaseUrl(payload.runtimeProxyBaseUrl)) return null;
+    return { baseUrl: payload.runtimeProxyBaseUrl, token: "", runtimeAccess: "same_origin_proxy" };
+  }
+  if (!payload.runtimeUrl || !isLoopbackRuntimeUrl(payload.runtimeUrl) || current.runtimeAccess === "same_origin_proxy") return null;
+  return {
+    baseUrl: payload.runtimeUrl,
+    token: payload.sessionToken || (payload.runtimeUrl === current.baseUrl ? current.token : ""),
+    runtimeAccess: "direct",
+  };
+}
+
 export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter } {
   const [settings, setSettings] = useState<RuntimeSettings>(readInitialRuntimeSettings);
   const [bridgeAdapter] = useState(() => createBridgeAdapter(() => undefined));
@@ -25,13 +39,8 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
     const unsubscribe = bridgeAdapter.subscribe((message) => {
       if (message.type !== "host.ready") return;
       const payload = message.payload as HostReadyPayload | undefined;
-      const runtimeUrl = payload?.runtimeProxyBaseUrl ?? payload?.runtimeUrl;
-      if (!runtimeUrl || !isLoopbackRuntimeUrl(runtimeUrl)) return;
       setSettings((current) => {
-        const proxyMode = Boolean(payload?.runtimeProxyBaseUrl);
-        if (!proxyMode && current.runtimeAccess === "same_origin_proxy") return current;
-        const nextToken = proxyMode ? "" : payload?.sessionToken ?? (runtimeUrl === current.baseUrl ? current.token : "");
-        return { baseUrl: runtimeUrl, token: nextToken, runtimeAccess: proxyMode ? "same_origin_proxy" : "direct" };
+        return resolveHostReadyRuntimeSettings(current, payload) ?? current;
       });
     });
     return () => {
