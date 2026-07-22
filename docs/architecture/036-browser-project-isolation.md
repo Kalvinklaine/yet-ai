@@ -57,7 +57,9 @@ The engine validates label length and characters, resolves the handle, confirms 
 
 ### Symlinks and filesystem identity
 
-Registration follows the platform filesystem's canonicalization operation once and stores the resulting canonical directory root. A symlink chosen by the user is therefore registered as its resolved target, not as a second alias. Existing registry entries are compared by canonical root and, where the platform exposes a stable local file identity, that identity may support duplicate detection without becoming public metadata.
+Registration follows the platform filesystem's canonicalization operation once and stores the resulting canonical directory root. A symlink chosen by the user is therefore registered as its resolved target, not as a second alias. On Unix platforms the engine also stores the canonical directory's bounded numeric device and inode fields as private filesystem identity. Duplicate registration and every availability or open check require both the canonical root and this identity to match, so removing a directory and recreating another directory at the same path cannot capture its project ID. Existing registry records are backfilled only after the root still canonicalizes to its stored path and is readable; records that cannot be validated remain unavailable until an explicit repair flow.
+
+On non-Unix platforms this milestone does not claim a stable filesystem identity primitive. The stored identity is absent and the shared predicate conservatively retains canonical-path, directory-type, and readability checks. Tests cover that fallback separately from the stronger Unix replacement detection contract.
 
 The engine rejects a missing target, non-directory target, canonicalization loop, broken symlink, inaccessible target, or target that escapes the active browser-discovery root. It also rejects unsafe symlinks in engine-owned registry and project storage paths. Files and symlinks inside a registered project are not traversed merely by registration.
 
