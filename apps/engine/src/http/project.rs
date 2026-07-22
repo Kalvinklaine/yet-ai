@@ -265,8 +265,22 @@ fn invalid_project_json(rejection: JsonRejection) -> Response {
 
 pub(super) fn scoped_router() -> Router<AppState> {
     Router::new()
-        .route("/chats", axum::routing::any(scoped_placeholder))
-        .route("/chats/*resource", axum::routing::any(scoped_placeholder))
+        .route(
+            "/chats",
+            axum::routing::get(super::project_chats_list).post(super::project_chats_create),
+        )
+        .route(
+            "/chats/subscribe",
+            axum::routing::get(super::project_chats_subscribe),
+        )
+        .route(
+            "/chats/:chat_id",
+            axum::routing::get(super::project_chats_get).delete(super::project_chats_delete),
+        )
+        .route(
+            "/chats/:chat_id/commands",
+            axum::routing::post(super::project_chat_command),
+        )
         .route("/project-memory", axum::routing::any(scoped_placeholder))
         .route(
             "/project-memory/*resource",
