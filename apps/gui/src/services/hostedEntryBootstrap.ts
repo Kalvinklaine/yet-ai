@@ -4,6 +4,7 @@ const bootstrapMessageType = "yet-ai.hosted-bootstrap";
 const bootstrapRequestType = "yet-ai.hosted-bootstrap.request";
 const bootstrapTokenPattern = /^[A-Za-z0-9_-]{32}$/;
 const bootstrapTimeoutMs = 3000;
+const bootstrapRetryIntervalMs = 100;
 
 type HostedBootstrapMessage = {
   type: typeof bootstrapMessageType;
@@ -28,9 +29,13 @@ export async function initializeHostedEntry(target: Window = window): Promise<vo
 
 function waitForHostedBootstrap(target: Window, token: string): Promise<HostedBootstrapMessage | undefined> {
   return new Promise((resolve) => {
-    const timeout = target.setTimeout(() => finish(), bootstrapTimeoutMs);
+    let finished = false;
+    let retry: number | undefined;
     const finish = (message?: HostedBootstrapMessage) => {
+      if (finished) return;
+      finished = true;
       target.clearTimeout(timeout);
+      if (retry !== undefined) target.clearInterval(retry);
       target.removeEventListener("message", onMessage);
       resolve(message);
     };
@@ -39,7 +44,10 @@ function waitForHostedBootstrap(target: Window, token: string): Promise<HostedBo
       finish(event.data);
     };
     target.addEventListener("message", onMessage);
-    target.parent.postMessage({ type: bootstrapRequestType, token }, "*");
+    const request = () => target.parent.postMessage({ type: bootstrapRequestType, token }, "*");
+    const timeout = target.setTimeout(() => finish(), bootstrapTimeoutMs);
+    request();
+    if (!finished) retry = target.setInterval(request, bootstrapRetryIntervalMs);
   });
 }
 

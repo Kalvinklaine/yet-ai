@@ -1887,7 +1887,7 @@ window.addEventListener("message", (event) => {
 </html>`;
 }
 
-function vscodeHostedChatUrl(guiDevUrl: string, bootstrapToken: string): string {
+export function vscodeHostedChatUrl(guiDevUrl: string, bootstrapToken: string): string {
   const url = new URL(guiDevUrl);
   url.pathname = vscodeHostedChatPath;
   url.search = "";

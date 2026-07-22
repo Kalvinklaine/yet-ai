@@ -46,6 +46,7 @@ async function main(): Promise<void> {
     await assertVerificationHandlerRejectsWithoutExecution(webview);
     assertIframeValidatorRejectsVerificationRequests(webview);
     assertHostedChatBootstrapPrecedesPackagedGui(webview);
+    assertHostedChatUrlStripsQueryAndHash(webview);
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
     await assertPreReadyControlledCommandRunRejectsWithoutExecution(webview);
     await assertPreReadyControlledVerificationBundleRejectsWithoutExecution(webview);
@@ -54,6 +55,17 @@ async function main(): Promise<void> {
   } finally {
     moduleWithLoad._load = originalLoad;
   }
+}
+
+function assertHostedChatUrlStripsQueryAndHash(webview: typeof import("./webview")): void {
+  const url = new URL(webview.vscodeHostedChatUrl(
+    "http://127.0.0.1:5173/source/path?unrelated=value#private-fragment",
+    "abcdefghijklmnopqrstuvwxABCDEFGH",
+  ));
+  assert.equal(url.pathname, "/vscode/hosted-chat");
+  assert.equal(url.search, "?yetAiHostedBootstrap=abcdefghijklmnopqrstuvwxABCDEFGH");
+  assert.equal(url.hash, "");
+  assert.deepEqual([...url.searchParams.keys()], ["yetAiHostedBootstrap"]);
 }
 
 function assertHostedChatBootstrapPrecedesPackagedGui(webview: typeof import("./webview")): void {

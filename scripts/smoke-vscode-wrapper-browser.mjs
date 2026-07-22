@@ -163,6 +163,8 @@ try {
   await devFrame.getByText("Chat readiness", { exact: false }).first().waitFor({ state: "attached", timeout: 10_000 });
   const devHostedEntry = await devFrame.locator("body").evaluate(() => ({ pathname: window.location.pathname, entryMode: window.__yetAiInitialRuntimeConfig?.entryMode }));
   if (devHostedEntry.pathname !== hostedChatPath || devHostedEntry.entryMode !== "hosted_chat") failures.push("VS Code dev iframe did not complete the wrapper-owned hosted bootstrap before GUI routing.");
+  const devBootstrapRequestCount = await page.evaluate(() => window.__yetAiDevBootstrapRequestCount);
+  if (devBootstrapRequestCount < 2) failures.push(`VS Code dev iframe did not retry after the forced dropped bootstrap request (${devBootstrapRequestCount} request(s)).`);
 
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const hostedEntry = await page.evaluate(() => ({ pathname: window.location.pathname, entryMode: window.__yetAiInitialRuntimeConfig?.entryMode }));
@@ -1276,7 +1278,7 @@ async function startStaticServer(staticRoot) {
       if (requestUrl.pathname === devWrapperPath) {
         const token = "vscodeWrapperDevBootstrapToken01";
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-        response.end(`<!doctype html><iframe src="${hostedChatPath}?yetAiHostedBootstrap=${token}"></iframe><script>const token=${JSON.stringify(token)};addEventListener("message",event=>{if(event.source===document.querySelector("iframe").contentWindow&&event.data?.type==="yet-ai.hosted-bootstrap.request"&&event.data.token===token)event.source.postMessage({type:"yet-ai.hosted-bootstrap",token,entryMode:"hosted_chat"},location.origin);});</script>`);
+        response.end(`<!doctype html><iframe src="${hostedChatPath}?yetAiHostedBootstrap=${token}"></iframe><script>const token=${JSON.stringify(token)};window.__yetAiDevBootstrapRequestCount=0;addEventListener("message",event=>{if(event.source===document.querySelector("iframe").contentWindow&&event.data?.type==="yet-ai.hosted-bootstrap.request"&&event.data.token===token){window.__yetAiDevBootstrapRequestCount+=1;if(window.__yetAiDevBootstrapRequestCount>1)event.source.postMessage({type:"yet-ai.hosted-bootstrap",token,entryMode:"hosted_chat"},location.origin);}});</script>`);
         return;
       }
       hasDevBootstrap = requestUrl.searchParams.has("yetAiHostedBootstrap");
