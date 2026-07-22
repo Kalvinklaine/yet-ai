@@ -53,6 +53,7 @@ async function main(): Promise<void> {
     assertDevFallbackKeepsPackageInert(webview);
     assertDevFallbackWithoutPackageIsBounded(webview);
     assertHostedChatUrlStripsQueryAndHash(webview);
+    assertDevIframeForwardsVerificationBundleResult(webview);
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
     await assertPreReadyControlledCommandRunRejectsWithoutExecution(webview);
     await assertPreReadyControlledVerificationBundleRejectsWithoutExecution(webview);
@@ -150,6 +151,22 @@ function assertHostedChatUrlStripsQueryAndHash(webview: typeof import("./webview
   assert.equal(url.search, "?yetAiHostedBootstrap=abcdefghijklmnopqrstuvwxABCDEFGH");
   assert.equal(url.hash, "");
   assert.deepEqual([...url.searchParams.keys()], ["yetAiHostedBootstrap"]);
+}
+
+function assertDevIframeForwardsVerificationBundleResult(webview: typeof import("./webview")): void {
+  const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-verification-result-"));
+  try {
+    const html = renderDevWebview(webview, extensionRoot);
+    const hostValidator = html.match(/const isHostMessage = \(message\) => ([^;]+);/)?.[1];
+    assert.ok(hostValidator);
+    assert.equal(hostValidator.includes('message.type === "host.controlledAgentVerificationBundleResult"'), true);
+    assert.equal(hostValidator.includes('Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload")'), true);
+    assert.equal(hostValidator.includes("message.version === bootstrap.bridgeVersion"), true);
+    assert.equal(html.includes("if (isHostMessage(event.data))"), true);
+    assert.equal(html.includes("sendToFrame(event.data)"), true);
+  } finally {
+    fs.rmSync(extensionRoot, { recursive: true, force: true });
+  }
 }
 
 function assertHostedChatBootstrapPrecedesPackagedGui(webview: typeof import("./webview")): void {
