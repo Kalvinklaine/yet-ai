@@ -75,8 +75,8 @@ export function getProject(settings: RuntimeSettings, projectId: string, signal?
   return runtimeFetch<ProjectSummary>(settings, `/v1/projects/${requiredProjectId(projectId)}`, { signal });
 }
 
-export function registerProject(settings: RuntimeSettings, request: { displayName: string; directorySessionId: string; directoryHandle: string }): Promise<RuntimeResult<ProjectSummary>> {
-  return runtimeFetch<ProjectSummary>(settings, "/v1/projects", { method: "POST", body: JSON.stringify(request) });
+export function registerProject(settings: RuntimeSettings, request: { displayName: string; directorySessionId: string; directoryHandle: string }, signal?: AbortSignal): Promise<RuntimeResult<ProjectSummary>> {
+  return runtimeFetch<ProjectSummary>(settings, "/v1/projects", { method: "POST", body: JSON.stringify(request), signal });
 }
 
 export function updateProject(settings: RuntimeSettings, projectId: string, request: { displayName: string; expectedRevision: string }): Promise<RuntimeResult<ProjectSummary>> {
@@ -91,14 +91,15 @@ export function restoreProject(settings: RuntimeSettings, projectId: string, exp
   return projectLifecycle(settings, projectId, "restore", expectedRevision);
 }
 
-export function startDirectoryDiscovery(settings: RuntimeSettings): Promise<RuntimeResult<DirectoryDiscoverySessionResponse>> {
-  return runtimeFetch<DirectoryDiscoverySessionResponse>(settings, "/v1/project-browser/sessions", { method: "POST", body: JSON.stringify({}) });
+export function startDirectoryDiscovery(settings: RuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<DirectoryDiscoverySessionResponse>> {
+  return runtimeFetch<DirectoryDiscoverySessionResponse>(settings, "/v1/project-browser/sessions", { method: "POST", body: JSON.stringify({}), signal });
 }
 
-export function listDirectoryDiscovery(settings: RuntimeSettings, sessionId: string, directoryHandle: string): Promise<RuntimeResult<DirectoryDiscoveryListResponse>> {
+export function listDirectoryDiscovery(settings: RuntimeSettings, sessionId: string, directoryHandle: string, signal?: AbortSignal): Promise<RuntimeResult<DirectoryDiscoveryListResponse>> {
   return runtimeFetch<DirectoryDiscoveryListResponse>(settings, `/v1/project-browser/sessions/${encodeURIComponent(sessionId)}/list`, {
     method: "POST",
     body: JSON.stringify({ directoryHandle }),
+    signal,
   });
 }
 

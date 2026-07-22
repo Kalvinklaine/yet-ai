@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { archiveProject, createProjectRuntimeSettings, listProjects, registerProject, restoreProject, startDirectoryDiscovery } from "./projectClient";
+import { archiveProject, createProjectRuntimeSettings, listDirectoryDiscovery, listProjects, registerProject, restoreProject, startDirectoryDiscovery } from "./projectClient";
 
 const projectId = "prj_abcdefghijklmnopqrstuv";
 const fetchMock = vi.fn();
@@ -31,6 +31,19 @@ describe("projectClient", () => {
     await startDirectoryDiscovery(settings);
 
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual(["/v1/projects", "/v1/projects", "/v1/project-browser/sessions"]);
+  });
+
+  it("forwards cancellation signals for registration and discovery", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost:3000/projects"));
+    const controller = new AbortController();
+
+    await registerProject({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, { displayName: "Local", directorySessionId: "session", directoryHandle: "root" }, controller.signal);
+    await startDirectoryDiscovery({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, controller.signal);
+    await listDirectoryDiscovery({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, "session", "root", controller.signal);
+
+    expect(fetchMock.mock.calls.map(([, init]) => init.signal)).toEqual([controller.signal, controller.signal, controller.signal]);
   });
 
   it("uses the dedicated lifecycle response contract for archive and restore", async () => {

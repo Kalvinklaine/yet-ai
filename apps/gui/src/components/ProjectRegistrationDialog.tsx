@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { listDirectoryDiscovery, registerProject, startDirectoryDiscovery, type DirectoryEntry, type ProjectSummary } from "../services/projectClient";
 import type { RuntimeError, RuntimeSettings } from "../services/runtimeClient";
 
@@ -14,20 +14,41 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
   const [error, setError] = useState<RuntimeError | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
-  const startedRef = useRef(false);
+  const generationRef = useRef(0);
+  const controllerRef = useRef<AbortController | null>(null);
+  const registeringRef = useRef(false);
 
-  const begin = async () => {
+  const invalidate = useCallback(() => {
+    generationRef.current += 1;
+    controllerRef.current?.abort();
+    controllerRef.current = null;
+  }, []);
+
+  const beginAttempt = useCallback(() => {
+    invalidate();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    return { generation: generationRef.current, controller };
+  }, [invalidate]);
+
+  const isCurrent = useCallback((generation: number, controller: AbortController) => generation === generationRef.current && controllerRef.current === controller && !controller.signal.aborted, []);
+
+  const begin = useCallback(async () => {
+    registeringRef.current = false;
+    const { generation, controller } = beginAttempt();
     setState("starting");
     setError(null);
     setLevels([]);
     setSelected(null);
-    const result = await startDirectoryDiscovery(settings);
+    const result = await startDirectoryDiscovery(settings, controller.signal);
+    if (!isCurrent(generation, controller)) return;
     if (!result.ok) {
       setState("error");
       setError(result.error);
       return;
     }
-    const listing = await listDirectoryDiscovery(settings, result.data.sessionId, result.data.root.handle);
+    const listing = await listDirectoryDiscovery(settings, result.data.sessionId, result.data.root.handle, controller.signal);
+    if (!isCurrent(generation, controller)) return;
     if (!listing.ok) {
       setState("error");
       setError(listing.error);
@@ -39,20 +60,18 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
     setSelected(result.data.root.selectable ? result.data.root : null);
     setDisplayName(result.data.root.displayName);
     setState("ready");
-  };
+  }, [beginAttempt, isCurrent, settings]);
 
   useEffect(() => {
-    if (!startedRef.current) {
-      startedRef.current = true;
-      void begin();
-    }
-  }, []);
+    void begin();
+    return invalidate;
+  }, [begin, invalidate]);
   useEffect(() => { closeRef.current?.focus(); }, []);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        handleClose();
       }
       if (event.key === "Tab") {
         const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), a[href]") ?? []);
@@ -65,12 +84,19 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [handleClose]);
+
+  function handleClose() {
+    invalidate();
+    onClose();
+  }
 
   const openDirectory = async (entry: DirectoryEntry) => {
+    const { generation, controller } = beginAttempt();
     setState("loading");
     setError(null);
-    const result = await listDirectoryDiscovery(settings, sessionId, entry.handle);
+    const result = await listDirectoryDiscovery(settings, sessionId, entry.handle, controller.signal);
+    if (!isCurrent(generation, controller)) return;
     if (!result.ok) {
       setState("error");
       setError(result.error);
@@ -84,6 +110,8 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
   };
 
   const returnToLevel = (index: number) => {
+    registeringRef.current = false;
+    invalidate();
     setLevels((current) => current.slice(0, index + 1));
     const entry = levels[index].entry;
     setSelected(entry.selectable ? entry : null);
@@ -94,29 +122,34 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selected || !displayName.trim()) return;
+    if (!selected || !displayName.trim() || registeringRef.current) return;
+    registeringRef.current = true;
+    const { generation, controller } = beginAttempt();
     setState("registering");
     setError(null);
-    const result = await registerProject(settings, { displayName: displayName.trim(), directorySessionId: sessionId, directoryHandle: selected.handle });
+    const result = await registerProject(settings, { displayName: displayName.trim(), directorySessionId: sessionId, directoryHandle: selected.handle }, controller.signal);
+    if (!isCurrent(generation, controller)) return;
     if (!result.ok) {
+      registeringRef.current = false;
       setState("error");
       setError(result.error);
       return;
     }
+    invalidate();
     onRegistered(result.data);
   };
 
   const current = levels[levels.length - 1];
   const expired = error?.message.toLowerCase().includes("expired") || error?.status === 410;
   return (
-    <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) handleClose(); }}>
       <section ref={dialogRef} className="project-dialog stack" role="dialog" aria-modal="true" aria-labelledby="add-project-title">
         <div className="project-dialog-header row">
           <div className="stack">
             <span className="badge ok">local directory</span>
             <h2 id="add-project-title">Add local project</h2>
           </div>
-          <button ref={closeRef} type="button" className="secondary-button" onClick={onClose} aria-label="Close Add local project dialog">Close</button>
+          <button ref={closeRef} type="button" className="secondary-button" onClick={handleClose} aria-label="Close Add local project dialog">Close</button>
         </div>
         <p className="subtle">Choose one directory through the local runtime. Yet AI receives opaque navigation handles; no path is placed in the URL or saved by this page.</p>
         {levels.length > 0 && (
@@ -137,7 +170,7 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
           <span className="subtle">Selected: {selected ? selected.displayName : "Choose a selectable directory"}. Session expires {expiresAt ? new Date(expiresAt).toLocaleTimeString() : "soon"}.</span>
           <div className="row">
             <button type="submit" disabled={!selected || !displayName.trim() || state !== "ready"}>{state === "registering" ? "Adding project…" : "Add project"}</button>
-            <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
+            <button type="button" className="secondary-button" onClick={handleClose}>Cancel</button>
           </div>
         </form>
       </section>

@@ -14,10 +14,13 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
   const lastRefreshRef = useRef(0);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const requestRef = useRef(0);
+  const requestControllerRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async (background = false) => {
+    requestControllerRef.current?.abort();
     const request = ++requestRef.current;
     const controller = new AbortController();
+    requestControllerRef.current = controller;
     setState(background && projects.length > 0 ? "refreshing" : "loading");
     setError(null);
     const result = await listProjects(settings, controller.signal);
@@ -37,7 +40,11 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
 
   useEffect(() => {
     void refresh();
-    return () => { requestRef.current += 1; };
+    return () => {
+      requestRef.current += 1;
+      requestControllerRef.current?.abort();
+      requestControllerRef.current = null;
+    };
   }, [settings]);
   useEffect(() => {
     const invalidate = () => {
