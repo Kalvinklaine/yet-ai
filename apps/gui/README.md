@@ -26,6 +26,15 @@ npm run smoke:gui-conversation-history
 npm run smoke:controlled-run-history
 ```
 
+The complete browser-first project boundary has a focused real-engine smoke:
+
+```sh
+npm run smoke:browser-project-isolation
+```
+
+It registers two temporary local projects, opens the built engine-served GUI in Playwright, and verifies the usable `/projects` landing page, safe project rows and Add Project action, direct/refreshable project routes, independent tabs, scoped chat/memory/progress UI, stale SSE retirement and controlled-state clearing on switch, archive/restore, legacy separation, and browser/log/storage leak resistance. It uses generated local credentials and Demo Mode only, with no hosted account, real provider credentials, cloud service, or non-loopback request.
+
+
 Agent progress read-only panel coverage is available from the root:
 
 ```sh

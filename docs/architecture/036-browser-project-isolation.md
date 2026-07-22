@@ -309,6 +309,21 @@ V1 does not add:
 - tokens or canonical roots in project URLs;
 - copied third-party source, UI, assets, names, documentation, or tracked references.
 
+## Verified browser milestone
+
+The browser-first v1 boundary is implemented and covered by `npm run smoke:browser-project-isolation`. The deterministic smoke builds the Rust engine and React GUI, registers two real temporary single-root projects through the engine CLI, serves the built GUI from the authenticated loopback engine, and drives it with Playwright Chromium. It verifies the `/` to `/projects` landing flow, safe hub labels and readiness/activity fields, direct and refreshed project routes, independent tabs, project-scoped chat, memory, progress and SSE retirement, cross-project not-found behavior, controlled-state clearing on switch, archive/restore without deletion, and separate legacy compatibility data.
+
+The smoke uses generated credentials, Demo Mode, isolated temporary config/cache/home directories, and loopback traffic only. It checks browser URL, HTML, visible text, browser storage, engine output, and observed browser requests for raw temporary roots, auth material, operational internals, or non-loopback access. It does not prove provider quality, hosted-account behavior, IDE project binding, arbitrary filesystem discovery, production packaging, or multi-user security.
+
+Run the focused milestone and final code gates with:
+
+```sh
+npm run smoke:browser-project-isolation
+cargo test -p yet-lsp project_ && cargo test -p yet-lsp chat_history && cargo test -p yet-lsp project_memory && cargo test -p yet-lsp agent_progress
+npm --prefix apps/gui run typecheck && npm --prefix apps/gui test -- projectRouting projectScope ProjectHub ProjectShell ProjectChat ProjectMemory ProjectAgent
+npm run validate:contracts && npm run check && git diff --check
+```
+
 ## Consequences
 
 Project IDs become the durable public local routing key while roots remain replaceable private registry material. Browser navigation is deterministic and shareable on the same authenticated local runtime without leaking filesystem paths. Request-scoped context prevents one tab's selection from changing another request's authority. Project-scoped config/cache storage isolates data without writing operational state into repositories.

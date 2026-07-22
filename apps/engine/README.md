@@ -35,6 +35,10 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `POST /v1/project-browser/sessions/{session_id}/list`
 - `POST /v1/projects`
 
+## Browser project isolation smoke
+
+`npm run smoke:browser-project-isolation` builds the real engine and GUI, registers two temporary projects through the CLI, starts the authenticated loopback runtime with isolated config/cache/home directories, and drives the engine-served GUI in Playwright. It covers safe project summaries, scoped chat/memory/progress APIs, generic cross-project not-found responses, independent tabs and refreshed routes, stale SSE retirement after project navigation, archive/restore persistence, and separate legacy compatibility storage. The smoke uses Demo Mode and generated credentials only; it makes no non-loopback request and requires no provider credentials, hosted account, or cloud service.
+
 ## Local project registration
 
 Browser registration starts an authenticated, short-lived discovery session rooted at the canonical user home. The API lists only immediate, non-hidden, readable child directories as sanitized basenames and opaque session-bound handles. It does not return or accept absolute paths, list files, recurse, scan for repositories, read contents, index, or watch directories. Discovery is bounded by lifetime, navigation depth, sessions, handles, and entries; canonicalization and containment checks prevent symlink escape. A successful `POST /v1/projects` consumes the selected handle.

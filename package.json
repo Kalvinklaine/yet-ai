@@ -94,6 +94,7 @@
     "smoke:gui-runtime-e2e": "node scripts/smoke-gui-runtime-e2e.mjs",
     "smoke:real-engine-startup": "node scripts/smoke-real-engine-startup.mjs",
     "smoke:engine-served-web-ui": "node scripts/smoke-engine-served-web-ui.mjs",
+    "smoke:browser-project-isolation": "cargo build -p yet-lsp && npm --prefix apps/gui run build && node scripts/smoke-browser-project-isolation.mjs",
     "smoke:hosted-gui-host-ready-gate": "node scripts/smoke-hosted-gui-host-ready-gate.mjs",
     "smoke:real-engine-gui": "npm run smoke:real-engine-startup && npm --prefix apps/gui run build && npm run smoke:hosted-gui-host-ready-gate",
     "smoke:local-provider-first-message": "node scripts/smoke-local-provider-first-message.mjs",

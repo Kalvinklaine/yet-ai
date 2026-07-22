@@ -254,6 +254,9 @@ fn valid_port(port: &str) -> bool {
 }
 
 fn inject_web_ui_bootstrap(index_html: &str, project_id: Option<&str>) -> Result<String, String> {
+    let index_html = index_html
+        .replace("src=\"./assets/", "src=\"/assets/")
+        .replace("href=\"./assets/", "href=\"/assets/");
     let Some(script_index) = index_html.find("<script type=\"module\"") else {
         return Err("Built Web UI index.html does not contain a Vite module script.".to_string());
     };
@@ -1667,6 +1670,39 @@ mod project_tests {
         assert!(!html.contains("test-token"));
         assert!(!html.contains("Authorization"));
         let _ = std::fs::remove_dir_all(dist);
+    }
+
+    #[tokio::test]
+    async fn web_ui_index_rewrites_relative_vite_assets_for_project_deep_links() {
+        let _guard = web_ui_test_lock().lock().await;
+        let dist = temp_web_ui_dist();
+        std::fs::write(
+            dist.join("index.html"),
+            r#"<html><head><link rel="stylesheet" href="./assets/index-test.css"></head><body><script type="module" src="./assets/index-test.js"></script></body></html>"#,
+        )
+        .unwrap();
+        std::env::set_var(super::WEB_UI_DIST_DIR_ENV, &dist);
+        let (state, project_id, root) = project_test_state().await;
+
+        let response = super::router(state)
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/p/{project_id}/memory"))
+                    .header(header::HOST, "127.0.0.1:8001")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        std::env::remove_var(super::WEB_UI_DIST_DIR_ENV);
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let html = response_text(response).await;
+        assert!(html.contains("src=\"/assets/index-test.js\""));
+        assert!(html.contains("href=\"/assets/index-test.css\""));
+        assert!(!html.contains("./assets/"));
+        let _ = std::fs::remove_dir_all(dist);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 
     async fn project_test_state() -> (AppState, String, PathBuf) {
