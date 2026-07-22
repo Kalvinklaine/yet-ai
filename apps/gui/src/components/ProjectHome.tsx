@@ -1,7 +1,7 @@
 import type { ProjectSummary } from "../services/projectClient";
-import { buildProjectRoute } from "../services/projectRouting";
+import { ProjectLink, type ProjectNavigation } from "../services/projectRouting";
 
-export function ProjectHome({ project }: { project: ProjectSummary }) {
+export function ProjectHome({ project, navigate }: { project: ProjectSummary; navigate: ProjectNavigation }) {
   const ready = project.status === "available" && project.rootAvailable;
   return (
     <section className="project-home stack" aria-labelledby="project-home-title">
@@ -15,9 +15,9 @@ export function ProjectHome({ project }: { project: ProjectSummary }) {
         <article><strong>Last opened</strong><span>{formatTime(project.lastOpenedAt)}</span></article>
       </div>
       <div className="project-home-actions">
-        <a className="project-action-card" href={buildProjectRoute({ kind: "project", projectId: project.projectId, page: "chat" })}><strong>Chat</strong><span>Continue project conversations</span></a>
-        <a className="project-action-card" href={buildProjectRoute({ kind: "project", projectId: project.projectId, page: "memory" })}><strong>Memory</strong><span>Review curated local notes</span></a>
-        <a className="project-action-card" href={buildProjectRoute({ kind: "project", projectId: project.projectId, page: "agent" })}><strong>Agent</strong><span>Review controlled project work</span></a>
+        <ProjectLink className="project-action-card" route={{ kind: "project", projectId: project.projectId, page: "chat" }} navigate={navigate}><strong>Chat</strong><span>Continue project conversations</span></ProjectLink>
+        <ProjectLink className="project-action-card" route={{ kind: "project", projectId: project.projectId, page: "memory" }} navigate={navigate}><strong>Memory</strong><span>Review curated local notes</span></ProjectLink>
+        <ProjectLink className="project-action-card" route={{ kind: "project", projectId: project.projectId, page: "agent" }} navigate={navigate}><strong>Agent</strong><span>Review controlled project work</span></ProjectLink>
       </div>
     </section>
   );

@@ -67,12 +67,12 @@ export function createProjectRuntimeSettings(globalSettings: RuntimeSettings, pr
   });
 }
 
-export function listProjects(settings: RuntimeSettings): Promise<RuntimeResult<ProjectListResponse>> {
-  return runtimeFetch<ProjectListResponse>(settings, "/v1/projects");
+export function listProjects(settings: RuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<ProjectListResponse>> {
+  return runtimeFetch<ProjectListResponse>(settings, "/v1/projects", { signal });
 }
 
-export function getProject(settings: RuntimeSettings, projectId: string): Promise<RuntimeResult<ProjectSummary>> {
-  return runtimeFetch<ProjectSummary>(settings, `/v1/projects/${requiredProjectId(projectId)}`);
+export function getProject(settings: RuntimeSettings, projectId: string, signal?: AbortSignal): Promise<RuntimeResult<ProjectSummary>> {
+  return runtimeFetch<ProjectSummary>(settings, `/v1/projects/${requiredProjectId(projectId)}`, { signal });
 }
 
 export function registerProject(settings: RuntimeSettings, request: { displayName: string; directorySessionId: string; directoryHandle: string }): Promise<RuntimeResult<ProjectSummary>> {

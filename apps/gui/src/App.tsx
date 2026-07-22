@@ -399,7 +399,7 @@ export function generateApplyRequestSessionNonce(): string {
   return `s${hex}`;
 }
 
-export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }> }) {
+export function App({ route = { kind: "legacy" }, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter }) {
   const projectId = route.kind === "project" ? route.projectId : undefined;
   const projectPage = route.kind === "project" ? route.page : undefined;
   const routedChatId = route.kind === "project" && route.page === "chat" ? route.chatId : undefined;
@@ -410,7 +410,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   }
   const projectScopeController = projectScopeControllerRef.current;
   const [projectScopeRevision, setProjectScopeRevision] = useState(0);
-  const initialRuntimeSettings = useMemo(() => readInitialRuntimeSettings(), []);
+  const initialRuntimeSettings = useMemo(() => runtimeSettings ?? readInitialRuntimeSettings(), []);
   const [baseUrl, setBaseUrl] = useState(initialRuntimeSettings.baseUrl);
   const [token, setToken] = useState(initialRuntimeSettings.token);
   const [runtimeAccess, setRuntimeAccess] = useState(initialRuntimeSettings.runtimeAccess);
@@ -1374,8 +1374,13 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
     setBaseUrl(normalizedSettings.baseUrl);
     setToken(normalizedSettings.token);
     setRuntimeAccess(normalizedSettings.runtimeAccess);
+    if (changed) onRuntimeSettingsChange?.(normalizedSettings);
     return changed;
-  }, [markSettingsChanged, projectId, projectScopeController]);
+  }, [markSettingsChanged, onRuntimeSettingsChange, projectId, projectScopeController]);
+
+  useEffect(() => {
+    if (runtimeSettings) updateRuntimeSettings(runtimeSettings);
+  }, [runtimeSettings, updateRuntimeSettings]);
 
   const updateBaseUrl = useCallback((nextBaseUrl: string) => {
     hostReadyAppliedRef.current = false;
@@ -1440,10 +1445,10 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   }, [appendTrace, updateRuntimeSettings]);
 
   useEffect(() => {
-    const adapter = createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
+    const adapter = bridgeAdapter ?? createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
     bridgeAdapterRef.current = adapter;
     setBridgeHost(adapter.host);
-    adapter.subscribe((message) => {
+    const unsubscribe = adapter.subscribe((message) => {
       if (message.type === "host.ready") {
         applyHostReady(message.payload as HostReadyPayload | undefined);
       } else if (message.type === "host.runtimeStatus") {
@@ -1881,9 +1886,10 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
     });
     return () => {
       bridgeAdapterRef.current = null;
-      adapter.dispose();
+      unsubscribe();
+      if (!bridgeAdapter) adapter.dispose();
     };
-  }, [appendTrace, applyHostReady, stopPendingControlledCommandRunState]);
+  }, [appendTrace, applyHostReady, bridgeAdapter, stopPendingControlledCommandRunState]);
 
   const appendChatError = useCallback((message: string, code?: string) => {
     setChatView((current) => applyChatViewEvent(current, {

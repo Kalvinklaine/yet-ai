@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectRouterShell } from "./ProjectRouterShell";
 import { navigateProjectRoute } from "./services/projectRouting";
+import type { RuntimeSettings } from "./services/runtimeClient";
 
 vi.mock("./App", () => ({
   App: ({ route }: { route: { kind: string; page?: string; chatId?: string } }) => <div data-testid="app-route">{[route.kind, route.page, route.chatId].filter(Boolean).join(":")}</div>,
@@ -11,6 +12,10 @@ vi.mock("./App", () => ({
 vi.mock("./components/ProjectShell", () => ({
   ProjectShell: ({ children }: { children?: React.ReactNode }) => <div data-testid="project-shell">{children}</div>,
 }));
+let hubSettings: RuntimeSettings | undefined;
+vi.mock("./components/ProjectHub", () => ({
+  ProjectHub: ({ settings }: { settings: RuntimeSettings }) => { hubSettings = settings; return <div>Projects</div>; },
+}));
 
 let root: ReactDOM.Root | undefined;
 
@@ -18,16 +23,17 @@ afterEach(() => {
   act(() => root?.unmount());
   root = undefined;
   document.body.innerHTML = "";
+  hubSettings = undefined;
 });
 
 describe("ProjectRouterShell", () => {
-  it("replaces the root URL with projects and renders the project hub route", () => {
+  it("replaces the root URL with projects and renders the project hub route", async () => {
     window.history.replaceState(null, "", "/");
     const replaceState = vi.spyOn(window.history, "replaceState");
     const container = document.createElement("div");
     document.body.append(container);
 
-    act(() => {
+    await act(async () => {
       root = ReactDOM.createRoot(container);
       root.render(<ProjectRouterShell />);
     });
@@ -36,6 +42,25 @@ describe("ProjectRouterShell", () => {
     expect(window.location.pathname).toBe("/projects");
     expect(container.textContent).toContain("Projects");
     replaceState.mockRestore();
+  });
+
+  it("applies trusted live host runtime settings to the hub", async () => {
+    window.history.replaceState(null, "", "/projects");
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+      version: "2026-05-15",
+      type: "host.ready",
+      payload: { runtimeUrl: "http://127.0.0.1:9123", sessionToken: "hidden-session" },
+    } })));
+
+    expect(hubSettings).toEqual({ baseUrl: "http://127.0.0.1:9123", token: "hidden-session", runtimeAccess: "direct" });
+    expect(container.textContent).not.toContain("hidden-session");
   });
 
   it("renders programmatic navigation immediately", () => {

@@ -1,3 +1,5 @@
+import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+
 export const projectIdPattern = /^prj_[A-Za-z0-9_-]{22}$/;
 const chatIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const projectRouteChangeEvent = "yet-ai:project-route-change";
@@ -52,6 +54,7 @@ export function buildProjectRoute(route: Exclude<AppRoute, { kind: "not_found" }
 }
 
 export type ProjectHistory = { history: Pick<History, "pushState" | "replaceState"> } & Pick<EventTarget, "dispatchEvent">;
+export type ProjectNavigation = (route: Exclude<AppRoute, { kind: "not_found" }>) => void;
 
 export function navigateProjectRoute(history: ProjectHistory, route: Exclude<AppRoute, { kind: "not_found" }>, replace = false): string {
   const path = buildProjectRoute(route);
@@ -59,6 +62,15 @@ export function navigateProjectRoute(history: ProjectHistory, route: Exclude<App
   else history.history.pushState(null, "", path);
   history.dispatchEvent(new CustomEvent<AppRoute>(projectRouteChangeEvent, { detail: route }));
   return path;
+}
+
+export function ProjectLink({ route, navigate, children, ...props }: { route: Exclude<AppRoute, { kind: "not_found" }>; navigate: ProjectNavigation; children: ReactNode } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, "href" | "onClick">) {
+  const onClick = (event: ReactMouseEvent<HTMLAnchorElement>) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || props.target === "_blank") return;
+    event.preventDefault();
+    navigate(route);
+  };
+  return <a {...props} href={buildProjectRoute(route)} onClick={onClick}>{children}</a>;
 }
 
 export function subscribeToProjectRoute(target: Pick<Window, "addEventListener" | "removeEventListener" | "location">, listener: (route: AppRoute) => void): () => void {

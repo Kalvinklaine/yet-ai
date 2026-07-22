@@ -13,6 +13,7 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
   const [state, setState] = useState<"starting" | "ready" | "loading" | "registering" | "error">("starting");
   const [error, setError] = useState<RuntimeError | null>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLElement>(null);
   const startedRef = useRef(false);
 
   const begin = async () => {
@@ -49,7 +50,18 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
   useEffect(() => { closeRef.current?.focus(); }, []);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+      if (event.key === "Tab") {
+        const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), a[href]") ?? []);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -98,7 +110,7 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
   const expired = error?.message.toLowerCase().includes("expired") || error?.status === 410;
   return (
     <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="project-dialog stack" role="dialog" aria-modal="true" aria-labelledby="add-project-title">
+      <section ref={dialogRef} className="project-dialog stack" role="dialog" aria-modal="true" aria-labelledby="add-project-title">
         <div className="project-dialog-header row">
           <div className="stack">
             <span className="badge ok">local directory</span>
