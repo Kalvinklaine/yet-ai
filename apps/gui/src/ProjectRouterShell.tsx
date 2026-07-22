@@ -40,7 +40,10 @@ export function ProjectRouterShell() {
 }
 
 export function isHostedChatEntry(pathname: string, entryMode: unknown): boolean {
-  return entryMode === "hosted_chat" && /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(pathname);
+  return entryMode === "hosted_chat" && (
+    /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(pathname)
+    || pathname === "/vscode/hosted-chat"
+  );
 }
 
 function RouteStatus({ title, detail, navigate }: { title: string; detail: string; navigate: ProjectNavigation }) {

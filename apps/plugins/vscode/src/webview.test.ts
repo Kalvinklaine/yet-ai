@@ -45,6 +45,7 @@ async function main(): Promise<void> {
     assertVerificationRequestsRejectWithoutExecution(webview);
     await assertVerificationHandlerRejectsWithoutExecution(webview);
     assertIframeValidatorRejectsVerificationRequests(webview);
+    assertHostedChatBootstrapPrecedesPackagedGui(webview);
     await assertPreReadyControlledEditRejectsWithoutWrite(webview);
     await assertPreReadyControlledCommandRunRejectsWithoutExecution(webview);
     await assertPreReadyControlledVerificationBundleRejectsWithoutExecution(webview);
@@ -53,6 +54,38 @@ async function main(): Promise<void> {
   } finally {
     moduleWithLoad._load = originalLoad;
   }
+}
+
+function assertHostedChatBootstrapPrecedesPackagedGui(webview: typeof import("./webview")): void {
+  const html = webview.renderWebviewHtml(
+    { cspSource: "vscode-resource:", asWebviewUri: (uri: { toString(): string }) => uri.toString() } as never,
+    { fsPath: "/tmp/yet-ai-extension", path: "/tmp/yet-ai-extension" } as never,
+    {
+      product: { id: "yet-ai", displayName: "Yet AI" },
+      engine: { binaryName: "yet-lsp" },
+      gui: { npmPackage: "@yet-ai/gui" },
+      vscode: { publisher: "yet-ai-placeholder", name: "yet-ai", displayName: "Yet AI", configurationPrefix: "yetai", commandPrefix: "yetaicmd", activityBarId: "yet-ai-toolbox-pane" },
+    } as never,
+    { runtimeUrl: "http://127.0.0.1:8001" } as never,
+  );
+  assert.equal(webview.vscodeHostedChatPath, "/vscode/hosted-chat");
+  assert.equal(html.includes('history.replaceState(null, "", "/vscode/hosted-chat")'), true);
+  assert.equal(html.includes('window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" }'), true);
+  assert.ok(html.indexOf("window.__yetAiInitialRuntimeConfig") < html.indexOf("window.yetAiBootstrap"));
+  assert.equal((html.match(/acquireVsCodeApi\(\)/g) ?? []).length, 1);
+
+  const devHtml = webview.renderWebviewHtml(
+    { cspSource: "vscode-resource:", asWebviewUri: (uri: { toString(): string }) => uri.toString() } as never,
+    { fsPath: "/tmp/yet-ai-extension", path: "/tmp/yet-ai-extension" } as never,
+    {
+      product: { id: "yet-ai", displayName: "Yet AI" },
+      engine: { binaryName: "yet-lsp" },
+      gui: { npmPackage: "@yet-ai/gui" },
+      vscode: { publisher: "yet-ai-placeholder", name: "yet-ai", displayName: "Yet AI", configurationPrefix: "yetai", commandPrefix: "yetaicmd", activityBarId: "yet-ai-toolbox-pane" },
+    } as never,
+    { runtimeUrl: "http://127.0.0.1:8001", guiDevUrl: "http://127.0.0.1:5173" } as never,
+  );
+  assert.equal(devHtml.includes('src="http://127.0.0.1:5173/vscode/hosted-chat"'), true);
 }
 
 function assertHostReadyIncludesMetadataOnlyCapabilities(webview: typeof import("./webview")): void {

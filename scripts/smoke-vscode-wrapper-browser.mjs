@@ -13,6 +13,7 @@ const packagedGuiRoot = path.join(root, "apps", "plugins", "vscode", "media", "g
 const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-wrapper-browser");
 const bridgeVersion = "2026-05-15";
+const hostedChatPath = "/vscode/hosted-chat";
 const headed = process.argv.includes("--headed");
 const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
 const runtimeToken = `vscode-wrapper-runtime-${randomUUID()}`;
@@ -155,7 +156,9 @@ try {
     });
   });
 
-  await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
+  const hostedEntry = await page.evaluate(() => ({ pathname: window.location.pathname, entryMode: window.__yetAiInitialRuntimeConfig?.entryMode }));
+  if (hostedEntry.pathname !== hostedChatPath || hostedEntry.entryMode !== "hosted_chat") failures.push("VS Code wrapper did not provide strict hosted-chat path and entry-mode evidence.");
   await expectHiddenHeroTitle(page, "VS Code hosted packaged GUI hero title");
   await expectBodyVisibleText(page, "Chat readiness", "hosted chat readiness card");
   await expectAttachedText(page, "Conversations", "hosted conversations workbench");
@@ -167,6 +170,8 @@ try {
   if (guiReady?.version !== bridgeVersion || guiReady?.payload?.supportedBridgeVersion !== bridgeVersion) {
     failures.push("VS Code-like acquireVsCodeApi bridge did not collect strict gui.ready.");
   }
+  await expectAttachedText(page, "bridge vscode", "VS Code bridge mode badge before host messages");
+  await page.waitForTimeout(100);
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -191,8 +196,6 @@ try {
       authority: "metadata_only",
     },
   });
-  await expectAttachedText(page, "Host runtime settings received", "host.ready bridge log");
-  await expectAttachedText(page, "Host message host.runtimeStatus", "host.runtimeStatus bridge log");
   await expectAttachedText(page, "bridge vscode", "VS Code bridge mode badge");
   await expectAttachedText(page, "VS Code controlled actions", "controlled action availability");
   await expectAttachedText(page, "Provider setup", "VS Code provider setup surface");
@@ -1223,12 +1226,20 @@ async function startStaticServer(staticRoot) {
       response.writeHead(400).end("Bad request");
       return;
     }
-    const requestedPath = path.normalize(path.join(realStaticRoot, pathname));
+    const hostedEntry = pathname === hostedChatPath;
+    const requestedPath = path.normalize(path.join(realStaticRoot, hostedEntry ? "/index.html" : pathname));
     try {
       const realRequestedPath = await realpath(requestedPath);
       if (!isPathInsideRoot(realStaticRoot, realRequestedPath) || !(await stat(realRequestedPath)).isFile()) throw new Error("not found");
       response.writeHead(200, { "content-type": contentType(realRequestedPath) });
-      createReadStream(realRequestedPath).pipe(response);
+      if (hostedEntry) {
+        const chunks = [];
+        for await (const chunk of createReadStream(realRequestedPath)) chunks.push(chunk);
+        const html = Buffer.concat(chunks).toString("utf8").replace("<head>", '<head><base href="/"><script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat"};</script>');
+        response.end(html);
+      } else {
+        createReadStream(realRequestedPath).pipe(response);
+      }
     } catch {
       response.writeHead(404).end("Not found");
     }

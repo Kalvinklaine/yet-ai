@@ -947,7 +947,7 @@ for (const guiDevUrl of httpsLoopbackGuiDevUrls) {
 
   assertNoSecretSentinels(httpsGuiDevHtml, fakeSecretValues, label);
 
-  const expectedIframe = `<iframe title="Yet AI Test GUI" src="${guiDevUrl}"></iframe>`;
+  const expectedIframe = `<iframe title="Yet AI Test GUI" src="${guiDevUrl}/vscode/hosted-chat"></iframe>`;
   if (!httpsGuiDevHtml.includes(expectedIframe)) {
     throw new Error(`${label} missing exact iframe src: ${expectedIframe}`);
   }

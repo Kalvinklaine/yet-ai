@@ -48,8 +48,11 @@ describe("ProjectRouterShell", () => {
     replaceState.mockRestore();
   });
 
-  it("denies the hosted chat path without wrapper bootstrap evidence", async () => {
-    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+  it.each([
+    "/panel/panel-test/hosted-chat",
+    "/vscode/hosted-chat",
+  ])("denies the hosted chat path without wrapper bootstrap evidence: %s", async (pathname) => {
+    window.history.replaceState(null, "", pathname);
     const container = document.createElement("div");
     document.body.append(container);
 
@@ -77,8 +80,11 @@ describe("ProjectRouterShell", () => {
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
   });
 
-  it("renders hosted chat only with the strict path and wrapper bootstrap flag", async () => {
-    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+  it.each([
+    "/panel/panel-test/hosted-chat",
+    "/vscode/hosted-chat",
+  ])("renders hosted chat only with the strict wrapper path and bootstrap flag: %s", async (pathname) => {
+    window.history.replaceState(null, "", pathname);
     window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
     const container = document.createElement("div");
     document.body.append(container);
@@ -88,7 +94,7 @@ describe("ProjectRouterShell", () => {
       root.render(<ProjectRouterShell />);
     });
 
-    expect(window.location.pathname).toBe("/panel/panel-test/hosted-chat");
+    expect(window.location.pathname).toBe(pathname);
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("legacy");
   });
 

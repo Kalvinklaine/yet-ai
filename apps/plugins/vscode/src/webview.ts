@@ -186,6 +186,7 @@ const maxWorkspaceSnippetSearchSnippetLength = 400;
 const inFlightIdeActionRequestIds = new Set<string>();
 const maxVerificationOutputTailLength = 4000;
 const pendingWorkspaceSnippetSearchQueries = new Set<string>();
+export const vscodeHostedChatPath = "/vscode/hosted-chat";
 
 export function openYetAiWebview(
   context: vscode.ExtensionContext,
@@ -1679,7 +1680,7 @@ export function renderWebviewHtml(
     guiDevOrigin,
   });
   const frameSource = connection.guiDevUrl
-    ? `<iframe title="${escapeHtml(identity.vscode.displayName)} GUI" src="${escapeHtml(connection.guiDevUrl)}"></iframe>`
+    ? `<iframe title="${escapeHtml(identity.vscode.displayName)} GUI" src="${escapeHtml(vscodeHostedChatUrl(connection.guiDevUrl))}"></iframe>`
     : "";
   const placeholder = connection.guiDevUrl || packagedGui ? "" : `<main><h1>${escapeHtml(identity.vscode.displayName)}</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${escapeHtml(connection.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> and <code>cd apps/plugins/vscode && npm run copy:gui</code> to package the GUI, or set <code>yetai.guiDevUrl</code> to a loopback Vite dev server during development.</p></main>`;
   const packagedGuiHtml = packagedGui ? rewritePackagedGuiHtml(packagedGui.html, packagedGui.root, webview) : "";
@@ -1698,6 +1699,10 @@ iframe { width: 100vw; height: 100vh; border: 0; }
 </style>
 </head>
 <body>
+<script nonce="${nonce}">
+history.replaceState(null, "", ${serializeScriptJson(vscodeHostedChatPath)});
+window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+</script>
 ${placeholder}${frameSource}${packagedGuiHtml}
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
@@ -1875,6 +1880,12 @@ window.addEventListener("message", (event) => {
 </script>
 </body>
 </html>`;
+}
+
+function vscodeHostedChatUrl(guiDevUrl: string): string {
+  const url = new URL(guiDevUrl);
+  url.pathname = vscodeHostedChatPath;
+  return url.toString();
 }
 
 type PackagedGui = {
