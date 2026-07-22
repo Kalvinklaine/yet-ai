@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use base64::Engine;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -433,10 +432,15 @@ fn now_timestamp() -> String {
 fn new_note_id() -> Result<String, ProjectMemoryError> {
     let mut bytes = vec![0u8; NOTE_ID_RANDOM_BYTES];
     getrandom::getrandom(&mut bytes).map_err(|_| ProjectMemoryError::Storage)?;
-    Ok(format!(
-        "mem_{}",
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
-    ))
+    Ok(note_id_from_bytes(&bytes))
+}
+
+fn note_id_from_bytes(bytes: &[u8]) -> String {
+    let suffix = bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("mem_{suffix}")
 }
 
 async fn load_notes(storage_root: &Path) -> Result<Vec<ProjectMemoryNote>, ProjectMemoryError> {
@@ -695,6 +699,20 @@ async fn sync_parent_directory(path: &Path) -> Result<(), ProjectMemoryError> {
 #[cfg(not(unix))]
 async fn sync_parent_directory(_path: &Path) -> Result<(), ProjectMemoryError> {
     Ok(())
+}
+
+#[cfg(test)]
+mod note_id_tests {
+    use super::*;
+
+    #[test]
+    fn generated_note_id_alphabet_always_passes_validation() {
+        for byte in 0..=u8::MAX {
+            let id = note_id_from_bytes(&[byte; NOTE_ID_RANDOM_BYTES]);
+            assert_eq!(id.len(), 4 + NOTE_ID_RANDOM_BYTES * 2);
+            assert!(validate_note_id(&id).is_ok(), "{id}");
+        }
+    }
 }
 
 #[cfg(all(test, unix))]
