@@ -27,6 +27,7 @@ const REGISTRY_LOCK_RETRY: Duration = Duration::from_millis(10);
 #[derive(Clone)]
 pub struct ProjectRegistryRuntime {
     registry_path: PathBuf,
+    project_dir: PathBuf,
     config_dir: PathBuf,
     cache_dir: PathBuf,
     ordering: Arc<tokio::sync::Mutex<()>>,
@@ -267,6 +268,7 @@ impl ProjectRegistryRuntime {
     pub fn new(storage_paths: &StoragePaths) -> Self {
         Self {
             registry_path: storage_paths.project_registry_path(),
+            project_dir: storage_paths.project_dir.clone(),
             config_dir: storage_paths.config_dir.clone(),
             cache_dir: storage_paths.cache_dir.clone(),
             ordering: Arc::new(tokio::sync::Mutex::new(())),
@@ -338,7 +340,9 @@ impl ProjectRegistryRuntime {
         if !is_valid_project_id(project_id) {
             return Err(ProjectContextError::NotFound);
         }
-        if storage_paths.config_dir != self.config_dir || storage_paths.cache_dir != self.cache_dir
+        if storage_paths.project_dir != self.project_dir
+            || storage_paths.config_dir != self.config_dir
+            || storage_paths.cache_dir != self.cache_dir
         {
             return Err(ProjectContextError::StorageUnavailable);
         }
@@ -555,11 +559,13 @@ impl ProjectRegistryRuntime {
     }
 
     fn validate_registration_root(&self, root: &Path) -> Result<(), ProjectRegistryError> {
+        let project = canonical_storage_boundary(&self.project_dir)
+            .map_err(|_| ProjectRegistryError::Storage)?;
         let config = canonical_storage_boundary(&self.config_dir)
             .map_err(|_| ProjectRegistryError::Storage)?;
         let cache = canonical_storage_boundary(&self.cache_dir)
             .map_err(|_| ProjectRegistryError::Storage)?;
-        if [config.as_path(), cache.as_path()]
+        if [project.as_path(), config.as_path(), cache.as_path()]
             .into_iter()
             .any(|boundary| root.starts_with(boundary) || boundary.starts_with(root))
         {
@@ -1890,6 +1896,7 @@ mod tests {
     async fn projects_reject_private_storage_roots_and_accept_siblings() {
         let temp = tempfile::tempdir().unwrap();
         let paths = storage_paths(&temp);
+        std::fs::create_dir_all(paths.project_dir.join("child")).unwrap();
         std::fs::create_dir_all(paths.config_dir.join("projects")).unwrap();
         std::fs::create_dir_all(&paths.cache_dir).unwrap();
         let sibling = temp.path().join("workspace");
@@ -1898,16 +1905,52 @@ mod tests {
 
         for root in [
             temp.path().to_path_buf(),
+            paths.project_dir.clone(),
+            paths.project_dir.join("child"),
             paths.config_dir.clone(),
             paths.config_dir.join("projects"),
             paths.cache_dir.clone(),
         ] {
+            let error = runtime.register(&root, Some("Private")).await.unwrap_err();
+            assert_eq!(error, ProjectRegistryError::InvalidRequest);
+            assert!(!error.to_string().contains(root.to_string_lossy().as_ref()));
+        }
+        assert!(runtime.register(&sibling, Some("Sibling")).await.is_ok());
+
+        #[cfg(unix)]
+        {
+            let legacy_alias = temp.path().join("legacy-alias");
+            std::os::unix::fs::symlink(&paths.project_dir, &legacy_alias).unwrap();
             assert_eq!(
-                runtime.register(&root, Some("Private")).await.unwrap_err(),
+                runtime
+                    .register(&legacy_alias, Some("Alias"))
+                    .await
+                    .unwrap_err(),
                 ProjectRegistryError::InvalidRequest
             );
         }
-        assert!(runtime.register(&sibling, Some("Sibling")).await.is_ok());
+
+        let browser = crate::project_browser::ProjectBrowserRuntime::with_home(Some(
+            temp.path().to_path_buf(),
+        ));
+        let session = browser.create_session().await.unwrap();
+        let legacy = browser
+            .list(&session.session_id, &session.root.handle)
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.display_name == "legacy")
+            .unwrap();
+        assert_eq!(
+            browser
+                .register(&runtime, &session.session_id, &legacy.handle, "Legacy")
+                .await
+                .unwrap_err(),
+            crate::project_browser::ProjectBrowserError::Registry(
+                ProjectRegistryError::InvalidRequest
+            )
+        );
     }
 
     #[tokio::test]

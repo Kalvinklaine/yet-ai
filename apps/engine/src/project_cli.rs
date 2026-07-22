@@ -158,6 +158,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         std::fs::create_dir(temp.path().join("relative-root")).unwrap();
         let storage = paths(&temp);
+        std::fs::create_dir(&storage.project_dir).unwrap();
         assert!(run_with_storage(
             &args(&["project", "add", "relative-root"]),
             &storage,
@@ -166,6 +167,17 @@ mod tests {
         )
         .await
         .is_ok());
+        let legacy_error = run_with_storage(
+            &args(&["project", "add", storage.project_dir.to_str().unwrap()]),
+            &storage,
+            temp.path().to_path_buf(),
+            8001,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert_eq!(legacy_error, "project command failed");
+        assert!(!legacy_error.contains(storage.project_dir.to_str().unwrap()));
         for invalid in [
             args(&["project"]),
             args(&["project", "add"]),
