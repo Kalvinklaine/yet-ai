@@ -172,6 +172,55 @@ describe("project lifecycle scope", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/p/${projectA}/v1/chats/chat-x`))).toBe(true);
   });
 
+  it("keeps a missing routed chat selected without hydrating the available fallback", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-fallback", "Fallback chat", 1)],
+      chatThreads: { "chat-fallback": chatThread("chat-fallback", "Fallback chat", [chatMessage("chat-fallback", "msg-fallback", "assistant", "Fallback message must stay hidden")]) },
+    });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-missing" });
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("chat-missing");
+    expect(container?.querySelector("[data-testid='missing-routed-chat']")?.textContent).toContain("Chat not found in this project");
+    expect(container?.textContent).toContain("No other conversation was loaded in its place.");
+    expect(container?.textContent).toContain("Back to project chat list");
+    expect(container?.textContent).not.toContain("Fallback message must stay hidden");
+    expect(container?.querySelector("[data-testid='chat-composer']")).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/p/${projectA}/v1/chats/chat-fallback`))).toBe(false);
+  });
+
+  it("ignores a deferred routed chat response after reroute and unmount", async () => {
+    const oldThread = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/p/${projectA}/v1/chats/chat-old`) && !init?.method) {
+        return oldThread.promise;
+      }
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-old", "Old chat", 1), chatSummary("chat-new", "New chat", 1)],
+        chatThreads: { "chat-new": chatThread("chat-new", "New chat", [chatMessage("chat-new", "msg-new", "assistant", "Current routed message")]) },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-old" });
+    await flushAsync();
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat", chatId: "chat-new" }} />));
+    await flushAsync();
+    expect(container?.textContent).toContain("Current routed message");
+
+    await act(async () => {
+      root?.unmount();
+      root = undefined;
+    });
+    oldThread.resolve(jsonResponse(chatThread("chat-old", "Old chat", [chatMessage("chat-old", "msg-old", "assistant", "Late old route message")])));
+    await flushAsync();
+    expect(container?.textContent).toBe("");
+  });
+
   it("treats same-project route chat changes like chat selection without resetting the project", async () => {
     mockRuntimeResponses({
       ...readyRuntimeOptions(),

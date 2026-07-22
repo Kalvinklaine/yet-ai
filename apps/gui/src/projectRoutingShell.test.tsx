@@ -5,7 +5,11 @@ import { ProjectRouterShell } from "./ProjectRouterShell";
 import { navigateProjectRoute } from "./services/projectRouting";
 
 vi.mock("./App", () => ({
-  App: ({ route }: { route: { kind: string } }) => <div data-testid="app-route">{route.kind}</div>,
+  App: ({ route }: { route: { kind: string; page?: string; chatId?: string } }) => <div data-testid="app-route">{[route.kind, route.page, route.chatId].filter(Boolean).join(":")}</div>,
+}));
+
+vi.mock("./components/ProjectShell", () => ({
+  ProjectShell: ({ children }: { children?: React.ReactNode }) => <div data-testid="project-shell">{children}</div>,
 }));
 
 let root: ReactDOM.Root | undefined;
@@ -47,5 +51,31 @@ describe("ProjectRouterShell", () => {
     act(() => navigateProjectRoute(window, { kind: "settings" }));
 
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("settings");
+  });
+
+  it("follows real browser back and forward popstate changes across chat and page routes", () => {
+    const projectId = "prj_abcdefghijklmnopqrstuv" as never;
+    window.history.replaceState(null, "", `/p/${projectId}/chat/chat-a`);
+    const container = document.createElement("div");
+    document.body.append(container);
+    act(() => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-a");
+
+    window.history.pushState(null, "", `/p/${projectId}/memory`);
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:memory");
+
+    window.history.replaceState(null, "", `/p/${projectId}/chat/chat-a`);
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-a");
+
+    act(() => root?.unmount());
+    root = undefined;
+    window.history.replaceState(null, "", `/p/${projectId}/agent`);
+    act(() => window.dispatchEvent(new PopStateEvent("popstate")));
+    expect(container.textContent).toBe("");
   });
 });

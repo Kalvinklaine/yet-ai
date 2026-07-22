@@ -24,7 +24,7 @@ import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatus
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
 import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatRuntimeSettings, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { createProjectRuntimeSettings } from "./services/projectClient";
-import type { AppRoute } from "./services/projectRouting";
+import { buildProjectRoute, type AppRoute } from "./services/projectRouting";
 import { ProjectScopeController, createProjectScopeCorrelation, type ProjectScopeCorrelation, type ProjectScopeResetters } from "./services/projectScope";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./services/redaction";
 import { subscribeToChat, type SseEvent } from "./services/sseClient";
@@ -440,6 +440,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   const [chatHistoryError, setChatHistoryError] = useState<RuntimeError | null>(null);
   const [chatHistoryRevision, setChatHistoryRevision] = useState<number | null>(null);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
+  const [missingRoutedChatId, setMissingRoutedChatId] = useState<string | null>(null);
   const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
   const [conversationNotice, setConversationNotice] = useState<string | null>(null);
   const [compactConversationsOpen, setCompactConversationsOpen] = useState(false);
@@ -629,6 +630,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
   const activeChatSummaries = chatHistoryCurrent ? chatSummaries : [];
   const activeRuntimeLifecycle = runtimeLifecycle?.settingsRevision === settingsRevision ? runtimeLifecycle.diagnostics : null;
   const activeChatSummary = activeChatSummaries.find((item) => item.chatId === chatId);
+  const routedChatMissing = routedChatId !== undefined && missingRoutedChatId === routedChatId && chatId === routedChatId;
   const activeChatIndex = activeChatSummaries.findIndex((item) => item.chatId === chatId);
   const runtimeConnected = activePing?.ready === true && !activeConnectionError;
   const runtimeAuthMismatchError = runtimeAuthMismatch(activeConnectionError, activeModelError, activeProviderAuthError);
@@ -1329,7 +1331,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
         chatHistoryAttemptRef.current += 1;
         const nextChatId = route.kind === "project" && route.page === "chat" && route.chatId ? route.chatId : "chat-001";
         setChatId(nextChatId); setChatView(resetChatViewState(nextChatId)); setChatSummaries([]); setChatHistoryRevision(null);
-        setChatHistoryError(null); setChatHistoryLoading(false); setDeletingChatId(null); setConversationNotice(null); setChatInput(""); setTimeline([]); setChatLifecycleState("idle");
+        setChatHistoryError(null); setChatHistoryLoading(false); setMissingRoutedChatId(null); setDeletingChatId(null); setConversationNotice(null); setChatInput(""); setTimeline([]); setChatLifecycleState("idle");
       },
       active_editor_context: () => {
         setAttachedContext(null); setIncludeAttachedContext(false); setAttachedContextAcknowledged(false); setAttachedContextStatus(null); clearExplicitContextBundle(null);
@@ -2157,10 +2159,14 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       const summaries = result.data.chats ?? [];
       setChatSummaries(summaries);
       setChatHistoryRevision(revision);
+      const routedChatPresent = routedChatId === undefined || summaries.some((summary) => summary.chatId === routedChatId);
+      setMissingRoutedChatId(routedChatPresent ? null : routedChatId);
       const resolution = routedChatId
         ? { nextChatId: routedChatId, shouldResetView: chatIdRef.current !== routedChatId, reason: "current_present" as const }
         : resolveChatAfterList({ currentChatId: chatIdRef.current, summaries, defaultChatId: "chat-001" });
-      if (resolution.reason === "first_summary") {
+      if (!routedChatPresent) {
+        setConversationNotice(`Chat ${sanitizeDisplayText(routedChatId ?? "")} was not found in this project. The routed chat id remains selected.`);
+      } else if (resolution.reason === "first_summary") {
         setConversationNotice(`Selected ${sanitizeDisplayText(summaries[0]?.title || resolution.nextChatId)} because the previous chat is not in this local runtime list.`);
       } else if (resolution.reason === "default_chat") {
         setConversationNotice("No saved conversations are available; showing a fresh local chat.");
@@ -2192,15 +2198,19 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
       return;
     }
     if (result.ok) {
+      setMissingRoutedChatId((current) => current === targetChatId ? null : current);
       setChatView((current) => hydrateChatViewFromThread(current, result.data));
       setChatSummaries((current) => upsertChatSummary(current, result.data));
       setChatHistoryRevision(revision);
     } else {
+      if (routedChatId === targetChatId && result.error.status === 404) {
+        setMissingRoutedChatId(targetChatId);
+      }
       setChatHistoryError(result.error);
       setChatHistoryRevision(revision);
     }
     setChatHistoryLoading(false);
-  }, [isCurrentRefresh]);
+  }, [isCurrentRefresh, routedChatId]);
 
   const createNewChat = useCallback(async () => {
     const targetSettings = settingsRef.current;
@@ -2269,6 +2279,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
     if (!routedChatId || routedChatId === chatIdRef.current) {
       return;
     }
+    setMissingRoutedChatId(null);
     selectChat(routedChatId);
   }, [routedChatId, selectChat]);
 
@@ -2704,10 +2715,10 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
     clearEditProposalState();
     clearModelProposalState();
     clearIdeActionState();
-    if (activeChatSummary || routedChatId === chatId) {
+    if (activeChatSummary || routedChatId === chatId && missingRoutedChatId !== routedChatId) {
       void loadChatThread(chatId);
     }
-  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, clearModelProposalState, loadChatThread, routedChatId]);
+  }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, clearModelProposalState, loadChatThread, missingRoutedChatId, routedChatId]);
 
   useEffect(() => () => {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
@@ -3740,7 +3751,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
         const rowLabel = `${positionLabel}: ${title}${active ? ", current conversation" : ""}. Updated ${updatedAt}. ${messageCountLabel}.`;
         return (
           <div className={`conversation-item ${active ? "active" : ""}`} key={summary.chatId} role="listitem" aria-label={rowLabel}>
-            <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting || active} aria-current={active ? "page" : undefined} aria-label={`${active ? "Current conversation" : "Open conversation"}: ${title}. ${positionLabel}. ${messageCountLabel}.`}>
+            <button type="button" className="conversation-select" onClick={() => selectChat(summary.chatId)} disabled={deleting || active || routedChatMissing} aria-current={active ? "page" : undefined} aria-label={`${active ? "Current conversation" : "Open conversation"}: ${title}. ${positionLabel}. ${messageCountLabel}.`}>
               <span className="conversation-title-line">
                 <strong className="conversation-title">{title}</strong>
                 {active && <span className="badge ok">active conversation</span>}
@@ -3885,7 +3896,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
           <aside className="conversations-panel conversations-rail stack" aria-label="Local conversations">
             <div className="row">
               <h3>Conversations</h3>
-              <button type="button" onClick={() => void createNewChat()}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
+              <button type="button" onClick={() => void createNewChat()} disabled={routedChatMissing}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
             </div>
             <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
             <span id="delete-current-conversation-help-rail" className="sr-only">Deleting the current conversation asks for confirmation, removes it from engine-owned local history, and selects the next available conversation or a fresh local chat.</span>
@@ -3900,7 +3911,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
               <h3>Chats</h3>
               <button type="button" className="secondary-button" onClick={() => setCompactConversationsOpen(false)}>Close</button>
             </div>
-            <button type="button" onClick={() => void createNewChat()}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
+            <button type="button" onClick={() => void createNewChat()} disabled={routedChatMissing}>{chatHistoryLoading ? "Loading…" : "New chat"}</button>
             <span className="subtle">Engine-owned local history. Messages are not written to browser storage.</span>
             <span id="delete-current-conversation-help-drawer" className="sr-only">Deleting the current conversation asks for confirmation, removes it from engine-owned local history, and selects the next available conversation or a fresh local chat.</span>
             <div className="conversation-status" role="status">
@@ -3915,10 +3926,10 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
                 <strong>{currentChatTitle}</strong>
                 <span className="subtle">{activeChatIndex >= 0 ? `Conversation ${activeChatIndex + 1} of ${activeChatSummaries.length} · ` : ""}{chatView.messages.length} visible message{chatView.messages.length === 1 ? "" : "s"} · {chatView.subscriptionReady ? "snapshot loaded" : activeChatSummary ? `${activeChatSummary.messageCount} persisted message${activeChatSummary.messageCount === 1 ? "" : "s"}` : "fresh local chat"}</span>
               </div>
-              <button type="button" onClick={() => void createNewChat()}>{chatHistoryLoading ? "Loading…" : "New"}</button>
+              <button type="button" onClick={() => void createNewChat()} disabled={routedChatMissing}>{chatHistoryLoading ? "Loading…" : "New"}</button>
               <span className="badge chat-id-badge">{sanitizeDisplayText(chatId)}</span>
             </div>
-            <details className="debug-details" data-testid="chat-advanced-controls">
+            {!routedChatMissing && <details className="debug-details" data-testid="chat-advanced-controls">
               <summary>Advanced chat controls</summary>
               <div className="form-grid">
                 <label>
@@ -3926,10 +3937,16 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
                   <input value={chatId} onChange={updateDirectChatId} />
                 </label>
               </div>
-            </details>
+            </details>}
             <div className="chat-scroll-region" ref={chatScrollRegionRef} aria-label="Chat messages">
               <div className="chat-panel">
-                {chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect(true)} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
+                {routedChatMissing ? (
+                  <section className="readiness-card warn" role="status" data-testid="missing-routed-chat">
+                    <strong>Chat not found in this project</strong>
+                    <span className="subtle">The URL still names {sanitizeDisplayText(routedChatId ?? chatId)}. No other conversation was loaded in its place.</span>
+                    {projectId && <a href={buildProjectRoute({ kind: "project", projectId, page: "chat" })}>Back to project chat list</a>}
+                  </section>
+                ) : chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect(true)} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
                 <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
                 {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
               </div>
@@ -3937,7 +3954,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
               {proposalHistory.entries.length > 0 && pendingApplyRequestId === null && <ProposalHistoryPanel history={proposalHistory} />}
               <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             </div>
-            <form className="chat-composer" data-testid="chat-composer" onSubmit={(event) => void submitChat(event)}>
+            {!routedChatMissing && <form className="chat-composer" data-testid="chat-composer" onSubmit={(event) => void submitChat(event)}>
               <div className="composer-input-area">
                 <div className="composer-context-chips" aria-label="Next-send context chips">
                   <span className={`composer-chip ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? "Send ready" : "Setup needed"}</span>
@@ -3994,7 +4011,7 @@ export function App({ route = { kind: "legacy" } }: { route?: Exclude<AppRoute, 
                   </div>
                 </details>
               </div>
-            </form>
+            </form>}
             {!hostedWebview && <details className="debug-details chat-secondary-debug" data-testid="sse-debug-details">
               <summary>SSE debug details</summary>
               <div className="timeline">
