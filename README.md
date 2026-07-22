@@ -12,6 +12,7 @@ The current repository is a local development and dev-preview foundation. It is 
   - Direct local runtime-to-provider calls using user-configured credentials or local runtimes.
 - **Browser and GUI chat flows**
   - React/Vite GUI for provider setup, runtime status, chat, streamed responses, local chat history, and first-message development flows.
+  - Implemented browser-first project isolation with the `/projects` hub, opaque project routes, and project-scoped chat, memory, and progress across independent local project roots.
   - Demo/local mock flows for validating the chat experience without real provider credentials.
 - **IDE dev-preview plugins**
   - VS Code webview host shell with packaged GUI preview, local runtime launch/connect modes, first-message smoke coverage, and bounded confirmed edit apply.

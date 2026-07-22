@@ -2,7 +2,7 @@
 
 ## Status
 
-Approved architecture for the next implementation milestone. This record freezes contracts and rollout rules; it does not claim that project registration, project-scoped routes, storage migration, or the project hub are implemented.
+Implemented and verified browser-first project isolation v1. This record remains the authoritative contract and rollout boundary for the project registry, project-scoped routes and storage, legacy separation, and the `/projects` hub.
 
 ## Decision
 
@@ -311,9 +311,9 @@ V1 does not add:
 
 ## Verified browser milestone
 
-The browser-first v1 boundary is implemented and covered by `npm run smoke:browser-project-isolation`. The deterministic smoke builds the Rust engine and React GUI, registers two real temporary single-root projects through the engine CLI, serves the built GUI from the authenticated loopback engine, and drives it with Playwright Chromium. It verifies the `/` to `/projects` landing flow, safe hub labels and readiness/activity fields, direct and refreshed project routes, independent tabs, project-scoped chat, memory, progress and SSE retirement, cross-project not-found behavior, controlled-state clearing on switch, archive/restore without deletion, and separate legacy compatibility data.
+The browser-first v1 boundary is implemented and covered by the exact command `npm run smoke:browser-project-isolation`. The deterministic smoke builds the real Rust `yet-lsp` engine and React GUI, creates two independent temporary directory roots, registers both real single-root projects through the engine CLI, serves the built GUI from the authenticated loopback engine, and drives it with Playwright Chromium. It verifies the `/` to `/projects` landing flow, safe hub labels and readiness/activity fields, direct and refreshed project routes, independent tabs, project-scoped chat, memory, progress and SSE retirement, cross-project not-found behavior, controlled-state clearing on switch, archive/restore without deletion, and separate legacy compatibility data.
 
-The smoke uses generated credentials, Demo Mode, isolated temporary config/cache/home directories, and loopback traffic only. It checks browser URL, HTML, visible text, browser storage, engine output, and observed browser requests for raw temporary roots, auth material, operational internals, or non-loopback access. It does not prove provider quality, hosted-account behavior, IDE project binding, arbitrary filesystem discovery, production packaging, or multi-user security.
+The smoke uses generated local authentication, Demo Mode, isolated temporary config/cache/home directories, and loopback traffic only. It checks browser URL, HTML, visible text, browser storage, engine output, and observed browser requests for raw temporary roots, auth material, operational internals, or non-loopback access. Playwright Chromium is a required local prerequisite and must be installed before running the smoke. The gate does not prove provider quality, hosted-account behavior, IDE project binding, daemon or worker ownership, multi-root support, background indexing, broad autonomous authority, production packaging or release readiness, cloud sync, or multi-user security.
 
 Run the focused milestone and final code gates with:
 
