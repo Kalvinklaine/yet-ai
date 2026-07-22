@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
 
+use crate::agent_progress;
 use crate::projects::{
     is_valid_project_id, ProjectContext, ProjectContextError, ProjectRegistryError, ProjectSummary,
 };
@@ -157,6 +158,59 @@ pub(super) async fn scoped_placeholder(
     }
 }
 
+pub(super) async fn agent_progress_list(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match agent_progress::load_project_progress_with_runtime(
+        &context.storage().agent_progress,
+        context.project_id(),
+        &state.agent_progress_runtime,
+    )
+    .await
+    {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+pub(super) async fn agent_progress_event(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    request: Result<Json<agent_progress::AgentProgressEvent>, JsonRejection>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    let Json(event) = match request {
+        Ok(event) => event,
+        Err(rejection) => return invalid_project_json(rejection),
+    };
+    match state
+        .agent_progress_runtime
+        .publish_project_event(context.project_id(), event)
+        .await
+    {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": error.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 pub(super) async fn resolve_context(
     state: &AppState,
     project_id: &str,
@@ -272,9 +326,9 @@ pub(super) fn scoped_router() -> Router<AppState> {
             "/project-memory/*resource",
             axum::routing::any(scoped_placeholder),
         )
-        .route("/agent-progress", axum::routing::any(scoped_placeholder))
+        .route("/agent-progress", axum::routing::get(agent_progress_list))
         .route(
-            "/agent-progress/*resource",
-            axum::routing::any(scoped_placeholder),
+            "/agent-progress/events",
+            axum::routing::post(agent_progress_event),
         )
 }

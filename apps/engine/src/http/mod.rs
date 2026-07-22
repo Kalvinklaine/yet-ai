@@ -1492,7 +1492,7 @@ mod project_tests {
         state: AppState,
         method: &str,
         uri: String,
-        body: &'static str,
+        body: &str,
         authenticated: bool,
     ) -> Response {
         let mut builder = Request::builder().method(method).uri(uri);
@@ -1503,7 +1503,7 @@ mod project_tests {
             builder = builder.header(header::CONTENT_TYPE, "application/json");
         }
         super::router(state)
-            .oneshot(builder.body(Body::from(body)).unwrap())
+            .oneshot(builder.body(Body::from(body.to_string())).unwrap())
             .await
             .unwrap()
     }
@@ -1695,6 +1695,139 @@ mod project_tests {
         let (first, second) = tokio::join!(first, second);
         assert_eq!(first.status(), StatusCode::NOT_IMPLEMENTED);
         assert_eq!(second.status(), StatusCode::NOT_IMPLEMENTED);
+        let _ = std::fs::remove_dir_all(first_root.parent().unwrap());
+    }
+
+    fn scoped_progress_event(event_id: &str, message: &str) -> String {
+        serde_json::json!({
+            "protocolVersion": "2026-05-29",
+            "eventId": event_id,
+            "runId": "shared-run",
+            "cardId": "T-9",
+            "timestamp": "2026-07-22T01:02:03Z",
+            "phase": "started",
+            "status": "running",
+            "message": message
+        })
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn project_agent_progress_routes_isolate_sources_events_and_legacy() {
+        let (state, first_id, first_root) = project_test_state().await;
+        let second_root = first_root.parent().unwrap().join("progress-second-root");
+        std::fs::create_dir_all(&second_root).unwrap();
+        let second_id = state
+            .project_registry_runtime
+            .register(&second_root, Some("Second"))
+            .await
+            .unwrap()
+            .project_id;
+        let first_context = super::project::resolve_context(&state, &first_id)
+            .await
+            .unwrap();
+        let second_context = super::project::resolve_context(&state, &second_id)
+            .await
+            .unwrap();
+        std::fs::create_dir_all(&first_context.storage().agent_progress).unwrap();
+        std::fs::create_dir_all(&second_context.storage().agent_progress).unwrap();
+        std::fs::write(
+            first_context.storage().agent_progress.join("progress.json"),
+            r#"{"cloudRequired":false,"providerAccess":"direct","generatedAt":"2026-07-22T01:00:00Z","snapshots":[]}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            second_context.storage().agent_progress.join("progress.json"),
+            r#"{"cloudRequired":false,"providerAccess":"direct","generatedAt":"2026-07-22T01:01:00Z","snapshots":[]}"#,
+        )
+        .unwrap();
+
+        let first_event = scoped_progress_event("first-event", "First project progress.");
+        let second_event = scoped_progress_event("second-event", "Second project progress.");
+        let first_post = project_request(
+            state.clone(),
+            "POST",
+            format!("/p/{first_id}/v1/agent-progress/events"),
+            &first_event,
+            true,
+        )
+        .await;
+        let second_post = project_request(
+            state.clone(),
+            "POST",
+            format!("/p/{second_id}/v1/agent-progress/events"),
+            &second_event,
+            true,
+        )
+        .await;
+        assert_eq!(first_post.status(), StatusCode::OK);
+        assert_eq!(second_post.status(), StatusCode::OK);
+
+        let (first_get, second_get) = tokio::join!(
+            project_request(
+                state.clone(),
+                "GET",
+                format!("/p/{first_id}/v1/agent-progress"),
+                "",
+                true
+            ),
+            project_request(
+                state.clone(),
+                "GET",
+                format!("/p/{second_id}/v1/agent-progress"),
+                "",
+                true
+            )
+        );
+        let first_body = response_text(first_get).await;
+        let second_body = response_text(second_get).await;
+        assert!(first_body.contains("first-event"));
+        assert!(!first_body.contains("second-event"));
+        assert!(second_body.contains("second-event"));
+        assert!(!second_body.contains("first-event"));
+
+        let legacy = project_request(
+            state.clone(),
+            "GET",
+            "/v1/agent-progress".to_string(),
+            "",
+            true,
+        )
+        .await;
+        let legacy_body = response_text(legacy).await;
+        assert!(!legacy_body.contains("first-event"));
+        assert!(!legacy_body.contains("second-event"));
+
+        let unknown_with_bad_body = project_request(
+            state.clone(),
+            "POST",
+            "/p/prj_AAAAAAAAAAAAAAAAAAAAAA/v1/agent-progress/events".to_string(),
+            r#"{"projectId":"prj_AAAAAAAAAAAAAAAAAAAAAA"}"#,
+            true,
+        )
+        .await;
+        assert_eq!(unknown_with_bad_body.status(), StatusCode::NOT_FOUND);
+        let body_project_id = serde_json::json!({
+            "protocolVersion": "2026-05-29",
+            "eventId": "body-project-id",
+            "runId": "shared-run",
+            "cardId": "T-9",
+            "timestamp": "2026-07-22T01:02:03Z",
+            "phase": "started",
+            "status": "running",
+            "message": "Rejected metadata.",
+            "projectId": first_id
+        })
+        .to_string();
+        let rejected = project_request(
+            state,
+            "POST",
+            format!("/p/{second_id}/v1/agent-progress/events"),
+            &body_project_id,
+            true,
+        )
+        .await;
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
         let _ = std::fs::remove_dir_all(first_root.parent().unwrap());
     }
 
