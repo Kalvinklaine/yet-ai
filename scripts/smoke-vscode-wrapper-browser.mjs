@@ -99,6 +99,7 @@ const mockChatMessages = [{ id: proposalAssistantMessageId, chatId: "chat-001", 
 const mockChatSubscribers = new Set();
 const runtimeRequestLog = [];
 const chatCommandBodies = [];
+const chatCommandObservers = new Set();
 const failures = [];
 const consoleMessages = [];
 let observedRuntimeAuthorization = false;
@@ -839,13 +840,16 @@ async function runExplicitContextBundleScenario(page) {
   await expectAttachedText(page, "Include bundle with next message", "VS Code bundle include toggle");
   await assertBrowserStorageDoesNotContain(page, [bundleExcerptOnePath, bundleExcerptOneText, bundleExcerptTwoPath, bundleExcerptTwoText], "VS Code bundle preview storage check");
 
-  const chatCommandCountBeforeBundleSend = countChatCommandPosts();
+  clearChatCommandObservations();
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(bundlePrompt);
+  await waitForExplicitContextBundleItems(page);
+  const bundleCommandPromise = waitForChatCommand(bundlePrompt);
   await clickSendButtonWithActionability(page, "VS Code explicit context bundle send");
+  const bundleCommand = await bundleCommandPromise;
   await expectBodyVisibleText(page, bundlePrompt, "VS Code bundle user bubble");
-  const bundleChatPosts = countChatCommandPosts() - chatCommandCountBeforeBundleSend;
-  if (bundleChatPosts !== 1) failures.push(`Explicit context bundle send posted ${bundleChatPosts} chat commands instead of exactly one.`);
-  assertExplicitContextBundleChatCommand(chatCommandBodies.at(-1), "vscode");
+  const matchingBundleCommands = chatCommandBodies.filter((command) => command?.requestId === bundleCommand.requestId && command?.payload?.content === bundlePrompt);
+  if (chatCommandBodies.length !== 1 || matchingBundleCommands.length !== 1) failures.push(`Explicit context bundle send posted ${chatCommandBodies.length} chat commands, ${matchingBundleCommands.length} matching its prompt/request, instead of exactly one.`);
+  assertExplicitContextBundleChatCommand(bundleCommand, "vscode");
   await openComposerDrawer(page, "ide-actions-drawer");
   await expectBodyVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "VS Code bundle one-shot clear status");
   await expectBodyVisibleText(page, "empty", "VS Code bundle empty after send");
@@ -889,6 +893,45 @@ async function attachBundleExcerpt(page, excerpt) {
     payload: activeFileExcerptResultPayload({ source: "vscode", text: excerpt.text, workspaceRelativePath: excerpt.path, range: excerpt.range }),
   });
   await expectBodyVisibleText(page, "Attach active file excerpt: succeeded", "bundle active-file excerpt result");
+}
+
+async function waitForExplicitContextBundleItems(page) {
+  await page.waitForFunction(({ firstPath, firstText, secondPath, secondText }) => {
+    const card = document.querySelector(".explicit-context-bundle-card");
+    const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
+    const text = card?.textContent ?? "";
+    return text.includes(firstPath)
+      && text.includes(firstText)
+      && text.includes(secondPath)
+      && text.includes(secondText)
+      && send instanceof HTMLButtonElement
+      && !send.disabled;
+  }, {
+    firstPath: bundleExcerptOnePath,
+    firstText: bundleExcerptOneText,
+    secondPath: bundleExcerptTwoPath,
+    secondText: bundleExcerptTwoText,
+  }, { timeout: 10_000 });
+}
+
+function clearChatCommandObservations() {
+  chatCommandBodies.length = 0;
+}
+
+function waitForChatCommand(prompt, timeout = 10_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chatCommandObservers.delete(observer);
+      reject(new Error(`Timed out waiting for chat.command correlated to prompt ${JSON.stringify(prompt)}.`));
+    }, timeout);
+    const observer = (command) => {
+      if (command?.type !== "user_message" || command?.payload?.content !== prompt || typeof command?.requestId !== "string") return;
+      clearTimeout(timer);
+      chatCommandObservers.delete(observer);
+      resolve(command);
+    };
+    chatCommandObservers.add(observer);
+  });
 }
 
 async function runDemoModeFirstMessageScenario(page) {
@@ -1101,6 +1144,7 @@ async function startMockRuntimeServer() {
       const chatId = decodeURIComponent(commandMatch[1]);
       const body = JSON.parse(await readBody(request));
       chatCommandBodies.push(body);
+      for (const observer of chatCommandObservers) observer(body);
       const createdAt = new Date(0).toISOString();
       const userMessage = { id: `user-visual-chat-${mockChatMessages.length}`, chatId, role: "user", content: body.payload?.content ?? "", createdAt, status: "complete" };
       const assistantMessage = { id: `assistant-visual-chat-${mockChatMessages.length}`, chatId, role: "assistant", content: "VS Code wrapper canned chat response.", createdAt, status: "complete" };
