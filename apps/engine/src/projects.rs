@@ -8,6 +8,8 @@ use base64::Engine;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::storage::{ProjectStoragePaths, StoragePaths};
+
 const REGISTRY_VERSION: u32 = 2;
 const INITIAL_REVISION: &str = "1";
 const REGISTRY_MAX_BYTES: u64 = 2_000_000;
@@ -55,6 +57,60 @@ pub struct PrivateProjectEntry {
     pub last_opened_at: Option<String>,
     pub archived: bool,
     canonical_root: PathBuf,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct ProjectContext {
+    project_id: String,
+    revision: String,
+    display_name: String,
+    canonical_root: PathBuf,
+    storage: ProjectStoragePaths,
+}
+
+impl ProjectContext {
+    pub fn project_id(&self) -> &str {
+        &self.project_id
+    }
+
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    pub fn canonical_root(&self) -> &Path {
+        &self.canonical_root
+    }
+
+    pub fn storage(&self) -> &ProjectStoragePaths {
+        &self.storage
+    }
+}
+
+impl std::fmt::Debug for ProjectContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProjectContext")
+            .field("project_id", &self.project_id)
+            .field("revision", &self.revision)
+            .field("display_name", &self.display_name)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ProjectContextError {
+    #[error("project not found")]
+    NotFound,
+    #[error("project is archived")]
+    Archived,
+    #[error("project root is unavailable")]
+    RootMissing,
+    #[error("project storage unavailable")]
+    StorageUnavailable,
 }
 
 impl PrivateProjectEntry {
@@ -170,6 +226,41 @@ impl ProjectRegistryRuntime {
         } else {
             Ok(entry)
         }
+    }
+
+    pub async fn resolve_context(
+        &self,
+        storage_paths: &StoragePaths,
+        project_id: &str,
+    ) -> Result<ProjectContext, ProjectContextError> {
+        if !is_valid_project_id(project_id) {
+            return Err(ProjectContextError::NotFound);
+        }
+        let entry = self
+            .get_private_entry(project_id)
+            .await
+            .map_err(|error| match error {
+                ProjectRegistryError::NotFound | ProjectRegistryError::InvalidRequest => {
+                    ProjectContextError::NotFound
+                }
+                _ => ProjectContextError::StorageUnavailable,
+            })?;
+        if entry.archived {
+            return Err(ProjectContextError::Archived);
+        }
+        if !root_is_readable_and_same(entry.canonical_root()) {
+            return Err(ProjectContextError::RootMissing);
+        }
+        let storage = storage_paths
+            .project_storage_paths(project_id)
+            .map_err(|_| ProjectContextError::StorageUnavailable)?;
+        Ok(ProjectContext {
+            project_id: entry.project_id,
+            revision: entry.revision,
+            display_name: entry.display_name,
+            canonical_root: entry.canonical_root,
+            storage,
+        })
     }
 
     pub async fn register(
@@ -446,17 +537,28 @@ fn unique_project_id(registry: &ProjectRegistry) -> Result<String, ProjectRegist
     Err(ProjectRegistryError::Storage)
 }
 
-fn validate_project_id(value: &str) -> Result<(), ProjectRegistryError> {
+pub(crate) fn is_valid_project_id(value: &str) -> bool {
     if value.len() != 26 || !value.starts_with("prj_") {
-        return Err(ProjectRegistryError::InvalidRequest);
+        return false;
     }
-    let decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(&value[4..])
-        .map_err(|_| ProjectRegistryError::InvalidRequest)?;
-    if decoded.len() != PROJECT_ID_RANDOM_BYTES {
-        return Err(ProjectRegistryError::InvalidRequest);
-    }
-    Ok(())
+        .is_ok_and(|decoded| {
+            decoded.len() == PROJECT_ID_RANDOM_BYTES
+                && base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(decoded) == value[4..]
+        })
+}
+
+fn validate_project_id(value: &str) -> Result<(), ProjectRegistryError> {
+    is_valid_project_id(value)
+        .then_some(())
+        .ok_or(ProjectRegistryError::InvalidRequest)
+}
+
+fn root_is_readable_and_same(root: &Path) -> bool {
+    std::fs::canonicalize(root).is_ok_and(|current| {
+        current == root && current.is_dir() && std::fs::read_dir(&current).is_ok()
+    })
 }
 
 fn timestamp_now() -> String {
@@ -761,6 +863,14 @@ fn sync_directory(_path: &Path) -> Result<(), ProjectRegistryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn storage_paths(temp: &tempfile::TempDir) -> StoragePaths {
+        StoragePaths {
+            project_dir: temp.path().join("legacy"),
+            config_dir: temp.path().join("config"),
+            cache_dir: temp.path().join("cache"),
+        }
+    }
 
     fn registry_path(temp: &tempfile::TempDir) -> PathBuf {
         temp.path()
@@ -1139,5 +1249,148 @@ mod tests {
                 ProjectRegistryError::Storage
             );
         }
+    }
+
+    #[tokio::test]
+    async fn project_context_paths_are_private_confined_and_concurrent() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_root = temp.path().join("private-first-root");
+        let second_root = temp.path().join("private-second-root");
+        std::fs::create_dir(&first_root).unwrap();
+        std::fs::create_dir(&second_root).unwrap();
+        let paths = storage_paths(&temp);
+        let runtime = ProjectRegistryRuntime::new(paths.project_registry_path());
+        let first = runtime.register(&first_root, Some("First")).await.unwrap();
+        let second = runtime
+            .register(&second_root, Some("Second"))
+            .await
+            .unwrap();
+
+        let (first_context, second_context) = tokio::join!(
+            runtime.resolve_context(&paths, &first.project_id),
+            runtime.resolve_context(&paths, &second.project_id)
+        );
+        let first_context = first_context.unwrap();
+        let second_context = second_context.unwrap();
+        assert_ne!(
+            first_context.storage().config_root,
+            second_context.storage().config_root
+        );
+        assert_ne!(
+            first_context.storage().cache_root,
+            second_context.storage().cache_root
+        );
+        assert_eq!(first_context.project_id(), first.project_id);
+        assert_eq!(first_context.revision(), first.revision);
+        assert_eq!(first_context.display_name(), "First");
+        assert_eq!(
+            first_context.canonical_root(),
+            std::fs::canonicalize(&first_root).unwrap()
+        );
+        assert_eq!(
+            first_context.storage().config_root.parent(),
+            Some(paths.config_dir.join("projects").as_path())
+        );
+        assert_eq!(
+            first_context.storage().cache_root.parent(),
+            Some(paths.cache_dir.join("projects").as_path())
+        );
+        let debug = format!("{first_context:?}");
+        assert!(!debug.contains("private-first-root"));
+        assert!(!ProjectContextError::RootMissing
+            .to_string()
+            .contains("private-first-root"));
+    }
+
+    #[tokio::test]
+    async fn project_context_invalid_unknown_archived_missing_and_registry_fail_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("private-root-marker");
+        std::fs::create_dir(&root).unwrap();
+        let paths = storage_paths(&temp);
+        let runtime = ProjectRegistryRuntime::new(paths.project_registry_path());
+        let created = runtime.register(&root, Some("Lifecycle")).await.unwrap();
+
+        assert_eq!(
+            runtime
+                .resolve_context(&paths, "../private-root-marker")
+                .await
+                .unwrap_err(),
+            ProjectContextError::NotFound
+        );
+        assert_eq!(
+            runtime
+                .resolve_context(&paths, &new_project_id().unwrap())
+                .await
+                .unwrap_err(),
+            ProjectContextError::NotFound
+        );
+        let archived = runtime
+            .archive(&created.project_id, &created.revision)
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime
+                .resolve_context(&paths, &created.project_id)
+                .await
+                .unwrap_err(),
+            ProjectContextError::Archived
+        );
+        runtime
+            .restore(&created.project_id, &archived.revision)
+            .await
+            .unwrap();
+        std::fs::remove_dir(&root).unwrap();
+        assert_eq!(
+            runtime
+                .resolve_context(&paths, &created.project_id)
+                .await
+                .unwrap_err(),
+            ProjectContextError::RootMissing
+        );
+
+        let corrupt = tempfile::tempdir().unwrap();
+        let corrupt_paths = storage_paths(&corrupt);
+        std::fs::create_dir_all(corrupt_paths.project_registry_path().parent().unwrap()).unwrap();
+        std::fs::write(corrupt_paths.project_registry_path(), b"{").unwrap();
+        let corrupt_runtime = ProjectRegistryRuntime::new(corrupt_paths.project_registry_path());
+        assert_eq!(
+            corrupt_runtime
+                .resolve_context(&corrupt_paths, &created.project_id)
+                .await
+                .unwrap_err(),
+            ProjectContextError::StorageUnavailable
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn project_context_unsafe_storage_symlink_has_no_global_fallback() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let paths = storage_paths(&temp);
+        let runtime = ProjectRegistryRuntime::new(paths.project_registry_path());
+        let created = runtime
+            .register(&root, Some("Unsafe storage"))
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink(
+            outside.path(),
+            paths.config_dir.join("projects").join(&created.project_id),
+        )
+        .unwrap();
+
+        assert_eq!(
+            runtime
+                .resolve_context(&paths, &created.project_id)
+                .await
+                .unwrap_err(),
+            ProjectContextError::StorageUnavailable
+        );
+        assert!(std::fs::read_dir(outside.path()).unwrap().next().is_none());
+        assert!(!paths.config_dir.join("chat-history").exists());
+        assert!(!paths.cache_dir.join("agent-progress").exists());
     }
 }

@@ -26,7 +26,7 @@ use crate::projects::ProjectRegistryRuntime;
 
 pub use identity::ProductIdentity;
 pub use security::{AuthToken, BrowserSessionId};
-pub use storage::{resolve_default_storage_paths, StoragePaths};
+pub use storage::{resolve_default_storage_paths, ProjectStoragePaths, StoragePaths};
 
 #[derive(Clone)]
 pub struct AppState {
