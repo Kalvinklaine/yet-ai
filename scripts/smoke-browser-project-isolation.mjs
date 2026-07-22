@@ -113,7 +113,12 @@ try {
   await expectText(pageB, "beta-progress-only");
   assert(!(await pageB.locator("body").innerText()).includes("alpha-progress-only"), "Project B progress UI exposed project A data.");
 
-  await pageA.goto(`${baseUrl}/p/${projectA.projectId}/chat/${chatA.chatId}`);
+  await pageA.goto(`${baseUrl}/`);
+  await pageA.waitForURL(`${baseUrl}/projects`);
+  await pageA.getByRole("link", { name: "Open project Alpha safe label" }).click();
+  await pageA.waitForURL(`${baseUrl}/p/${projectA.projectId}/`);
+  await pageA.getByRole("link", { name: "Chat", exact: true }).click();
+  await pageA.waitForURL(`${baseUrl}/p/${projectA.projectId}/chat`);
   await expectText(pageA, chatA.chatId);
   const alphaCommandMarker = "alpha-in-flight-only";
   const alphaPendingLabels = [
@@ -133,12 +138,25 @@ try {
   await Promise.all([commandAccepted, sseAccepted]);
   await expectText(pageA, "Assistant is responding");
   assert((await pageA.locator("body").innerText()).includes(alphaCommandMarker), "Accepted project A command was not visible before the route switch.");
-  await pageA.goto(`${baseUrl}/p/${projectB.projectId}/chat/${chatB.chatId}`);
+  const alphaPendingDraftMarker = "alpha-pending-draft-only";
+  await composer.fill(alphaPendingDraftMarker);
+  assert(await composer.inputValue() === alphaPendingDraftMarker, "Project A pending composer draft was not available before the route switch.");
+  await pageA.evaluate(() => { Reflect.set(window, "__yetAiSmokeDocumentSentinel", { identity: "same-document-project-switch" }); });
+  await pageA.getByRole("link", { name: "Projects", exact: false }).click();
+  await pageA.waitForURL(`${baseUrl}/projects`);
+  await pageA.getByRole("link", { name: "Open project Beta safe label" }).click();
+  await pageA.waitForURL(`${baseUrl}/p/${projectB.projectId}/`);
+  await pageA.getByRole("link", { name: "Chat", exact: true }).click();
+  await pageA.waitForURL(`${baseUrl}/p/${projectB.projectId}/chat`);
   await expectText(pageA, "Beta safe label");
   await expectText(pageA, chatB.chatId);
-  assert(pageA.url() === `${baseUrl}/p/${projectB.projectId}/chat/${chatB.chatId}`, "Same-tab switch did not retain the project B chat route.");
+  assert(pageA.url() === `${baseUrl}/p/${projectB.projectId}/chat`, "Same-tab typed-router switch did not retain the project B chat route.");
+  assert(await pageA.evaluate(() => Reflect.get(window, "__yetAiSmokeDocumentSentinel")?.identity) === "same-document-project-switch", "Project switch replaced the browser document instead of using the typed SPA router.");
+  const projectBComposer = pageA.locator('[data-testid="chat-composer"] textarea');
+  assert(await projectBComposer.inputValue() === "", "Project A pending composer draft survived in project B.");
   const forbiddenInB = [
     alphaCommandMarker,
+    alphaPendingDraftMarker,
     chatA.chatId,
     projectA.projectId,
     "Alpha safe label",
@@ -164,6 +182,7 @@ try {
   }
   assert(!bThread.includes(alphaCommandMarker) && !bThread.includes(chatA.chatId), "Project B API received project A chat history after route switching.");
   await pageA.goto(`${baseUrl}/p/${projectA.projectId}/chat/${chatA.chatId}`);
+  await pageA.reload();
   await expectText(pageA, "Alpha safe label");
   await expectText(pageA, alphaCommandMarker);
   const returnedAEvidence = `${await pageA.content()}\n${await pageA.locator("body").innerText()}`;
@@ -378,7 +397,8 @@ async function assertPageExcludes(page, forbiddenValues, label) {
   const html = await page.content();
   const body = await page.locator("body").innerText();
   for (const value of forbiddenValues) {
-    assert(!html.includes(value), `${label} HTML contained forbidden project A evidence ${JSON.stringify(value)}.`);
+    const htmlIndex = html.indexOf(value);
+    assert(htmlIndex === -1, `${label} HTML contained forbidden project A evidence ${JSON.stringify(value)} near ${JSON.stringify(html.slice(Math.max(0, htmlIndex - 120), htmlIndex + value.length + 120))}.`);
     assert(!body.includes(value), `${label} body contained forbidden project A evidence ${JSON.stringify(value)}.`);
   }
 }
