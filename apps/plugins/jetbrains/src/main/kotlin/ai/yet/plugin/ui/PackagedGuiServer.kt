@@ -252,7 +252,9 @@ private fun servePanelWrapper(exchange: HttpExchange, panelId: String, panels: M
     send(exchange, 200, "text/html; charset=utf-8", wrapper.toByteArray(StandardCharsets.UTF_8))
 }
 
-private fun panelIndexRoute(rawPath: String): String? {
+private data class PanelIndexRoute(val panelId: String, val hostedChatEntry: Boolean)
+
+private fun panelIndexRoute(rawPath: String): PanelIndexRoute? {
     val prefix = "/panel/"
     if (!rawPath.startsWith(prefix)) return null
     val remainder = rawPath.removePrefix(prefix)
@@ -262,15 +264,15 @@ private fun panelIndexRoute(rawPath: String): String? {
     val path = remainder.substring(separator)
     if (!isValidPanelId(panelId)) return null
     if (path != "/" && path != "/index.html" && path != "/hosted-chat") return null
-    return panelId
+    return PanelIndexRoute(panelId, path == "/hosted-chat")
 }
 
-private fun servePanelIndex(exchange: HttpExchange, panelId: String, loadResource: (String) -> ByteArray?, panels: Map<String, PackagedGuiPanelRuntime>) {
+private fun servePanelIndex(exchange: HttpExchange, route: PanelIndexRoute, loadResource: (String) -> ByteArray?, panels: Map<String, PackagedGuiPanelRuntime>) {
     if (exchange.requestMethod != "GET") {
         send(exchange, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(StandardCharsets.UTF_8))
         return
     }
-    if (!panels.containsKey(panelId)) {
+    if (!panels.containsKey(route.panelId)) {
         send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
         return
     }
@@ -279,13 +281,14 @@ private fun servePanelIndex(exchange: HttpExchange, panelId: String, loadResourc
         send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
         return
     }
-    send(exchange, 200, "text/html; charset=utf-8", injectPanelBootstrap(String(index, StandardCharsets.UTF_8), panelId).toByteArray(StandardCharsets.UTF_8))
+    send(exchange, 200, "text/html; charset=utf-8", injectPanelBootstrap(String(index, StandardCharsets.UTF_8), route.panelId, route.hostedChatEntry).toByteArray(StandardCharsets.UTF_8))
 }
 
-fun injectPanelBootstrap(indexHtml: String, panelId: String): String {
+fun injectPanelBootstrap(indexHtml: String, panelId: String, hostedChatEntry: Boolean = false): String {
     if (!isValidPanelId(panelId)) return indexHtml
+    val entryMode = if (hostedChatEntry) "entryMode:\"hosted_chat\"," else ""
     val script = """
-        <script>window.__yetAiInitialRuntimeConfig={runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"/panel/$panelId",runtimeProxyBaseUrl:"/panel/$panelId"};</script>
+        <script>window.__yetAiInitialRuntimeConfig={${entryMode}runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"/panel/$panelId",runtimeProxyBaseUrl:"/panel/$panelId"};</script>
     """.trimIndent()
     return if (indexHtml.contains("<head>")) {
         indexHtml.replace("<head>", "<head>\n$script", ignoreCase = false)

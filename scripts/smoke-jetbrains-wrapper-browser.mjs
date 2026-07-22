@@ -771,7 +771,7 @@ async function assertPanelScopedBootstrap(page) {
     failures.push(`Wrapper iframe did not load panel-scoped packaged index: ${redactUrl(frameUrl)}.`);
   }
   const bootstrap = await page.frameLocator("iframe[title='Yet AI GUI']").locator("body").evaluate(() => window.__yetAiInitialRuntimeConfig).catch(() => undefined);
-  if (bootstrap?.runtimeAccess !== "same_origin_proxy" || bootstrap?.runtimeBaseUrl !== panelBasePath || bootstrap?.runtimeProxyBaseUrl !== panelBasePath) {
+  if (bootstrap?.entryMode !== "hosted_chat" || bootstrap?.runtimeAccess !== "same_origin_proxy" || bootstrap?.runtimeBaseUrl !== panelBasePath || bootstrap?.runtimeProxyBaseUrl !== panelBasePath) {
     failures.push(`Panel index did not inject PackagedGuiServer bootstrap config: ${JSON.stringify(bootstrap)}.`);
   }
 }
@@ -3525,7 +3525,7 @@ async function servePanelIndexHtml(request, response, realStaticRoot) {
 }
 
 function injectPanelBootstrap(indexHtml) {
-  const script = `<script>window.__yetAiInitialRuntimeConfig={runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"${panelBasePath}",runtimeProxyBaseUrl:"${panelBasePath}"};</script>`;
+  const script = `<script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat",runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"${panelBasePath}",runtimeProxyBaseUrl:"${panelBasePath}"};</script>`;
   return indexHtml.includes("<head>") ? indexHtml.replace("<head>", `<head>\n${script}`) : `${script}\n${indexHtml}`;
 }
 

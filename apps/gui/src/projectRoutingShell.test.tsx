@@ -27,6 +27,7 @@ afterEach(() => {
   root = undefined;
   document.body.innerHTML = "";
   hubSettings = undefined;
+  delete window.__yetAiInitialRuntimeConfig;
 });
 
 describe("ProjectRouterShell", () => {
@@ -47,9 +48,8 @@ describe("ProjectRouterShell", () => {
     replaceState.mockRestore();
   });
 
-  it("renders the wrapper-owned hosted chat entry without redirecting to projects", async () => {
+  it("denies the hosted chat path without wrapper bootstrap evidence", async () => {
     window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
-    const replaceState = vi.spyOn(window.history, "replaceState");
     const container = document.createElement("div");
     document.body.append(container);
 
@@ -58,10 +58,38 @@ describe("ProjectRouterShell", () => {
       root.render(<ProjectRouterShell />);
     });
 
-    expect(replaceState).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Not Found");
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+  });
+
+  it("denies the hosted chat bootstrap flag on a non-panel path", async () => {
+    window.history.replaceState(null, "", "/projects");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    expect(container.textContent).toContain("Projects");
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+  });
+
+  it("renders hosted chat only with the strict path and wrapper bootstrap flag", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
     expect(window.location.pathname).toBe("/panel/panel-test/hosted-chat");
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("legacy");
-    replaceState.mockRestore();
   });
 
   it("applies trusted live host runtime settings to the hub", async () => {

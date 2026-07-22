@@ -81,6 +81,7 @@ const providerAuthPendingPollMinSeconds = 1;
 const providerAuthPendingPollMaxSeconds = 30;
 
 type InitialRuntimeConfig = {
+  entryMode?: "hosted_chat";
   runtimeAccess?: "same_origin_proxy";
   runtimeBaseUrl?: string;
   runtimeProxyBaseUrl?: string;

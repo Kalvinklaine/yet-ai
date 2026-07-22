@@ -7,7 +7,7 @@ import { ProjectLink, navigateProjectRoute, parseProjectRoute, subscribeToProjec
 import { useLiveRuntimeSettings } from "./services/useLiveRuntimeSettings";
 
 export function ProjectRouterShell() {
-  const hostedChatEntry = isHostedChatEntry(window.location.pathname);
+  const hostedChatEntry = isHostedChatEntry(window.location.pathname, window.__yetAiInitialRuntimeConfig?.entryMode);
   const [route, setRoute] = useState<AppRoute>(() => {
     if (hostedChatEntry) {
       return { kind: "legacy" };
@@ -39,8 +39,8 @@ export function ProjectRouterShell() {
   return <App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
 }
 
-export function isHostedChatEntry(pathname: string): boolean {
-  return /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(pathname);
+export function isHostedChatEntry(pathname: string, entryMode: unknown): boolean {
+  return entryMode === "hosted_chat" && /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(pathname);
 }
 
 function RouteStatus({ title, detail, navigate }: { title: string; detail: string; navigate: ProjectNavigation }) {
