@@ -204,13 +204,13 @@ pub(super) async fn memory_create(
     Path(project_id): Path<String>,
     request: Result<Json<project_memory::ProjectMemoryCreateRequest>, JsonRejection>,
 ) -> Response {
-    let Json(request) = match request {
-        Ok(request) => request,
-        Err(rejection) => return super::invalid_json_body(rejection),
-    };
     let context = match resolve_context(&state, &project_id).await {
         Ok(context) => context,
         Err(response) => return response,
+    };
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return super::invalid_json_body(rejection),
     };
     match project_memory::create(&context.storage().project_memory, request).await {
         Ok(note) => (StatusCode::CREATED, Json(note)).into_response(),
@@ -239,13 +239,13 @@ pub(super) async fn memory_update(
     Path((project_id, note_id)): Path<(String, String)>,
     request: Result<Json<project_memory::ProjectMemoryUpdateRequest>, JsonRejection>,
 ) -> Response {
-    let Json(request) = match request {
-        Ok(request) => request,
-        Err(rejection) => return super::invalid_json_body(rejection),
-    };
     let context = match resolve_context(&state, &project_id).await {
         Ok(context) => context,
         Err(response) => return response,
+    };
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return super::invalid_json_body(rejection),
     };
     match project_memory::update(&context.storage().project_memory, &note_id, request).await {
         Ok(note) => Json(note).into_response(),
@@ -274,13 +274,13 @@ pub(super) async fn memory_search(
     Path(project_id): Path<String>,
     request: Result<Json<project_memory::ProjectMemorySearchRequest>, JsonRejection>,
 ) -> Response {
-    let Json(request) = match request {
-        Ok(request) => request,
-        Err(rejection) => return super::invalid_json_body(rejection),
-    };
     let context = match resolve_context(&state, &project_id).await {
         Ok(context) => context,
         Err(response) => return response,
+    };
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return super::invalid_json_body(rejection),
     };
     match project_memory::search(&context.storage().project_memory, request).await {
         Ok(response) => Json(response).into_response(),
@@ -323,6 +323,16 @@ pub(super) async fn agent_progress_event(
         Ok(context) => context,
         Err(response) => return response,
     };
+    if crate::storage::ensure_store_namespace(&context.storage().agent_progress, true)
+        .await
+        .is_err()
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "error": "agent progress unavailable" })),
+        )
+            .into_response();
+    }
     let Json(event) = match request {
         Ok(event) => event,
         Err(rejection) => return invalid_project_json(rejection),

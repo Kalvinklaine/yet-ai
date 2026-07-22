@@ -363,7 +363,13 @@ pub async fn load_project_progress(
 }
 
 async fn load_progress_path(path: &Path) -> Result<AgentProgressListResponse, AgentProgressError> {
-    reject_symlink(path.parent().ok_or(AgentProgressError::Unavailable)?).await?;
+    let root = path.parent().ok_or(AgentProgressError::Unavailable)?;
+    if !crate::storage::ensure_store_namespace(root, false)
+        .await
+        .map_err(|_| AgentProgressError::Unavailable)?
+    {
+        return Ok(AgentProgressListResponse::empty());
+    }
     let metadata = match tokio::fs::symlink_metadata(path).await {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -374,6 +380,9 @@ async fn load_progress_path(path: &Path) -> Result<AgentProgressListResponse, Ag
     if metadata.file_type().is_symlink() || !metadata.is_file() {
         return Err(AgentProgressError::Unavailable);
     }
+    crate::storage::ensure_store_namespace(root, false)
+        .await
+        .map_err(|_| AgentProgressError::Unavailable)?;
     let bytes = read_bounded(path).await?;
     let mut response: AgentProgressListResponse =
         serde_json::from_slice(&bytes).map_err(|_| AgentProgressError::Unavailable)?;
@@ -498,15 +507,6 @@ fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentP
     );
     if response.snapshots.len() > MAX_SNAPSHOTS {
         response.snapshots.truncate(MAX_SNAPSHOTS);
-    }
-}
-
-async fn reject_symlink(path: &Path) -> Result<(), AgentProgressError> {
-    match tokio::fs::symlink_metadata(path).await {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(AgentProgressError::Unavailable),
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(AgentProgressError::Unavailable),
     }
 }
 
@@ -1547,6 +1547,29 @@ mod tests {
             .publish_project_event("project-a", unsafe_event)
             .await
             .is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn agent_progress_rejects_project_and_subsystem_symlink_escapes() {
+        for boundary in ["project", "subsystem"] {
+            let temp = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let sentinel = outside.path().join("sentinel");
+            std::fs::write(&sentinel, "unchanged").unwrap();
+            let project = temp.path().join("cache/projects/project-a");
+            let root = project.join("agent-progress");
+            std::fs::create_dir_all(project.parent().unwrap()).unwrap();
+            if boundary == "project" {
+                std::os::unix::fs::symlink(outside.path(), &project).unwrap();
+            } else {
+                std::fs::create_dir(&project).unwrap();
+                std::os::unix::fs::symlink(outside.path(), &root).unwrap();
+            }
+
+            assert!(load_project_progress(&root).await.is_err());
+            assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "unchanged");
+        }
     }
 
     #[test]

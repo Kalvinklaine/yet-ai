@@ -571,10 +571,19 @@ impl ChatRuntime {
     ) -> ChatEvent {
         let lock = self.history_lock(runtime_key).await;
         let _guard = lock.lock().await;
-        let thread = chat_history::get_thread_in(history_root, chat_id)
-            .await
-            .ok();
-        snapshot_event(chat_id, thread)
+        match chat_history::get_thread_in(history_root, chat_id).await {
+            Ok(thread) => snapshot_event(chat_id, Some(thread)),
+            Err(chat_history::ChatHistoryError::NotFound) => snapshot_event(chat_id, None),
+            Err(_) => ChatEvent {
+                seq: 0,
+                event_type: "error".to_string(),
+                chat_id: chat_id.to_string(),
+                payload: json!({
+                    "code": "chat_history_storage_error",
+                    "message": "Chat history could not be loaded from local storage."
+                }),
+            },
+        }
     }
 
     async fn history_lock(&self, chat_id: &str) -> Arc<Mutex<()>> {
@@ -4204,6 +4213,24 @@ mod tests {
         let states = runtime.inner.lock().await;
         assert!(states[&first_key].active_stream.is_none());
         assert!(states[&second_key].active_stream.is_some());
+    }
+
+    #[tokio::test]
+    async fn project_chat_subscription_reports_corrupt_history_as_storage_error() {
+        let dir = temp_dir();
+        let root = dir.join("config/projects/project-a/chat-history");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("chat_corrupt.json"), b"{").unwrap();
+        let runtime = super::ChatRuntime::new();
+        let event = runtime
+            .snapshot_event("project-a", &root, "chat_corrupt")
+            .await;
+        assert_eq!(event.event_type, "error");
+        assert_eq!(event.payload["code"], "chat_history_storage_error");
+        assert!(!event
+            .payload
+            .to_string()
+            .contains(&dir.to_string_lossy().to_string()));
     }
 
     #[test]

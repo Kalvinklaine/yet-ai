@@ -106,6 +106,129 @@ pub(crate) fn validate_storage_chain(path: &Path) -> Result<(), ProjectStorageEr
     Ok(())
 }
 
+pub(crate) async fn ensure_store_namespace(
+    root: &Path,
+    create: bool,
+) -> Result<bool, ProjectStorageError> {
+    let root = root.to_path_buf();
+    tokio::task::spawn_blocking(move || ensure_store_namespace_sync(&root, create))
+        .await
+        .map_err(|_| ProjectStorageError)?
+}
+
+fn ensure_store_namespace_sync(root: &Path, create: bool) -> Result<bool, ProjectStorageError> {
+    if !root.is_absolute() {
+        return Err(ProjectStorageError);
+    }
+    let parent = root.parent().ok_or(ProjectStorageError)?;
+    let trusted_root = if parent
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "projects")
+    {
+        parent
+            .parent()
+            .and_then(Path::parent)
+            .ok_or(ProjectStorageError)?
+    } else {
+        parent
+    };
+    if !root.starts_with(trusted_root) || root == trusted_root {
+        return Err(ProjectStorageError);
+    }
+    validate_storage_chain(trusted_root)?;
+    if create {
+        create_missing_directory_chain(trusted_root)?;
+    }
+    let mut current = trusted_root.to_path_buf();
+    let relative = root
+        .strip_prefix(trusted_root)
+        .map_err(|_| ProjectStorageError)?;
+    if !ensure_directory_component(&current, create)? {
+        return Ok(false);
+    }
+    for component in relative.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err(ProjectStorageError);
+        }
+        current.push(component.as_os_str());
+        if !ensure_directory_component(&current, create)? {
+            return Ok(false);
+        }
+    }
+    validate_storage_chain(root)?;
+    Ok(true)
+}
+
+fn create_missing_directory_chain(path: &Path) -> Result<(), ProjectStorageError> {
+    let mut existing = path;
+    let mut missing = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(existing) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(ProjectStorageError);
+                }
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(existing.to_path_buf());
+                existing = existing.parent().ok_or(ProjectStorageError)?;
+            }
+            Err(_) => return Err(ProjectStorageError),
+        }
+    }
+    for directory in missing.into_iter().rev() {
+        ensure_directory_component(&directory, true)?;
+    }
+    validate_storage_chain(path)
+}
+
+fn ensure_directory_component(path: &Path, create: bool) -> Result<bool, ProjectStorageError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(ProjectStorageError);
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            match std::fs::create_dir(path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(_) => return Err(ProjectStorageError),
+            }
+            let metadata = std::fs::symlink_metadata(path).map_err(|_| ProjectStorageError)?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(ProjectStorageError);
+            }
+            set_private_store_directory(path)?;
+            Ok(true)
+        }
+        Err(_) => Err(ProjectStorageError),
+    }
+}
+
+#[cfg(unix)]
+fn set_private_store_directory(path: &Path) -> Result<(), ProjectStorageError> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let directory = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|_| ProjectStorageError)?;
+    directory
+        .set_permissions(std::fs::Permissions::from_mode(0o700))
+        .map_err(|_| ProjectStorageError)
+}
+
+#[cfg(not(unix))]
+fn set_private_store_directory(_path: &Path) -> Result<(), ProjectStorageError> {
+    Ok(())
+}
+
 pub(crate) fn canonical_storage_boundary(path: &Path) -> Result<PathBuf, ProjectStorageError> {
     validate_storage_chain(path)?;
     let mut existing = path;

@@ -503,37 +503,17 @@ fn project_memory_path(storage_root: &Path) -> PathBuf {
 
 async fn ensure_project_memory_directory(path: &Path) -> Result<(), ProjectMemoryError> {
     let root = path.parent().ok_or(ProjectMemoryError::Storage)?;
-    let parent = root.parent().ok_or(ProjectMemoryError::Storage)?;
-    tokio::fs::create_dir_all(parent)
+    crate::storage::ensure_store_namespace(root, true)
         .await
-        .map_err(|_| ProjectMemoryError::Storage)?;
-    ensure_project_memory_root(root, true).await.map(|_| ())
+        .map_err(|_| ProjectMemoryError::Storage)
+        .map(|_| ())
 }
 
 async fn ensure_existing_project_memory_root(path: &Path) -> Result<bool, ProjectMemoryError> {
     let root = path.parent().ok_or(ProjectMemoryError::Storage)?;
-    ensure_project_memory_root(root, false).await
-}
-
-async fn ensure_project_memory_root(root: &Path, create: bool) -> Result<bool, ProjectMemoryError> {
-    match tokio::fs::symlink_metadata(root).await {
-        Ok(metadata) => {
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(ProjectMemoryError::Storage);
-            }
-            set_private_directory_permissions(root).await?;
-            Ok(true)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => Ok(false),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            tokio::fs::create_dir(root)
-                .await
-                .map_err(|_| ProjectMemoryError::Storage)?;
-            set_private_directory_permissions(root).await?;
-            Ok(true)
-        }
-        Err(_) => Err(ProjectMemoryError::Storage),
-    }
+    crate::storage::ensure_store_namespace(root, false)
+        .await
+        .map_err(|_| ProjectMemoryError::Storage)
 }
 
 async fn reject_project_memory_file_symlink(path: &Path) -> Result<(), ProjectMemoryError> {
@@ -554,6 +534,7 @@ async fn atomic_write_project_memory(path: &Path, bytes: &[u8]) -> Result<(), Pr
         tokio::fs::OpenOptions::mode(&mut options, 0o600);
     }
     let result = async {
+        ensure_project_memory_directory(path).await?;
         let mut file = options
             .open(&temp_path)
             .await
@@ -565,6 +546,7 @@ async fn atomic_write_project_memory(path: &Path, bytes: &[u8]) -> Result<(), Pr
             .await
             .map_err(|_| ProjectMemoryError::Storage)?;
         set_private_permissions_for_open_file(file).await?;
+        ensure_project_memory_directory(path).await?;
         reject_project_memory_file_symlink(path).await?;
         tokio::fs::rename(&temp_path, path)
             .await
@@ -691,20 +673,6 @@ async fn set_private_permissions(_path: &Path) -> Result<(), ProjectMemoryError>
 }
 
 #[cfg(unix)]
-async fn set_private_directory_permissions(path: &Path) -> Result<(), ProjectMemoryError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-        .await
-        .map_err(|_| ProjectMemoryError::Storage)
-}
-
-#[cfg(not(unix))]
-async fn set_private_directory_permissions(_path: &Path) -> Result<(), ProjectMemoryError> {
-    Ok(())
-}
-
-#[cfg(unix)]
 async fn sync_parent_directory(path: &Path) -> Result<(), ProjectMemoryError> {
     let dir = path
         .parent()
@@ -727,4 +695,45 @@ async fn sync_parent_directory(path: &Path) -> Result<(), ProjectMemoryError> {
 #[cfg(not(unix))]
 async fn sync_parent_directory(_path: &Path) -> Result<(), ProjectMemoryError> {
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod scoped_namespace_tests {
+    use super::*;
+
+    fn request() -> ProjectMemoryCreateRequest {
+        ProjectMemoryCreateRequest {
+            protocol_version: PROTOCOL_VERSION.to_string(),
+            title: "Scoped note".to_string(),
+            text: "Private project memory".to_string(),
+            tags: Vec::new(),
+            source: "manual".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn project_memory_rejects_project_and_subsystem_symlink_escapes() {
+        for boundary in ["project", "subsystem"] {
+            let temp = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let sentinel = outside.path().join("sentinel");
+            std::fs::write(&sentinel, "unchanged").unwrap();
+            let project = temp.path().join("config/projects/project-a");
+            let root = project.join("project-memory");
+            std::fs::create_dir_all(project.parent().unwrap()).unwrap();
+            if boundary == "project" {
+                std::os::unix::fs::symlink(outside.path(), &project).unwrap();
+            } else {
+                std::fs::create_dir(&project).unwrap();
+                std::os::unix::fs::symlink(outside.path(), &root).unwrap();
+            }
+
+            assert!(matches!(
+                create(&root, request()).await,
+                Err(ProjectMemoryError::Storage)
+            ));
+            assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "unchanged");
+            assert!(!outside.path().join("notes.json").exists());
+        }
+    }
 }

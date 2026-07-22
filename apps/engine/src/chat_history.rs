@@ -112,7 +112,10 @@ pub async fn list_threads(config_dir: &Path) -> Result<ChatListResponse, ChatHis
 
 pub async fn list_threads_in(root: &Path) -> Result<ChatListResponse, ChatHistoryError> {
     let root = root.to_path_buf();
-    if !ensure_chat_history_root(&root, false).await? {
+    if !crate::storage::ensure_store_namespace(&root, false)
+        .await
+        .map_err(|_| ChatHistoryError::Storage)?
+    {
         return Ok(ChatListResponse { chats: Vec::new() });
     }
     let mut entries = tokio::fs::read_dir(&root)
@@ -388,37 +391,17 @@ fn new_message_id() -> Result<String, ChatHistoryError> {
 
 async fn ensure_chat_history_directory(path: &Path) -> Result<(), ChatHistoryError> {
     let root = path.parent().ok_or(ChatHistoryError::Storage)?;
-    let parent = root.parent().ok_or(ChatHistoryError::Storage)?;
-    tokio::fs::create_dir_all(parent)
+    crate::storage::ensure_store_namespace(root, true)
         .await
-        .map_err(|_| ChatHistoryError::Storage)?;
-    ensure_chat_history_root(root, true).await.map(|_| ())
+        .map_err(|_| ChatHistoryError::Storage)
+        .map(|_| ())
 }
 
 async fn ensure_existing_chat_history_root(path: &Path) -> Result<bool, ChatHistoryError> {
     let root = path.parent().ok_or(ChatHistoryError::Storage)?;
-    ensure_chat_history_root(root, false).await
-}
-
-async fn ensure_chat_history_root(root: &Path, create: bool) -> Result<bool, ChatHistoryError> {
-    match tokio::fs::symlink_metadata(root).await {
-        Ok(metadata) => {
-            if !metadata.is_dir() || metadata.file_type().is_symlink() {
-                return Err(ChatHistoryError::Storage);
-            }
-            set_private_directory_permissions(root).await?;
-            Ok(true)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create => Ok(false),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            tokio::fs::create_dir(root)
-                .await
-                .map_err(|_| ChatHistoryError::Storage)?;
-            set_private_directory_permissions(root).await?;
-            Ok(true)
-        }
-        Err(_) => Err(ChatHistoryError::Storage),
-    }
+    crate::storage::ensure_store_namespace(root, false)
+        .await
+        .map_err(|_| ChatHistoryError::Storage)
 }
 
 async fn reject_chat_history_file_symlink(path: &Path) -> Result<(), ChatHistoryError> {
@@ -439,6 +422,7 @@ async fn atomic_write_chat_history(path: &Path, bytes: &[u8]) -> Result<(), Chat
         tokio::fs::OpenOptions::mode(&mut options, 0o600);
     }
     let result = async {
+        ensure_chat_history_directory(path).await?;
         let mut file = options
             .open(&temp_path)
             .await
@@ -450,6 +434,7 @@ async fn atomic_write_chat_history(path: &Path, bytes: &[u8]) -> Result<(), Chat
             .await
             .map_err(|_| ChatHistoryError::Storage)?;
         set_private_permissions_for_open_file(file).await?;
+        ensure_chat_history_directory(path).await?;
         reject_chat_history_file_symlink(path).await?;
         tokio::fs::rename(&temp_path, path)
             .await
@@ -587,25 +572,6 @@ async fn set_private_permissions(path: &Path) -> Result<(), ChatHistoryError> {
 
 #[cfg(not(unix))]
 async fn set_private_permissions(_path: &Path) -> Result<(), ChatHistoryError> {
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn set_private_directory_permissions(path: &Path) -> Result<(), ChatHistoryError> {
-    use std::os::unix::fs::PermissionsExt;
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let directory = open_directory_no_follow(&path).map_err(|_| ChatHistoryError::Storage)?;
-        directory
-            .set_permissions(std::fs::Permissions::from_mode(0o700))
-            .map_err(|_| ChatHistoryError::Storage)
-    })
-    .await
-    .map_err(|_| ChatHistoryError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn set_private_directory_permissions(_path: &Path) -> Result<(), ChatHistoryError> {
     Ok(())
 }
 
@@ -790,6 +756,33 @@ mod tests {
             Err(ChatHistoryError::Storage)
         ));
         assert!(std::fs::read_dir(outside).unwrap().next().is_none());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn chat_history_rejects_project_and_subsystem_symlink_escapes() {
+        for boundary in ["project", "subsystem"] {
+            let temp = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let sentinel = outside.path().join("sentinel");
+            std::fs::write(&sentinel, "unchanged").unwrap();
+            let project = temp.path().join("config/projects/project-a");
+            let root = project.join("chat-history");
+            std::fs::create_dir_all(project.parent().unwrap()).unwrap();
+            if boundary == "project" {
+                std::os::unix::fs::symlink(outside.path(), &project).unwrap();
+            } else {
+                std::fs::create_dir(&project).unwrap();
+                std::os::unix::fs::symlink(outside.path(), &root).unwrap();
+            }
+
+            assert!(matches!(
+                super::create_thread_in(&root).await,
+                Err(ChatHistoryError::Storage)
+            ));
+            assert_eq!(std::fs::read_to_string(&sentinel).unwrap(), "unchanged");
+            assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 1);
+        }
     }
 
     #[cfg(unix)]
