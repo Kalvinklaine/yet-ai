@@ -3,6 +3,7 @@ import { listDirectoryDiscovery, registerProject, startDirectoryDiscovery, type 
 import type { RuntimeError, RuntimeSettings } from "../services/runtimeClient";
 
 type DirectoryLevel = { entry: DirectoryEntry; entries: DirectoryEntry[] };
+type ActiveAction = { key: string; generation: number; controller: AbortController };
 
 export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: { settings: RuntimeSettings; onClose: () => void; onRegistered: (project: ProjectSummary) => void }) {
   const [sessionId, setSessionId] = useState("");
@@ -16,42 +17,54 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
   const dialogRef = useRef<HTMLElement>(null);
   const generationRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
-  const registeringRef = useRef(false);
+  const activeActionRef = useRef<ActiveAction | null>(null);
 
   const invalidate = useCallback(() => {
     generationRef.current += 1;
     controllerRef.current?.abort();
     controllerRef.current = null;
+    activeActionRef.current = null;
   }, []);
 
-  const beginAttempt = useCallback(() => {
+  const beginAttempt = useCallback((key: string) => {
+    if (activeActionRef.current?.key === key && !activeActionRef.current.controller.signal.aborted) return null;
     invalidate();
     const controller = new AbortController();
     controllerRef.current = controller;
-    return { generation: generationRef.current, controller };
+    const action = { key, generation: generationRef.current, controller };
+    activeActionRef.current = action;
+    return action;
   }, [invalidate]);
 
-  const isCurrent = useCallback((generation: number, controller: AbortController) => generation === generationRef.current && controllerRef.current === controller && !controller.signal.aborted, []);
+  const isCurrent = useCallback((action: ActiveAction) => action.generation === generationRef.current && controllerRef.current === action.controller && activeActionRef.current === action && !action.controller.signal.aborted, []);
+
+  const releaseAttempt = useCallback((action: ActiveAction) => {
+    if (!isCurrent(action)) return;
+    controllerRef.current = null;
+    activeActionRef.current = null;
+  }, [isCurrent]);
 
   const begin = useCallback(async () => {
-    registeringRef.current = false;
-    const { generation, controller } = beginAttempt();
+    const action = beginAttempt("begin");
+    if (!action) return;
     setState("starting");
     setError(null);
     setLevels([]);
     setSelected(null);
-    const result = await startDirectoryDiscovery(settings, controller.signal);
-    if (!isCurrent(generation, controller)) return;
+    const result = await startDirectoryDiscovery(settings, action.controller.signal);
+    if (!isCurrent(action)) return;
     if (!result.ok) {
       setState("error");
       setError(result.error);
+      releaseAttempt(action);
       return;
     }
-    const listing = await listDirectoryDiscovery(settings, result.data.sessionId, result.data.root.handle, controller.signal);
-    if (!isCurrent(generation, controller)) return;
+    const listing = await listDirectoryDiscovery(settings, result.data.sessionId, result.data.root.handle, action.controller.signal);
+    if (!isCurrent(action)) return;
     if (!listing.ok) {
       setState("error");
       setError(listing.error);
+      releaseAttempt(action);
       return;
     }
     setSessionId(result.data.sessionId);
@@ -60,7 +73,8 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
     setSelected(result.data.root.selectable ? result.data.root : null);
     setDisplayName(result.data.root.displayName);
     setState("ready");
-  }, [beginAttempt, isCurrent, settings]);
+    releaseAttempt(action);
+  }, [beginAttempt, isCurrent, releaseAttempt, settings]);
 
   useEffect(() => {
     void begin();
@@ -92,14 +106,16 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
   }
 
   const openDirectory = async (entry: DirectoryEntry) => {
-    const { generation, controller } = beginAttempt();
+    const action = beginAttempt(`directory:${entry.handle}`);
+    if (!action) return;
     setState("loading");
     setError(null);
-    const result = await listDirectoryDiscovery(settings, sessionId, entry.handle, controller.signal);
-    if (!isCurrent(generation, controller)) return;
+    const result = await listDirectoryDiscovery(settings, sessionId, entry.handle, action.controller.signal);
+    if (!isCurrent(action)) return;
     if (!result.ok) {
       setState("error");
       setError(result.error);
+      releaseAttempt(action);
       return;
     }
     setLevels((current) => [...current, { entry, entries: result.data.entries }]);
@@ -107,10 +123,10 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
     setDisplayName(entry.displayName);
     setExpiresAt(result.data.expiresAt);
     setState("ready");
+    releaseAttempt(action);
   };
 
   const returnToLevel = (index: number) => {
-    registeringRef.current = false;
     invalidate();
     setLevels((current) => current.slice(0, index + 1));
     const entry = levels[index].entry;
@@ -122,17 +138,17 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selected || !displayName.trim() || registeringRef.current) return;
-    registeringRef.current = true;
-    const { generation, controller } = beginAttempt();
+    if (!selected || !displayName.trim()) return;
+    const action = beginAttempt("submit");
+    if (!action) return;
     setState("registering");
     setError(null);
-    const result = await registerProject(settings, { displayName: displayName.trim(), directorySessionId: sessionId, directoryHandle: selected.handle }, controller.signal);
-    if (!isCurrent(generation, controller)) return;
+    const result = await registerProject(settings, { displayName: displayName.trim(), directorySessionId: sessionId, directoryHandle: selected.handle }, action.controller.signal);
+    if (!isCurrent(action)) return;
     if (!result.ok) {
-      registeringRef.current = false;
       setState("error");
       setError(result.error);
+      releaseAttempt(action);
       return;
     }
     invalidate();

@@ -13,6 +13,60 @@ const session = { ok: true as const, data: { sessionId: "pds_safe", expiresAt: "
 const listing = { ok: true as const, data: { sessionId: "pds_safe", directoryHandle: "dir_root", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false as const, providerAccess: "direct" as const } };
 
 describe("ProjectRegistrationDialog", () => {
+  it("starts one discovery attempt for a double Retry click", async () => {
+    const pending = deferred<Awaited<ReturnType<typeof client.startDirectoryDiscovery>>>();
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValueOnce({ ok: false, error: { status: "network", message: "offline" } }).mockReturnValueOnce(pending.promise);
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue(listing);
+    const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectRegistrationDialog settings={settings} onClose={vi.fn()} onRegistered={vi.fn()} />); });
+    const retry = Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Retry discovery") as HTMLButtonElement;
+    await act(async () => { retry.click(); retry.click(); });
+    expect(client.startDirectoryDiscovery).toHaveBeenCalledTimes(2);
+    await act(async () => { pending.resolve(session); await pending.promise; });
+  });
+
+  it("starts one list request for a double directory click", async () => {
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValue(session);
+    const childListing = deferred<Awaited<ReturnType<typeof client.listDirectoryDiscovery>>>();
+    vi.mocked(client.listDirectoryDiscovery)
+      .mockResolvedValueOnce({ ...listing, data: { ...listing.data, entries: [{ handle: "dir_child", displayName: "Garden", selectable: true }] } })
+      .mockReturnValueOnce(childListing.promise);
+    const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectRegistrationDialog settings={settings} onClose={vi.fn()} onRegistered={vi.fn()} />); });
+    const directory = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Garden")) as HTMLButtonElement;
+    await act(async () => { directory.click(); directory.click(); });
+    expect(client.listDirectoryDiscovery).toHaveBeenCalledTimes(2);
+    await act(async () => { childListing.resolve({ ...listing, data: { ...listing.data, directoryHandle: "dir_child" } }); await childListing.promise; });
+  });
+
+  it("allows a fresh retry after a terminal error", async () => {
+    vi.mocked(client.startDirectoryDiscovery)
+      .mockResolvedValueOnce({ ok: false, error: { status: "network", message: "offline" } })
+      .mockResolvedValueOnce(session);
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue(listing);
+    const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectRegistrationDialog settings={settings} onClose={vi.fn()} onRegistered={vi.fn()} />); });
+    await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Retry discovery") as HTMLButtonElement).click(); });
+    expect(client.startDirectoryDiscovery).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Selected: Home");
+  });
+
+  it("starts one registration request for a double submit", async () => {
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValue(session);
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue(listing);
+    const pending = deferred<Awaited<ReturnType<typeof client.registerProject>>>();
+    vi.mocked(client.registerProject).mockReturnValue(pending.promise);
+    const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectRegistrationDialog settings={settings} onClose={vi.fn()} onRegistered={vi.fn()} />); });
+    const form = container.querySelector("form") as HTMLFormElement;
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(client.registerProject).toHaveBeenCalledOnce();
+    await act(async () => { pending.resolve({ ok: false, error: { status: "network", message: "offline" } }); await pending.promise; });
+  });
+
   it("navigates opaque entries and registers the selected directory", async () => {
     vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "pds_safe", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "dir_root", displayName: "Home", selectable: false }, cloudRequired: false, providerAccess: "direct" } });
     vi.mocked(client.listDirectoryDiscovery).mockResolvedValueOnce({ ok: true, data: { sessionId: "pds_safe", directoryHandle: "dir_root", expiresAt: "2027-01-01T00:00:00Z", entries: [{ handle: "dir_child", displayName: "Garden", selectable: true }], cloudRequired: false, providerAccess: "direct" } }).mockResolvedValueOnce({ ok: true, data: { sessionId: "pds_safe", directoryHandle: "dir_child", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
