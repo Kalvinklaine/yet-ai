@@ -1208,13 +1208,8 @@ fn verify_open_regular_file(path: &Path, file: &std::fs::File) -> Result<(), Pro
     }
     #[cfg(windows)]
     {
-        use std::os::windows::fs::MetadataExt;
-        let opened_identity = (opened.volume_serial_number(), opened.file_index());
-        let current_identity = (current.volume_serial_number(), current.file_index());
-        if opened_identity.0.is_none()
-            || opened_identity.1.is_none()
-            || opened_identity != current_identity
-        {
+        let current_file = open_registry_file_for_identity(path)?;
+        if windows_file_identity(file)? != windows_file_identity(&current_file)? {
             return Err(ProjectRegistryError::Storage);
         }
     }
@@ -1223,6 +1218,36 @@ fn verify_open_regular_file(path: &Path, file: &std::fs::File) -> Result<(), Pro
         return Err(ProjectRegistryError::Storage);
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn open_registry_file_for_identity(path: &Path) -> Result<std::fs::File, ProjectRegistryError> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|_| ProjectRegistryError::Storage)
+}
+
+#[cfg(windows)]
+fn windows_file_identity(file: &std::fs::File) -> Result<(u32, u64), ProjectRegistryError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+    };
+
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), information.as_mut_ptr()) } == 0 {
+        return Err(ProjectRegistryError::Storage);
+    }
+    let information = unsafe { information.assume_init() };
+    Ok((
+        information.dwVolumeSerialNumber,
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow),
+    ))
 }
 
 #[cfg(unix)]
