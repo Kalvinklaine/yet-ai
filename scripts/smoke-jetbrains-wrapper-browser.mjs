@@ -277,7 +277,10 @@ try {
   }
   await page.waitForSelector("iframe[title='Yet AI GUI']", { state: "visible", timeout: 5000 });
   await assertWrapperLoadedButNotReadyFallbackPath(page);
-  const retryScenarioArmed = await page.evaluate(() => window.__yetAiArmSameNonceRetryScenario?.() === true);
+  const retryScenarioArmed = await page.evaluate(() => {
+    if (typeof window.__yetAiArmSameNonceRetryScenario !== "function") return false;
+    return window.__yetAiArmSameNonceRetryScenario() === true;
+  });
   if (!retryScenarioArmed) {
     failures.push("Wrapper smoke did not arm the one-shot same-nonce retry scenario for the initial GUI frame.");
   }
