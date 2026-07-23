@@ -3550,13 +3550,13 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
       await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
       return;
     }
-    if (requestUrl.pathname === `${panelBasePath}/` || requestUrl.pathname === `${panelBasePath}/index.html` || requestUrl.pathname === `${panelBasePath}/hosted-chat`) {
+    if (requestUrl.pathname === `${panelBasePath}/hosted-chat`) {
       if (request.method !== "GET") {
         response.writeHead(405, { allow: "GET" });
         response.end("Method not allowed");
         return;
       }
-      await servePanelIndexHtml(response, realStaticRoot, requestUrl.pathname === `${panelBasePath}/hosted-chat`);
+      await servePanelIndexHtml(response, realStaticRoot);
       return;
     }
     if (requestUrl.pathname.startsWith(`${panelBasePath}/v1/`)) {
@@ -3574,9 +3574,16 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
 }
 
 async function assertPackagedGuiPanelServerParity(panelGuiBaseUrl) {
-  const barePanelResponse = await fetch(panelGuiBaseUrl);
-  if (barePanelResponse.status !== 404) {
-    throw new Error(`JetBrains wrapper smoke bare panel route returned ${barePanelResponse.status} instead of 404.`);
+  for (const pathSuffix of ["/", "/index.html"]) {
+    const response = await fetch(`${panelGuiBaseUrl}${pathSuffix}`);
+    if (response.status !== 404) {
+      throw new Error(`JetBrains wrapper smoke panel alias ${pathSuffix} returned ${response.status} instead of 404.`);
+    }
+  }
+  const hostedChatResponse = await fetch(`${panelGuiBaseUrl}/hosted-chat`);
+  const hostedChatHtml = await hostedChatResponse.text();
+  if (hostedChatResponse.status !== 200 || !hostedChatHtml.includes('entryMode:"hosted_chat"') || !hostedChatHtml.includes(`runtimeBaseUrl:"${panelBasePath}"`) || !hostedChatHtml.includes(`runtimeProxyBaseUrl:"${panelBasePath}"`)) {
+    throw new Error(`JetBrains wrapper smoke hosted-chat entry did not return the panel bootstrap contract.`);
   }
   const headHostedChatResponse = await fetch(`${panelGuiBaseUrl}/hosted-chat`, { method: "HEAD" });
   if (headHostedChatResponse.status !== 405) {
@@ -3611,7 +3618,7 @@ async function startWrapperServer(wrapperHtml) {
   return listen(server);
 }
 
-async function servePanelIndexHtml(response, realStaticRoot, hostedChatEntry) {
+async function servePanelIndexHtml(response, realStaticRoot) {
   const indexFile = path.join(realStaticRoot, "index.html");
   const realIndexFile = await realpath(indexFile);
   if (!isPathInsideRoot(realStaticRoot, realIndexFile)) {
@@ -3620,14 +3627,13 @@ async function servePanelIndexHtml(response, realStaticRoot, hostedChatEntry) {
     return;
   }
   const indexHtml = await readFile(realIndexFile, "utf8");
-  const body = injectPanelBootstrap(indexHtml, hostedChatEntry);
+  const body = injectPanelBootstrap(indexHtml);
   response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
   response.end(body);
 }
 
-function injectPanelBootstrap(indexHtml, hostedChatEntry) {
-  const entryMode = hostedChatEntry ? `entryMode:"hosted_chat",` : "";
-  const script = `<script>window.__yetAiInitialRuntimeConfig={${entryMode}runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"${panelBasePath}",runtimeProxyBaseUrl:"${panelBasePath}"};</script>`;
+function injectPanelBootstrap(indexHtml) {
+  const script = `<script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat",runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"${panelBasePath}",runtimeProxyBaseUrl:"${panelBasePath}"};</script>`;
   return indexHtml.includes("<head>") ? indexHtml.replace("<head>", `<head>\n${script}`) : `${script}\n${indexHtml}`;
 }
 

@@ -53,6 +53,7 @@ class PackagedGuiServerTest {
         try {
             assertTrue(URI(gui.origin).authority != URI(gui.wrapperOrigin).authority)
             assertEquals(200, request(gui.indexUrl).status)
+            assertEquals(200, request("${gui.origin}/").status)
         } finally {
             service.dispose()
         }
@@ -108,25 +109,17 @@ class PackagedGuiServerTest {
     }
 
     @Test
-    fun panelScopedIndexInjectsInitialProxyRuntimeConfigWithoutToken() {
+    fun hostedChatIndexInjectsProxyRuntimeConfigWithoutToken() {
         val html = injectPanelBootstrap("<html><head><title>Yet</title></head><body><div id=\"root\"></div></body></html>", "panel-1")
 
         assertTrue(html.contains("window.__yetAiInitialRuntimeConfig"))
+        assertTrue(html.contains("entryMode:\"hosted_chat\""))
         assertTrue(html.contains("runtimeAccess:\"same_origin_proxy\""))
         assertTrue(html.contains("runtimeBaseUrl:\"/panel/panel-1\""))
         assertTrue(html.contains("runtimeProxyBaseUrl:\"/panel/panel-1\""))
         assertTrue(html.indexOf("window.__yetAiInitialRuntimeConfig") < html.indexOf("<title>Yet</title>"))
         assertTrue(!html.contains("sessionToken"))
         assertTrue(!html.contains("Authorization"))
-        assertTrue(!html.contains("entryMode"))
-    }
-
-    @Test
-    fun hostedChatIndexInjectsStrictEntryMode() {
-        val html = injectPanelBootstrap("<html><head></head><body></body></html>", "panel-1", hostedChatEntry = true)
-
-        assertTrue(html.contains("entryMode:\"hosted_chat\""))
-        assertTrue(html.contains("runtimeAccess:\"same_origin_proxy\""))
     }
 
     @Test
@@ -142,19 +135,23 @@ class PackagedGuiServerTest {
     }
 
     @Test
-    fun serverInjectsHostedChatEntryModeOnlyOnHostedChatRoute() {
+    fun serverServesOnlyRegisteredHostedChatPanelEntry() {
         val server = PackagedGuiServer()
         val gui = server.start() ?: error("packaged GUI test resource unavailable")
         try {
             val panel = server.registerPanel(RuntimeSettings("http://127.0.0.1:8765", null, null))
 
             val hosted = request(gui.forPanel(panel).indexUrl)
-            val ordinary = request("${gui.origin}${panel.proxyBaseUrl}/index.html")
+            val panelRoot = request("${gui.origin}${panel.proxyBaseUrl}/")
+            val panelIndex = request("${gui.origin}${panel.proxyBaseUrl}/index.html")
 
             assertEquals(200, hosted.status)
-            assertEquals(200, ordinary.status)
+            assertEquals(404, panelRoot.status)
+            assertEquals(404, panelIndex.status)
             assertTrue(hosted.body.contains("entryMode:\"hosted_chat\""))
-            assertFalse(ordinary.body.contains("entryMode"))
+            assertTrue(hosted.body.contains("runtimeAccess:\"same_origin_proxy\""))
+            assertTrue(hosted.body.contains("runtimeBaseUrl:\"${panel.proxyBaseUrl}\""))
+            assertTrue(hosted.body.contains("runtimeProxyBaseUrl:\"${panel.proxyBaseUrl}\""))
         } finally {
             server.dispose()
         }
