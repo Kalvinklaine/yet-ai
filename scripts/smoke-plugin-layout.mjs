@@ -536,18 +536,13 @@ async function startStaticServer(staticRoot) {
   const server = http.createServer(async (request, response) => {
     const rawPath = rawRequestPath(request.url);
     const spaEntry = isStrictHostedEntryPath(rawPath);
-    const pathname = staticRequestPath(rawPath);
+    const pathname = staticRequestPath(hostedRelativeAssetPath(rawPath) ?? rawPath);
     if (pathname === null) return response.writeHead(403).end("Forbidden");
     const requestedPath = spaEntry ? path.join(staticRoot, "index.html") : path.resolve(staticRoot, `.${pathname}`);
     if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) return response.writeHead(403).end("Forbidden");
     try {
       const fileStat = await stat(requestedPath);
       if (!fileStat.isFile()) return response.writeHead(404).end("Not found");
-      if (spaEntry) {
-        const html = await readFile(requestedPath, "utf8");
-        response.writeHead(200, { "content-type": contentType(requestedPath) }).end(rewriteHostedAssetMounts(html));
-        return;
-      }
       response.writeHead(200, { "content-type": contentType(requestedPath) });
       createReadStream(requestedPath).pipe(response);
     } catch { response.writeHead(404).end("Not found"); }
@@ -565,6 +560,12 @@ function isStrictHostedEntryPath(rawPath) {
   return rawPath === "/vscode/hosted-chat" || /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(rawPath);
 }
 
+function hostedRelativeAssetPath(rawPath) {
+  const match = /^\/vscode\/assets\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(rawPath)
+    ?? /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/assets\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(rawPath);
+  return match ? `/assets/${match[1]}` : null;
+}
+
 function staticRequestPath(rawPath) {
   if (!rawPath.startsWith("/") || rawPath.includes("\\")) return null;
   let decoded;
@@ -577,10 +578,6 @@ function staticRequestPath(rawPath) {
   const segments = decoded.split("/");
   if (segments.some((segment) => segment === "." || segment === "..")) return null;
   return decoded === "/" ? "/index.html" : decoded;
-}
-
-function rewriteHostedAssetMounts(html) {
-  return html.replace(/\b(src|href)=("|')\.\/assets\//g, '$1=$2/assets/');
 }
 
 async function verifyStaticServerContract(port) {
@@ -600,7 +597,7 @@ async function verifyStaticServerContract(port) {
   ];
   for (const requestPath of validHostedPaths) {
     const result = await requestStaticServer(port, requestPath);
-    if (result.status !== 200 || !result.contentType.startsWith("text/html") || !result.body.includes('src="/assets/')) {
+    if (result.status !== 200 || !result.contentType.startsWith("text/html") || result.body !== indexHtml) {
       throw new Error(`Plugin layout smoke server self-check failed for valid hosted entry: ${sanitizeEvidenceText(requestPath)}`);
     }
   }
@@ -610,11 +607,33 @@ async function verifyStaticServerContract(port) {
       throw new Error(`Plugin layout smoke server self-check accepted malformed hosted entry: ${sanitizeEvidenceText(requestPath)}`);
     }
   }
+  const hostedAssetPaths = [
+    `/vscode/${assetPath}`,
+    `/panel/${JETBRAINS_SMOKE_PANEL_ID}/${assetPath}`,
+  ];
+  for (const requestPath of hostedAssetPaths) {
+    const result = await requestStaticServer(port, requestPath);
+    if (result.status !== 200 || result.contentType.startsWith("text/html") || result.body.length === 0) {
+      throw new Error(`Plugin layout smoke server self-check failed for hosted-relative asset: ${sanitizeEvidenceText(requestPath)}`);
+    }
+  }
+  const rejectedHostedAssetPaths = [
+    `/vscode/assets/../${path.basename(assetPath)}`,
+    `/vscode/assets/%2e%2e/${path.basename(assetPath)}`,
+    `/panel/bad.id/${assetPath}`,
+    `/panel/${JETBRAINS_SMOKE_PANEL_ID}/assets/nested/${path.basename(assetPath)}`,
+  ];
+  for (const requestPath of rejectedHostedAssetPaths) {
+    const result = await requestStaticServer(port, requestPath);
+    if (result.status === 200) {
+      throw new Error(`Plugin layout smoke server self-check accepted malformed hosted-relative asset: ${sanitizeEvidenceText(requestPath)}`);
+    }
+  }
   const assetResult = await requestStaticServer(port, `/${assetPath}`);
   if (assetResult.status !== 200 || assetResult.contentType === "text/html; charset=utf-8" || assetResult.body.length === 0) {
     throw new Error("Plugin layout smoke server self-check failed for a regular built asset.");
   }
-  console.log("Plugin layout smoke server contract passed: strict raw hosted routes and packaged /assets mount verified.");
+  console.log("Plugin layout smoke server contract passed: strict raw hosted routes and hosted-relative assets verified.");
 }
 
 function requestStaticServer(port, requestPath) {
