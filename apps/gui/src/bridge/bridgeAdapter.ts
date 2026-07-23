@@ -270,7 +270,6 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
   const pendingMessages: HostMessage[] = [];
   const maxPendingMessages = 8;
   let jetbrainsFrameNonce: string | undefined;
-  let postedJetbrainsFrameNonce: string | undefined;
   const append = (entry: string) => {
     log.push(entry);
     onLog(entry);
@@ -331,14 +330,11 @@ export function createBridgeAdapter(onLog: (entry: string) => void): BridgeAdapt
     }
     if (parentBridge && isFrameNonceMessage(message)) {
       jetbrainsFrameNonce = message.payload.frameNonce;
-      if (postedJetbrainsFrameNonce !== jetbrainsFrameNonce) {
-        postedJetbrainsFrameNonce = jetbrainsFrameNonce;
-        post({
-          version: bridgeVersion,
-          type: "gui.ready",
-          payload: { supportedBridgeVersion: bridgeVersion },
-        });
-      }
+      post({
+        version: bridgeVersion,
+        type: "gui.ready",
+        payload: { supportedBridgeVersion: bridgeVersion },
+      });
       return;
     }
     if (!isHostMessage(message)) {

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isControlledAgentMultifileApplyRequestPayload, isControlledAgentMultifileApplyResultPayload, isControlledHostCapabilitiesPayload, isGuiMessage, isHostMessage, isHostRuntimeStatusPayload, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
@@ -118,7 +119,7 @@ describe("bridgeAdapter", () => {
     adapter.dispose();
   });
 
-  it("echoes each JetBrains iframe frame nonce once in gui.ready using the referrer origin", () => {
+  it("echoes every JetBrains iframe frame nonce challenge in gui.ready using the referrer origin", () => {
     const logs: string[] = [];
     const parent = { postMessage: vi.fn() };
     Object.defineProperty(Document.prototype, "referrer", {
@@ -148,7 +149,7 @@ describe("bridgeAdapter", () => {
     expect(adapter.host).toBe("jetbrains");
     expect(logs).toContain("Bridge host jetbrains");
     expect(logs).not.toContain("Browser mock sent gui.ready");
-    expect(parent.postMessage).toHaveBeenCalledTimes(2);
+    expect(parent.postMessage).toHaveBeenCalledTimes(3);
     expect(parent.postMessage).toHaveBeenNthCalledWith(1, {
       version: bridgeVersion,
       type: "gui.ready",
@@ -158,6 +159,14 @@ describe("bridgeAdapter", () => {
       },
     }, "https://wrapper.example");
     expect(parent.postMessage).toHaveBeenNthCalledWith(2, {
+      version: bridgeVersion,
+      type: "gui.ready",
+      payload: {
+        supportedBridgeVersion: bridgeVersion,
+        frameNonce: "0123456789abcdef0123456789abcdef",
+      },
+    }, "https://wrapper.example");
+    expect(parent.postMessage).toHaveBeenNthCalledWith(3, {
       version: bridgeVersion,
       type: "gui.ready",
       payload: {
