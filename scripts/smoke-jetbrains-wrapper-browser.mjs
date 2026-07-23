@@ -321,6 +321,7 @@ try {
   // The cross-origin probe above can overlap the natural handshake, but authority
   // immutability is meaningful only after the current-frame ready state settles.
   await waitForStableAcceptedGuiReady(page);
+  await assertSameNonceRetryRecovered(page);
   await assertAcceptedReadyHidesFallback(page);
   await assertPostReadyWrapperAuthorityImmutable(page, frameLocator);
   await assertRejectedReadyInputsPreserveAuthority(page, bridgeVersion, guiBaseUrl);
@@ -839,6 +840,28 @@ async function waitForStableAcceptedGuiReady(page) {
   }));
   if (!state.accepted) {
     failures.push(`Natural current-frame gui.ready did not reach stable accepted authority before the bypass baseline: ${JSON.stringify(state)}.`);
+  }
+}
+
+async function assertSameNonceRetryRecovered(page) {
+  const state = await page.evaluate(() => ({
+    challengeCount: window.__yetAiSmokeNonceChallengeCount ?? 0,
+    validReadyAttemptCount: window.__yetAiSmokeValidReadyAttemptCount ?? 0,
+    firstReadyIgnored: window.__yetAiSmokeFirstReadyIgnored === true,
+    firstReadyChallengeCount: window.__yetAiSmokeFirstReadyChallengeCount ?? 0,
+    acceptedReadyChallengeCount: window.__yetAiSmokeAcceptedReadyChallengeCount ?? 0,
+    retriedInSameFrameGeneration: window.__yetAiSmokeRetriedInSameFrameGeneration === true,
+    retriedWithCurrentNonce: window.__yetAiSmokeRetriedWithCurrentNonce === true,
+    accepted: window.__yetAiIframeGuiReady === true,
+  }));
+  if (!state.firstReadyIgnored || !state.accepted) {
+    failures.push(`Wrapper smoke did not ignore the first valid gui.ready and recover on retry: ${JSON.stringify(state)}.`);
+  }
+  if (state.validReadyAttemptCount < 2 || state.challengeCount < 2 || state.acceptedReadyChallengeCount <= state.firstReadyChallengeCount) {
+    failures.push(`Wrapper smoke did not observe a later nonce challenge and gui.ready retry: ${JSON.stringify(state)}.`);
+  }
+  if (!state.retriedInSameFrameGeneration || !state.retriedWithCurrentNonce) {
+    failures.push(`Wrapper smoke did not prove the accepted retry used the same current frame nonce: ${JSON.stringify(state)}.`);
   }
 }
 
@@ -2779,7 +2802,8 @@ window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued dia
           while (pendingDiagnostics.length > 0) showDiagnostic(pendingDiagnostics.shift())
           window.__yetAiSmokeFlushingPending = false;`);
   html = html.replace("currentFrameWindow.postMessage({ version: bridgeVersion, type: \"host.frameNonce\", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);", `currentFrameWindow.postMessage({ version: bridgeVersion, type: "host.frameNonce", payload: { frameNonce: currentFrameNonce } }, frameTargetOrigin);
-          window.__yetAiCurrentFrameNonce = currentFrameNonce;`);
+          window.__yetAiCurrentFrameNonce = currentFrameNonce;
+          window.__yetAiSmokeNonceChallengeCount = (window.__yetAiSmokeNonceChallengeCount ?? 0) + 1;`);
   html = html.replace("currentGuiReadyRequestId = undefined;", `currentGuiReadyRequestId = undefined;
           window.__yetAiCurrentReadyRequestId = undefined;`);
   html = html.replace("acceptedHostReadyRequestId = undefined;", `acceptedHostReadyRequestId = undefined;
@@ -2799,6 +2823,7 @@ window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued dia
         window.__yetAiHostMessagesPostedCount = 0;
         window.__yetAiHostMessagesPosted = [];
         window.__yetAiGuiReadySequence = 0;
+        window.__yetAiSmokeFirstReadyIgnored = false;
         window.__yetAiSendHostMessageToFrame = sendToFrame;
         window.__yetAiWrapperInitialized = true;`);
   html = html.replace("window.postIntellijMessage = (message) => { window.__yetAiBridgeMessages.push(message); };", "window.postIntellijMessage = (message) => { window.__yetAiBridgeMessages.push(message); };");
@@ -2809,8 +2834,35 @@ window.__yetAiAdoptedPreInitDiagnostic = pendingDiagnostics.includes("Queued dia
               window.__yetAiAcceptedHostReadyRequestId = acceptedHostReadyRequestId;`);
   html = html.replace("hostReadyAcceptedForCurrentFrame = true;", `hostReadyAcceptedForCurrentFrame = true;
               window.__yetAiHostReadyAcceptedForCurrentFrame = true;`);
+  html = html.replace("currentFrameNonce = newFrameNonce();", `currentFrameNonce = newFrameNonce();
+          window.__yetAiSmokeNonceChallengeCount = 0;
+          window.__yetAiSmokeValidReadyAttemptCount = 0;
+          window.__yetAiSmokeFirstReadyChallengeCount = 0;
+          window.__yetAiSmokeAcceptedReadyChallengeCount = 0;
+          window.__yetAiSmokeRetriedInSameFrameGeneration = false;
+          window.__yetAiSmokeRetriedWithCurrentNonce = false;`);
+  html = html.replace(/} else if \(isGuiMessage\(event\.data\)\) \{\s*if \(frameReady && event\.data\.payload\.frameNonce === currentFrameNonce\) return;/, `} else if (isGuiMessage(event.data)) {
+              window.__yetAiSmokeValidReadyAttemptCount = (window.__yetAiSmokeValidReadyAttemptCount ?? 0) + 1;
+              if (!window.__yetAiSmokeFirstReadyIgnored) {
+                window.__yetAiSmokeFirstReadyIgnored = true;
+                window.__yetAiSmokeFirstReadyChallengeCount = window.__yetAiSmokeNonceChallengeCount ?? 0;
+                window.__yetAiSmokeFirstReadyFrameGeneration = frameGeneration;
+                return;
+              }
+              window.__yetAiSmokeAcceptedReadyChallengeCount = window.__yetAiSmokeNonceChallengeCount ?? 0;
+              window.__yetAiSmokeRetriedInSameFrameGeneration = window.__yetAiSmokeFirstReadyFrameGeneration === frameGeneration;
+              window.__yetAiSmokeRetriedWithCurrentNonce = event.data.payload.frameNonce === currentFrameNonce;
+              if (frameReady && event.data.payload.frameNonce === currentFrameNonce) return;`);
   html = html.replace("if (!frameReady && frameNonceChallengeAttempts < 20) {", `window.__yetAiLastFrameNonceForSmoke = currentFrameNonce;
           if (!frameReady && frameNonceChallengeAttempts < 20) {`);
+  const requiredRetryInstrumentation = [
+    "window.__yetAiSmokeFirstReadyIgnored = true;",
+    "window.__yetAiSmokeNonceChallengeCount = (window.__yetAiSmokeNonceChallengeCount ?? 0) + 1;",
+    "window.__yetAiSmokeRetriedInSameFrameGeneration = window.__yetAiSmokeFirstReadyFrameGeneration === frameGeneration;",
+  ];
+  for (const snippet of requiredRetryInstrumentation) {
+    if (!html.includes(snippet)) throw new Error(`JetBrains wrapper smoke did not install repeated nonce instrumentation: ${snippet}`);
+  }
   return html;
 }
 
