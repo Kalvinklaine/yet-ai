@@ -11,6 +11,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
 const archiveInspectMaxBuffer = 128 * 1024 * 1024;
+const spaRoute = "/settings";
 const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI"];
 const failures = [];
 
@@ -73,8 +74,15 @@ try {
     }
   });
 
-  await page.goto(`${baseUrl}/index.html`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${baseUrl}${spaRoute}`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
+
+  const initialBodyText = (await page.locator("body").innerText()).trim();
+  const notFoundVisible = await page.getByRole("heading", { name: "Not Found", exact: true }).isVisible().catch(() => false);
+  if (notFoundVisible) {
+    failures.push(`Packaged GUI route ${spaRoute} rendered Not Found. Body: ${JSON.stringify(initialBodyText.slice(0, 500))}`);
+    reportFailures();
+  }
 
   for (const text of requiredVisibleText) {
     const visible = await page.getByText(text, { exact: true }).first().isVisible().catch(() => false);
@@ -238,7 +246,7 @@ function listZip(zipPath) {
 async function startStaticServer(staticRoot) {
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-    const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
+    const pathname = decodeURIComponent(requestUrl.pathname === "/" || requestUrl.pathname === spaRoute ? "/index.html" : requestUrl.pathname);
     const requestedPath = path.normalize(path.join(staticRoot, pathname));
     if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
       response.writeHead(403);
