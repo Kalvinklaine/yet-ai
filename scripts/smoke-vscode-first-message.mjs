@@ -12,8 +12,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const packagedGuiRoot = path.join(root, "apps", "plugins", "vscode", "media", "gui");
 const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
+const hostedChatPath = "/vscode/hosted-chat";
 const bridgeVersion = "2026-05-15";
-const runtimeToken = `vscode-runtime-token-${randomUUID()}`;
+const runtimeToken = `vscsession.${randomUUID()}`;
 const providerKey = `sk-vscode-provider-${randomUUID()}`;
 const contextSentinel = `VSCODE_CONTEXT_SENTINEL_${randomUUID()}`;
 const contextText = "safe short VS Code selected text for first-message context";
@@ -40,6 +41,7 @@ if (packageJson.scripts?.["smoke:gui-runtime-e2e"] !== "node scripts/smoke-gui-r
 await requirePackagedGui();
 const { chromium } = await requireChromium();
 const guiServer = await startStaticServer(packagedGuiRoot);
+await verifyStaticServerContract(guiServer.port);
 const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
 const runtimeServer = await startMockRuntimeServer();
 const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
@@ -77,6 +79,8 @@ try {
   });
   await page.addInitScript(({ token }) => {
     window.__yetAiVsCodeMessages = [];
+    window.__yetAiInitialRuntimeConfig = { ...window.__yetAiInitialRuntimeConfig, entryMode: "hosted_chat" };
+    window.__yetAiSmokeTrustedEntryInjected = window.__yetAiInitialRuntimeConfig.entryMode === "hosted_chat";
     window.acquireVsCodeApi = () => ({
       postMessage(message) {
         window.__yetAiVsCodeMessages.push(message);
@@ -100,8 +104,11 @@ try {
     }
   });
 
-  await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
+  await assertHostedEntryRoute(page);
   await page.waitForFunction(() => window.__yetAiVsCodeMessages?.some((message) => message?.type === "gui.ready"), undefined, { timeout: 10_000 });
+  await expectAttachedText(page, "bridge vscode", "VS Code bridge mode before host messages");
+  await page.waitForTimeout(100);
   await page.evaluate(({ version }) => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {
@@ -141,8 +148,15 @@ try {
     }));
   }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken });
 
-  await expectAttachedText(page, "Host runtime settings received", "host.ready runtime bootstrap");
-  await expectAttachedText(page, "Host message host.runtimeStatus", "host.runtimeStatus lifecycle metadata");
+  await page.waitForTimeout(100);
+  if (consoleMessages.includes("Rejected invalid host bridge message")) {
+    throw new Error("VS Code first-message host.ready was rejected by the GUI bridge contract.");
+  }
+
+  await page.waitForFunction((runtimeUrl) => Array.from(document.querySelectorAll("input")).some((input) => input.value === runtimeUrl), runtimeBaseUrl, { timeout: 10_000 }).catch(async (error) => {
+    const body = await page.locator("body").innerText().catch(() => "");
+    throw new Error(`Timed out waiting for host.ready runtime settings. ${messageOf(error)}\nVisible body excerpt: ${sanitizeDiagnosticText(body).slice(0, 4000)}`);
+  });
   await expectVisibleBodyTextAny(page, ["RUNTIME CONNECTED", "Runtime connected — choose the first-message path"], "visible runtime connected state through host.ready", 20_000);
   await expectVisibleBodyText(page, "State: Provider required", "provider-required first-message state", 20_000);
   await expectVisibleBodyText(page, "Provider required for first message", "provider-required guidance", 20_000);
@@ -407,16 +421,14 @@ function demoModeDisabledResponse() {
 async function startStaticServer(staticRoot) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
-    let requestUrl;
-    let pathname;
-    try {
-      requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-      pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    } catch {
-      response.writeHead(400).end("Bad request");
+    const rawPath = rawRequestPath(request.url);
+    const hostedEntry = rawPath === hostedChatPath;
+    const pathname = staticRequestPath(hostedAssetPath(rawPath) ?? rawPath);
+    if (pathname === null) {
+      response.writeHead(403).end("Forbidden");
       return;
     }
-    const requestedPath = path.normalize(path.join(realStaticRoot, pathname));
+    const requestedPath = path.resolve(realStaticRoot, `.${hostedEntry ? "/index.html" : pathname}`);
     let realRequestedPath;
     try {
       realRequestedPath = await realpath(requestedPath);
@@ -428,6 +440,116 @@ async function startStaticServer(staticRoot) {
     }
   });
   return listen(server);
+}
+
+function rawRequestPath(requestTarget) {
+  const target = requestTarget ?? "/";
+  const queryIndex = target.indexOf("?");
+  return queryIndex < 0 ? target : target.slice(0, queryIndex);
+}
+
+function hostedAssetPath(rawPath) {
+  const match = /^\/vscode\/assets\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(rawPath);
+  return match ? `/assets/${match[1]}` : null;
+}
+
+function staticRequestPath(rawPath) {
+  if (!rawPath.startsWith("/") || rawPath.includes("\\")) return null;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    return null;
+  }
+  if (decoded.includes("\\") || decoded.includes("\0")) return null;
+  if (decoded.split("/").some((segment) => segment === "." || segment === "..")) return null;
+  return decoded === "/" ? "/index.html" : decoded;
+}
+
+async function verifyStaticServerContract(port) {
+  const indexHtml = await readFile(packagedGuiIndex, "utf8");
+  const assetPath = /(?:src|href)=(?:"|')\.\/(assets\/[^"']+)/.exec(indexHtml)?.[1];
+  if (!assetPath) throw new Error("VS Code first-message smoke server self-check failed: packaged entry has no relative asset reference.");
+
+  const hostedEntry = await requestStaticServer(port, hostedChatPath);
+  if (hostedEntry.status !== 200 || !hostedEntry.contentType.startsWith("text/html") || hostedEntry.body !== indexHtml) {
+    throw new Error("VS Code first-message smoke server self-check failed for the trusted hosted entry.");
+  }
+
+  for (const requestPath of [
+    "/vscode%2fhosted-chat",
+    "/vscode/%68osted-chat",
+    "/vscode/../hosted-chat",
+    "/vscode\\hosted-chat",
+    "/vscode/hosted-chat/",
+  ]) {
+    const result = await requestStaticServer(port, requestPath);
+    if (result.status === 200 && result.contentType.startsWith("text/html")) {
+      throw new Error(`VS Code first-message smoke server self-check accepted malformed hosted entry: ${sanitizeDiagnosticText(requestPath)}`);
+    }
+  }
+
+  const hostedAsset = await requestStaticServer(port, `/vscode/${assetPath}`);
+  if (hostedAsset.status !== 200 || hostedAsset.contentType.startsWith("text/html") || hostedAsset.body.length === 0) {
+    throw new Error("VS Code first-message smoke server self-check failed for a hosted flat asset.");
+  }
+
+  for (const requestPath of [
+    `/vscode/assets/../${path.basename(assetPath)}`,
+    `/vscode/assets/%2e%2e/${path.basename(assetPath)}`,
+    `/vscode/assets/nested/${path.basename(assetPath)}`,
+    `/vscode/assets%2f${path.basename(assetPath)}`,
+    `/vscode/assets/${path.basename(assetPath)}/extra`,
+  ]) {
+    const result = await requestStaticServer(port, requestPath);
+    if (result.status === 200) {
+      throw new Error(`VS Code first-message smoke server self-check accepted malformed hosted asset: ${sanitizeDiagnosticText(requestPath)}`);
+    }
+  }
+
+  const rootAsset = await requestStaticServer(port, `/${assetPath}`);
+  if (rootAsset.status !== 200 || rootAsset.contentType.startsWith("text/html") || rootAsset.body.length === 0) {
+    throw new Error("VS Code first-message smoke server self-check failed for regular root static serving.");
+  }
+  console.log("VS Code first-message smoke server contract passed: strict hosted entry and flat assets verified.");
+}
+
+function requestStaticServer(port, requestPath) {
+  return new Promise((resolve, reject) => {
+    const request = http.get({ host: "127.0.0.1", port, path: requestPath }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => resolve({
+        status: response.statusCode ?? 0,
+        contentType: String(response.headers["content-type"] ?? ""),
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.on("error", reject);
+  });
+}
+
+async function assertHostedEntryRoute(page) {
+  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 }).catch(() => undefined);
+  const state = await page.evaluate((expectedPath) => ({
+    url: window.location.href,
+    path: window.location.pathname,
+    expectedPath,
+    trustedEntryInjected: window.__yetAiSmokeTrustedEntryInjected === true,
+    entryMode: window.__yetAiInitialRuntimeConfig?.entryMode ?? null,
+    notFound: document.body.innerText.includes("Not Found"),
+    bodySnippet: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 700),
+  }), hostedChatPath);
+  if (!state.bodySnippet || state.notFound || state.path !== hostedChatPath || !state.trustedEntryInjected || state.entryMode !== "hosted_chat") {
+    const diagnostic = {
+      ...state,
+      url: redactUrl(state.url),
+      path: sanitizeDiagnosticText(state.path),
+      expectedPath: sanitizeDiagnosticText(state.expectedPath),
+      bodySnippet: sanitizeDiagnosticText(state.bodySnippet),
+    };
+    throw new Error(`VS Code first-message hosted route/bootstrap failed: ${JSON.stringify(diagnostic)}`);
+  }
 }
 
 function listen(server) {
@@ -574,6 +696,14 @@ function redactSecrets(text) {
     redacted = redacted.split(marker).join("[redacted]");
   }
   return redacted.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]");
+}
+
+function sanitizeDiagnosticText(text) {
+  return redactSecrets(text)
+    .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]")
+    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]")
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "[redacted-email]");
 }
 
 function redactUrl(value) {
