@@ -12,6 +12,7 @@ const indexPath = path.join(distRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "plugin-layout");
 const runtimeSessionValue = `pl-${randomUUID()}`;
 const failures = [];
+const JETBRAINS_SMOKE_PANEL_ID = "plugin-layout-smoke";
 const LAYOUT_CONTRACT_VERSION = "T-772-plugin-layout-thresholds";
 const LAYOUT_THRESHOLDS = Object.freeze({
   maxContextHeight: 112,
@@ -57,6 +58,7 @@ try {
 
 async function exercisePluginViewport({ chromium, width, height, name, host }) {
   const page = await chromium.newPage({ viewport: { width, height } });
+  const hostedPath = host === "vscode" ? "/vscode/hosted-chat" : `/panel/${JETBRAINS_SMOKE_PANEL_ID}/hosted-chat`;
   page.on("pageerror", (error) => failures.push(`${name} page JavaScript error: ${error.message}`));
   page.on("request", (request) => {
     const url = request.url();
@@ -64,14 +66,16 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   });
   await page.addInitScript((bridgeHost) => {
     window.__yetAiBridgePosts = [];
+    window.__yetAiInitialRuntimeConfig = { ...window.__yetAiInitialRuntimeConfig, entryMode: "hosted_chat" };
+    window.__yetAiSmokeTrustedEntryInjected = window.__yetAiInitialRuntimeConfig.entryMode === "hosted_chat";
     if (bridgeHost === "vscode") {
       window.acquireVsCodeApi = () => ({ postMessage: (message) => window.__yetAiBridgePosts.push(message) });
     } else if (bridgeHost === "jetbrains") {
       window.postIntellijMessage = (message) => window.__yetAiBridgePosts.push(message);
     }
   }, host);
-  await page.goto(`http://127.0.0.1:${guiServer.port}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
+  await page.goto(`http://127.0.0.1:${guiServer.port}${hostedPath}`, { waitUntil: "domcontentloaded" });
+  await assertHostedEntryRoute(page, { host, hostedPath, name });
   await waitForGuiReady(page, name);
   await dispatchHostReady(page);
   await page.waitForFunction(() => document.body.innerText.includes("ready to chat") || document.body.innerText.includes("Ready to send"), undefined, { timeout: 20_000 }).catch(() => failures.push(`Missing ${name} runtime ready state`));
@@ -116,6 +120,22 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   assertLayoutMetrics(metrics, name, height, host);
 
   return saveEvidence(page, name, metrics);
+}
+
+async function assertHostedEntryRoute(page, { host, hostedPath, name }) {
+  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 }).catch(() => undefined);
+  const state = await page.evaluate((expectedPath) => ({
+    url: window.location.href,
+    path: window.location.pathname,
+    expectedPath,
+    trustedEntryInjected: window.__yetAiSmokeTrustedEntryInjected === true,
+    entryMode: window.__yetAiInitialRuntimeConfig?.entryMode ?? null,
+    notFound: document.body.innerText.includes("Not Found"),
+    bodySnippet: document.body.innerText.replace(/\s+/g, " ").trim().slice(0, 700),
+  }), hostedPath);
+  if (!state.bodySnippet || state.notFound || state.path !== hostedPath || !state.trustedEntryInjected || state.entryMode !== "hosted_chat") {
+    throw new Error(`${name} hosted route/bootstrap failed: ${sanitizeEvidenceText(JSON.stringify({ host, ...state }))}`);
+  }
 }
 
 function assertLayoutMetrics(metrics, label, height, host) {
@@ -515,11 +535,17 @@ async function startStaticServer(staticRoot) {
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
     const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    const requestedPath = path.normalize(path.join(staticRoot, pathname));
+    const spaEntry = pathname === "/vscode/hosted-chat" || /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(pathname);
+    const requestedPath = spaEntry ? path.join(staticRoot, "index.html") : path.normalize(path.join(staticRoot, pathname));
     if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) return response.writeHead(403).end("Forbidden");
     try {
       const fileStat = await stat(requestedPath);
       if (!fileStat.isFile()) return response.writeHead(404).end("Not found");
+      if (spaEntry) {
+        const html = await readFile(requestedPath, "utf8");
+        response.writeHead(200, { "content-type": contentType(requestedPath) }).end(html.replace("<head>", '<head>\n    <base href="/">'));
+        return;
+      }
       response.writeHead(200, { "content-type": contentType(requestedPath) });
       createReadStream(requestedPath).pipe(response);
     } catch { response.writeHead(404).end("Not found"); }
