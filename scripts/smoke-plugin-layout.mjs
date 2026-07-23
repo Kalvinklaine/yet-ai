@@ -34,6 +34,7 @@ const { chromium } = await requireChromium();
 
 try {
   guiServer = await startStaticServer(distRoot);
+  await verifyStaticServerContract(guiServer.port);
   runtimeServer = await startRuntimeServer();
   browser = await chromium.launch({ headless: true });
 
@@ -533,17 +534,18 @@ async function requireChromium() {
 
 async function startStaticServer(staticRoot) {
   const server = http.createServer(async (request, response) => {
-    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-    const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    const spaEntry = pathname === "/vscode/hosted-chat" || /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(pathname);
-    const requestedPath = spaEntry ? path.join(staticRoot, "index.html") : path.normalize(path.join(staticRoot, pathname));
+    const rawPath = rawRequestPath(request.url);
+    const spaEntry = isStrictHostedEntryPath(rawPath);
+    const pathname = staticRequestPath(rawPath);
+    if (pathname === null) return response.writeHead(403).end("Forbidden");
+    const requestedPath = spaEntry ? path.join(staticRoot, "index.html") : path.resolve(staticRoot, `.${pathname}`);
     if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) return response.writeHead(403).end("Forbidden");
     try {
       const fileStat = await stat(requestedPath);
       if (!fileStat.isFile()) return response.writeHead(404).end("Not found");
       if (spaEntry) {
         const html = await readFile(requestedPath, "utf8");
-        response.writeHead(200, { "content-type": contentType(requestedPath) }).end(html.replace("<head>", '<head>\n    <base href="/">'));
+        response.writeHead(200, { "content-type": contentType(requestedPath) }).end(rewriteHostedAssetMounts(html));
         return;
       }
       response.writeHead(200, { "content-type": contentType(requestedPath) });
@@ -551,6 +553,83 @@ async function startStaticServer(staticRoot) {
     } catch { response.writeHead(404).end("Not found"); }
   });
   return listen(server);
+}
+
+function rawRequestPath(requestTarget) {
+  const target = requestTarget ?? "/";
+  const queryIndex = target.indexOf("?");
+  return queryIndex < 0 ? target : target.slice(0, queryIndex);
+}
+
+function isStrictHostedEntryPath(rawPath) {
+  return rawPath === "/vscode/hosted-chat" || /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(rawPath);
+}
+
+function staticRequestPath(rawPath) {
+  if (!rawPath.startsWith("/") || rawPath.includes("\\")) return null;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(rawPath);
+  } catch {
+    return null;
+  }
+  if (decoded.includes("\\") || decoded.includes("\0")) return null;
+  const segments = decoded.split("/");
+  if (segments.some((segment) => segment === "." || segment === "..")) return null;
+  return decoded === "/" ? "/index.html" : decoded;
+}
+
+function rewriteHostedAssetMounts(html) {
+  return html.replace(/\b(src|href)=("|')\.\/assets\//g, '$1=$2/assets/');
+}
+
+async function verifyStaticServerContract(port) {
+  const indexHtml = await readFile(indexPath, "utf8");
+  const assetPath = /(?:src|href)=(?:"|')\.\/(assets\/[^"']+)/.exec(indexHtml)?.[1];
+  if (!assetPath) throw new Error("Plugin layout smoke server self-check failed: built entry has no relative asset reference.");
+  const validHostedPaths = ["/vscode/hosted-chat", `/panel/${JETBRAINS_SMOKE_PANEL_ID}/hosted-chat`];
+  const rejectedHostedPaths = [
+    "/vscode%2fhosted-chat",
+    "/vscode\\hosted-chat",
+    `/panel/${JETBRAINS_SMOKE_PANEL_ID}%2fhosted-chat`,
+    `/panel/${JETBRAINS_SMOKE_PANEL_ID}/%68osted-chat`,
+    `/panel/${JETBRAINS_SMOKE_PANEL_ID}/../hosted-chat`,
+    "/panel//hosted-chat",
+    "/panel/bad.id/hosted-chat",
+    "/panel/valid/hosted-chat/extra",
+  ];
+  for (const requestPath of validHostedPaths) {
+    const result = await requestStaticServer(port, requestPath);
+    if (result.status !== 200 || !result.contentType.startsWith("text/html") || !result.body.includes('src="/assets/')) {
+      throw new Error(`Plugin layout smoke server self-check failed for valid hosted entry: ${sanitizeEvidenceText(requestPath)}`);
+    }
+  }
+  for (const requestPath of rejectedHostedPaths) {
+    const result = await requestStaticServer(port, requestPath);
+    if (result.status === 200 && result.contentType.startsWith("text/html")) {
+      throw new Error(`Plugin layout smoke server self-check accepted malformed hosted entry: ${sanitizeEvidenceText(requestPath)}`);
+    }
+  }
+  const assetResult = await requestStaticServer(port, `/${assetPath}`);
+  if (assetResult.status !== 200 || assetResult.contentType === "text/html; charset=utf-8" || assetResult.body.length === 0) {
+    throw new Error("Plugin layout smoke server self-check failed for a regular built asset.");
+  }
+  console.log("Plugin layout smoke server contract passed: strict raw hosted routes and packaged /assets mount verified.");
+}
+
+function requestStaticServer(port, requestPath) {
+  return new Promise((resolve, reject) => {
+    const request = http.get({ host: "127.0.0.1", port, path: requestPath }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("end", () => resolve({
+        status: response.statusCode ?? 0,
+        contentType: String(response.headers["content-type"] ?? ""),
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.on("error", reject);
+  });
 }
 
 async function startRuntimeServer() {
