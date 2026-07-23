@@ -161,6 +161,75 @@ class PackagedGuiServerTest {
     }
 
     @Test
+    fun registeredPanelServesBuiltJavaScriptAndCssAssets() {
+        val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", null))
+        val resources = mapOf(
+            "/yet-ai-gui/assets/index.js" to "built-javascript".toByteArray(),
+            "/yet-ai-gui/assets/index.css" to "built-css".toByteArray(),
+        )
+        withPackagedServer(panels, resources = resources) { proxy ->
+            val javascript = request("${proxy.origin}/panel/panel-1/assets/index.js")
+            val css = request("${proxy.origin}/panel/panel-1/assets/index.css")
+
+            assertEquals(200, javascript.status)
+            assertEquals("built-javascript", javascript.body)
+            assertEquals("application/javascript; charset=utf-8", javascript.contentType)
+            assertEquals("no-store", javascript.cacheControl)
+            assertEquals(200, css.status)
+            assertEquals("built-css", css.body)
+            assertEquals("text/css; charset=utf-8", css.contentType)
+            assertEquals("no-store", css.cacheControl)
+        }
+    }
+
+    @Test
+    fun registeredPanelAssetPreservesGetOnlyStaticMethodSemantics() {
+        val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", null))
+        val resources = mapOf("/yet-ai-gui/assets/index.js" to "built-javascript".toByteArray())
+        withPackagedServer(panels, resources = resources) { proxy ->
+            val response = request("${proxy.origin}/panel/panel-1/assets/index.js", "HEAD")
+
+            assertEquals(405, response.status)
+            assertEquals("", response.body)
+            assertEquals("text/plain; charset=utf-8", response.contentType)
+            assertEquals("no-store", response.cacheControl)
+        }
+    }
+
+    @Test
+    fun panelAssetsRequireRegistrationAndRejectUnsafePathsAndMethods() {
+        val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", null))
+        val resources = mapOf("/yet-ai-gui/assets/index.js" to "built-javascript".toByteArray())
+        withPackagedServer(panels, resources = resources) { proxy ->
+            assertEquals(404, request("${proxy.origin}/panel/missing/assets/index.js").status)
+            assertEquals(405, request("${proxy.origin}/panel/panel-1/assets/index.js", "POST").status)
+            for (path in listOf(
+                "/panel/panel-1/assets/",
+                "/panel/panel-1/assets//index.js",
+                "/panel/panel-1/assets/%5cindex.js",
+                "/panel/panel-1/assets/../index.js",
+                "/panel/panel-1/assets/%2e%2e/index.js",
+                "/panel/panel-1/assets/%252e%252e/index.js",
+            )) {
+                assertEquals(404, request(proxy.origin + path).status, path)
+            }
+        }
+    }
+
+    @Test
+    fun rootAssetsKeepExistingStaticBehavior() {
+        val resources = mapOf("/yet-ai-gui/assets/index.js" to "root-javascript".toByteArray())
+        withPackagedServer(emptyMap(), resources = resources) { proxy ->
+            val response = request("${proxy.origin}/assets/index.js")
+
+            assertEquals(200, response.status)
+            assertEquals("root-javascript", response.body)
+            assertEquals("application/javascript; charset=utf-8", response.contentType)
+            assertEquals("no-store", response.cacheControl)
+        }
+    }
+
+    @Test
     fun registeredPanelWrapperIsServedOnlyForItsPanel() {
         val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", null))
         val wrappers = mapOf("panel-1" to "<html>panel-one-wrapper</html>")
@@ -393,7 +462,7 @@ class PackagedGuiServerTest {
     }
 }
 
-private data class Response(val status: Int, val body: String)
+private data class Response(val status: Int, val body: String, val contentType: String?, val cacheControl: String?)
 private data class RuntimeRequest(val target: String, val authorization: String?)
 
 private class TestServer(private val server: HttpServer) {
@@ -428,13 +497,14 @@ private fun withRuntimeServer(status: Int = 200, delayMillis: Long = 0, body: St
 private fun withPackagedServer(
     panels: Map<String, PackagedGuiPanelRuntime>,
     wrappers: Map<String, String> = emptyMap(),
+    resources: Map<String, ByteArray> = emptyMap(),
     proxyTimeouts: PackagedGuiProxyTimeouts = PackagedGuiProxyTimeouts(),
     block: (TestServer) -> Unit,
 ) {
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
     server.createContext("/") { exchange ->
         if (wrappers.isEmpty()) {
-            handle(exchange, { null }, { panels.toMap() }, proxyTimeouts)
+            handle(exchange, resources::get, { panels.toMap() }, proxyTimeouts)
         } else {
             handleWrapper(exchange, { panels.toMap() }, { wrappers.toMap() })
         }
@@ -463,6 +533,8 @@ private fun request(url: String, method: String = "GET"): Response {
     val status = connection.responseCode
     val stream = if (status >= 400) connection.errorStream else connection.inputStream
     val body = stream?.use { String(it.readBytes()) }.orEmpty()
+    val contentType = connection.getHeaderField("Content-Type")
+    val cacheControl = connection.getHeaderField("Cache-Control")
     connection.disconnect()
-    return Response(status, body)
+    return Response(status, body, contentType, cacheControl)
 }

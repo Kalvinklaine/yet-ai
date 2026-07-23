@@ -185,6 +185,11 @@ fun handle(
             servePanelIndex(exchange, panelIndex, loadResource, panels())
             return
         }
+        val panelAsset = panelAssetRoute(exchange.requestURI.rawPath)
+        if (panelAsset != null) {
+            servePanelAsset(exchange, panelAsset.first, panelAsset.second, loadResource, panels())
+            return
+        }
         val panelRoute = panelProxyRoute(exchange.requestURI.rawPath)
         if (panelRoute != null) {
             proxyPanelRequest(exchange, panelRoute.first, panelRoute.second, panels(), proxyTimeouts)
@@ -208,6 +213,46 @@ fun handle(
     } finally {
         exchange.close()
     }
+}
+
+private fun panelAssetRoute(rawPath: String): Pair<String, String>? {
+    val prefix = "/panel/"
+    if (!rawPath.startsWith(prefix)) return null
+    val remainder = rawPath.removePrefix(prefix)
+    val separator = remainder.indexOf('/')
+    if (separator < 0) return null
+    val panelId = remainder.substring(0, separator)
+    val path = remainder.substring(separator)
+    if (!isValidPanelId(panelId) || !path.startsWith("/assets/")) return null
+    return panelId to path
+}
+
+private fun servePanelAsset(
+    exchange: HttpExchange,
+    panelId: String,
+    rawPath: String,
+    loadResource: (String) -> ByteArray?,
+    panels: Map<String, PackagedGuiPanelRuntime>,
+) {
+    if (exchange.requestMethod != "GET") {
+        send(exchange, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    if (!panels.containsKey(panelId)) {
+        send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    val resource = resourcePath(rawPath)
+    if (resource == null) {
+        send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    val body = loadResource(resource)
+    if (body == null) {
+        send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
+        return
+    }
+    send(exchange, 200, mimeType(resource), body)
 }
 
 fun handleWrapper(
