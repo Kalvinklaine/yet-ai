@@ -161,15 +161,38 @@ class PackagedGuiServerTest {
     }
 
     @Test
-    fun registeredPanelServesBuiltJavaScriptAndCssAssets() {
+    fun hostedPanelIndexRelativeAssetsResolveThroughProductionHandler() {
         val panels = mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", null))
+        val indexHtml = """
+            <!doctype html>
+            <html><head>
+            <link rel="stylesheet" href="./assets/index-Css9f3a1.css">
+            <script type="module" src="./assets/index-Js8d4e2b.js"></script>
+            </head><body><div id="root"></div></body></html>
+        """.trimIndent()
         val resources = mapOf(
-            "/yet-ai-gui/assets/index.js" to "built-javascript".toByteArray(),
-            "/yet-ai-gui/assets/index.css" to "built-css".toByteArray(),
+            "/yet-ai-gui/index.html" to indexHtml.toByteArray(),
+            "/yet-ai-gui/assets/index-Js8d4e2b.js" to "built-javascript".toByteArray(),
+            "/yet-ai-gui/assets/index-Css9f3a1.css" to "built-css".toByteArray(),
         )
         withPackagedServer(panels, resources = resources) { proxy ->
-            val javascript = request("${proxy.origin}/panel/panel-1/assets/index.js")
-            val css = request("${proxy.origin}/panel/panel-1/assets/index.css")
+            val hostedUrl = "${proxy.origin}/panel/panel-1/hosted-chat"
+            val hosted = request(hostedUrl)
+            val relativeAssets = Regex("""(?:src|href)="(\./assets/[^"]+)"""")
+                .findAll(hosted.body)
+                .map { match -> match.groupValues[1] }
+                .toList()
+
+            assertEquals(200, hosted.status)
+            assertEquals(listOf("./assets/index-Css9f3a1.css", "./assets/index-Js8d4e2b.js"), relativeAssets)
+
+            val resolvedAssets = relativeAssets.associateWith { relativePath ->
+                val resolvedUrl = URI(hostedUrl).resolve(relativePath).toString()
+                assertEquals("/panel/panel-1/${relativePath.removePrefix("./")}", URI(resolvedUrl).path)
+                request(resolvedUrl)
+            }
+            val javascript = resolvedAssets.getValue("./assets/index-Js8d4e2b.js")
+            val css = resolvedAssets.getValue("./assets/index-Css9f3a1.css")
 
             assertEquals(200, javascript.status)
             assertEquals("built-javascript", javascript.body)

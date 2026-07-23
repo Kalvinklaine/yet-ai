@@ -3549,7 +3549,6 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
       await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
       return;
     }
-    const panelPrefix = `${panelBasePath}/`;
     if (requestUrl.pathname === panelBasePath || requestUrl.pathname === `${panelBasePath}/` || requestUrl.pathname === `${panelBasePath}/index.html` || requestUrl.pathname === `${panelBasePath}/hosted-chat`) {
       if (request.method !== "GET" && request.method !== "HEAD") {
         response.writeHead(405, { allow: "GET, HEAD" });
@@ -3563,7 +3562,7 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
       await forwardPanelProxyRequest(request, response, runtimeBaseUrl, `${requestUrl.pathname.slice(panelBasePath.length)}${requestUrl.search}`, true);
       return;
     }
-    if (!requestUrl.pathname.startsWith(panelPrefix)) {
+    if (!requestUrl.pathname.startsWith(`${panelBasePath}/assets/`)) {
       response.writeHead(404);
       response.end("Not found");
       return;
@@ -3611,8 +3610,8 @@ function injectPanelBootstrap(indexHtml) {
 }
 
 async function servePackagedGuiAsset(request, response, realStaticRoot, pathname) {
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    response.writeHead(405, { allow: "GET, HEAD" });
+  if (request.method !== "GET") {
+    response.writeHead(405, { allow: "GET" });
     response.end("Method not allowed");
     return;
   }
@@ -3643,10 +3642,6 @@ async function servePackagedGuiAsset(request, response, realStaticRoot, pathname
     return;
   }
   response.writeHead(200, { "content-type": contentType(realRequestedPath), "cache-control": "no-store" });
-  if (request.method === "HEAD") {
-    response.end();
-    return;
-  }
   const stream = createReadStream(realRequestedPath);
   stream.on("error", () => {
     if (!response.headersSent) response.writeHead(404);
