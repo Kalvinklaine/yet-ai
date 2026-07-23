@@ -557,12 +557,15 @@ function rawRequestPath(requestTarget) {
 }
 
 function isStrictHostedEntryPath(rawPath) {
-  return rawPath === "/vscode/hosted-chat" || /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/hosted-chat$/.test(rawPath);
+  return rawPath === "/vscode/hosted-chat" || rawPath === `/panel/${JETBRAINS_SMOKE_PANEL_ID}/hosted-chat`;
 }
 
 function hostedRelativeAssetPath(rawPath) {
+  const jetbrainsAssetPrefix = `/panel/${JETBRAINS_SMOKE_PANEL_ID}/assets/`;
   const match = /^\/vscode\/assets\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(rawPath)
-    ?? /^\/panel\/[A-Za-z0-9][A-Za-z0-9_-]{0,127}\/assets\/([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(rawPath);
+    ?? (rawPath.startsWith(jetbrainsAssetPrefix)
+      ? /^([A-Za-z0-9][A-Za-z0-9._-]*)$/.exec(rawPath.slice(jetbrainsAssetPrefix.length))
+      : null);
   return match ? `/assets/${match[1]}` : null;
 }
 
@@ -593,6 +596,7 @@ async function verifyStaticServerContract(port) {
     `/panel/${JETBRAINS_SMOKE_PANEL_ID}/../hosted-chat`,
     "/panel//hosted-chat",
     "/panel/bad.id/hosted-chat",
+    "/panel/plugin-layout-other/hosted-chat",
     "/panel/valid/hosted-chat/extra",
   ];
   for (const requestPath of validHostedPaths) {
@@ -621,6 +625,7 @@ async function verifyStaticServerContract(port) {
     `/vscode/assets/../${path.basename(assetPath)}`,
     `/vscode/assets/%2e%2e/${path.basename(assetPath)}`,
     `/panel/bad.id/${assetPath}`,
+    `/panel/plugin-layout-other/${assetPath}`,
     `/panel/${JETBRAINS_SMOKE_PANEL_ID}/assets/nested/${path.basename(assetPath)}`,
   ];
   for (const requestPath of rejectedHostedAssetPaths) {
