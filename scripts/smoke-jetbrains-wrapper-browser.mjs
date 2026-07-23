@@ -191,6 +191,7 @@ const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
 const packagedGuiServer = await startPackagedGuiPanelServer(packagedGuiRoot, runtimeBaseUrl);
 const guiBaseUrl = `http://127.0.0.1:${packagedGuiServer.port}`;
 const panelGuiBaseUrl = `${guiBaseUrl}${panelBasePath}`;
+await assertPackagedGuiPanelServerParity(panelGuiBaseUrl);
 const productionWrapperHtml = await renderProductionWrapperHtml(panelGuiBaseUrl);
 assertWrapperReadinessSemantics(productionWrapperHtml);
 const instrumentedWrapperHtml = instrumentProductionWrapperHtml(productionWrapperHtml);
@@ -3549,13 +3550,13 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
       await forwardPanelProxyRequest(request, response, runtimeBaseUrl, requestUrl.pathname, false);
       return;
     }
-    if (requestUrl.pathname === panelBasePath || requestUrl.pathname === `${panelBasePath}/` || requestUrl.pathname === `${panelBasePath}/index.html` || requestUrl.pathname === `${panelBasePath}/hosted-chat`) {
-      if (request.method !== "GET" && request.method !== "HEAD") {
-        response.writeHead(405, { allow: "GET, HEAD" });
+    if (requestUrl.pathname === `${panelBasePath}/` || requestUrl.pathname === `${panelBasePath}/index.html` || requestUrl.pathname === `${panelBasePath}/hosted-chat`) {
+      if (request.method !== "GET") {
+        response.writeHead(405, { allow: "GET" });
         response.end("Method not allowed");
         return;
       }
-      await servePanelIndexHtml(request, response, realStaticRoot);
+      await servePanelIndexHtml(response, realStaticRoot, requestUrl.pathname === `${panelBasePath}/hosted-chat`);
       return;
     }
     if (requestUrl.pathname.startsWith(`${panelBasePath}/v1/`)) {
@@ -3572,6 +3573,30 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
   return listen(server);
 }
 
+async function assertPackagedGuiPanelServerParity(panelGuiBaseUrl) {
+  const barePanelResponse = await fetch(panelGuiBaseUrl);
+  if (barePanelResponse.status !== 404) {
+    throw new Error(`JetBrains wrapper smoke bare panel route returned ${barePanelResponse.status} instead of 404.`);
+  }
+  const headHostedChatResponse = await fetch(`${panelGuiBaseUrl}/hosted-chat`, { method: "HEAD" });
+  if (headHostedChatResponse.status !== 405) {
+    throw new Error(`JetBrains wrapper smoke HEAD hosted-chat returned ${headHostedChatResponse.status} instead of 405.`);
+  }
+  const indexHtml = await readFile(packagedGuiIndexPath, "utf8");
+  const assetPaths = Array.from(indexHtml.matchAll(/(?:src|href)="\.\/(assets\/[^"?#]+\.(?:js|css))"/g), (match) => match[1]);
+  for (const [extension, expectedMime] of [[".js", "application/javascript; charset=utf-8"], [".css", "text/css; charset=utf-8"]]) {
+    const assetPath = assetPaths.find((candidate) => candidate.endsWith(extension));
+    if (assetPath === undefined) {
+      throw new Error(`JetBrains wrapper smoke packaged index is missing a relative ${extension} asset.`);
+    }
+    const response = await fetch(`${panelGuiBaseUrl}/${assetPath}`);
+    const actualMime = response.headers.get("content-type");
+    if (response.status !== 200 || actualMime !== expectedMime) {
+      throw new Error(`JetBrains wrapper smoke ${extension} asset returned ${response.status} with ${String(actualMime)} instead of 200 with ${expectedMime}.`);
+    }
+  }
+}
+
 async function startWrapperServer(wrapperHtml) {
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -3586,7 +3611,7 @@ async function startWrapperServer(wrapperHtml) {
   return listen(server);
 }
 
-async function servePanelIndexHtml(request, response, realStaticRoot) {
+async function servePanelIndexHtml(response, realStaticRoot, hostedChatEntry) {
   const indexFile = path.join(realStaticRoot, "index.html");
   const realIndexFile = await realpath(indexFile);
   if (!isPathInsideRoot(realStaticRoot, realIndexFile)) {
@@ -3595,17 +3620,14 @@ async function servePanelIndexHtml(request, response, realStaticRoot) {
     return;
   }
   const indexHtml = await readFile(realIndexFile, "utf8");
-  const body = injectPanelBootstrap(indexHtml);
+  const body = injectPanelBootstrap(indexHtml, hostedChatEntry);
   response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-  if (request.method === "HEAD") {
-    response.end();
-    return;
-  }
   response.end(body);
 }
 
-function injectPanelBootstrap(indexHtml) {
-  const script = `<script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat",runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"${panelBasePath}",runtimeProxyBaseUrl:"${panelBasePath}"};</script>`;
+function injectPanelBootstrap(indexHtml, hostedChatEntry) {
+  const entryMode = hostedChatEntry ? `entryMode:"hosted_chat",` : "";
+  const script = `<script>window.__yetAiInitialRuntimeConfig={${entryMode}runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"${panelBasePath}",runtimeProxyBaseUrl:"${panelBasePath}"};</script>`;
   return indexHtml.includes("<head>") ? indexHtml.replace("<head>", `<head>\n${script}`) : `${script}\n${indexHtml}`;
 }
 
@@ -3752,7 +3774,7 @@ function contentType(filePath) {
     return "text/html; charset=utf-8";
   }
   if (filePath.endsWith(".js")) {
-    return "text/javascript; charset=utf-8";
+    return "application/javascript; charset=utf-8";
   }
   if (filePath.endsWith(".css")) {
     return "text/css; charset=utf-8";
