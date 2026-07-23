@@ -2,6 +2,7 @@ import org.gradle.api.GradleException
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.testing.Test
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Instant
@@ -223,6 +224,20 @@ tasks {
         description = "Prints production JetBrains wrapper HTML for browser smoke inputs."
         classpath = sourceSets["test"].runtimeClasspath
         mainClass.set("ai.yet.plugin.ui.SmokeRenderWrapperHtmlKt")
+    }
+
+    register("smokePackagedGuiServerBehavior") {
+        group = "verification"
+        description = "Verifies production packaged GUI panel behavior with current generated resources."
+        dependsOn(test)
+    }
+
+    named<Test>("test") {
+        if (gradle.startParameter.taskNames.any { it.substringAfterLast(':') == "smokePackagedGuiServerBehavior" }) {
+            filter {
+                includeTestsMatching("ai.yet.plugin.ui.PackagedGuiServerArtifactSmokeTest")
+            }
+        }
     }
 
     patchPluginXml {

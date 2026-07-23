@@ -37,6 +37,10 @@ if (rootDistZipPath === undefined) {
 
 await checkDocs();
 
+if (failures.length === 0) {
+  checkPackagedGuiServerBehavior();
+}
+
 if (failures.length > 0) {
   console.error("JetBrains installable ZIP smoke failed:");
   for (const failure of failures) {
@@ -53,6 +57,21 @@ if (rootDistZipPath !== undefined) {
   console.log(`Checked ${path.relative(root, rootDistZipPath)} and checksum.`);
 }
 console.log("Verified installable ZIP structure and manual install docs without launching an IDE. No provider credentials are required or used; the smoke does not call OpenAI or contact hosted Yet AI services.");
+
+function checkPackagedGuiServerBehavior() {
+  const result = spawnSync("gradle", ["smokePackagedGuiServerBehavior", "--quiet", "--console=plain"], {
+    cwd: jetbrainsRoot,
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+  });
+  if (result.status !== 0) {
+    failures.push("Production packaged GUI server behavior smoke failed. Rebuild the current JetBrains preview and rerun the installable smoke.");
+    return;
+  }
+  console.log("Verified production JVM packaged GUI hosted entry and panel-relative JavaScript/CSS behavior without launching JCEF.");
+}
 
 async function readGradleProjectVersion() {
   const buildFile = await readFile(path.join(jetbrainsRoot, "build.gradle.kts"), "utf8");
