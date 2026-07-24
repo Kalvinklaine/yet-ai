@@ -22,6 +22,7 @@ const gradleCommandSelfCheck = process.argv.includes("--self-check-gradle-comman
 
 if (gradleCommandSelfCheck) {
   assertGradleArtifactSmokeCommandSelfCheck();
+  assertArtifactSmokeMarkerSelfCheck();
   console.log("Gradle artifact smoke command self-check passed.");
   process.exit(0);
 }
@@ -36,16 +37,17 @@ if (zipPaths.length === 0) {
 }
 
 const rootDistZipPath = await findRootDistZip();
+let rootArtifactHashes;
 if (rootDistZipPath === undefined) {
   failures.push("No root JetBrains dev-preview artifact found under dist/plugins/jetbrains/. Run `npm run prepare:jetbrains-preview` first.");
 } else {
-  await checkRootDistArtifact(rootDistZipPath);
+  rootArtifactHashes = await checkRootDistArtifact(rootDistZipPath);
 }
 
 await checkDocs();
 
 if (failures.length === 0) {
-  checkPackagedGuiServerBehavior(rootDistZipPath);
+  checkPackagedGuiServerBehavior(rootDistZipPath, rootArtifactHashes);
 }
 
 if (failures.length > 0) {
@@ -65,7 +67,7 @@ if (rootDistZipPath !== undefined) {
 }
 console.log("Verified installable ZIP structure and manual install docs without launching an IDE. No provider credentials are required or used; the smoke does not call OpenAI or contact hosted Yet AI services.");
 
-function checkPackagedGuiServerBehavior(rootZipPath) {
+function checkPackagedGuiServerBehavior(rootZipPath, expectedHashes) {
   const command = buildGradleArtifactSmokeCommand(process.platform);
   const result = spawnSync(command.file, command.args, {
     cwd: jetbrainsRoot,
@@ -80,8 +82,7 @@ function checkPackagedGuiServerBehavior(rootZipPath) {
     return;
   }
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  const markers = output.match(/^PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 jarSha256=[a-f0-9]{64} zipSha256=[a-f0-9]{64}$/gm) ?? [];
-  if (markers.length !== 1) {
+  if (!artifactSmokeMarkerMatches(output, expectedHashes)) {
     failures.push("Production packaged GUI server behavior smoke did not report one executed artifact-backed test.");
     return;
   }
@@ -100,6 +101,29 @@ function assertGradleArtifactSmokeCommandSelfCheck() {
   const args = ["smokePackagedGuiServerBehavior", "--console=plain"];
   assertDeepEqual(buildGradleArtifactSmokeCommand("win32"), { file: "cmd.exe", args: ["/d", "/s", "/c", "gradle.bat", ...args] }, "Windows Gradle artifact smoke command shape");
   assertDeepEqual(buildGradleArtifactSmokeCommand("darwin"), { file: "gradle", args }, "POSIX Gradle artifact smoke command shape");
+}
+
+function assertArtifactSmokeMarkerSelfCheck() {
+  const jarSha256 = "a".repeat(64);
+  const zipSha256 = "b".repeat(64);
+  const marker = `PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 jarSha256=${jarSha256} zipSha256=${zipSha256}`;
+  const expected = { jarSha256, zipSha256 };
+  assertDeepEqual(artifactSmokeMarkerMatches(marker, expected), true, "matching artifact smoke marker");
+  assertDeepEqual(artifactSmokeMarkerMatches(`${marker}\n${marker}`, expected), false, "duplicate artifact smoke marker");
+  assertDeepEqual(artifactSmokeMarkerMatches(`${marker} trailing`, expected), false, "malformed artifact smoke marker");
+  assertDeepEqual(artifactSmokeMarkerMatches(marker, { jarSha256: "c".repeat(64), zipSha256 }), false, "mismatched artifact JAR hash");
+  assertDeepEqual(artifactSmokeMarkerMatches(marker, { jarSha256, zipSha256: "c".repeat(64) }), false, "mismatched artifact ZIP hash");
+}
+
+function artifactSmokeMarkerMatches(output, expectedHashes) {
+  if (expectedHashes === undefined) {
+    return false;
+  }
+  const markerPattern = /^PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 jarSha256=(?<jarSha256>[a-f0-9]{64}) zipSha256=(?<zipSha256>[a-f0-9]{64})$/gm;
+  const markers = [...output.matchAll(markerPattern)];
+  return markers.length === 1 &&
+    markers[0].groups?.jarSha256 === expectedHashes.jarSha256 &&
+    markers[0].groups?.zipSha256 === expectedHashes.zipSha256;
 }
 
 function assertDeepEqual(actual, expected, label) {
@@ -147,9 +171,14 @@ async function checkRootDistArtifact(zipPath) {
   if (path.basename(zipPath) !== expectedName) {
     failures.push(`${relativeZip} must use the stable ${expectedName} naming pattern for the current JetBrains plugin version.`);
   }
-  await checkChecksum(zipPath);
+  const zipSha256 = await checkChecksum(zipPath);
   await checkFreshness(zipPath, await collectRootArtifactInputs(), `${relativeZip} is older than JetBrains preview build inputs.`);
   await checkZip(zipPath);
+  if (zipSha256 === undefined) {
+    return undefined;
+  }
+  const jarSha256 = await readNestedProductionJarSha256(zipPath);
+  return jarSha256 === undefined ? undefined : { zipSha256, jarSha256 };
 }
 
 async function checkChecksum(zipPath) {
@@ -159,14 +188,14 @@ async function checkChecksum(zipPath) {
     checksumText = await readFile(checksumPath, "utf8");
   } catch {
     failures.push(`${path.relative(root, checksumPath)} must exist next to the root dev-preview ZIP.`);
-    return;
+    return undefined;
   }
   const parts = checksumText.trim().split(/\s+/);
   const expected = parts[0];
   const checksumFileName = parts[1];
   if (!expected?.match(/^[a-f0-9]{64}$/i)) {
     failures.push(`${path.relative(root, checksumPath)} must contain a SHA-256 digest.`);
-    return;
+    return undefined;
   }
   if (checksumFileName !== undefined && checksumFileName !== path.basename(zipPath)) {
     failures.push(`${path.relative(root, checksumPath)} must reference ${path.basename(zipPath)}.`);
@@ -174,7 +203,29 @@ async function checkChecksum(zipPath) {
   const actual = createHash("sha256").update(await readFile(zipPath)).digest("hex");
   if (actual.toLowerCase() !== expected.toLowerCase()) {
     failures.push(`${path.relative(root, checksumPath)} does not match ${path.relative(root, zipPath)}.`);
+    return undefined;
   }
+  return actual;
+}
+
+async function readNestedProductionJarSha256(zipPath) {
+  const listing = listZip(zipPath);
+  if (listing === undefined) {
+    return undefined;
+  }
+  const pluginJars = listing.split(/\r?\n/).filter((entry) =>
+    /^[^/]+\/lib\/yet-ai-jetbrains-[^/]+\.jar$/.test(entry) && !entry.endsWith("-searchableOptions.jar")
+  );
+  if (pluginJars.length !== 1) {
+    failures.push("The root JetBrains dev-preview ZIP must contain exactly one production plugin JAR.");
+    return undefined;
+  }
+  const jarBytes = await extractZipEntryBytes(zipPath, pluginJars[0]);
+  if (jarBytes === undefined) {
+    failures.push("The root JetBrains dev-preview ZIP production plugin JAR could not be read.");
+    return undefined;
+  }
+  return createHash("sha256").update(jarBytes).digest("hex");
 }
 
 async function collectRootArtifactInputs() {

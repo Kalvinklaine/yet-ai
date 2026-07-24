@@ -223,6 +223,16 @@ tasks {
         filter {
             excludeTestsMatching("ai.yet.plugin.ui.PackagedGuiServerArtifactSmokeTest")
         }
+        val artifactSmokeClass = "ai.yet.plugin.ui.PackagedGuiServerArtifactSmokeTest"
+        val explicitlyRequested = gradle.startParameter.taskRequests
+            .flatMap { it.args }
+            .windowed(2)
+            .any { (option, pattern) ->
+                option == "--tests" && (pattern == artifactSmokeClass || pattern.startsWith("$artifactSmokeClass."))
+        }
+        if (explicitlyRequested) {
+            throw GradleException("Use `gradle smokePackagedGuiServerBehavior` for PackagedGuiServerArtifactSmokeTest.")
+        }
     }
 
     register<JavaExec>("printSmokeWrapperHtml") {
