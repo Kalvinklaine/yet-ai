@@ -59,7 +59,7 @@ if (rootDistZipPath !== undefined) {
 console.log("Verified installable ZIP structure and manual install docs without launching an IDE. No provider credentials are required or used; the smoke does not call OpenAI or contact hosted Yet AI services.");
 
 function checkPackagedGuiServerBehavior() {
-  const result = spawnSync("gradle", ["smokePackagedGuiServerBehavior", "--quiet", "--console=plain"], {
+  const result = spawnSync("gradle", ["smokePackagedGuiServerBehavior", "--console=plain", "--rerun-tasks"], {
     cwd: jetbrainsRoot,
     encoding: "utf8",
     maxBuffer: 1024 * 1024,
@@ -68,6 +68,11 @@ function checkPackagedGuiServerBehavior() {
   });
   if (result.status !== 0) {
     failures.push("Production packaged GUI server behavior smoke failed. Rebuild the current JetBrains preview and rerun the installable smoke.");
+    return;
+  }
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  if (!/^PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 sha256=[a-f0-9]{64}$/m.test(output)) {
+    failures.push("Production packaged GUI server behavior smoke did not report one executed artifact-backed test.");
     return;
   }
   console.log("Verified production JVM packaged GUI hosted entry and panel-relative JavaScript/CSS behavior without launching JCEF.");

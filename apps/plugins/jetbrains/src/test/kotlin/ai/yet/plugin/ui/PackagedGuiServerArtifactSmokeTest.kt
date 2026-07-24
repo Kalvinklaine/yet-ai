@@ -3,6 +3,7 @@ package ai.yet.plugin.ui
 import ai.yet.plugin.runtime.RuntimeSettings
 import java.net.HttpURLConnection
 import java.net.URI
+import java.security.MessageDigest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -10,6 +11,18 @@ import kotlin.test.assertTrue
 class PackagedGuiServerArtifactSmokeTest {
     @Test
     fun currentPackagedGuiAssetsResolveThroughProductionPanelRoutes() {
+        val classBytes = requireNotNull(PackagedGuiServer::class.java.getResourceAsStream("/ai/yet/plugin/ui/PackagedGuiServer.class"))
+            .use { it.readBytes() }
+        val indexBytes = requireNotNull(PackagedGuiServer::class.java.getResourceAsStream("/yet-ai-gui/index.html"))
+            .use { it.readBytes() }
+        val expectedClassSha = System.getProperty("yetAi.packagedSmokeClassSha256")
+        val expectedIndexSha = System.getProperty("yetAi.packagedSmokeIndexSha256")
+        assertEquals(expectedClassSha == null, expectedIndexSha == null)
+        if (expectedClassSha != null && expectedIndexSha != null) {
+            assertEquals(expectedClassSha, sha256(classBytes))
+            assertEquals(expectedIndexSha, sha256(indexBytes))
+        }
+
         val server = PackagedGuiServer()
         try {
             val gui = requireNotNull(server.start())
@@ -45,6 +58,10 @@ class PackagedGuiServerArtifactSmokeTest {
         }
     }
 }
+
+private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+    .digest(bytes)
+    .joinToString("") { "%02x".format(it) }
 
 private data class ArtifactSmokeResponse(
     val status: Int,
