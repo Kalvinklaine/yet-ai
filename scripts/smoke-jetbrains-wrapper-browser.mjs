@@ -174,6 +174,7 @@ if (gradleCommandSelfCheck) {
 }
 
 assertJetBrainsParityContract();
+assertSameNonceRetryEvidenceSelfCheck();
 await requireFreshPackagedGui();
 
 let chromium;
@@ -864,14 +865,46 @@ async function assertSameNonceRetryRecovered(page) {
     acceptedRetryUsedSameNonceAsFirstReady: window.__yetAiSmokeAcceptedRetryUsedSameNonceAsFirstReady === true,
     accepted: window.__yetAiIframeGuiReady === true,
   }));
-  if (!state.firstReadyIgnored || !state.scenarioConsumed || state.scenarioArmed || !state.accepted) {
-    failures.push(`Wrapper smoke did not ignore the first valid gui.ready and recover on retry: ${JSON.stringify(state)}.`);
+  if (!isSameNonceRetryEvidenceAccepted(state)) {
+    failures.push(`Wrapper smoke did not prove ignored-first-ready recovery with an accepted same-nonce retry in the same frame generation: ${JSON.stringify(state)}.`);
   }
-  if (state.validReadyAttemptCount < 2 || state.challengeCount < 2 || state.acceptedReadyChallengeCount <= state.firstReadyChallengeCount) {
-    failures.push(`Wrapper smoke did not observe a later nonce challenge and gui.ready retry: ${JSON.stringify(state)}.`);
-  }
-  if (!state.retriedInSameFrameGeneration || !state.acceptedRetryUsedSameNonceAsFirstReady) {
-    failures.push(`Wrapper smoke did not prove the accepted retry used the first ready attempt's nonce in the same frame generation: ${JSON.stringify(state)}.`);
+}
+
+function isSameNonceRetryEvidenceAccepted(state) {
+  return state.firstReadyIgnored === true
+    && state.scenarioConsumed === true
+    && state.scenarioArmed === false
+    && state.validReadyAttemptCount >= 2
+    && state.challengeCount >= 1
+    && state.retriedInSameFrameGeneration === true
+    && state.acceptedRetryUsedSameNonceAsFirstReady === true
+    && state.accepted === true;
+}
+
+function assertSameNonceRetryEvidenceSelfCheck() {
+  const ciState = {
+    challengeCount: 4,
+    validReadyAttemptCount: 2,
+    firstReadyIgnored: true,
+    firstReadyChallengeCount: 4,
+    acceptedReadyChallengeCount: 4,
+    scenarioArmed: false,
+    scenarioConsumed: true,
+    retriedInSameFrameGeneration: true,
+    acceptedRetryUsedSameNonceAsFirstReady: true,
+    accepted: true,
+  };
+  assertDeepEqual(isSameNonceRetryEvidenceAccepted(ciState), true, "Equal-challenge same-nonce retry evidence");
+  for (const [label, state] of [
+    ["first ready not ignored", { ...ciState, firstReadyIgnored: false }],
+    ["missing retry", { ...ciState, validReadyAttemptCount: 1 }],
+    ["missing acceptance", { ...ciState, accepted: false }],
+    ["different frame generation", { ...ciState, retriedInSameFrameGeneration: false }],
+    ["different nonce", { ...ciState, acceptedRetryUsedSameNonceAsFirstReady: false }],
+    ["missing nonce challenge", { ...ciState, challengeCount: 0 }],
+    ["unconsumed scenario", { ...ciState, scenarioArmed: true, scenarioConsumed: false }],
+  ]) {
+    assertDeepEqual(isSameNonceRetryEvidenceAccepted(state), false, `Rejected ${label} evidence`);
   }
 }
 
