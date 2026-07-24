@@ -25,6 +25,7 @@ const pluginLikeViewport = { width: 800, height: 800 };
 const headed = process.argv.includes("--headed");
 const demoModeFirstMessage = process.argv.includes("--demo-mode-first-message");
 const gradleCommandSelfCheck = process.argv.includes("--self-check-gradle-command");
+const sameNonceRetryFailureSelfCheck = process.argv.includes("--self-check-same-nonce-retry-failure-reporting");
 const failures = [];
 const runtimeToken = `jb.wrapper.runtime.${randomUUID().replaceAll("-", "")}`;
 const panelId = `panel-${randomUUID().replaceAll("-", "")}`;
@@ -174,7 +175,7 @@ if (gradleCommandSelfCheck) {
 }
 
 assertJetBrainsParityContract();
-assertSameNonceRetryEvidenceSelfCheck();
+runSameNonceRetryEvidenceSelfCheck();
 await requireFreshPackagedGui();
 
 let chromium;
@@ -879,6 +880,19 @@ function isSameNonceRetryEvidenceAccepted(state) {
     && state.retriedInSameFrameGeneration === true
     && state.acceptedRetryUsedSameNonceAsFirstReady === true
     && state.accepted === true;
+}
+
+function runSameNonceRetryEvidenceSelfCheck() {
+  try {
+    assertSameNonceRetryEvidenceSelfCheck();
+    if (sameNonceRetryFailureSelfCheck) {
+      throw new Error(`Deterministic failure at ${path.join(root, "scripts", "smoke-jetbrains-wrapper-browser.mjs")}`);
+    }
+  } catch (error) {
+    const message = sanitizeEvidenceText(messageOf(error)).replace(/\s+/g, " ").slice(0, 1000);
+    failures.push(`Same-nonce retry evidence self-check failed: ${message || "Unknown assertion failure"}.`);
+    reportFailures();
+  }
 }
 
 function assertSameNonceRetryEvidenceSelfCheck() {
