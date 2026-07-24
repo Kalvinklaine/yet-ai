@@ -18,6 +18,13 @@ const bundledEngineResourcePath = `yet-ai-engine/${binaryFileName}`;
 const expectedPluginVersion = await readGradleProjectVersion();
 const staleToleranceMs = 2000;
 const prepareMessage = "Run `npm run prepare:jetbrains-preview` from the repository root to rebuild generated JetBrains preview artifacts.";
+const gradleCommandSelfCheck = process.argv.includes("--self-check-gradle-command");
+
+if (gradleCommandSelfCheck) {
+  assertGradleArtifactSmokeCommandSelfCheck();
+  console.log("Gradle artifact smoke command self-check passed.");
+  process.exit(0);
+}
 
 const zipPaths = await findDistributionZips();
 if (zipPaths.length === 0) {
@@ -38,7 +45,7 @@ if (rootDistZipPath === undefined) {
 await checkDocs();
 
 if (failures.length === 0) {
-  checkPackagedGuiServerBehavior();
+  checkPackagedGuiServerBehavior(rootDistZipPath);
 }
 
 if (failures.length > 0) {
@@ -58,24 +65,47 @@ if (rootDistZipPath !== undefined) {
 }
 console.log("Verified installable ZIP structure and manual install docs without launching an IDE. No provider credentials are required or used; the smoke does not call OpenAI or contact hosted Yet AI services.");
 
-function checkPackagedGuiServerBehavior() {
-  const result = spawnSync("gradle", ["smokePackagedGuiServerBehavior", "--console=plain", "--rerun-tasks"], {
+function checkPackagedGuiServerBehavior(rootZipPath) {
+  const command = buildGradleArtifactSmokeCommand(process.platform);
+  const result = spawnSync(command.file, command.args, {
     cwd: jetbrainsRoot,
     encoding: "utf8",
     maxBuffer: 1024 * 1024,
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
+    env: { ...process.env, YET_AI_INSTALLABLE_SMOKE_ZIP: path.normalize(path.resolve(rootZipPath)) },
   });
   if (result.status !== 0) {
     failures.push("Production packaged GUI server behavior smoke failed. Rebuild the current JetBrains preview and rerun the installable smoke.");
     return;
   }
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-  if (!/^PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 sha256=[a-f0-9]{64}$/m.test(output)) {
+  const markers = output.match(/^PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 jarSha256=[a-f0-9]{64} zipSha256=[a-f0-9]{64}$/gm) ?? [];
+  if (markers.length !== 1) {
     failures.push("Production packaged GUI server behavior smoke did not report one executed artifact-backed test.");
     return;
   }
   console.log("Verified production JVM packaged GUI hosted entry and panel-relative JavaScript/CSS behavior without launching JCEF.");
+}
+
+function buildGradleArtifactSmokeCommand(platform) {
+  const gradleArgs = ["smokePackagedGuiServerBehavior", "--console=plain"];
+  if (platform === "win32") {
+    return { file: "cmd.exe", args: ["/d", "/s", "/c", "gradle.bat", ...gradleArgs] };
+  }
+  return { file: "gradle", args: gradleArgs };
+}
+
+function assertGradleArtifactSmokeCommandSelfCheck() {
+  const args = ["smokePackagedGuiServerBehavior", "--console=plain"];
+  assertDeepEqual(buildGradleArtifactSmokeCommand("win32"), { file: "cmd.exe", args: ["/d", "/s", "/c", "gradle.bat", ...args] }, "Windows Gradle artifact smoke command shape");
+  assertDeepEqual(buildGradleArtifactSmokeCommand("darwin"), { file: "gradle", args }, "POSIX Gradle artifact smoke command shape");
+}
+
+function assertDeepEqual(actual, expected, label) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label} mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
 }
 
 async function readGradleProjectVersion() {

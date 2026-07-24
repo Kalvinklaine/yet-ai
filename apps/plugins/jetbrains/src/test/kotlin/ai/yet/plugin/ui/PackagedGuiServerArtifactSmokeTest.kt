@@ -16,12 +16,14 @@ class PackagedGuiServerArtifactSmokeTest {
         val indexBytes = requireNotNull(PackagedGuiServer::class.java.getResourceAsStream("/yet-ai-gui/index.html"))
             .use { it.readBytes() }
         val expectedClassSha = System.getProperty("yetAi.packagedSmokeClassSha256")
+            ?: error("Missing required artifact identity property yetAi.packagedSmokeClassSha256")
         val expectedIndexSha = System.getProperty("yetAi.packagedSmokeIndexSha256")
-        assertEquals(expectedClassSha == null, expectedIndexSha == null)
-        if (expectedClassSha != null && expectedIndexSha != null) {
-            assertEquals(expectedClassSha, sha256(classBytes))
-            assertEquals(expectedIndexSha, sha256(indexBytes))
-        }
+            ?: error("Missing required artifact identity property yetAi.packagedSmokeIndexSha256")
+        val expectedRootZipSha = System.getProperty("yetAi.packagedSmokeRootZipSha256")
+            ?: error("Missing required artifact identity property yetAi.packagedSmokeRootZipSha256")
+        assertTrue(expectedRootZipSha.matches(Regex("[a-f0-9]{64}")))
+        assertEquals(expectedClassSha, sha256(classBytes))
+        assertEquals(expectedIndexSha, sha256(indexBytes))
 
         val server = PackagedGuiServer()
         try {

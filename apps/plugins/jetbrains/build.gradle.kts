@@ -56,7 +56,7 @@ val packagedEngineResourcesDir = layout.buildDirectory.dir("generated/resources/
 val artifactMetadataResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-artifact")
 val stagedEngineBinary = packagedEngineResourcesDir.map { it.file("yet-ai-engine/$engineBinaryFileName") }
 val artifactMetadataFile = artifactMetadataResourcesDir.map { it.file("yet-ai-artifact/build.properties") }
-val installablePluginZip = layout.buildDirectory.file("distributions/${rootProject.name}-${project.version}.zip")
+val installableSmokeZipPath = providers.environmentVariable("YET_AI_INSTALLABLE_SMOKE_ZIP")
 
 fun sha256(file: java.io.File): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -220,6 +220,9 @@ tasks {
 
     test {
         useJUnitPlatform()
+        filter {
+            excludeTestsMatching("ai.yet.plugin.ui.PackagedGuiServerArtifactSmokeTest")
+        }
     }
 
     register<JavaExec>("printSmokeWrapperHtml") {
@@ -243,7 +246,7 @@ tasks {
         inputs.file(packagedPluginJar)
             .withPropertyName("packagedPluginJar")
             .withPathSensitivity(PathSensitivity.NONE)
-        inputs.file(installablePluginZip)
+        inputs.file(installableSmokeZipPath)
             .withPropertyName("installablePluginZip")
             .withPathSensitivity(PathSensitivity.NONE)
         outputs.upToDateWhen { false }
@@ -256,7 +259,13 @@ tasks {
             executable = configuredTest.executable
             jvmArgs(configuredTest.allJvmArgs)
             val composedJarFile = packagedPluginJar.get().asFile
-            val installableZipFile = installablePluginZip.get().asFile
+            val configuredZipPath = installableSmokeZipPath.orNull
+                ?: throw GradleException("The dedicated artifact smoke requires YET_AI_INSTALLABLE_SMOKE_ZIP.")
+            val installableZipFile = file(configuredZipPath).canonicalFile
+            val rootDistDirectory = layout.projectDirectory.dir("../../../dist/plugins/jetbrains").asFile.canonicalFile
+            if (!installableZipFile.isFile || installableZipFile.parentFile != rootDistDirectory || !installableZipFile.name.endsWith("-dev-preview.zip")) {
+                throw GradleException("The dedicated artifact smoke ZIP must be an existing root dev-preview ZIP under dist/plugins/jetbrains/.")
+            }
             val nestedJarBytes = ZipFile(installableZipFile).use { zip ->
                 val pluginJars = zip.entries().asSequence()
                     .filter {
@@ -275,6 +284,7 @@ tasks {
             if (composedSha != nestedSha) {
                 throw GradleException("Installable plugin production JAR does not match the composed JAR executed by the smoke test.")
             }
+            systemProperty("yetAi.packagedSmokeRootZipSha256", sha256(installableZipFile))
             ZipFile(composedJarFile).use { jar ->
                 mapOf(
                     "yetAi.packagedSmokeClassSha256" to "ai/yet/plugin/ui/PackagedGuiServer.class",
@@ -295,7 +305,7 @@ tasks {
             if (executedTests != 1L) {
                 throw GradleException("Packaged GUI server behavior smoke must execute exactly one test; executed $executedTests.")
             }
-            println("PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 sha256=${sha256(packagedPluginJar.get().asFile)}")
+            println("PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 jarSha256=${sha256(packagedPluginJar.get().asFile)} zipSha256=${sha256(file(installableSmokeZipPath.get()))}")
         }
     }
 
