@@ -164,7 +164,7 @@ describe("ProjectRouterShell", () => {
   });
 
   it("follows real browser back and forward popstate changes across chat and page routes", () => {
-    const projectId = "prj_abcdefghijklmnopqrstuv" as never;
+    const projectId = "prj_abcdefghijklmnopqrstuA" as never;
     window.history.replaceState(null, "", `/p/${projectId}/chat/chat-a`);
     const container = document.createElement("div");
     document.body.append(container);

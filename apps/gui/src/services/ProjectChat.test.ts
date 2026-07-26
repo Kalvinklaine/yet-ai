@@ -3,8 +3,8 @@ import { createProjectRuntimeSettings } from "./projectClient";
 import { createChat, deleteChat, getChat, listChats, sendAbort, sendUserMessage } from "./runtimeClient";
 
 const fetchMock = vi.fn();
-const projectA = "prj_abcdefghijklmnopqrstuv";
-const projectB = "prj_bcdefghijklmnopqrstuvw";
+const projectA = "prj_abcdefghijklmnopqrstuA";
+const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBQ";
 
 afterEach(() => vi.unstubAllGlobals());
 

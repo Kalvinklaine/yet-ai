@@ -7,7 +7,7 @@ import { parseProjectId } from "../services/projectRouting";
 
 vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), getProject: vi.fn() }));
 const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
-const projectId = parseProjectId("prj_abcdefghijklmnopqrstuv")!;
+const projectId = parseProjectId("prj_abcdefghijklmnopqrstuA")!;
 const project = { projectId, displayName: "Quiet Garden", status: "available" as const, revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false as const, providerAccess: "direct" as const };
 let root: ReactDOM.Root | undefined;
 afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ""; vi.restoreAllMocks(); });
@@ -30,7 +30,7 @@ describe("ProjectShell", () => {
   });
 
   it("ignores a late project response after the route changes", async () => {
-    const secondId = parseProjectId("prj_1234567890123456789012")!;
+    const secondId = parseProjectId("prj_123456789012345678901g")!;
     let resolveFirst!: (value: Awaited<ReturnType<typeof client.getProject>>) => void;
     vi.mocked(client.getProject)
       .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))

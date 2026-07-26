@@ -70,7 +70,7 @@ describe("ProjectRegistrationDialog", () => {
   it("navigates opaque entries and registers the selected directory", async () => {
     vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "pds_safe", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "dir_root", displayName: "Home", selectable: false }, cloudRequired: false, providerAccess: "direct" } });
     vi.mocked(client.listDirectoryDiscovery).mockResolvedValueOnce({ ok: true, data: { sessionId: "pds_safe", directoryHandle: "dir_root", expiresAt: "2027-01-01T00:00:00Z", entries: [{ handle: "dir_child", displayName: "Garden", selectable: true }], cloudRequired: false, providerAccess: "direct" } }).mockResolvedValueOnce({ ok: true, data: { sessionId: "pds_safe", directoryHandle: "dir_child", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
-    const project = { projectId: "prj_abcdefghijklmnopqrstuv" as client.ProjectSummary["projectId"], displayName: "Garden", status: "available" as const, revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false as const, providerAccess: "direct" as const };
+    const project = { projectId: "prj_abcdefghijklmnopqrstuA" as client.ProjectSummary["projectId"], displayName: "Garden", status: "available" as const, revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false as const, providerAccess: "direct" as const };
     vi.mocked(client.registerProject).mockResolvedValue({ ok: true, data: project });
     const onRegistered = vi.fn(); const container = document.createElement("div"); document.body.append(container);
     await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectRegistrationDialog settings={settings} onClose={vi.fn()} onRegistered={onRegistered} />); });
@@ -100,7 +100,7 @@ describe("ProjectRegistrationDialog", () => {
     const signal = vi.mocked(client.registerProject).mock.calls[0][2];
     await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Cancel") as HTMLButtonElement).click(); });
     expect(signal?.aborted).toBe(true);
-    await act(async () => { pending.resolve({ ok: true, data: { projectId: "prj_abcdefghijklmnopqrstuv" as client.ProjectSummary["projectId"], displayName: "Home", status: "available", revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false, providerAccess: "direct" } }); await pending.promise; });
+    await act(async () => { pending.resolve({ ok: true, data: { projectId: "prj_abcdefghijklmnopqrstuA" as client.ProjectSummary["projectId"], displayName: "Home", status: "available", revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false, providerAccess: "direct" } }); await pending.promise; });
     expect(onClose).toHaveBeenCalledOnce();
     expect(onRegistered).not.toHaveBeenCalled();
   });

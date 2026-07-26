@@ -409,7 +409,7 @@ describe("runtimeClient", () => {
   it("uses the explicit project API base for chat CRUD and commands", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ chats: [] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const projectId = "prj_abcdefghijklmnopqrstuv";
+    const projectId = "prj_abcdefghijklmnopqrstuA";
     const settings = createProjectRuntimeSettings({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, projectId);
 
     await listChats(settings);
@@ -430,14 +430,14 @@ describe("runtimeClient", () => {
   });
 
   it("rejects incomplete or mismatched project settings instead of falling back", () => {
-    const projectId = "prj_abcdefghijklmnopqrstuv";
+    const projectId = "prj_abcdefghijklmnopqrstuA";
     expect(() => chatApiPath({ baseUrl: "/", token: "", projectScope: { projectId: projectId as never } } as never, "/chats")).toThrow("incomplete");
     expect(() => chatApiPath({ baseUrl: "/", token: "", projectScope: { projectId: projectId as never }, apiBase: "/v1" } as never, "/chats")).toThrow("invalid");
   });
 
   it("aborts project fetches when their lifecycle scope is invalidated", async () => {
     const controller = new AbortController();
-    const projectId = "prj_abcdefghijklmnopqrstuv";
+    const projectId = "prj_abcdefghijklmnopqrstuA";
     const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
       init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
     }));

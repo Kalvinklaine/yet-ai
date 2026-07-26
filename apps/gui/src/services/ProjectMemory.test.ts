@@ -3,7 +3,7 @@ import { createProjectRuntimeSettings } from "./projectClient";
 import { createProjectMemory, deleteProjectMemory, listProjectMemory, searchProjectMemory } from "./projectMemoryClient";
 
 const fetchMock = vi.fn();
-const projectId = "prj_abcdefghijklmnopqrstuv";
+const projectId = "prj_abcdefghijklmnopqrstuA";
 
 afterEach(() => vi.unstubAllGlobals());
 

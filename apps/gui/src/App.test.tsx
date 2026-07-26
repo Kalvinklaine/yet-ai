@@ -153,7 +153,7 @@ describe("hosted iframe shell layout", () => {
 
 describe("project lifecycle scope", () => {
   const projectA = "prj_AAAAAAAAAAAAAAAAAAAAAA" as never;
-  const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBB" as never;
+  const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBQ" as never;
 
   it.each([
     ["chat", "Project chat", "Local runtime connection", "Provider setup", "Local project memory", "Agent progress"],

@@ -21,6 +21,8 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PackagedGuiServerTest {
+    private val projectId = "prj_abcdefghijklmnopqrstuA"
+
     @Test
     fun partialStartupFailureStopsServersAndExecutorWithoutPublishingRunningState() {
         lateinit var guiServer: HttpServer
@@ -96,6 +98,19 @@ class PackagedGuiServerTest {
 
         assertTrue(decision is PackagedGuiProxyDecision.Forward)
         assertEquals("http://127.0.0.1:8765/v1/ping", decision.request.targetUrl)
+        assertEquals("Bearer safe-test-token", decision.request.headers["Authorization"])
+    }
+
+    @Test
+    fun forwardsCanonicalProjectScopedRequestsWithServerSideAuthorization() {
+        val decision = packagedGuiProxyDecision(
+            "panel-1",
+            "/p/$projectId/v1/chats",
+            mapOf("panel-1" to PackagedGuiPanelRuntime("http://127.0.0.1:8765", "safe-test-token")),
+        )
+
+        assertTrue(decision is PackagedGuiProxyDecision.Forward)
+        assertEquals("http://127.0.0.1:8765/p/$projectId/v1/chats", decision.request.targetUrl)
         assertEquals("Bearer safe-test-token", decision.request.headers["Authorization"])
     }
 
@@ -329,6 +344,16 @@ class PackagedGuiServerTest {
         assertEquals(PackagedGuiProxyDecision.Reject, packagedGuiProxyDecision("missing", "/v1/ping", panels))
         assertEquals(PackagedGuiProxyDecision.Reject, packagedGuiProxyDecision("../panel-1", "/v1/ping", panels))
         assertEquals(PackagedGuiProxyDecision.Reject, packagedGuiProxyDecision("panel-1", "/assets/index.js", panels))
+        for (path in listOf(
+            "/p/prj_abcdefghijklmnopqrstuv/v1/chats",
+            "/p/prj_AAAAAAAAAAAAAAAAAAAAAB/v1/chats",
+            "/p/$projectId/v2/chats",
+            "/p/$projectId/v1/../projects",
+            "/p/$projectId/v1/%2e%2e/projects",
+            "/projects/$projectId/v1/chats",
+        )) {
+            assertEquals(PackagedGuiProxyDecision.Reject, packagedGuiProxyDecision("panel-1", path, panels), path)
+        }
     }
 
     @Test
@@ -363,6 +388,44 @@ class PackagedGuiServerTest {
             assertEquals("present", diagnostics.authInjectedUpstream)
             assertEquals("panel-1", diagnostics.safeSessionId)
             assertEquals("200", diagnostics.upstreamStatus)
+        }
+    }
+
+    @Test
+    fun registeredPanelProxyForwardsProjectDashboardAndChatApis() = withRuntimeServer { runtime ->
+        withPackagedServer(mapOf("panel-1" to PackagedGuiPanelRuntime(runtime.origin, "private-project-token"))) { proxy ->
+            val requests = listOf(
+                Triple("/v1/projects/$projectId?view=summary%20only", "GET", null),
+                Triple("/p/$projectId/v1/chats?limit=20%26safe", "GET", null),
+                Triple("/p/$projectId/v1/agent-progress", "GET", null),
+                Triple("/p/$projectId/v1/chats", "POST", "{\"title\":\"New chat\"}"),
+            )
+
+            requests.forEach { (path, method, body) ->
+                assertEquals(200, request("${proxy.origin}/panel/panel-1$path", method, body).status)
+            }
+
+            assertEquals(requests.map { it.first }, runtime.requests.map { it.target })
+            assertEquals(requests.map { it.second }, runtime.requests.map { it.method })
+            assertEquals(requests.map { it.third.orEmpty() }, runtime.requests.map { it.body })
+            assertTrue(runtime.requests.all { it.authorization == "Bearer private-project-token" })
+            assertFalse(runtime.requests.toString().contains("Authorization"))
+        }
+    }
+
+    @Test
+    fun panelProxyRejectsInvalidProjectRoutesBeforeRuntime() = withRuntimeServer { runtime ->
+        withPackagedServer(mapOf("panel-1" to PackagedGuiPanelRuntime(runtime.origin, "private-project-token"))) { proxy ->
+            for (path in listOf(
+                "/panel/panel-1/p/prj_abcdefghijklmnopqrstuv/v1/chats",
+                "/panel/panel-1/p/prj_AAAAAAAAAAAAAAAAAAAAAB/v1/chats",
+                "/panel/panel-1/p/$projectId/v1/%252e%252e/projects",
+                "/panel/panel-1/p/$projectId/v2/chats",
+                "/p/$projectId/v1/chats",
+            )) {
+                assertEquals(404, request(proxy.origin + path).status, path)
+            }
+            assertEquals(emptyList(), runtime.requests)
         }
     }
 
@@ -431,7 +494,7 @@ class PackagedGuiServerTest {
     }
 
     @Test
-    fun chatSubscriptionStreamsEventsPastOrdinaryReadTimeout() {
+    fun projectChatSubscriptionStreamsEventsPastOrdinaryReadTimeout() {
         val upstreamCanClose = CountDownLatch(1)
         val upstreamClosed = CountDownLatch(1)
         val requests = Collections.synchronizedList(mutableListOf<RuntimeRequest>())
@@ -456,7 +519,7 @@ class PackagedGuiServerTest {
                 mapOf("panel-stream" to PackagedGuiPanelRuntime(runtimeOrigin, "private-stream-token")),
                 proxyTimeouts = PackagedGuiProxyTimeouts(connectMillis = 200, readMillis = 100),
             ) { proxy ->
-                val connection = URI("${proxy.origin}/panel/panel-stream/v1/chats/subscribe?chat_id=chat_1").toURL().openConnection() as HttpURLConnection
+                val connection = URI("${proxy.origin}/panel/panel-stream/p/$projectId/v1/chats/subscribe?chat_id=chat_1").toURL().openConnection() as HttpURLConnection
                 connection.connectTimeout = 2_000
                 connection.readTimeout = 1_000
                 try {
@@ -468,7 +531,7 @@ class PackagedGuiServerTest {
 
                     assertEquals(expected, String(events))
                     assertEquals(1L, upstreamClosed.count)
-                    assertEquals("/v1/chats/subscribe?chat_id=chat_1", requests.single().target)
+                    assertEquals("/p/$projectId/v1/chats/subscribe?chat_id=chat_1", requests.single().target)
                     assertEquals("Bearer private-stream-token", requests.single().authorization)
                     assertFalse(YetProxyAuthDiagnosticsStore.snapshot().toString().contains("private-stream-token"))
                 } finally {
@@ -864,7 +927,7 @@ class PackagedGuiServerTest {
 }
 
 private data class Response(val status: Int, val body: String, val contentType: String?, val cacheControl: String?)
-private data class RuntimeRequest(val target: String, val authorization: String?)
+private data class RuntimeRequest(val target: String, val authorization: String?, val method: String = "GET", val body: String = "")
 
 private class TestServer(private val server: HttpServer, val activeWork: PackagedGuiActiveWorkRegistry) {
     val origin = "http://127.0.0.1:${server.address.port}"
@@ -886,7 +949,12 @@ private fun withRuntimeServer(
     val requests = mutableListOf<RuntimeRequest>()
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
     server.createContext("/") { exchange ->
-        requests.add(RuntimeRequest(exchange.requestURI.rawPath + exchange.requestURI.rawQuery?.let { "?$it" }.orEmpty(), exchange.requestHeaders.getFirst("Authorization")))
+        requests.add(RuntimeRequest(
+            exchange.requestURI.rawPath + exchange.requestURI.rawQuery?.let { "?$it" }.orEmpty(),
+            exchange.requestHeaders.getFirst("Authorization"),
+            exchange.requestMethod,
+            exchange.requestBody.use { String(it.readBytes()) },
+        ))
         if (delayMillis > 0) Thread.sleep(delayMillis)
         val responseBody = body.toByteArray()
         contentType?.let { exchange.responseHeaders.set("Content-Type", it) }
@@ -960,16 +1028,21 @@ private fun awaitCondition(timeoutMillis: Long = 1_000, condition: () -> Boolean
     return condition()
 }
 
-private fun request(url: String, method: String = "GET"): Response {
+private fun request(url: String, method: String = "GET", body: String? = null): Response {
     val connection = URI(url).toURL().openConnection() as HttpURLConnection
     connection.requestMethod = method
     connection.connectTimeout = 2000
     connection.readTimeout = 2000
+    if (body != null) {
+        connection.doOutput = true
+        connection.setRequestProperty("Content-Type", "application/json")
+        connection.outputStream.use { it.write(body.toByteArray()) }
+    }
     val status = connection.responseCode
     val stream = if (status >= 400) connection.errorStream else connection.inputStream
-    val body = stream?.use { String(it.readBytes()) }.orEmpty()
+    val responseBody = stream?.use { String(it.readBytes()) }.orEmpty()
     val contentType = connection.getHeaderField("Content-Type")
     val cacheControl = connection.getHeaderField("Cache-Control")
     connection.disconnect()
-    return Response(status, body, contentType, cacheControl)
+    return Response(status, responseBody, contentType, cacheControl)
 }

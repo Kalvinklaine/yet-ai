@@ -138,7 +138,7 @@ describe("sseClient", () => {
   it("uses the explicit project API base for chat SSE", async () => {
     fetchMock.mockResolvedValue(sseResponse([snapshot]));
     vi.stubGlobal("fetch", fetchMock);
-    const projectId = "prj_abcdefghijklmnopqrstuv";
+    const projectId = "prj_abcdefghijklmnopqrstuA";
     const settings = createProjectRuntimeSettings({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, projectId);
     vi.stubGlobal("location", new URL(`http://localhost:3000/p/${projectId}/chat`));
 

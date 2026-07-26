@@ -1,6 +1,6 @@
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
-export const projectIdPattern = /^prj_[A-Za-z0-9_-]{22}$/;
+export const projectIdPattern = /^prj_[A-Za-z0-9_-]{21}[AQgw]$/;
 const chatIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const projectRouteChangeEvent = "yet-ai:project-route-change";
 

@@ -3,7 +3,7 @@ import { parseProjectId } from "./projectRouting";
 import { ProjectScopeController, createProjectScopeCorrelation, projectBoundStateFamilies, resetProjectBoundState, type ProjectScopeResetters } from "./projectScope";
 
 const projectA = parseProjectId("prj_AAAAAAAAAAAAAAAAAAAAAA")!;
-const projectB = parseProjectId("prj_BBBBBBBBBBBBBBBBBBBBBB")!;
+const projectB = parseProjectId("prj_BBBBBBBBBBBBBBBBBBBBBQ")!;
 
 function resetters(calls: string[] = []): ProjectScopeResetters {
   return projectBoundStateFamilies.reduce<ProjectScopeResetters>((result, family) => {

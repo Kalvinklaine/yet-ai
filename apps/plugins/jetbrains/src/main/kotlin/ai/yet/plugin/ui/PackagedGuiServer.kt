@@ -199,6 +199,10 @@ data class PackagedGuiProxyRequest(val targetUrl: String, val headers: Map<Strin
 data class PackagedGuiProxyTimeouts(val connectMillis: Int = 2_000, val readMillis: Int = 10_000)
 
 private const val EVENT_STREAM_READ_TIMEOUT_MILLIS = 45_000
+private const val MAX_PROXY_REQUEST_BODY_BYTES = 1_048_576
+private const val MAX_PROXY_RESPONSE_BODY_BYTES = 4_194_304
+private val CANONICAL_PROJECT_ID = Regex("^prj_[A-Za-z0-9_-]{21}[AQgw]$")
+private val SAFE_PROXY_SEGMENT = Regex("^[A-Za-z0-9_-]+$")
 
 interface PackagedGuiActiveWork {
     val panelId: String
@@ -281,11 +285,22 @@ sealed class PackagedGuiProxyDecision {
 fun packagedGuiProxyDecision(panelId: String, rawPath: String, panels: Map<String, PackagedGuiPanelRuntime>): PackagedGuiProxyDecision {
     if (!isValidPanelId(panelId)) return PackagedGuiProxyDecision.Reject
     val panel = panels[panelId] ?: return PackagedGuiProxyDecision.Reject
-    if (!rawPath.startsWith("/v1/") && rawPath != "/v1") return PackagedGuiProxyDecision.Reject
+    if (!isAllowedProxyPath(rawPath)) return PackagedGuiProxyDecision.Reject
     if (!isLoopbackRuntimeRoot(panel.runtimeUrl)) return PackagedGuiProxyDecision.Reject
     val targetUrl = URI(panel.runtimeUrl).resolve(rawPath.removePrefix("/")).toString()
     val headers = panel.sessionToken?.takeIf { it.isNotBlank() }?.let { token -> mapOf("Authorization" to ("Bearer " + token)) } ?: emptyMap()
     return PackagedGuiProxyDecision.Forward(PackagedGuiProxyRequest(targetUrl, headers))
+}
+
+private fun isAllowedProxyPath(rawPath: String): Boolean {
+    val segments = rawPath.split('/')
+    if (segments.firstOrNull() != "" || segments.drop(1).any { it.isEmpty() || !SAFE_PROXY_SEGMENT.matches(it) }) return false
+    if (segments.size >= 2 && segments[1] == "v1") return true
+    return segments.size >= 5 &&
+        segments[0].isEmpty() &&
+        segments[1] == "p" &&
+        CANONICAL_PROJECT_ID.matches(segments[2]) &&
+        segments[3] == "v1"
 }
 
 fun isValidPanelId(panelId: String): Boolean = Regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$").matches(panelId)
@@ -497,7 +512,7 @@ private fun panelProxyRoute(rawPath: String): Pair<String, String>? {
     val panelId = remainder.substring(0, separator)
     val proxiedPath = remainder.substring(separator)
     if (!isValidPanelId(panelId)) return null
-    if (!proxiedPath.startsWith("/v1/")) return null
+    if (!isAllowedProxyPath(proxiedPath)) return null
     return panelId to proxiedPath
 }
 
@@ -520,29 +535,40 @@ private fun proxyPanelRequest(
         send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
         return false
     }
+    val requestBody = if (exchange.requestMethod == "POST") {
+        exchange.requestBody.use { input -> input.readNBytes(MAX_PROXY_REQUEST_BODY_BYTES + 1) }.also { body ->
+            if (body.size > MAX_PROXY_REQUEST_BODY_BYTES) {
+                send(exchange, 413, "application/json; charset=utf-8", "{\"error\":\"runtime_proxy_request_too_large\"}".toByteArray(StandardCharsets.UTF_8))
+                return false
+            }
+        }
+    } else {
+        null
+    }
     val target = URI(decision.request.targetUrl).let { uri ->
         val rawQuery = exchange.requestURI.rawQuery
-        if (rawQuery == null) uri else URI(uri.scheme, uri.authority, uri.path, rawQuery, null)
+        if (rawQuery == null) uri else URI.create("${uri}?$rawQuery")
     }
     var connection: HttpURLConnection? = null
+    val chatSubscription = isChatSubscriptionPath(rawPath)
     var connectionOwnedElsewhere = false
     var locallyClosed = false
     val response = try {
         connection = target.toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = timeouts.connectMillis
-        connection.readTimeout = if (rawPath == "/v1/chats/subscribe") EVENT_STREAM_READ_TIMEOUT_MILLIS else timeouts.readMillis
+        connection.readTimeout = if (chatSubscription) EVENT_STREAM_READ_TIMEOUT_MILLIS else timeouts.readMillis
         connection.requestMethod = exchange.requestMethod
         connection.instanceFollowRedirects = false
         decision.request.headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
         exchange.requestHeaders["Content-Type"]?.firstOrNull()?.let { connection.setRequestProperty("Content-Type", it) }
         if (exchange.requestMethod == "POST") {
             connection.doOutput = true
-            exchange.requestBody.use { input -> connection.outputStream.use { output -> input.copyTo(output) } }
+            connection.outputStream.use { output -> output.write(requestBody!!) }
         }
         val status = connection.responseCode
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), status)
         val contentType = connection.contentType ?: "application/octet-stream"
-        if (status in 200..299 && rawPath == "/v1/chats/subscribe" && isEventStream(contentType)) {
+        if (status in 200..299 && chatSubscription && isEventStream(contentType)) {
             val input = connection.inputStream
             val session = PackagedGuiActiveStream(panelId, connection, input, exchange)
             if (activeWork != null && !activeWork.add(session)) {
@@ -571,12 +597,15 @@ private fun proxyPanelRequest(
             }
             return connectionOwnedElsewhere
         }
-        if (rawPath == "/v1/chats/subscribe") connection.readTimeout = timeouts.readMillis
-        val body = if (rawPath == "/v1/chats/subscribe" && bufferedExecutor != null) {
+        if (chatSubscription) connection.readTimeout = timeouts.readMillis
+        val body = if (chatSubscription && bufferedExecutor != null) {
             connectionOwnedElsewhere = true
             readBufferedResponse(panelId, connection, status, timeouts.readMillis, bufferedExecutor, activeWork)
         } else {
-            (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
+            val input = if (status >= 400) connection.errorStream else connection.inputStream
+            input?.use { it.readNBytes(MAX_PROXY_RESPONSE_BODY_BYTES + 1) }?.also { body ->
+                if (body.size > MAX_PROXY_RESPONSE_BODY_BYTES) throw PackagedGuiProxyResponseTooLargeException()
+            } ?: ByteArray(0)
         }
         PackagedGuiProxyResponse(status, contentType, body)
     } catch (_: SocketTimeoutException) {
@@ -585,6 +614,9 @@ private fun proxyPanelRequest(
     } catch (_: PackagedGuiProxyLocallyClosedException) {
         locallyClosed = true
         proxyFailure(502, "runtime_proxy_unavailable")
+    } catch (_: PackagedGuiProxyResponseTooLargeException) {
+        YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 502)
+        proxyFailure(502, "runtime_proxy_response_too_large")
     } catch (_: IOException) {
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 502)
         proxyFailure(502, "runtime_proxy_unavailable")
@@ -601,6 +633,10 @@ private fun proxyPanelRequest(
     }
     return false
 }
+
+private fun isChatSubscriptionPath(rawPath: String): Boolean =
+    rawPath == "/v1/chats/subscribe" ||
+        (rawPath.startsWith("/p/") && rawPath.endsWith("/v1/chats/subscribe"))
 
 private fun readBufferedResponse(
     panelId: String,
@@ -620,7 +656,9 @@ private fun readBufferedResponse(
             try {
                 val input = if (status >= 400) connection.errorStream else connection.inputStream
                 reader.attachInput(input)
-                input?.use { it.readBytes() } ?: ByteArray(0)
+                input?.use { it.readNBytes(MAX_PROXY_RESPONSE_BODY_BYTES + 1) }?.also { body ->
+                    if (body.size > MAX_PROXY_RESPONSE_BODY_BYTES) throw PackagedGuiProxyResponseTooLargeException()
+                } ?: ByteArray(0)
             } finally {
                 connection.disconnect()
                 activeWork?.remove(reader)
@@ -654,6 +692,7 @@ private fun readBufferedResponse(
 }
 
 private class PackagedGuiProxyLocallyClosedException : IOException()
+private class PackagedGuiProxyResponseTooLargeException : IOException()
 
 class PackagedGuiBufferedReader(
     override val panelId: String,

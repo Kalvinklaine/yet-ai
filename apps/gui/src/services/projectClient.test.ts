@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { archiveProject, createProjectRuntimeSettings, listDirectoryDiscovery, listProjects, registerProject, restoreProject, startDirectoryDiscovery } from "./projectClient";
 
-const projectId = "prj_abcdefghijklmnopqrstuv";
+const projectId = "prj_abcdefghijklmnopqrstuA";
 const fetchMock = vi.fn();
 
 afterEach(() => {

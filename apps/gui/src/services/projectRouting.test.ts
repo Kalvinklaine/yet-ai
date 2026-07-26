@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildProjectRoute, navigateProjectRoute, parseProjectId, parseProjectRoute, subscribeToProjectRoute, type AppRoute } from "./projectRouting";
 
-const projectId = "prj_abcdefghijklmnopqrstuv";
+const projectId = "prj_abcdefghijklmnopqrstuA";
 const validatedProjectId = parseProjectId(projectId)!;
 
 const routes: Array<{ path: string; route: Exclude<AppRoute, { kind: "not_found" }> }> = [
@@ -33,6 +33,11 @@ describe("projectRouting", () => {
 
   it("validates only contract-shaped project ids", () => {
     expect(parseProjectId(projectId)).toBe(projectId);
+    expect(parseProjectId("prj_AAAAAAAAAAAAAAAAAAAAAQ")).not.toBeNull();
+    expect(parseProjectId("prj_AAAAAAAAAAAAAAAAAAAAAg")).not.toBeNull();
+    expect(parseProjectId("prj_AAAAAAAAAAAAAAAAAAAAAw")).not.toBeNull();
+    expect(parseProjectId("prj_AAAAAAAAAAAAAAAAAAAAAB")).toBeNull();
+    expect(parseProjectId("prj_abcdefghijklmnopqrstuv")).toBeNull();
     expect(parseProjectId(`${projectId}/chat`)).toBeNull();
     expect(parseProjectId("prj_abcdefghijklmnopqrstu%2F")).toBeNull();
   });

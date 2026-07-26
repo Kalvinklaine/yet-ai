@@ -10,7 +10,7 @@ describe("ProjectAgent", () => {
   it("loads overlapping run ids through their route project only", async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ cloudRequired: false, providerAccess: "direct", snapshots: [] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    const ids = ["prj_abcdefghijklmnopqrstuv", "prj_bcdefghijklmnopqrstuvw"];
+    const ids = ["prj_abcdefghijklmnopqrstuA", "prj_BBBBBBBBBBBBBBBBBBBBBQ"];
 
     for (const id of ids) await getAgentProgress(createProjectRuntimeSettings({ baseUrl: "http://127.0.0.1:8001", token: "" }, id));
 
