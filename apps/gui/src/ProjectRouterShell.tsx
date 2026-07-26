@@ -20,7 +20,7 @@ export function ProjectRouterShell() {
     return parseProjectRoute(window.location.pathname);
   });
   const [hostedRoute, setHostedRoute] = useState<Extract<AppRoute, { kind: "legacy" | "settings" | "project" }> | null>(null);
-  const { settings, updateSettings, bridgeAdapter, workspaceBinding } = useLiveRuntimeSettings();
+  const { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
 
   useEffect(() => subscribeToProjectRoute(window, setRoute), []);
@@ -29,7 +29,7 @@ export function ProjectRouterShell() {
     if (hostedRoute) {
       return <App route={hostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
     }
-    return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} onOpen={setHostedRoute} />;
+    return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} hostReadyGeneration={hostReadyGeneration} onOpen={setHostedRoute} />;
   }
   if (route.kind === "not_found") {
     return <RouteStatus title="Not Found" detail="This Yet AI route is not recognized." navigate={navigate} />;

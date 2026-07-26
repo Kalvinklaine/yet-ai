@@ -411,16 +411,16 @@ export async function runtimeFetch<T>(
 }
 
 
-export function getPing(settings: RuntimeSettings): Promise<RuntimeResult<PingResponse>> {
-  return runtimeFetch<PingResponse>(settings, "/v1/ping");
+export function getPing(settings: RuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<PingResponse>> {
+  return runtimeFetch<PingResponse>(settings, "/v1/ping", { signal });
 }
 
 export function getCaps(settings: RuntimeSettings): Promise<RuntimeResult<CapsResponse>> {
   return runtimeFetch<CapsResponse>(settings, "/v1/caps");
 }
 
-export function getModels(settings: RuntimeSettings): Promise<RuntimeResult<ModelsResponse>> {
-  return runtimeFetch<ModelsResponse>(settings, "/v1/models");
+export function getModels(settings: RuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<ModelsResponse>> {
+  return runtimeFetch<ModelsResponse>(settings, "/v1/models", { signal });
 }
 
 export function getDemoMode(settings: RuntimeSettings): Promise<RuntimeResult<DemoModeResponse>> {

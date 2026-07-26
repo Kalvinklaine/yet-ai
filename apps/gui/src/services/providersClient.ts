@@ -56,8 +56,8 @@ export type ProviderTestResponse = {
   cloudRequired: false;
 };
 
-export function listProviders(settings: RuntimeSettings): Promise<RuntimeResult<ProvidersResponse>> {
-  return runtimeFetch<ProvidersResponse>(settings, "/v1/providers");
+export function listProviders(settings: RuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<ProvidersResponse>> {
+  return runtimeFetch<ProvidersResponse>(settings, "/v1/providers", { signal });
 }
 
 export function saveProvider(

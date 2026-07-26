@@ -42,23 +42,32 @@ export function resolveWorkspaceBindingUpdate(
   return { requestId: currentRequestId, binding: message.payload as WorkspaceBindingPayload, changed: true };
 }
 
-export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter; workspaceBinding: WorkspaceBindingPayload | null } {
+export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter; workspaceBinding: WorkspaceBindingPayload | null; hostReadyGeneration: string | null } {
   const [settings, setSettings] = useState<RuntimeSettings>(readInitialRuntimeSettings);
   const [workspaceBinding, setWorkspaceBinding] = useState<WorkspaceBindingPayload | null>(null);
+  const [hostReadyGeneration, setHostReadyGeneration] = useState<string | null>(null);
+  const settingsRef = useRef(settings);
   const hostReadyRequestId = useRef<string | null>(null);
   const [bridgeAdapter] = useState(() => createBridgeAdapter(() => undefined));
   const updateSettings = useCallback((next: RuntimeSettings) => {
-    setSettings({ baseUrl: next.baseUrl, token: next.token ?? "", runtimeAccess: next.runtimeAccess ?? "direct" });
+    const normalized = { baseUrl: next.baseUrl, token: next.token ?? "", runtimeAccess: next.runtimeAccess ?? "direct" };
+    settingsRef.current = normalized;
+    setSettings(normalized);
   }, []);
 
   useEffect(() => {
     const unsubscribe = bridgeAdapter.subscribe((message) => {
       if (message.type === "host.ready") {
         const payload = message.payload as HostReadyPayload | undefined;
-        setSettings((current) => resolveHostReadyRuntimeSettings(current, payload) ?? current);
         const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
         hostReadyRequestId.current = update.requestId;
         if (update.changed) setWorkspaceBinding(null);
+        const resolved = resolveHostReadyRuntimeSettings(settingsRef.current, payload);
+        setHostReadyGeneration(resolved && update.requestId ? update.requestId : null);
+        if (resolved) {
+          settingsRef.current = resolved;
+          setSettings(resolved);
+        }
       } else if (message.type === "host.workspaceBinding") {
         const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
         if (update.changed) setWorkspaceBinding(update.binding);
@@ -70,5 +79,5 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
     };
   }, [bridgeAdapter]);
 
-  return { settings, updateSettings, bridgeAdapter, workspaceBinding };
+  return { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration };
 }

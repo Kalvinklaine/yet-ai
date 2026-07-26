@@ -15,13 +15,14 @@ type SelectedProject = { projectId: ProjectId; displayName: string };
 type DashboardProps = {
   settings: RuntimeSettings;
   binding: WorkspaceBindingPayload | null;
+  hostReadyGeneration?: string | null;
   onOpen: (route: Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>) => void;
 };
 
 const loading = { status: "loading" } as const;
 const chatIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
-export function CurrentWorkspaceDashboard({ settings, binding, onOpen }: DashboardProps) {
+export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGeneration, onOpen }: DashboardProps) {
   const [selection, setSelection] = useState<SelectedProject | null>(null);
   const [projects, setProjects] = useState<LoadState<ProjectSummary[]>>(loading);
   const [summary, setSummary] = useState<LoadState<ProjectSummary>>(loading);
@@ -32,21 +33,33 @@ export function CurrentWorkspaceDashboard({ settings, binding, onOpen }: Dashboa
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const trusted = hostReadyGeneration === undefined || (hostReadyGeneration !== null && binding !== null);
 
   useEffect(() => {
     setSelection(binding?.state === "auto_bound" ? toSelectedProject(binding.projectId, binding.displayName) : null);
   }, [binding]);
 
-  const loadGlobal = useCallback(() => {
-    let active = true;
+  useEffect(() => {
+    setProjects(loading);
+    setSummary(loading);
+    setConversations(loading);
+    setActiveWork(loading);
     setRuntime(loading);
     setProviderModel(loading);
-    void getPing(settings).then((result) => {
-      if (!active) return;
+    setStartError(null);
+  }, [hostReadyGeneration]);
+
+  const loadGlobal = useCallback(() => {
+    if (!trusted) return;
+    const controller = new AbortController();
+    setRuntime(loading);
+    setProviderModel(loading);
+    void getPing(settings, controller.signal).then((result) => {
+      if (controller.signal.aborted) return;
       setRuntime(result.ok && result.data.ready ? { status: "ready", data: true } : { status: "error", message: runtimeMessage(result.ok ? null : result.error) });
     });
-    void Promise.all([getModels(settings), listProviders(settings)]).then(([models, providers]) => {
-      if (!active) return;
+    void Promise.all([getModels(settings, controller.signal), listProviders(settings, controller.signal)]).then(([models, providers]) => {
+      if (controller.signal.aborted) return;
       if (!models.ok || !providers.ok) {
         setProviderModel({ status: "error", message: "Provider or model readiness could not be loaded." });
         return;
@@ -55,13 +68,13 @@ export function CurrentWorkspaceDashboard({ settings, binding, onOpen }: Dashboa
       const enabledProviders = providers.data.providers.filter((provider) => provider.enabled).length;
       setProviderModel({ status: "ready", data: Math.min(readyModels, enabledProviders) });
     });
-    return () => { active = false; };
-  }, [settings]);
+    return () => controller.abort();
+  }, [settings, trusted, hostReadyGeneration]);
 
   useEffect(loadGlobal, [loadGlobal]);
 
   useEffect(() => {
-    if (binding?.state !== "selection_required") return;
+    if (!trusted || binding?.state !== "selection_required") return;
     const controller = new AbortController();
     setProjects(loading);
     void listProjects(settings, controller.signal).then((result) => {
@@ -71,10 +84,10 @@ export function CurrentWorkspaceDashboard({ settings, binding, onOpen }: Dashboa
         : { status: "error", message: "Existing projects could not be loaded." });
     });
     return () => controller.abort();
-  }, [binding, settings]);
+  }, [binding, settings, trusted, hostReadyGeneration]);
 
   useEffect(() => {
-    if (!selection) return;
+    if (!trusted || !selection) return;
     const controller = new AbortController();
     const scoped = createProjectRuntimeSettings(settings, selection.projectId, { generation: 0, abortSignal: controller.signal });
     setSummary(loading);
@@ -90,7 +103,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, onOpen }: Dashboa
       if (!controller.signal.aborted) setActiveWork(result.ok ? { status: "ready", data: result.data.snapshots } : { status: "error", message: "Agent progress could not be loaded." });
     });
     return () => controller.abort();
-  }, [selection, settings]);
+  }, [selection, settings, trusted, hostReadyGeneration]);
 
   const latestChat = conversations.status === "ready" ? conversations.data[0] : undefined;
   const projectName = summary.status === "ready" ? summary.data.displayName : selection?.displayName;
@@ -111,7 +124,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, onOpen }: Dashboa
     setStartError("A new project chat could not be started.");
   };
 
-  if (!binding) {
+  if (!trusted || !binding) {
     return <DashboardFrame><section className="workspace-dashboard-card" role="status"><h2>Connecting workspace</h2><p>Waiting for the trusted IDE workspace binding.</p></section></DashboardFrame>;
   }
 

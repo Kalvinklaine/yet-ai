@@ -35,12 +35,12 @@ function installFetch(options: { chats?: unknown[]; failAgent?: boolean } = {}) 
   return fetchMock;
 }
 
-async function renderDashboard(binding: WorkspaceBindingPayload, onOpen = vi.fn()) {
+async function renderDashboard(binding: WorkspaceBindingPayload | null, onOpen = vi.fn(), hostReadyGeneration?: string | null) {
   container = document.createElement("div");
   document.body.append(container);
   await act(async () => {
     root = ReactDOM.createRoot(container!);
-    root.render(<CurrentWorkspaceDashboard settings={settings} binding={binding} onOpen={onOpen} />);
+    root.render(<CurrentWorkspaceDashboard settings={settings} binding={binding} hostReadyGeneration={hostReadyGeneration} onOpen={onOpen} />);
   });
   return onOpen;
 }
@@ -64,6 +64,64 @@ afterEach(() => {
 });
 
 describe("CurrentWorkspaceDashboard", () => {
+  it("makes no hosted requests before trusted readiness and binding", async () => {
+    const fetchMock = installFetch();
+    await renderDashboard(null, vi.fn(), null);
+    await flush();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(container?.textContent).toContain("Waiting for the trusted IDE workspace binding.");
+  });
+
+  it("keeps a valid ready generation inert until its binding arrives", async () => {
+    const fetchMock = installFetch();
+    await renderDashboard(null, vi.fn(), "ready-1");
+    await flush();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses only delivered trusted settings after the correlated binding", async () => {
+    const fetchMock = installFetch();
+    const trustedSettings = { baseUrl: "/panel/panel-trusted", token: "", runtimeAccess: "same_origin_proxy" as const };
+    container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container!);
+      root.render(<CurrentWorkspaceDashboard settings={trustedSettings} binding={binding("auto_bound")} hostReadyGeneration="ready-1" onOpen={vi.fn()} />);
+    });
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalled();
+    expect(fetchMock.mock.calls.every(([url]) => String(url).startsWith("/panel/panel-trusted/"))).toBe(true);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("127.0.0.1:8001"))).toBe(false);
+  });
+
+  it("aborts old generation requests and hides stale dashboard data", async () => {
+    const signals: AbortSignal[] = [];
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal) signals.push(init.signal);
+      return new Promise<Response>(() => undefined);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container!);
+      root.render(<CurrentWorkspaceDashboard settings={{ ...settings, baseUrl: "http://127.0.0.1:9123" }} binding={binding("auto_bound")} hostReadyGeneration="ready-1" onOpen={vi.fn()} />);
+    });
+    expect(fetchMock).toHaveBeenCalled();
+
+    await act(async () => {
+      root?.render(<CurrentWorkspaceDashboard settings={settings} binding={null} hostReadyGeneration={null} onOpen={vi.fn()} />);
+    });
+
+    expect(signals.length).toBeGreaterThan(0);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(container?.textContent).toContain("Waiting for the trusted IDE workspace binding.");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("127.0.0.1:8001"))).toBe(false);
+  });
+
   it("loads bound sections independently without creating or subscribing to chat", async () => {
     const fetchMock = installFetch({ failAgent: true });
     const onOpen = await renderDashboard(binding("auto_bound"));
