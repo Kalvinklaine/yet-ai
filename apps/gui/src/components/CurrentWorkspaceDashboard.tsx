@@ -12,17 +12,21 @@ type LoadState<T> =
 
 type SelectedProject = { projectId: ProjectId; displayName: string };
 
+declare const hostedAuthorityTokenBrand: unique symbol;
+export type HostedAuthorityToken = string & { readonly [hostedAuthorityTokenBrand]: true };
+
 type DashboardProps = {
   settings: RuntimeSettings;
   binding: WorkspaceBindingPayload | null;
   hostReadyGeneration?: string | null;
-  onOpen: (route: Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>, selectedProjectId?: ProjectId) => boolean;
+  getAuthorityToken: (selectedProjectId?: ProjectId) => HostedAuthorityToken | null;
+  onOpen: (route: Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>, authorityToken: HostedAuthorityToken, selectedProjectId?: ProjectId) => boolean;
 };
 
 const loading = { status: "loading" } as const;
 const chatIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
-export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGeneration, onOpen }: DashboardProps) {
+export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGeneration, getAuthorityToken, onOpen }: DashboardProps) {
   const [selection, setSelection] = useState<SelectedProject | null>(null);
   const [projects, setProjects] = useState<LoadState<ProjectSummary[]>>(loading);
   const [summary, setSummary] = useState<LoadState<ProjectSummary>>(loading);
@@ -52,8 +56,10 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     setActiveWork(loading);
     setRuntime(loading);
     setProviderModel(loading);
+    setStarting(false);
+    startingRef.current = false;
     setStartError(null);
-  }, [hostReadyGeneration]);
+  }, [binding, hostReadyGeneration]);
 
   const loadGlobal = useCallback(() => {
     if (!trusted) return;
@@ -117,21 +123,23 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
 
   const startNew = async () => {
     if (!selection || startingRef.current) return;
+    const selectedProjectId = binding?.state === "selection_required" ? selection.projectId : undefined;
+    const authorityToken = getAuthorityToken(selectedProjectId);
+    if (!authorityToken) {
+      setStartError("The workspace changed. Try again.");
+      return;
+    }
     startingRef.current = true;
     setStarting(true);
     setStartError(null);
     const result = await createChat(createProjectRuntimeSettings(settings, selection.projectId));
     if (!mountedRef.current) return;
-    if (result.ok && chatIdPattern.test(result.data.chatId)) {
-      if (!openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId })) {
-        setStarting(false);
-        startingRef.current = false;
-        setStartError("The workspace changed. Try again.");
-      }
-      return;
-    }
     setStarting(false);
     startingRef.current = false;
+    if (result.ok && chatIdPattern.test(result.data.chatId)) {
+      openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId }, authorityToken, selectedProjectId);
+      return;
+    }
     setStartError("A new project chat could not be started.");
   };
 
@@ -156,23 +164,40 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
           <DashboardSection title="Active work" state={activeWork} ready={activeWork.status === "ready" && activeSnapshots.length ? `${activeSnapshots.length} active or blocked run${activeSnapshots.length === 1 ? "" : "s"}` : undefined} empty="No active agent work." />
         </div>
         <div className="workspace-dashboard-actions" aria-label="Workspace actions">
-          {latestChat && chatIdPattern.test(latestChat.chatId) && <button type="button" onClick={() => openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: latestChat.chatId })}>Resume last</button>}
+          {latestChat && chatIdPattern.test(latestChat.chatId) && <button type="button" onClick={() => openSelectedProjectWithCurrentAuthority({ kind: "project", projectId: selection.projectId, page: "chat", chatId: latestChat.chatId })}>Resume last</button>}
           <button type="button" onClick={() => void startNew()} disabled={starting}>{starting ? "Starting…" : "Start new chat"}</button>
-          <button type="button" className="secondary-button" onClick={() => onOpen({ kind: "settings" })}>Settings</button>
+          <button type="button" className="secondary-button" onClick={() => openWithCurrentAuthority({ kind: "settings" })}>Settings</button>
           <button type="button" className="secondary-button" onClick={loadGlobal}>Diagnostics</button>
-          <button type="button" className="link-button" onClick={() => onOpen({ kind: "legacy" })}>Legacy data</button>
+          <button type="button" className="link-button" onClick={() => openWithCurrentAuthority({ kind: "legacy" })}>Legacy data</button>
         </div>
         {startError && <p className="workspace-dashboard-error" role="alert">{startError}</p>}
       </>}
     </DashboardFrame>
   );
 
-  function openSelectedProject(route: Extract<AppRoute, { kind: "project" }>): boolean {
-    const opened = binding?.state === "selection_required"
-      ? onOpen(route, selection?.projectId)
-      : onOpen(route);
+  function openSelectedProjectWithCurrentAuthority(route: Extract<AppRoute, { kind: "project" }>): boolean {
+    const selectedProjectId = binding?.state === "selection_required" ? selection?.projectId : undefined;
+    const authorityToken = getAuthorityToken(selectedProjectId);
+    return authorityToken ? openSelectedProject(route, authorityToken, selectedProjectId) : rejectOpen();
+  }
+
+  function openSelectedProject(route: Extract<AppRoute, { kind: "project" }>, authorityToken: HostedAuthorityToken, selectedProjectId?: ProjectId): boolean {
+    const opened = onOpen(route, authorityToken, selectedProjectId);
     if (!opened) setStartError("The workspace changed. Try again.");
     return opened;
+  }
+
+  function openWithCurrentAuthority(route: Extract<AppRoute, { kind: "legacy" | "settings" }>): boolean {
+    const authorityToken = getAuthorityToken();
+    if (!authorityToken) return rejectOpen();
+    const opened = onOpen(route, authorityToken);
+    if (!opened) setStartError("The workspace changed. Try again.");
+    return opened;
+  }
+
+  function rejectOpen(): false {
+    setStartError("The workspace changed. Try again.");
+    return false;
   }
 }
 

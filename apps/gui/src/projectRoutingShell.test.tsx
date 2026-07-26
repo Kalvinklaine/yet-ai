@@ -6,6 +6,7 @@ import { navigateProjectRoute } from "./services/projectRouting";
 import type { RuntimeSettings } from "./services/runtimeClient";
 
 const appRenderCalls = vi.hoisted(() => [] as string[]);
+const deferredHostedOpen = vi.hoisted(() => ({ run: null as null | (() => boolean) }));
 vi.mock("./App", () => ({
   App: ({ route }: { route: { kind: string; page?: string; chatId?: string } }) => {
     const label = [route.kind, route.page, route.chatId].filter(Boolean).join(":");
@@ -25,12 +26,14 @@ vi.mock("./components/LegacyData", () => ({
   LegacyData: () => <div data-testid="legacy-data">legacy</div>,
 }));
 vi.mock("./components/CurrentWorkspaceDashboard", () => ({
-  CurrentWorkspaceDashboard: ({ onOpen }: { onOpen: (route: object, selectedProjectId?: string) => boolean }) => <div data-testid="workspace-dashboard">
-    <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-new" })}>Start new chat</button>
-    <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-selected" }, "prj_abcdefghijklmnopqrstuA")}>Start selected chat</button>
-    <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_bcdefghijklmnopqrstuvQ", page: "chat", chatId: "chat-mismatch" }, "prj_abcdefghijklmnopqrstuA")}>Start mismatched chat</button>
-    <button type="button" onClick={() => onOpen({ kind: "settings" })}>Settings</button>
-    <button type="button" onClick={() => onOpen({ kind: "legacy" })}>Legacy data</button>
+  CurrentWorkspaceDashboard: ({ getAuthorityToken, onOpen }: { getAuthorityToken: (selectedProjectId?: string) => string | null; onOpen: (route: object, token: string, selectedProjectId?: string) => boolean }) => <div data-testid="workspace-dashboard">
+    <button type="button" onClick={() => { const token = getAuthorityToken(); if (token) onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-new" }, token); }}>Start new chat</button>
+    <button type="button" onClick={() => { const token = getAuthorityToken("prj_abcdefghijklmnopqrstuA"); if (token) onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-selected" }, token, "prj_abcdefghijklmnopqrstuA"); }}>Start selected chat</button>
+    <button type="button" onClick={() => { const token = getAuthorityToken("prj_abcdefghijklmnopqrstuA"); if (token) onOpen({ kind: "project", projectId: "prj_bcdefghijklmnopqrstuvQ", page: "chat", chatId: "chat-mismatch" }, token, "prj_abcdefghijklmnopqrstuA"); }}>Start mismatched chat</button>
+    <button type="button" onClick={() => { const token = getAuthorityToken(); if (token) onOpen({ kind: "settings" }, token); }}>Settings</button>
+    <button type="button" onClick={() => { const token = getAuthorityToken(); if (token) onOpen({ kind: "legacy" }, token); }}>Legacy data</button>
+    <button type="button" onClick={() => { const token = getAuthorityToken(); if (token) deferredHostedOpen.run = () => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-deferred" }, token); }}>Capture deferred chat</button>
+    <button type="button" onClick={() => { const token = getAuthorityToken("prj_abcdefghijklmnopqrstuA"); if (token) deferredHostedOpen.run = () => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-deferred-selected" }, token, "prj_abcdefghijklmnopqrstuA"); }}>Capture deferred selected chat</button>
   </div>,
 }));
 
@@ -78,6 +81,7 @@ afterEach(() => {
   document.body.innerHTML = "";
   hubSettings = undefined;
   appRenderCalls.length = 0;
+  deferredHostedOpen.run = null;
   delete window.__yetAiInitialRuntimeConfig;
 });
 
@@ -171,6 +175,26 @@ describe("ProjectRouterShell", () => {
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
   });
 
+  it("rejects a deferred open from an older generation even when the project is unchanged", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await sendHostReady("ready-1");
+    await sendWorkspaceBinding("ready-1");
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Capture deferred chat")?.click());
+
+    await sendHostReady("ready-2", "/panel/panel-next");
+    await sendWorkspaceBinding("ready-2");
+
+    expect(deferredHostedOpen.run?.()).toBe(false);
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+  });
+
   it("preserves an open hosted chat for an accepted same-ID retry", async () => {
     window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
     window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
@@ -247,6 +271,25 @@ describe("ProjectRouterShell", () => {
     expect(appRenderCalls).toHaveLength(rendersBeforeReplacement);
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+  });
+
+  it("rejects deferred explicit selection after a same-project binding replacement", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await sendHostReady("ready-1");
+    await sendSelectionBinding("ready-1");
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Capture deferred selected chat")?.click());
+
+    await sendSelectionBinding("ready-1", "root_unavailable");
+
+    expect(deferredHostedOpen.run?.()).toBe(false);
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
   });
 
   it.each([

@@ -3,10 +3,11 @@ import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
-import { CurrentWorkspaceDashboard } from "./CurrentWorkspaceDashboard";
+import { CurrentWorkspaceDashboard, type HostedAuthorityToken } from "./CurrentWorkspaceDashboard";
 
 const projectId = "prj_abcdefghijklmnopqrstuA";
 const settings = { baseUrl: "http://127.0.0.1:8001", token: "", runtimeAccess: "direct" as const };
+const authorityToken = "authority-1" as HostedAuthorityToken;
 let root: ReactDOM.Root | undefined;
 let container: HTMLDivElement | undefined;
 
@@ -35,12 +36,12 @@ function installFetch(options: { chats?: unknown[]; failAgent?: boolean; project
   return fetchMock;
 }
 
-async function renderDashboard(binding: WorkspaceBindingPayload | null, onOpen = vi.fn(() => true), hostReadyGeneration?: string | null) {
+async function renderDashboard(binding: WorkspaceBindingPayload | null, onOpen = vi.fn(() => true), hostReadyGeneration?: string | null, getAuthorityToken = vi.fn(() => authorityToken as HostedAuthorityToken | null)) {
   container = document.createElement("div");
   document.body.append(container);
   await act(async () => {
     root = ReactDOM.createRoot(container!);
-    root.render(<CurrentWorkspaceDashboard settings={settings} binding={binding} hostReadyGeneration={hostReadyGeneration} onOpen={onOpen} />);
+    root.render(<CurrentWorkspaceDashboard settings={settings} binding={binding} hostReadyGeneration={hostReadyGeneration} getAuthorityToken={getAuthorityToken} onOpen={onOpen} />);
   });
   return onOpen;
 }
@@ -88,7 +89,7 @@ describe("CurrentWorkspaceDashboard", () => {
     document.body.append(container);
     await act(async () => {
       root = ReactDOM.createRoot(container!);
-      root.render(<CurrentWorkspaceDashboard settings={trustedSettings} binding={binding("auto_bound")} hostReadyGeneration="ready-1" onOpen={vi.fn()} />);
+      root.render(<CurrentWorkspaceDashboard settings={trustedSettings} binding={binding("auto_bound")} hostReadyGeneration="ready-1" getAuthorityToken={() => authorityToken} onOpen={vi.fn()} />);
     });
     await flush();
 
@@ -108,12 +109,12 @@ describe("CurrentWorkspaceDashboard", () => {
     document.body.append(container);
     await act(async () => {
       root = ReactDOM.createRoot(container!);
-      root.render(<CurrentWorkspaceDashboard settings={{ ...settings, baseUrl: "http://127.0.0.1:9123" }} binding={binding("auto_bound")} hostReadyGeneration="ready-1" onOpen={vi.fn()} />);
+      root.render(<CurrentWorkspaceDashboard settings={{ ...settings, baseUrl: "http://127.0.0.1:9123" }} binding={binding("auto_bound")} hostReadyGeneration="ready-1" getAuthorityToken={() => authorityToken} onOpen={vi.fn()} />);
     });
     expect(fetchMock).toHaveBeenCalled();
 
     await act(async () => {
-      root?.render(<CurrentWorkspaceDashboard settings={settings} binding={null} hostReadyGeneration={null} onOpen={vi.fn()} />);
+      root?.render(<CurrentWorkspaceDashboard settings={settings} binding={null} hostReadyGeneration={null} getAuthorityToken={() => null} onOpen={vi.fn()} />);
     });
 
     expect(signals.length).toBeGreaterThan(0);
@@ -175,12 +176,12 @@ describe("CurrentWorkspaceDashboard", () => {
     await flush();
 
     act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Resume last")?.click());
-    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" }, projectId);
+    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" }, authorityToken, projectId);
 
     act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
     await flush();
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true);
-    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-new" }, projectId);
+    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-new" }, authorityToken, projectId);
   });
 
   it("starts exactly one scoped chat and opens it", async () => {
@@ -194,7 +195,25 @@ describe("CurrentWorkspaceDashboard", () => {
 
     const creates = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/p/${projectId}/v1/chats`) && init?.method === "POST");
     expect(creates).toHaveLength(1);
-    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-new" });
+    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-new" }, authorityToken, undefined);
+  });
+
+  it("clears Starting before accepted open scheduling can rerender the dashboard", async () => {
+    installFetch();
+    const currentBinding = binding("auto_bound");
+    const onOpen = vi.fn(() => {
+      root?.render(<CurrentWorkspaceDashboard settings={settings} binding={currentBinding} hostReadyGeneration="ready-1" getAuthorityToken={() => authorityToken} onOpen={onOpen} />);
+      return true;
+    });
+    await renderDashboard(currentBinding, onOpen, "ready-1");
+    await flush();
+
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
+    await flush();
+
+    const start = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat");
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(start?.disabled).toBe(false);
   });
 
   it.each(["auto_bound", "selection_required"] as const)("recovers when a deferred %s Start loses workspace authority", async (bindingState) => {
@@ -222,7 +241,7 @@ describe("CurrentWorkspaceDashboard", () => {
     act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
     expect(container?.textContent).toContain("Starting…");
     await act(async () => {
-      root?.render(<CurrentWorkspaceDashboard settings={settings} binding={currentBinding} hostReadyGeneration="ready-2" onOpen={onOpen} />);
+      root?.render(<CurrentWorkspaceDashboard settings={settings} binding={currentBinding} hostReadyGeneration="ready-2" getAuthorityToken={() => "authority-2" as HostedAuthorityToken} onOpen={onOpen} />);
       resolveCreate?.(new Response(JSON.stringify({ chatId: "chat-stale" }), { status: 200, headers: { "Content-Type": "application/json" } }));
     });
     await flush();
@@ -234,9 +253,9 @@ describe("CurrentWorkspaceDashboard", () => {
     act(() => retry?.click());
     await flush();
     if (bindingState === "selection_required") {
-      expect(onOpen).toHaveBeenLastCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-retry" }, projectId);
+      expect(onOpen).toHaveBeenLastCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-retry" }, "authority-2", projectId);
     } else {
-      expect(onOpen).toHaveBeenLastCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-retry" });
+      expect(onOpen).toHaveBeenLastCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-retry" }, "authority-2", undefined);
     }
   });
 
@@ -300,7 +319,7 @@ describe("CurrentWorkspaceDashboard", () => {
     const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Resume last");
     act(() => resume?.click());
 
-    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" });
+    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" }, authorityToken, undefined);
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
     expect(document.body.textContent).not.toMatch(/\/Users\/|Bearer |sessionToken|multiple_roots/);
     expect(localStorage.length).toBe(0);
