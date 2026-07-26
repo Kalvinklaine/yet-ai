@@ -126,11 +126,42 @@ export type HostRuntimeStatusPayload = {
   authority: "metadata_only";
 };
 
+export type WorkspaceBindingPayload =
+  | {
+      protocolVersion: "workspace_binding_v1";
+      requestId: string;
+      state: "auto_bound";
+      projectId: string;
+      displayName: string;
+    }
+  | {
+      protocolVersion: "workspace_binding_v1";
+      requestId: string;
+      state: "selection_required";
+      reason: "no_root" | "multiple_roots" | "root_unavailable";
+    };
+
+export type DashboardSectionState =
+  | { status: "loading" }
+  | { status: "ready"; itemCount: number; empty: boolean }
+  | {
+      status: "error";
+      layer: "host" | "transport" | "runtime" | "provider_model" | "tool_session";
+      message: string;
+    };
+
+export type DashboardDataState = {
+  runtime: DashboardSectionState;
+  providerModel: DashboardSectionState;
+  conversations: DashboardSectionState;
+  activeWork: DashboardSectionState;
+};
+
 export type HostMessage = {
   version: string;
-  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult" | "host.controlledAgentVerificationBundleResult";
+  type: "host.ready" | "host.openedFromCommand" | "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.runtimeStatus" | "host.workspaceBinding" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentLexicalSearchResult" | "host.controlledAgentVerificationBundleResult";
   requestId?: string;
-  payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload | HostRuntimeStatusPayload;
+  payload?: Record<string, unknown> | IdeActionProgressPayload | IdeActionResultPayload | ApplyWorkspaceEditResultPayload | HostRuntimeStatusPayload | WorkspaceBindingPayload;
 };
 
 type FrameNonceMessage = {
@@ -231,6 +262,7 @@ const hostMessageTypes = new Set<HostMessage["type"]>([
   "host.ideActionResult",
   "host.applyWorkspaceEditResult",
   "host.runtimeStatus",
+  "host.workspaceBinding",
   "host.controlledAgentFileReadResult",
   "host.controlledAgentEditResult",
   "host.controlledAgentMultifileApplyResult",
@@ -764,6 +796,9 @@ export function isHostMessage(value: unknown): value is HostMessage {
   if (value.type === "host.runtimeStatus") {
     return value.requestId === undefined && isHostRuntimeStatusPayload(value.payload);
   }
+  if (value.type === "host.workspaceBinding") {
+    return typeof value.requestId === "string" && isWorkspaceBindingPayload(value.payload) && value.payload.requestId === value.requestId;
+  }
   if (value.type === "host.controlledAgentFileReadResult") {
     return typeof value.requestId === "string" && isPlainObject(value.payload);
   }
@@ -880,6 +915,54 @@ export function isHostRuntimeStatusPayload(value: unknown): value is HostRuntime
     safeMessage(value.nextAction) &&
     value.cloudRequired === false &&
     value.authority === "metadata_only";
+}
+
+export function isWorkspaceBindingPayload(value: unknown): value is WorkspaceBindingPayload {
+  if (!isPlainObject(value) || value.protocolVersion !== "workspace_binding_v1" || !isBoundedRequestId(value.requestId) || typeof value.requestId !== "string") {
+    return false;
+  }
+  if (value.state === "auto_bound") {
+    return hasOnlyKeys(value, ["protocolVersion", "requestId", "state", "projectId", "displayName"]) &&
+      isOpaqueProjectId(value.projectId) &&
+      isSafeWorkspaceDisplayName(value.displayName);
+  }
+  if (value.state === "selection_required") {
+    return hasOnlyKeys(value, ["protocolVersion", "requestId", "state", "reason"]) &&
+      (value.reason === "no_root" || value.reason === "multiple_roots" || value.reason === "root_unavailable");
+  }
+  return false;
+}
+
+export function isDashboardSectionState(value: unknown): value is DashboardSectionState {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  if (value.status === "loading") {
+    return hasOnlyKeys(value, ["status"]);
+  }
+  if (value.status === "ready") {
+    return hasOnlyKeys(value, ["status", "itemCount", "empty"]) &&
+      optionalBoundedInteger(value.itemCount, 0, 1000) &&
+      value.itemCount !== undefined &&
+      typeof value.empty === "boolean" &&
+      value.empty === (value.itemCount === 0);
+  }
+  if (value.status === "error") {
+    return hasOnlyKeys(value, ["status", "layer", "message"]) &&
+      (value.layer === "host" || value.layer === "transport" || value.layer === "runtime" || value.layer === "provider_model" || value.layer === "tool_session") &&
+      safeMessage(value.message);
+  }
+  return false;
+}
+
+export function isDashboardDataState(value: unknown): value is DashboardDataState {
+  return isPlainObject(value) &&
+    hasOnlyKeys(value, ["runtime", "providerModel", "conversations", "activeWork"]) &&
+    Object.keys(value).length === 4 &&
+    isDashboardSectionState(value.runtime) &&
+    isDashboardSectionState(value.providerModel) &&
+    isDashboardSectionState(value.conversations) &&
+    isDashboardSectionState(value.activeWork);
 }
 
 export function isHostContextSnapshotPayload(value: unknown): value is HostContextSnapshotPayload {
@@ -1295,6 +1378,23 @@ function optionalSessionToken(value: unknown): boolean {
 
 function optionalProductId(value: unknown): boolean {
   return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value) && !/auth|bearer|api[_-]?key|token|secret|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value));
+}
+
+function isOpaqueProjectId(value: unknown): boolean {
+  return typeof value === "string" && /^prj_[A-Za-z0-9_-]{22}$/.test(value);
+}
+
+function isSafeWorkspaceDisplayName(value: unknown): boolean {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 120 &&
+    value.trim() === value &&
+    !hasControlCharacters(value) &&
+    !/[\/]/.test(value) &&
+    !unsafeDisplayText(value) &&
+    !hasPrivatePathLikeText(value) &&
+    !hasKeyLikeSecretText(value) &&
+    !/(?:https?:\/\/|file:|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 }
 
 function optionalDisplayName(value: unknown): boolean {

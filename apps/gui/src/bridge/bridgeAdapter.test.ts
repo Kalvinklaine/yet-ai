@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isControlledAgentMultifileApplyRequestPayload, isControlledAgentMultifileApplyResultPayload, isControlledHostCapabilitiesPayload, isGuiMessage, isHostMessage, isHostRuntimeStatusPayload, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload } from "./bridgeAdapter";
+import { createBridgeAdapter, isApplyWorkspaceEditPayload, isApplyWorkspaceEditResultPayload, isControlledAgentMultifileApplyRequestPayload, isControlledAgentMultifileApplyResultPayload, isControlledHostCapabilitiesPayload, isDashboardDataState, isDashboardSectionState, isGuiMessage, isHostMessage, isHostRuntimeStatusPayload, isIdeActionProgressPayload, isIdeActionRequestPayload, isIdeActionResultPayload, isWorkspaceBindingPayload } from "./bridgeAdapter";
 import guiReadyMessage from "../../../../packages/contracts/examples/bridge/gui-ready-message.json";
 import guiReadyWithFrameNonceMessage from "../../../../packages/contracts/examples/bridge/gui-ready-with-frame-nonce.json";
 import guiUnloadedMessage from "../../../../packages/contracts/examples/bridge/gui-unloaded-message.json";
@@ -921,6 +921,84 @@ describe("bridgeAdapter", () => {
     expect(isHostRuntimeStatusPayload(hostRuntimeStatusConnectedVscodeMessage.payload)).toBe(true);
   });
 
+  it("accepts safe correlated workspace binding states", () => {
+    const bound = workspaceBindingMessage();
+    expect(isWorkspaceBindingPayload(bound.payload)).toBe(true);
+    expect(isHostMessage(bound)).toBe(true);
+
+    for (const reason of ["no_root", "multiple_roots", "root_unavailable"]) {
+      const selectionRequired = workspaceBindingMessage({ state: "selection_required", reason }, `workspace-bind-${reason}`);
+      delete selectionRequired.payload.projectId;
+      delete selectionRequired.payload.displayName;
+      expect(isWorkspaceBindingPayload(selectionRequired.payload)).toBe(true);
+      expect(isHostMessage(selectionRequired)).toBe(true);
+    }
+  });
+
+  it("rejects unsafe workspace binding payloads and mismatched correlation", () => {
+    const invalidPayloads = [
+      { ...workspaceBindingMessage().payload, projectId: "project-readable-name" },
+      { ...workspaceBindingMessage().payload, projectId: "prj_AAAAAAAAAAAAAAAAAAAAA/" },
+      { ...workspaceBindingMessage().payload, displayName: "/Users/alice/private-workspace" },
+      { ...workspaceBindingMessage().payload, displayName: "file:///home/alice/workspace" },
+      { ...workspaceBindingMessage().payload, displayName: "Bearer local-token-value" },
+      { ...workspaceBindingMessage().payload, displayName: "sk-proj-abcdefghijklmnopqrstuvwxyz" },
+      { ...workspaceBindingMessage().payload, displayName: `Project ${"x".repeat(121)}` },
+      { ...workspaceBindingMessage().payload, displayName: "Project\u0000Name" },
+      { ...workspaceBindingMessage().payload, root: "/home/alice/workspace" },
+      { ...workspaceBindingMessage().payload, workspaceUri: "file:///home/alice/workspace" },
+      { ...workspaceBindingMessage().payload, token: "local-runtime-token" },
+      { ...workspaceBindingMessage().payload, protocolVersion: "workspace_binding_v2" },
+    ];
+
+    for (const payload of invalidPayloads) {
+      expect(isWorkspaceBindingPayload(payload)).toBe(false);
+      expect(isHostMessage({ version: bridgeVersion, type: "host.workspaceBinding", requestId: "workspace-bind-1", payload })).toBe(false);
+    }
+    expect(isHostMessage(workspaceBindingMessage({}, "different-request"))).toBe(true);
+    const mismatch = workspaceBindingMessage();
+    mismatch.requestId = "workspace-bind-other";
+    expect(isHostMessage(mismatch)).toBe(false);
+    expect(isHostMessage({ ...workspaceBindingMessage(), version: "2026-05-16" })).toBe(false);
+    expect(isHostMessage({ ...workspaceBindingMessage(), requestId: undefined })).toBe(false);
+  });
+
+  it("rejects workspace binding secrets without logging or storing them", () => {
+    const privateRoot = "/Users/alice/private-workspace";
+    const rawToken = "sk-proj-abcdefghijklmnopqrstuvwxyz";
+    const logs: string[] = [];
+    const messages: unknown[] = [];
+    const adapter = createBridgeAdapter((entry) => logs.push(entry));
+    adapter.subscribe((message) => messages.push(message));
+
+    window.dispatchEvent(new MessageEvent("message", { data: workspaceBindingMessage({ root: privateRoot }) }));
+    window.dispatchEvent(new MessageEvent("message", { data: workspaceBindingMessage({ displayName: rawToken }) }));
+
+    expect(messages).toHaveLength(0);
+    expect(logs.filter((entry) => entry === "Rejected invalid host bridge message")).toHaveLength(2);
+    expect(logs.join("\n")).not.toContain(privateRoot);
+    expect(logs.join("\n")).not.toContain(rawToken);
+    expect(JSON.stringify(localStorage)).not.toContain(privateRoot);
+    expect(JSON.stringify(sessionStorage)).not.toContain(rawToken);
+    adapter.dispose();
+  });
+
+  it("keeps dashboard sections independently loading, ready, empty, and errored", () => {
+    const state = {
+      runtime: { status: "ready", itemCount: 1, empty: false },
+      providerModel: { status: "error", layer: "provider_model", message: "Provider setup is required." },
+      conversations: { status: "loading" },
+      activeWork: { status: "ready", itemCount: 0, empty: true },
+    };
+    expect(isDashboardDataState(state)).toBe(true);
+    expect(isDashboardSectionState(state.activeWork)).toBe(true);
+    expect(isDashboardSectionState({ status: "ready", itemCount: 0, empty: false })).toBe(false);
+    expect(isDashboardSectionState({ status: "loading", itemCount: 0, empty: true })).toBe(false);
+    expect(isDashboardSectionState({ status: "error", layer: "runtime", message: "/Users/alice/runtime failed" })).toBe(false);
+    expect(isDashboardDataState({ ...state, conversations: undefined })).toBe(false);
+    expect(isDashboardDataState({ ...state, projects: { status: "loading" } })).toBe(false);
+  });
+
   it("rejects unsafe or privileged host.runtimeStatus payloads", () => {
     for (const message of [
       hostRuntimeStatusRawBearerTokenMessage,
@@ -1563,6 +1641,22 @@ function hostReady(payload: Record<string, unknown> = {}) {
       cloudRequired: false,
       ...payload,
     },
+  };
+}
+
+function workspaceBindingMessage(payload: Record<string, unknown> = {}, requestId = "workspace-bind-1") {
+  return {
+    version: bridgeVersion,
+    type: "host.workspaceBinding",
+    requestId,
+    payload: {
+      protocolVersion: "workspace_binding_v1",
+      requestId,
+      state: "auto_bound",
+      projectId: "prj_AbCdEfGhIjKlMnOpQrStUv",
+      displayName: "Yet AI Workspace",
+      ...payload,
+    } as Record<string, unknown>,
   };
 }
 
