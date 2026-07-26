@@ -886,7 +886,7 @@ function runSameNonceRetryEvidenceSelfCheck() {
   try {
     assertSameNonceRetryEvidenceSelfCheck();
     if (sameNonceRetryFailureSelfCheck) {
-      throw new Error(`Deterministic failure at ${path.join(root, "scripts", "smoke-jetbrains-wrapper-browser.mjs")}`);
+      throw new Error("Deterministic same-nonce retry failure probe");
     }
   } catch (error) {
     const message = sanitizeEvidenceText(messageOf(error)).replace(/\s+/g, " ").slice(0, 1000);
