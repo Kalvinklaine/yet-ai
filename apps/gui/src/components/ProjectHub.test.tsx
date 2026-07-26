@@ -40,6 +40,9 @@ describe("ProjectHub", () => {
     const row = Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.textContent?.includes("Launchable")) as HTMLTableRowElement;
     const sameWindow = Array.from(row.querySelectorAll("a")).find((link) => link.textContent === "Open") as HTMLAnchorElement;
     const newTab = Array.from(row.querySelectorAll("a")).find((link) => link.textContent === "Open in new tab") as HTMLAnchorElement;
+    expect(sameWindow.getAttribute("aria-label")).toBe("Open Launchable");
+    expect(sameWindow.getAttribute("href")).toBe(`/p/${project.projectId}/`);
+    expect(newTab.getAttribute("aria-label")).toBe("Open Launchable in new tab");
     expect(newTab.getAttribute("href")).toBe(`/p/${project.projectId}/`);
     expect(newTab.getAttribute("target")).toBe("_blank");
     expect(newTab.getAttribute("rel")).toBe("noopener noreferrer");
@@ -48,18 +51,33 @@ describe("ProjectHub", () => {
     expect(navigate).toHaveBeenCalledWith({ kind: "project", projectId: project.projectId, page: "home" });
   });
 
-  it("does not launch missing or archived projects or expose private values", async () => {
-    const missing = { ...summary("Missing", "missing"), projectId: "prj_1234567890123456789012" as client.ProjectSummary["projectId"] };
-    const archived = { ...summary("Archived", "archived"), projectId: "prj_abcdefghijklmnopqrstu_" as client.ProjectSummary["projectId"] };
+  it("keeps unavailable project lifecycle controls without exposing launch hrefs or private values", async () => {
+    const missing = { ...summary("Missing", "missing"), projectId: "prj_1234567890123456789012" as client.ProjectSummary["projectId"], rootPath: "/Users/private/missing-workspace" };
+    const archived = { ...summary("Archived", "archived"), projectId: "prj_abcdefghijklmnopqrstu_" as client.ProjectSummary["projectId"], providerToken: "token-secret-archived" };
+    vi.spyOn(window, "prompt").mockReturnValue("Missing renamed");
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.mocked(client.updateProject).mockResolvedValue({ ok: true, data: { ...missing, displayName: "Missing renamed", revision: "2" } });
+    vi.mocked(client.archiveProject).mockResolvedValue({ ok: true, data: { projectId: missing.projectId, status: "archived", revision: "2", rootAvailable: false, updatedAt: "2026-01-02T00:00:00Z" } });
+    vi.mocked(client.restoreProject).mockResolvedValue({ ok: true, data: { projectId: archived.projectId, status: "available", revision: "2", rootAvailable: true, updatedAt: "2026-01-02T00:00:00Z" } });
     vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [missing, archived], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
     const container = await render();
-    for (const name of ["Missing", "Archived"]) {
-      const row = Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.querySelector("strong")?.textContent === name) as HTMLTableRowElement;
-      expect(row.querySelectorAll("a")).toHaveLength(0);
-      expect(row.textContent).not.toContain("Open in new tab");
-    }
-    expect(container.innerHTML).not.toContain("/Users/private");
-    expect(container.innerHTML).not.toContain("token-secret");
+    const rowFor = (name: string) => Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.querySelector("strong")?.textContent === name) as HTMLTableRowElement;
+    const missingRow = rowFor("Missing");
+    const archivedRow = rowFor("Archived");
+    expect(missingRow.querySelector(`a[href="/p/${missing.projectId}/"]`)).toBeNull();
+    expect(archivedRow.querySelector(`a[href="/p/${archived.projectId}/"]`)).toBeNull();
+    expect(missingRow.querySelector('[aria-label="Rename project Missing"]')).not.toBeNull();
+    expect(missingRow.querySelector('[aria-label="Archive project Missing"]')).not.toBeNull();
+    expect(archivedRow.querySelector('[aria-label="Rename project Archived"]')).not.toBeNull();
+    expect(archivedRow.querySelector('[aria-label="Restore project Archived"]')).not.toBeNull();
+    await act(async () => { (missingRow.querySelector('[aria-label="Rename project Missing"]') as HTMLButtonElement).click(); });
+    expect(client.updateProject).toHaveBeenCalledWith(settings, missing.projectId, { displayName: "Missing renamed", expectedRevision: "1" });
+    await act(async () => { (missingRow.querySelector('[aria-label="Archive project Missing"]') as HTMLButtonElement).click(); });
+    expect(client.archiveProject).toHaveBeenCalledWith(settings, missing.projectId, "1");
+    await act(async () => { (archivedRow.querySelector('[aria-label="Restore project Archived"]') as HTMLButtonElement).click(); });
+    expect(client.restoreProject).toHaveBeenCalledWith(settings, archived.projectId, "1");
+    expect(container.innerHTML).not.toContain(missing.rootPath);
+    expect(container.innerHTML).not.toContain(archived.providerToken);
   });
 
   it("shows loading without a false empty state", async () => {
