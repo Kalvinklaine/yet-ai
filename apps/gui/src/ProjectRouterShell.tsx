@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { App } from "./App";
 import { ProjectHub } from "./components/ProjectHub";
 import { ProjectShell } from "./components/ProjectShell";
@@ -22,18 +22,22 @@ export function ProjectRouterShell() {
   });
   const [openedHostedRoute, setOpenedHostedRoute] = useState<OpenedHostedRoute | null>(null);
   const { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
+  const hostedAuthorityRef = useRef({ hostReadyGeneration, workspaceBinding });
+  hostedAuthorityRef.current = { hostReadyGeneration, workspaceBinding };
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
   const openHostedRoute = useCallback((nextRoute: HostedRoute, selectedProjectId?: string) => {
-    if (hostReadyGeneration === null || !workspaceBinding) return;
+    const { hostReadyGeneration: currentGeneration, workspaceBinding: currentBinding } = hostedAuthorityRef.current;
+    if (currentGeneration === null || !currentBinding) return false;
     const selectedId = selectedProjectId ? parseHostedProjectId(selectedProjectId) : null;
-    if (!isHostedRouteAllowed(nextRoute, workspaceBinding, selectedId)) return;
+    if (!isHostedRouteAllowed(nextRoute, currentBinding, selectedId)) return false;
     setOpenedHostedRoute({
       route: nextRoute,
-      generation: hostReadyGeneration,
-      bindingFingerprint: workspaceBindingFingerprint(workspaceBinding),
+      generation: currentGeneration,
+      bindingFingerprint: workspaceBindingFingerprint(currentBinding),
       selectedProjectId: selectedId,
     });
-  }, [hostReadyGeneration, workspaceBinding]);
+    return true;
+  }, []);
   const authorizedHostedRoute = openedHostedRoute
     && openedHostedRoute.generation === hostReadyGeneration
     && workspaceBinding

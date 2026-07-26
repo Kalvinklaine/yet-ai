@@ -16,7 +16,7 @@ type DashboardProps = {
   settings: RuntimeSettings;
   binding: WorkspaceBindingPayload | null;
   hostReadyGeneration?: string | null;
-  onOpen: (route: Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>, selectedProjectId?: ProjectId) => void;
+  onOpen: (route: Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>, selectedProjectId?: ProjectId) => boolean;
 };
 
 const loading = { status: "loading" } as const;
@@ -32,8 +32,14 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
   const [providerModel, setProviderModel] = useState<LoadState<number>>(loading);
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
+  const mountedRef = useRef(false);
   const [startError, setStartError] = useState<string | null>(null);
   const trusted = hostReadyGeneration === undefined || (hostReadyGeneration !== null && binding !== null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     setSelection(binding?.state === "auto_bound" ? toSelectedProject(binding.projectId, binding.displayName) : null);
@@ -115,8 +121,13 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     setStarting(true);
     setStartError(null);
     const result = await createChat(createProjectRuntimeSettings(settings, selection.projectId));
+    if (!mountedRef.current) return;
     if (result.ok && chatIdPattern.test(result.data.chatId)) {
-      openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId });
+      if (!openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId })) {
+        setStarting(false);
+        startingRef.current = false;
+        setStartError("The workspace changed. Try again.");
+      }
       return;
     }
     setStarting(false);
@@ -156,12 +167,12 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     </DashboardFrame>
   );
 
-  function openSelectedProject(route: Extract<AppRoute, { kind: "project" }>) {
-    if (binding?.state === "selection_required") {
-      onOpen(route, selection?.projectId);
-    } else {
-      onOpen(route);
-    }
+  function openSelectedProject(route: Extract<AppRoute, { kind: "project" }>): boolean {
+    const opened = binding?.state === "selection_required"
+      ? onOpen(route, selection?.projectId)
+      : onOpen(route);
+    if (!opened) setStartError("The workspace changed. Try again.");
+    return opened;
   }
 }
 

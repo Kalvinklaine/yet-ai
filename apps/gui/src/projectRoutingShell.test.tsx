@@ -25,7 +25,7 @@ vi.mock("./components/LegacyData", () => ({
   LegacyData: () => <div data-testid="legacy-data">legacy</div>,
 }));
 vi.mock("./components/CurrentWorkspaceDashboard", () => ({
-  CurrentWorkspaceDashboard: ({ onOpen }: { onOpen: (route: object, selectedProjectId?: string) => void }) => <div data-testid="workspace-dashboard">
+  CurrentWorkspaceDashboard: ({ onOpen }: { onOpen: (route: object, selectedProjectId?: string) => boolean }) => <div data-testid="workspace-dashboard">
     <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-new" })}>Start new chat</button>
     <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-selected" }, "prj_abcdefghijklmnopqrstuA")}>Start selected chat</button>
     <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_bcdefghijklmnopqrstuvQ", page: "chat", chatId: "chat-mismatch" }, "prj_abcdefghijklmnopqrstuA")}>Start mismatched chat</button>

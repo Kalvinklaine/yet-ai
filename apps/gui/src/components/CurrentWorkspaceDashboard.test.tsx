@@ -35,7 +35,7 @@ function installFetch(options: { chats?: unknown[]; failAgent?: boolean; project
   return fetchMock;
 }
 
-async function renderDashboard(binding: WorkspaceBindingPayload | null, onOpen = vi.fn(), hostReadyGeneration?: string | null) {
+async function renderDashboard(binding: WorkspaceBindingPayload | null, onOpen = vi.fn(() => true), hostReadyGeneration?: string | null) {
   container = document.createElement("div");
   document.body.append(container);
   await act(async () => {
@@ -195,6 +195,98 @@ describe("CurrentWorkspaceDashboard", () => {
     const creates = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/p/${projectId}/v1/chats`) && init?.method === "POST");
     expect(creates).toHaveLength(1);
     expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-new" });
+  });
+
+  it.each(["auto_bound", "selection_required"] as const)("recovers when a deferred %s Start loses workspace authority", async (bindingState) => {
+    let resolveCreate: ((response: Response) => void) | undefined;
+    let createCount = 0;
+    const fetchMock = installFetch();
+    const defaultFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(`/p/${projectId}/v1/chats`) && init?.method === "POST") {
+        createCount += 1;
+        if (createCount === 1) return new Promise<Response>((resolve) => { resolveCreate = resolve; });
+        return response({ chatId: "chat-retry" });
+      }
+      return defaultFetch(input, init);
+    });
+    const onOpen = vi.fn(() => false);
+    const currentBinding = binding(bindingState);
+    await renderDashboard(currentBinding, onOpen, "ready-1");
+    await flush();
+    if (bindingState === "selection_required") {
+      act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Cozy Project")?.click());
+      await flush();
+    }
+
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
+    expect(container?.textContent).toContain("Starting…");
+    await act(async () => {
+      root?.render(<CurrentWorkspaceDashboard settings={settings} binding={currentBinding} hostReadyGeneration="ready-2" onOpen={onOpen} />);
+      resolveCreate?.(new Response(JSON.stringify({ chatId: "chat-stale" }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    });
+    await flush();
+
+    expect(container?.textContent).toContain("The workspace changed. Try again.");
+    const retry = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat");
+    expect(retry?.disabled).toBe(false);
+    onOpen.mockReturnValue(true);
+    act(() => retry?.click());
+    await flush();
+    if (bindingState === "selection_required") {
+      expect(onOpen).toHaveBeenLastCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-retry" }, projectId);
+    } else {
+      expect(onOpen).toHaveBeenLastCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-retry" });
+    }
+  });
+
+  it("keeps create failures generic and allows another Start", async () => {
+    const fetchMock = installFetch();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith(`/p/${projectId}/v1/chats`) && init?.method === "POST"
+        ? response({ error: "failed" }, 500)
+        : response({}, 404));
+    await renderDashboard(binding("auto_bound"));
+    await flush();
+
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
+    await flush();
+
+    expect(container?.textContent).toContain("A new project chat could not be started.");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(false);
+  });
+
+  it("reports a rejected Resume without disabling it", async () => {
+    installFetch({ chats: [{ chatId: "chat-latest", title: "Latest", createdAt: "2026-07-26T10:00:00Z", updatedAt: "2026-07-26T11:00:00Z", messageCount: 4 }] });
+    const onOpen = vi.fn(() => false);
+    await renderDashboard(binding("auto_bound"), onOpen);
+    await flush();
+
+    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Resume last");
+    act(() => resume?.click());
+
+    expect(container?.textContent).toContain("The workspace changed. Try again.");
+    expect(resume?.disabled).toBe(false);
+  });
+
+  it("ignores create completion after unmount", async () => {
+    let resolveCreate: ((response: Response) => void) | undefined;
+    const fetchMock = installFetch();
+    const defaultFetch = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith(`/p/${projectId}/v1/chats`) && init?.method === "POST"
+        ? new Promise<Response>((resolve) => { resolveCreate = resolve; })
+        : defaultFetch(input, init));
+    const onOpen = vi.fn(() => true);
+    await renderDashboard(binding("auto_bound"), onOpen);
+    await flush();
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
+
+    act(() => root?.unmount());
+    root = undefined;
+    await act(async () => resolveCreate?.(new Response(JSON.stringify({ chatId: "chat-late" }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("resumes the latest chat without creating and leaves storage and DOM private", async () => {
