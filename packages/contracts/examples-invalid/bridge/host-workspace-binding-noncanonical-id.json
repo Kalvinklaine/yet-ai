@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.workspaceBinding",
+  "requestId": "workspace-bind-noncanonical",
+  "payload": {
+    "protocolVersion": "workspace_binding_v1",
+    "requestId": "workspace-bind-noncanonical",
+    "state": "auto_bound",
+    "projectId": "prj_AAAAAAAAAAAAAAAAAAAAAB",
+    "displayName": "Workspace"
+  }
+}

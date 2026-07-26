@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.workspaceBinding",
+  "requestId": "workspace-bind-1",
+  "payload": {
+    "protocolVersion": "workspace_binding_v1",
+    "requestId": "workspace-bind-1",
+    "state": "auto_bound",
+    "projectId": "prj_AbCdEfGhIjKlMnOpQrStUA",
+    "displayName": "Yet AI Workspace"
+  }
+}

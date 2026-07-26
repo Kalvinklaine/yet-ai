@@ -151,6 +151,7 @@ export type DashboardSectionState =
     };
 
 export type DashboardDataState = {
+  projects: DashboardSectionState;
   runtime: DashboardSectionState;
   providerModel: DashboardSectionState;
   conversations: DashboardSectionState;
@@ -957,8 +958,9 @@ export function isDashboardSectionState(value: unknown): value is DashboardSecti
 
 export function isDashboardDataState(value: unknown): value is DashboardDataState {
   return isPlainObject(value) &&
-    hasOnlyKeys(value, ["runtime", "providerModel", "conversations", "activeWork"]) &&
-    Object.keys(value).length === 4 &&
+    hasOnlyKeys(value, ["projects", "runtime", "providerModel", "conversations", "activeWork"]) &&
+    Object.keys(value).length === 5 &&
+    isDashboardSectionState(value.projects) &&
     isDashboardSectionState(value.runtime) &&
     isDashboardSectionState(value.providerModel) &&
     isDashboardSectionState(value.conversations) &&
@@ -1381,20 +1383,18 @@ function optionalProductId(value: unknown): boolean {
 }
 
 function isOpaqueProjectId(value: unknown): boolean {
-  return typeof value === "string" && /^prj_[A-Za-z0-9_-]{22}$/.test(value);
+  return typeof value === "string" && /^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(value);
 }
 
 function isSafeWorkspaceDisplayName(value: unknown): boolean {
   return typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= 120 &&
+    Array.from(value).length > 0 &&
+    Array.from(value).length <= 120 &&
     value.trim() === value &&
     !hasControlCharacters(value) &&
-    !/[\/]/.test(value) &&
-    !unsafeDisplayText(value) &&
-    !hasPrivatePathLikeText(value) &&
-    !hasKeyLikeSecretText(value) &&
-    !/(?:https?:\/\/|file:|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
+    !/[\/\\]/.test(value) &&
+    !/(?:api[-_ ]?key|authorization|bearer|token|secret|password|https?:\/\/|file:)/i.test(value) &&
+    !hasKeyLikeSecretText(value);
 }
 
 function optionalDisplayName(value: unknown): boolean {

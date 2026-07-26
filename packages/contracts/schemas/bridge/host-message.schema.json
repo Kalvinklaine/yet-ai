@@ -24,6 +24,7 @@
         "host.ideActionResult",
         "host.applyWorkspaceEditResult",
         "host.runtimeStatus",
+        "host.workspaceBinding",
         "host.controlledAgentFileReadResult",
         "host.controlledAgentEditResult",
         "host.controlledAgentMultifileApplyResult",
@@ -44,6 +45,38 @@
       "minLength": 1,
       "maxLength": 128,
       "pattern": "^(?!.*(?:[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Aa][Cc][Cc][Ee][Ss][Ss][-_]?[Tt][Oo][Kk][Ee][Nn]|[Pp][Rr][Oo][Vv][Ii][Dd][Ee][Rr][-_]?[Kk][Ee][Yy]|[Oo][Pp][Ee][Nn][Aa][Ii][-_]?[Aa][Pp][Ii][-_]?[Kk][Ee][Yy]|[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}))[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$"
+    },
+    "workspaceBindingPayload": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocolVersion", "requestId", "state", "projectId", "displayName"],
+          "properties": {
+            "protocolVersion": { "const": "workspace_binding_v1" },
+            "requestId": { "$ref": "#/$defs/requestId" },
+            "state": { "const": "auto_bound" },
+            "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{21}[AQgw]$" },
+            "displayName": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120,
+              "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)(?![\\s\\S]*(?:[Aa][Pp][Ii][-_ ]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]|[Bb][Ee][Aa][Rr][Ee][Rr]|[Tt][Oo][Kk][Ee][Nn]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|(?:^|[^A-Za-z0-9_-])[Ss][Kk]-(?:[Pp][Rr][Oo][Jj]-)?[A-Za-z0-9_-]{8,}|https?://|file:))[^\\x00-\\x1F\\x7F-\\x9F/\\\\]+$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocolVersion", "requestId", "state", "reason"],
+          "properties": {
+            "protocolVersion": { "const": "workspace_binding_v1" },
+            "requestId": { "$ref": "#/$defs/requestId" },
+            "state": { "const": "selection_required" },
+            "reason": { "enum": ["no_root", "multiple_roots", "root_unavailable"] }
+          }
+        }
+      ]
     },
     "safeRelativePath": {
       "type": "string",
@@ -3738,6 +3771,22 @@
             }
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "host.workspaceBinding" } },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["requestId", "payload"],
+        "properties": {
+          "requestId": { "$ref": "#/$defs/requestId" },
+          "payload": { "$ref": "#/$defs/workspaceBindingPayload" }
+        },
+        "allOf": [
+          { "properties": { "payload": { "type": "object", "properties": { "requestId": { "const": { "$data": "2/requestId" } } } } } }
+        ]
       }
     },
     {

@@ -1,0 +1,13 @@
+{
+  "version": "2026-05-15",
+  "type": "host.workspaceBinding",
+  "requestId": "workspace-bind-root",
+  "payload": {
+    "protocolVersion": "workspace_binding_v1",
+    "requestId": "workspace-bind-root",
+    "state": "auto_bound",
+    "projectId": "prj_AbCdEfGhIjKlMnOpQrStUA",
+    "displayName": "Workspace",
+    "root": "/home/example/workspace"
+  }
+}

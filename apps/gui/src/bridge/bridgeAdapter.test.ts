@@ -18,6 +18,17 @@ import hostRuntimeStatusPrivatePathMessage from "../../../../packages/contracts/
 import hostRuntimeStatusAuthorityLaunchMessage from "../../../../packages/contracts/examples-invalid/bridge/host-runtime-status-authority-launch.json";
 import hostRuntimeStatusRequestIdMessage from "../../../../packages/contracts/examples-invalid/bridge/host-runtime-status-request-id.json";
 import hostRuntimeStatusRunCommandFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-runtime-status-run-command-field.json";
+import hostWorkspaceBindingAutoBoundMessage from "../../../../packages/contracts/examples/bridge/host-workspace-binding-auto-bound.json";
+import hostWorkspaceBindingSelectionRequiredMessage from "../../../../packages/contracts/examples/bridge/host-workspace-binding-selection-required.json";
+import hostWorkspaceBindingCorrelationMismatchMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-correlation-mismatch.json";
+import hostWorkspaceBindingPathFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-path-field.json";
+import hostWorkspaceBindingRootFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-root-field.json";
+import hostWorkspaceBindingUriFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-uri-field.json";
+import hostWorkspaceBindingTokenFieldMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-token-field.json";
+import hostWorkspaceBindingMalformedIdMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-malformed-id.json";
+import hostWorkspaceBindingNoncanonicalIdMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-noncanonical-id.json";
+import hostWorkspaceBindingSecretNameMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-secret-name.json";
+import hostWorkspaceBindingUnsafeNameMessage from "../../../../packages/contracts/examples-invalid/bridge/host-workspace-binding-unsafe-name.json";
 import guiApplyWorkspaceEditRequestMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-apply-workspace-edit-request-message.json";
 import guiCopyTextMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-copy-text-message.json";
 import guiExecuteIdeToolMessage from "../../../../packages/contracts/examples-invalid/bridge/gui-execute-ide-tool-message.json";
@@ -922,6 +933,8 @@ describe("bridgeAdapter", () => {
   });
 
   it("accepts safe correlated workspace binding states", () => {
+    expect(isHostMessage(hostWorkspaceBindingAutoBoundMessage)).toBe(true);
+    expect(isHostMessage(hostWorkspaceBindingSelectionRequiredMessage)).toBe(true);
     const bound = workspaceBindingMessage();
     expect(isWorkspaceBindingPayload(bound.payload)).toBe(true);
     expect(isHostMessage(bound)).toBe(true);
@@ -936,8 +949,22 @@ describe("bridgeAdapter", () => {
   });
 
   it("rejects unsafe workspace binding payloads and mismatched correlation", () => {
+    for (const message of [
+      hostWorkspaceBindingCorrelationMismatchMessage,
+      hostWorkspaceBindingPathFieldMessage,
+      hostWorkspaceBindingRootFieldMessage,
+      hostWorkspaceBindingUriFieldMessage,
+      hostWorkspaceBindingTokenFieldMessage,
+      hostWorkspaceBindingMalformedIdMessage,
+      hostWorkspaceBindingNoncanonicalIdMessage,
+      hostWorkspaceBindingSecretNameMessage,
+      hostWorkspaceBindingUnsafeNameMessage,
+    ]) {
+      expect(isHostMessage(message)).toBe(false);
+    }
     const invalidPayloads = [
       { ...workspaceBindingMessage().payload, projectId: "project-readable-name" },
+      { ...workspaceBindingMessage().payload, projectId: "prj_AAAAAAAAAAAAAAAAAAAAAB" },
       { ...workspaceBindingMessage().payload, projectId: "prj_AAAAAAAAAAAAAAAAAAAAA/" },
       { ...workspaceBindingMessage().payload, displayName: "/Users/alice/private-workspace" },
       { ...workspaceBindingMessage().payload, displayName: "file:///home/alice/workspace" },
@@ -945,6 +972,7 @@ describe("bridgeAdapter", () => {
       { ...workspaceBindingMessage().payload, displayName: "sk-proj-abcdefghijklmnopqrstuvwxyz" },
       { ...workspaceBindingMessage().payload, displayName: `Project ${"x".repeat(121)}` },
       { ...workspaceBindingMessage().payload, displayName: "Project\u0000Name" },
+      { ...workspaceBindingMessage().payload, displayName: "Project\\Name" },
       { ...workspaceBindingMessage().payload, root: "/home/alice/workspace" },
       { ...workspaceBindingMessage().payload, workspaceUri: "file:///home/alice/workspace" },
       { ...workspaceBindingMessage().payload, token: "local-runtime-token" },
@@ -985,6 +1013,7 @@ describe("bridgeAdapter", () => {
 
   it("keeps dashboard sections independently loading, ready, empty, and errored", () => {
     const state = {
+      projects: { status: "ready", itemCount: 2, empty: false },
       runtime: { status: "ready", itemCount: 1, empty: false },
       providerModel: { status: "error", layer: "provider_model", message: "Provider setup is required." },
       conversations: { status: "loading" },
@@ -996,7 +1025,9 @@ describe("bridgeAdapter", () => {
     expect(isDashboardSectionState({ status: "loading", itemCount: 0, empty: true })).toBe(false);
     expect(isDashboardSectionState({ status: "error", layer: "runtime", message: "/Users/alice/runtime failed" })).toBe(false);
     expect(isDashboardDataState({ ...state, conversations: undefined })).toBe(false);
-    expect(isDashboardDataState({ ...state, projects: { status: "loading" } })).toBe(false);
+    expect(isDashboardDataState({ ...state, projects: { status: "loading" } })).toBe(true);
+    const { projects: _projects, ...withoutProjects } = state;
+    expect(isDashboardDataState(withoutProjects)).toBe(false);
   });
 
   it("rejects unsafe or privileged host.runtimeStatus payloads", () => {
@@ -1653,7 +1684,7 @@ function workspaceBindingMessage(payload: Record<string, unknown> = {}, requestI
       protocolVersion: "workspace_binding_v1",
       requestId,
       state: "auto_bound",
-      projectId: "prj_AbCdEfGhIjKlMnOpQrStUv",
+      projectId: "prj_AbCdEfGhIjKlMnOpQrStUA",
       displayName: "Yet AI Workspace",
       ...payload,
     } as Record<string, unknown>,

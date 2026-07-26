@@ -1,0 +1,11 @@
+{
+  "version": "2026-05-15",
+  "type": "host.workspaceBinding",
+  "requestId": "workspace-bind-2",
+  "payload": {
+    "protocolVersion": "workspace_binding_v1",
+    "requestId": "workspace-bind-2",
+    "state": "selection_required",
+    "reason": "multiple_roots"
+  }
+}

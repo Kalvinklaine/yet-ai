@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.workspaceBinding",
+  "requestId": "workspace-bind-bad-id",
+  "payload": {
+    "protocolVersion": "workspace_binding_v1",
+    "requestId": "workspace-bind-bad-id",
+    "state": "auto_bound",
+    "projectId": "project-readable-name",
+    "displayName": "Workspace"
+  }
+}

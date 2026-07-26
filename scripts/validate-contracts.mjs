@@ -316,6 +316,13 @@ const mappings = [
   ],
   ["packages/contracts/examples/bridge/host-ready-message.json", "packages/contracts/schemas/bridge/host-message.schema.json"],
   ...[
+    "host-workspace-binding-auto-bound.json",
+    "host-workspace-binding-selection-required.json"
+  ].map((fileName) => [
+    `packages/contracts/examples/bridge/${fileName}`,
+    "packages/contracts/schemas/bridge/host-message.schema.json"
+  ]),
+  ...[
     "host-runtime-status-connected-vscode.json",
     "host-runtime-status-auth-mismatch-jetbrains.json",
     "host-runtime-status-invalid-settings-vscode.json",
@@ -913,6 +920,15 @@ const invalidMappings = [
     "host-runtime-status-run-command-field.json",
     "host-runtime-status-request-id.json",
     "host-runtime-status-stack-trace.json",
+    "host-workspace-binding-correlation-mismatch.json",
+    "host-workspace-binding-path-field.json",
+    "host-workspace-binding-root-field.json",
+    "host-workspace-binding-uri-field.json",
+    "host-workspace-binding-token-field.json",
+    "host-workspace-binding-malformed-id.json",
+    "host-workspace-binding-noncanonical-id.json",
+    "host-workspace-binding-secret-name.json",
+    "host-workspace-binding-unsafe-name.json",
     "host-controlled-agent-file-read-result-private-path.json",
     "host-controlled-agent-file-read-result-blocked-body.json",
     "host-controlled-agent-file-read-result-unsafe-body.json",

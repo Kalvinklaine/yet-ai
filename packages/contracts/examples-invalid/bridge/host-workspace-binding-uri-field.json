@@ -1,0 +1,12 @@
+{
+  "version": "2026-05-15",
+  "type": "host.workspaceBinding",
+  "requestId": "workspace-bind-uri",
+  "payload": {
+    "protocolVersion": "workspace_binding_v1",
+    "requestId": "workspace-bind-uri",
+    "state": "selection_required",
+    "reason": "root_unavailable",
+    "workspaceUri": "file:///workspace"
+  }
+}
