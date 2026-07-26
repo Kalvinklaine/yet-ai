@@ -270,12 +270,15 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
     @Volatile
     private var pendingHostReadyReason: String? = null
     @Volatile
+    private var workspaceBindingGeneration = 0L
+    @Volatile
     private var disposed = false
 
     init {
         add(browser.component, BorderLayout.CENTER)
         query.addHandler { raw ->
             if (isGuiUnloadedBridgeMessage(raw)) {
+                workspaceBindingGeneration += 1
                 guiReadyRequestId = null
                 acceptedHostReadyRequestId = null
                 pendingHostReadyReason = null
@@ -435,6 +438,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
         )
         acceptedHostReadyRequestId = requestId.takeIf { delivered && !disposed }
         if (delivered && !disposed) {
+            requestId?.let { resolveWorkspaceBinding(settings, it) }
             emitHostReadyObservability(
                 settings = settings,
                 lifecycleStatus = latestConnection.lifecycleStatus,
@@ -443,6 +447,23 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
                 warn = { logger.warn(it) },
             )
             pendingHostReadyReason = null
+        }
+    }
+
+    private fun resolveWorkspaceBinding(settings: RuntimeSettings, requestId: String) {
+        val generation = workspaceBindingGeneration + 1
+        workspaceBindingGeneration = generation
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val result = try {
+                JetBrainsWorkspaceBindingResolver.resolve(JetBrainsWorkspaceRoots.collect(project), settings)
+            } catch (_: Exception) {
+                WorkspaceBindingResult.SelectionRequired("root_unavailable")
+            }
+            ApplicationManager.getApplication().invokeLater {
+                if (canDeliverWorkspaceBinding(disposed, generation, workspaceBindingGeneration, requestId, guiReadyRequestId, acceptedHostReadyRequestId)) {
+                    workspaceBindingMessage(requestId, result)?.let(::sendToGui)
+                }
+            }
         }
     }
 
@@ -478,6 +499,7 @@ class YetBrowserPanel(private val project: Project) : JPanel(BorderLayout()), Di
 
     override fun dispose() {
         disposed = true
+        workspaceBindingGeneration += 1
         contextRefreshAlarm.cancelAllRequests()
         packagedGuiPanel?.let { panel -> packagedGuiServer?.unregisterPanel(panel.id) }
         packagedGuiPanel = null
@@ -1039,6 +1061,9 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const isContextSelection = (selection) => selection === undefined || (isPlainObject(selection) && hasOnlyKeys(selection, ["startLine", "startCharacter", "endLine", "endCharacter", "text"]) && Object.keys(selection).length > 0 && optionalNumber(selection.startLine) && optionalNumber(selection.startCharacter) && optionalNumber(selection.endLine) && optionalNumber(selection.endCharacter) && optionalString(selection.text, 8000));
         const isContextSnapshotPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["kind", "source", "file", "selection"]) && payload.kind === "active_editor" && (payload.source === "vscode" || payload.source === "jetbrains" || payload.source === "browser") && isContextFile(payload.file) && isContextSelection(payload.selection);
         const isHostReadyPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["runtimeUrl", "runtimeProxyBaseUrl", "sessionToken", "productId", "displayName", "cloudRequired"]) && requiredLoopbackRuntimeUrl(payload.runtimeUrl) && optionalPanelScopedProxyBaseUrl(payload.runtimeProxyBaseUrl) && optionalString(payload.sessionToken, 4096) && optionalNonEmptyString(payload.productId, 256) && optionalNonEmptyString(payload.displayName, 256) && (payload.cloudRequired === undefined || payload.cloudRequired === false);
+        const isProjectId = (value) => typeof value === "string" && /^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(value);
+        const isProjectDisplayName = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && value.trim() === value && /^[^\u0000-\u001f\u007f-\u009f/\\]+$/.test(value) && !/(apikey|api_key|authorization|bearer|token|secret|password|https?:\/\/|file:)/i.test(value);
+        const isWorkspaceBindingPayload = (payload, requestId) => isPlainObject(payload) && payload.protocolVersion === "workspace_binding_v1" && payload.requestId === requestId && ((payload.state === "auto_bound" && hasOnlyKeys(payload, ["protocolVersion", "requestId", "state", "projectId", "displayName"]) && isProjectId(payload.projectId) && isProjectDisplayName(payload.displayName)) || (payload.state === "selection_required" && hasOnlyKeys(payload, ["protocolVersion", "requestId", "state", "reason"]) && ["no_root", "multiple_roots", "root_unavailable"].includes(payload.reason)));
         const isHostIdeActionProgressPayload = (payload) => isPlainObject(payload) && hasOnlyKeys(payload, ["phase", "status", "summary", "cloudRequired", "action", "workspaceRelativePath"]) && ["queued", "checkingPolicy", "running", "completed"].includes(payload.phase) && ["pending", "inProgress", "succeeded", "rejected", "unavailable", "failed"].includes(payload.status) && typeof payload.summary === "string" && payload.summary.length > 0 && payload.summary.length <= 1000 && (payload.cloudRequired === undefined || payload.cloudRequired === false) && (payload.action === undefined || allowedIdeActionNames.includes(payload.action)) && safePath(payload.workspaceRelativePath, 512);
         const isHostIdeActionResultContext = (context) => isPlainObject(context) && hasOnlyKeys(context, ["source", "hasActiveEditor", "workspaceFolderCount"]) && context.source === "jetbrains" && typeof context.hasActiveEditor === "boolean" && Number.isInteger(context.workspaceFolderCount) && context.workspaceFolderCount >= 0 && context.workspaceFolderCount <= 100;
         const isActiveFileExcerptText = (text) => typeof text === "string" && text.length > 0 && text.length <= 8000 && !/(authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|\/(?:Users|Home|Tmp|Var|Etc|Opt|Mnt|Volumes|Private)(?=\/|$|[^A-Za-z0-9_])|[A-Za-z]:(?:\/|\\)|~(?:\/|\\)|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(text);
@@ -1058,6 +1083,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
           if (message.type === "host.openedFromCommand") return message.requestId === undefined && (message.payload === undefined || (isPlainObject(message.payload) && Object.keys(message.payload).length === 0));
           if (!isRequestId(message.requestId)) return false;
           if (message.type === "host.ready") return isHostReadyPayload(message.payload);
+          if (message.type === "host.workspaceBinding") return typeof message.requestId === "string" && isWorkspaceBindingPayload(message.payload, message.requestId);
           if (message.type === "host.contextSnapshot") return isContextSnapshotPayload(message.payload);
           if (message.type === "host.ideActionProgress") return isHostIdeActionProgressPayload(message.payload);
           if (message.type === "host.ideActionResult") return isHostIdeActionResultPayload(message.payload);
@@ -1208,7 +1234,7 @@ fun renderHtml(connection: RuntimeConnectionResult, postIntellij: String, packag
         const messageMatchesCurrentReady = (message) => frameReady && currentGuiReadySequence === guiReadySequence && message.requestId === currentReadyRequestId();
         const canDeliverHostMessage = (message) => {
           if (message.type === "host.controlledAgentEditResult" && !frameReady) return isPreReadyTerminalBlockedControlledAgentEditResult(message);
-          if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentFileReadResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId();
+          if (message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.workspaceBinding" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentFileReadResult") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && (message.type !== "host.workspaceBinding" || message.requestId === currentReadyRequestId());
           if (message.type === "host.openedFromCommand") return frameReady && hostReadyAcceptedForCurrentFrame && acceptedHostReadyRequestId === currentReadyRequestId() && message.requestId === undefined;
           if (message.type === "host.runtimeStatus") return frameReady && message.requestId === undefined;
           if (!messageMatchesCurrentReady(message)) return false;

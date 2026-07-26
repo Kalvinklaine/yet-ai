@@ -124,6 +124,34 @@ object BridgeMessages {
         add("payload", JsonObject())
     }.toString()
 
+    fun workspaceBindingAutoBound(requestId: String, projectId: String, displayName: String): String? {
+        if (!isValidRequestId(requestId) || !isValidProjectId(projectId) || !isValidProjectDisplayName(displayName)) return null
+        return workspaceBinding(requestId) {
+            addProperty("state", "auto_bound")
+            addProperty("projectId", projectId)
+            addProperty("displayName", displayName)
+        }
+    }
+
+    fun workspaceBindingSelectionRequired(requestId: String, reason: String): String? {
+        if (!isValidRequestId(requestId) || reason !in setOf("no_root", "multiple_roots", "root_unavailable")) return null
+        return workspaceBinding(requestId) {
+            addProperty("state", "selection_required")
+            addProperty("reason", reason)
+        }
+    }
+
+    private fun workspaceBinding(requestId: String, payloadFields: JsonObject.() -> Unit): String = JsonObject().apply {
+        addProperty("version", ProductIdentity.bridgeVersion)
+        addProperty("type", "host.workspaceBinding")
+        addProperty("requestId", requestId)
+        add("payload", JsonObject().apply {
+            addProperty("protocolVersion", "workspace_binding_v1")
+            addProperty("requestId", requestId)
+            payloadFields()
+        })
+    }.toString()
+
     fun contextSnapshot(snapshot: ActiveEditorContext.Snapshot, requestId: String?): String {
         val message = JsonObject().apply {
             addProperty("version", ProductIdentity.bridgeVersion)
@@ -164,7 +192,18 @@ object BridgeMessages {
             value.none { it.isISOControl() } &&
             !SecretRequestIdRegex.containsMatchIn(value)
 
+    fun isValidProjectId(value: String): Boolean = ProjectIdRegex.matches(value)
+
+    fun isValidProjectDisplayName(value: String): Boolean =
+        value.isNotEmpty() &&
+            value.codePointCount(0, value.length) <= 120 &&
+            value.trim() == value &&
+            value.none { it.isISOControl() || it == '/' || it == '\\' } &&
+            !ProjectDisplayNameReservedRegex.containsMatchIn(value)
+
     private val SecretRequestIdRegex = Regex("authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}", RegexOption.IGNORE_CASE)
+    private val ProjectIdRegex = Regex("^prj_[A-Za-z0-9_-]{21}[AQgw]$")
+    private val ProjectDisplayNameReservedRegex = Regex("apikey|api_key|authorization|bearer|token|secret|password|https?://|file:", RegexOption.IGNORE_CASE)
 
     private fun JsonObject.stringValue(name: String): String? {
         val element = get(name) ?: return null

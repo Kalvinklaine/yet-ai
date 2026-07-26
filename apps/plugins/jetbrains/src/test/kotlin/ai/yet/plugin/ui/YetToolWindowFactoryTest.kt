@@ -14,6 +14,7 @@ import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -1455,6 +1456,71 @@ class YetToolWindowFactoryTest {
         assertEquals(listOf("Yet AI active editor context collection failed"), logs)
         assertFalse(logs.joinToString("\n").contains("raw-selected-text"))
         assertFalse(logs.joinToString("\n").contains("/Users/person/private/File.kt"))
+    }
+
+    @Test
+    fun workspaceBindingSingleRootUsesTransportAndEmitsSafeSummaryOnly() {
+        val privateRoot = "/Users/person/private-workspace"
+        val rawToken = "local-session-token"
+        var calls = 0
+        val result = JetBrainsWorkspaceBindingResolver.resolve(
+            roots = listOf(LocalWorkspaceRoot(privateRoot, "Workspace")),
+            settings = RuntimeSettings("http://127.0.0.1:8001", null, rawToken),
+            transport = WorkspaceBindingTransport { _, root ->
+                calls += 1
+                assertEquals(privateRoot, root.path)
+                WorkspaceBindingResult.AutoBound("prj_AbCdEfGhIjKlMnOpQrStUA", "Workspace")
+            },
+        )
+        val message = workspaceBindingMessage("ready-1", result)
+        assertNotNull(message)
+
+        assertEquals(1, calls)
+        assertEquals("host.workspaceBinding", messageType(message))
+        assertContains(message, "\"state\":\"auto_bound\"")
+        assertFalse(message.contains(privateRoot))
+        assertFalse(message.contains(rawToken))
+        assertFalse(message.contains("root"))
+    }
+
+    @Test
+    fun workspaceBindingZeroAndMultipleRootsSkipTransport() {
+        var calls = 0
+        val transport = WorkspaceBindingTransport { _, _ ->
+            calls += 1
+            WorkspaceBindingResult.SelectionRequired("root_unavailable")
+        }
+        val settings = RuntimeSettings("http://127.0.0.1:8001", null, "session-token")
+
+        val zero = JetBrainsWorkspaceBindingResolver.resolve(emptyList(), settings, transport)
+        val multiple = JetBrainsWorkspaceBindingResolver.resolve(
+            listOf(LocalWorkspaceRoot("/one", null), LocalWorkspaceRoot("/two", null)),
+            settings,
+            transport,
+        )
+
+        assertEquals(0, calls)
+        assertEquals("no_root", (zero as WorkspaceBindingResult.SelectionRequired).reason)
+        assertEquals("multiple_roots", (multiple as WorkspaceBindingResult.SelectionRequired).reason)
+    }
+
+    @Test
+    fun workspaceBindingFailureIsSanitizedAndDeliveryRejectsStaleOrDisposedCompletion() {
+        val failure = JetBrainsWorkspaceBindingResolver.resolve(
+            listOf(LocalWorkspaceRoot("/Users/person/private", null)),
+            RuntimeSettings("http://127.0.0.1:8001", null, "secret-token"),
+            WorkspaceBindingTransport { _, _ -> WorkspaceBindingResult.SelectionRequired("root_unavailable") },
+        )
+        val message = workspaceBindingMessage("ready-current", failure)
+        assertNotNull(message)
+        assertEquals("root_unavailable", JsonParser.parseString(message).asJsonObject.getAsJsonObject("payload").get("reason").asString)
+        assertFalse(message.contains("/Users/person/private"))
+        assertFalse(message.contains("secret-token"))
+
+        assertTrue(canDeliverWorkspaceBinding(false, 2, 2, "ready-current", "ready-current", "ready-current"))
+        assertFalse(canDeliverWorkspaceBinding(false, 1, 2, "ready-current", "ready-current", "ready-current"))
+        assertFalse(canDeliverWorkspaceBinding(true, 2, 2, "ready-current", "ready-current", "ready-current"))
+        assertFalse(canDeliverWorkspaceBinding(false, 2, 2, "ready-old", "ready-current", "ready-current"))
     }
 
     @Test

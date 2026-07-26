@@ -156,4 +156,28 @@ class BridgeMessagesTest {
 
         assertFalse(message.has("requestId"))
     }
+
+    @Test
+    fun workspaceBindingAutoBoundIsStrictCorrelatedAndSafe() {
+        val raw = BridgeMessages.workspaceBindingAutoBound("ready-1", "prj_AbCdEfGhIjKlMnOpQrStUA", "Yet AI Workspace")
+        assertNotNull(raw)
+        val message = JsonParser.parseString(raw).asJsonObject
+        val payload = message.getAsJsonObject("payload")
+
+        assertEquals("host.workspaceBinding", message.get("type").asString)
+        assertEquals("ready-1", message.get("requestId").asString)
+        assertEquals("ready-1", payload.get("requestId").asString)
+        assertEquals(setOf("protocolVersion", "requestId", "state", "projectId", "displayName"), payload.keySet())
+        assertFalse(raw.contains("root"))
+        assertFalse(raw.contains("token", ignoreCase = true))
+    }
+
+    @Test
+    fun workspaceBindingRejectsMalformedProjectSummariesAndReasons() {
+        assertNull(BridgeMessages.workspaceBindingAutoBound("ready-1", "project-readable", "Workspace"))
+        assertNull(BridgeMessages.workspaceBindingAutoBound("ready-1", "prj_AbCdEfGhIjKlMnOpQrStUA", "/Users/private"))
+        assertNull(BridgeMessages.workspaceBindingAutoBound("ready-1", "prj_AbCdEfGhIjKlMnOpQrStUA", "Bearer token"))
+        assertNull(BridgeMessages.workspaceBindingSelectionRequired("ready-1", "private_root"))
+        assertNotNull(BridgeMessages.workspaceBindingSelectionRequired("ready-1", "root_unavailable"))
+    }
 }
