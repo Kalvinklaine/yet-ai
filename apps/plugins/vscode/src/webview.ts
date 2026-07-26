@@ -14,6 +14,7 @@ import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity"
 export type HostMessage =
   | { version: string; type: "host.ready"; requestId?: string; payload?: Record<string, unknown> }
   | { version: string; type: "host.openedFromCommand" | "host.runtimeStatus"; requestId?: never; payload?: Record<string, unknown> }
+  | { version: string; type: "host.workspaceBinding"; requestId: string; payload: WorkspaceBindingPayload }
   | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentVerificationBundleResult" | "host.controlledAgentLexicalSearchResult"; requestId?: string; payload?: Record<string, unknown> };
 
 type RuntimeStatusLifecycle = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
@@ -82,10 +83,17 @@ type HostContextPayload = {
 
 type GuiMessage = {
   version: string;
-  type: "gui.ready" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentMultifileApplyRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentVerificationBundleRequest" | "gui.controlledAgentLexicalSearchRequest";
+  type: "gui.ready" | "gui.unloaded" | "gui.runtimeRefresh" | "gui.ideActionRequest" | "gui.applyWorkspaceEditRequest" | "gui.controlledAgentFileReadRequest" | "gui.controlledAgentEditRequest" | "gui.controlledAgentMultifileApplyRequest" | "gui.controlledAgentCommandRunRequest" | "gui.controlledAgentVerificationBundleRequest" | "gui.controlledAgentLexicalSearchRequest";
   requestId?: string;
   payload?: Record<string, unknown>;
 };
+
+export type WorkspaceBindingPayload =
+  | { protocolVersion: "workspace_binding_v1"; requestId: string; state: "auto_bound"; projectId: string; displayName: string }
+  | { protocolVersion: "workspace_binding_v1"; requestId: string; state: "selection_required"; reason: "no_root" | "multiple_roots" | "root_unavailable" };
+
+type WorkspaceFolderInput = { uri: { scheme: string; fsPath: string } };
+type WorkspaceBindingFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 type VerificationCommandId = "repository-check" | "gui-app-tests" | "engine-chat-tests";
 
@@ -237,6 +245,8 @@ export function openYetAiWebview(
   panel.webview.html = renderWebviewHtml(panel.webview, context.extensionUri, identity, connection);
   let guiReady = false;
   let guiReadyRequestId: string | undefined;
+  let bindingGeneration = 0;
+  let disposed = false;
   let contextRefreshTimer: ReturnType<typeof setTimeout> | undefined;
   const sendContextSnapshot = () => {
     if (!guiReady) {
@@ -259,6 +269,8 @@ export function openYetAiWebview(
   const activeEditorListener = vscode.window.onDidChangeActiveTextEditor(() => scheduleContextRefresh());
   const selectionListener = vscode.window.onDidChangeTextEditorSelection(() => scheduleContextRefresh());
   panel.onDidDispose(() => {
+    disposed = true;
+    bindingGeneration += 1;
     activeEditorListener.dispose();
     selectionListener.dispose();
     if (contextRefreshTimer !== undefined) {
@@ -266,6 +278,20 @@ export function openYetAiWebview(
       contextRefreshTimer = undefined;
     }
   });
+  const sendWorkspaceBinding = (requestId: string) => {
+    const generation = ++bindingGeneration;
+    void resolveWorkspaceBinding(connection, vscode.workspace.workspaceFolders ?? [], requestId).then((message) => {
+      if (isCurrentWorkspaceBindingDelivery({ disposed, generation, latestGeneration: bindingGeneration, guiReady, requestId, latestRequestId: guiReadyRequestId })) {
+        void panel.webview.postMessage(message);
+      }
+    });
+  };
+  const workspaceFoldersListener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    if (guiReady && guiReadyRequestId !== undefined) {
+      sendWorkspaceBinding(guiReadyRequestId);
+    }
+  });
+  panel.onDidDispose(() => workspaceFoldersListener.dispose());
   panel.webview.onDidReceiveMessage((message: unknown) => {
     if (!isGuiMessage(message)) {
       if (isInvalidIdeActionRequestMessage(message)) {
@@ -312,6 +338,22 @@ export function openYetAiWebview(
       return;
     }
     console.log(`Yet AI received ${message.type}`);
+    if (message.type === "gui.unloaded") {
+      guiReady = false;
+      guiReadyRequestId = undefined;
+      bindingGeneration += 1;
+      return;
+    }
+    if (message.type === "gui.runtimeRefresh") {
+      if (!guiReady || message.requestId === undefined) {
+        return;
+      }
+      guiReadyRequestId = message.requestId;
+      void panel.webview.postMessage(createConnectedHostRuntimeStatus(connection));
+      void panel.webview.postMessage(createHostReady(identity, connection, message.requestId));
+      sendWorkspaceBinding(message.requestId);
+      return;
+    }
     if (isPrivilegedGuiMessageType(message.type) && !isPrivilegedGuiMessageAllowed({ guiReady })) {
       void rejectPrivilegedGuiMessageBeforeReady(panel.webview, message);
       return;
@@ -349,9 +391,10 @@ export function openYetAiWebview(
       return;
     }
     guiReady = true;
-    guiReadyRequestId = message.requestId;
+    guiReadyRequestId = message.requestId ?? createRequestId();
     void panel.webview.postMessage(createConnectedHostRuntimeStatus(connection));
-    void panel.webview.postMessage(createHostReady(identity, connection, message.requestId));
+    void panel.webview.postMessage(createHostReady(identity, connection, guiReadyRequestId));
+    sendWorkspaceBinding(guiReadyRequestId);
     void panel.webview.postMessage({
       version: bridgeVersion,
       type: "host.openedFromCommand",
@@ -382,6 +425,89 @@ export function isPrivilegedGuiMessageType(type: GuiMessage["type"]): type is Pr
     type === "gui.controlledAgentCommandRunRequest" ||
     type === "gui.controlledAgentVerificationBundleRequest" ||
     type === "gui.controlledAgentLexicalSearchRequest";
+}
+
+export function isCurrentWorkspaceBindingDelivery(state: { disposed: boolean; generation: number; latestGeneration: number; guiReady: boolean; requestId: string; latestRequestId?: string }): boolean {
+  return !state.disposed && state.generation === state.latestGeneration && state.guiReady && state.requestId === state.latestRequestId;
+}
+
+export async function resolveWorkspaceBinding(
+  connection: EngineConnection,
+  workspaceFolders: readonly WorkspaceFolderInput[],
+  requestId: string,
+  fetchImplementation: WorkspaceBindingFetch = fetch,
+): Promise<HostMessage> {
+  const unavailable = (reason: "no_root" | "multiple_roots" | "root_unavailable"): HostMessage => ({
+    version: bridgeVersion,
+    type: "host.workspaceBinding",
+    requestId,
+    payload: { protocolVersion: "workspace_binding_v1", requestId, state: "selection_required", reason },
+  });
+  if (workspaceFolders.length === 0) {
+    return unavailable("no_root");
+  }
+  const localRoots = [...new Set(workspaceFolders.filter((folder) => folder.uri.scheme === "file").map((folder) => folder.uri.fsPath))];
+  if (localRoots.length > 1 || (workspaceFolders.length > 1 && workspaceFolders.some((folder) => folder.uri.scheme !== "file"))) {
+    return unavailable("multiple_roots");
+  }
+  if (localRoots.length !== 1 || connection.sessionToken === undefined || !isBridgeSafeSessionToken(connection.sessionToken)) {
+    return unavailable("root_unavailable");
+  }
+  try {
+    const response = await fetchImplementation(new URL("/v1/projects/resolve-local-workspace", connection.runtimeUrl), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${connection.sessionToken}`,
+        "Content-Type": "application/json",
+        "X-Yet-AI-Caller": "ide_host",
+      },
+      body: JSON.stringify({ root: localRoots[0] }),
+    });
+    if (!response.ok) {
+      return unavailable("root_unavailable");
+    }
+    const summary: unknown = await response.json();
+    if (!isPublicWorkspaceProjectSummary(summary)) {
+      return unavailable("root_unavailable");
+    }
+    return {
+      version: bridgeVersion,
+      type: "host.workspaceBinding",
+      requestId,
+      payload: {
+        protocolVersion: "workspace_binding_v1",
+        requestId,
+        state: "auto_bound",
+        projectId: summary.projectId,
+        displayName: summary.displayName,
+      },
+    };
+  } catch {
+    return unavailable("root_unavailable");
+  }
+}
+
+function isPublicWorkspaceProjectSummary(value: unknown): value is { projectId: string; displayName: string } {
+  if (!isPlainRecord(value) || !hasOnlyKeys(value, ["projectId", "displayName", "status", "revision", "createdAt", "lastOpenedAt", "rootAvailable", "cloudRequired", "providerAccess"])) {
+    return false;
+  }
+  return isOpaqueProjectId(value.projectId) &&
+    isSafeWorkspaceDisplayName(value.displayName) &&
+    value.status === "available" &&
+    typeof value.revision === "string" && /^[1-9][0-9]{0,19}$/.test(value.revision) &&
+    typeof value.createdAt === "string" && value.createdAt.length <= 64 &&
+    (value.lastOpenedAt === null || (typeof value.lastOpenedAt === "string" && value.lastOpenedAt.length <= 64)) &&
+    value.rootAvailable === true && value.cloudRequired === false && value.providerAccess === "direct";
+}
+
+function isOpaqueProjectId(value: unknown): value is string {
+  return typeof value === "string" && /^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(value);
+}
+
+function isSafeWorkspaceDisplayName(value: unknown): value is string {
+  return typeof value === "string" && Array.from(value).length > 0 && Array.from(value).length <= 120 && value.trim() === value &&
+    !/[\u0000-\u001f\u007f-\u009f/\\]/.test(value) &&
+    !/(?:api[-_ ]?key|authorization|bearer|token|secret|password|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}|https?:\/\/|file:)/i.test(value);
 }
 
 export function isPrivilegedGuiMessageAllowed(state: PrivilegedGuiReadinessState): boolean {
@@ -1866,11 +1992,12 @@ const isStrictRange = (value) => isPlainObject(value) && Object.keys(value).ever
 const isVerificationCommandId = (value) => value === "repository-check" || value === "gui-app-tests" || value === "engine-chat-tests";
 const isWorkspaceSnippetSearchQuery = (value) => typeof value === "string" && value.length > 0 && value.length <= 120 && /\S/.test(value) && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/[*/\\~]/.test(value) && !value.includes("..") && !/[{}[\]()^$+?|]/.test(value) && !/[;&\`$<>]/.test(value) && !/\b(?:cwd|env|shell|git|tool|provider|model|apiKey|requestId|assistant|regex|glob|path)\b/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/.test(value) && !/[A-Za-z]:/.test(value);
 const isStrictIdeActionPayload = (payload) => isPlainObject(payload) && ((Object.keys(payload).every((key) => key === "action") && (payload.action === "getContextSnapshot" || payload.action === "getActiveFileExcerpt")) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath") && payload.action === "openWorkspaceFile" && isStrictSafeRelativePath(payload.workspaceRelativePath)) || (Object.keys(payload).every((key) => key === "action" || key === "workspaceRelativePath" || key === "range") && payload.action === "revealWorkspaceRange" && isStrictSafeRelativePath(payload.workspaceRelativePath) && isStrictRange(payload.range)) || (Object.keys(payload).every((key) => key === "action" || key === "query") && payload.action === "searchWorkspaceSnippets" && isWorkspaceSnippetSearchQuery(payload.query)));
-const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)) || (message.type === "gui.controlledAgentFileReadRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledFileReadMessage(message) && isControlledFileReadPayload(message.payload)) || (message.type === "gui.controlledAgentEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentEditMessage(message) && isControlledAgentEditPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentMultifileApplyRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentMultifileApplyMessage(message) && isControlledAgentMultifileApplyPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentCommandRunRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledCommandRunMessage(message) && isControlledCommandRunPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentVerificationBundleRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledVerificationBundleMessage(message) && isControlledVerificationBundlePayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentLexicalSearchRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledLexicalSearchMessage(message) && isControlledLexicalSearchPayload(message.payload) && message.payload.requestId === message.requestId));
+const isFrameGuiMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && ((message.type === "gui.ready" && isBoundedRequestId(message.requestId) && isStrictGuiReadyPayload(message.payload)) || (message.type === "gui.unloaded" && message.requestId === undefined && isEmptyHostPayload(message.payload)) || (message.type === "gui.runtimeRefresh" && isRequiredRequestId(message.requestId) && isEmptyHostPayload(message.payload)) || (message.type === "gui.ideActionRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedIdeActionMessage(message) && isStrictIdeActionPayload(message.payload)) || (message.type === "gui.applyWorkspaceEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedApplyWorkspaceEditMessage(message)) || (message.type === "gui.controlledAgentFileReadRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledFileReadMessage(message) && isControlledFileReadPayload(message.payload)) || (message.type === "gui.controlledAgentEditRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentEditMessage(message) && isControlledAgentEditPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentMultifileApplyRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledAgentMultifileApplyMessage(message) && isControlledAgentMultifileApplyPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentCommandRunRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledCommandRunMessage(message) && isControlledCommandRunPayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentVerificationBundleRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledVerificationBundleMessage(message) && isControlledVerificationBundlePayload(message.payload) && message.payload.requestId === message.requestId) || (message.type === "gui.controlledAgentLexicalSearchRequest" && isRequiredRequestId(message.requestId) && isBoundedForwardedControlledLexicalSearchMessage(message) && isControlledLexicalSearchPayload(message.payload) && message.payload.requestId === message.requestId));
 const isEmptyHostPayload = (payload) => payload === undefined || (isPlainObject(payload) && Object.keys(payload).length === 0);
 const isSafeRuntimeStatusText = (value) => typeof value === "string" && value.length > 0 && value.length <= 1000 && !/[\u0000-\u001f\u007f-\u009f]/.test(value) && !/(?:authorization|bearer|cookie|api[_-]?key|token|secret|password|private[_-]?path|provider[_-]?response|raw[_-]?prompt|file[_-]?content|sk-(?:proj-)?[A-Za-z0-9_-]{8,})/i.test(value) && !/(?:\/(?:Users|home|tmp|var|Volumes|Private|etc|opt|mnt)(?=\/|$|[^A-Za-z0-9_])|~[\/\\]|[A-Za-z]:[\/\\])/i.test(value);
 const isHostRuntimeStatusPayload = (payload) => isPlainObject(payload) && Object.keys(payload).every((key) => key === "protocolVersion" || key === "surface" || key === "lifecycle" || key === "runtimeOwner" || key === "launchMode" || key === "tokenState" || key === "processState" || key === "diagnosis" || key === "nextAction" || key === "cloudRequired" || key === "authority") && payload.protocolVersion === "2026-06-21" && payload.surface === "vscode" && ["unknown", "checking", "starting", "connected", "degraded", "disconnected", "restarting", "stopped", "auth_mismatch", "invalid_settings", "failed"].includes(payload.lifecycle) && ["ide_host", "external", "user", "test_harness"].includes(payload.runtimeOwner) && ["auto", "connect", "launch", "preview", "manual", "unknown"].includes(payload.launchMode) && ["unknown", "not_required", "absent", "present", "mismatch", "invalid"].includes(payload.tokenState) && ["unknown", "not_owned", "checking", "starting", "running", "exited", "stopped", "failed"].includes(payload.processState) && isSafeRuntimeStatusText(payload.diagnosis) && isSafeRuntimeStatusText(payload.nextAction) && payload.cloudRequired === false && payload.authority === "metadata_only";
-const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : message.type === "host.runtimeStatus" ? message.requestId === undefined && isHostRuntimeStatusPayload(message.payload) : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentMultifileApplyResult" || message.type === "host.controlledAgentCommandRunResult" || message.type === "host.controlledAgentVerificationBundleResult" || message.type === "host.controlledAgentLexicalSearchResult"));
+const isWorkspaceBindingPayload = (payload) => isPlainObject(payload) && isRequiredRequestId(payload.requestId) && payload.protocolVersion === "workspace_binding_v1" && ((payload.state === "auto_bound" && Object.keys(payload).every((key) => ["protocolVersion", "requestId", "state", "projectId", "displayName"].includes(key)) && /^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(payload.projectId) && typeof payload.displayName === "string" && payload.displayName.length > 0 && payload.displayName.length <= 120 && payload.displayName.trim() === payload.displayName && !/[\u0000-\u001f\u007f-\u009f/\\]/.test(payload.displayName) && !/(?:api[-_ ]?key|authorization|bearer|token|secret|password|(?:^|[^A-Za-z0-9_-])sk-(?:proj-)?[A-Za-z0-9_-]{8,}|https?:\/\/|file:)/i.test(payload.displayName)) || (payload.state === "selection_required" && Object.keys(payload).every((key) => ["protocolVersion", "requestId", "state", "reason"].includes(key)) && ["no_root", "multiple_roots", "root_unavailable"].includes(payload.reason)));
+const isHostMessage = (message) => isPlainObject(message) && Object.keys(message).every((key) => key === "version" || key === "type" || key === "requestId" || key === "payload") && message.version === bootstrap.bridgeVersion && (message.type === "host.openedFromCommand" ? message.requestId === undefined && isEmptyHostPayload(message.payload) : message.type === "host.runtimeStatus" ? message.requestId === undefined && isHostRuntimeStatusPayload(message.payload) : message.type === "host.workspaceBinding" ? isRequiredRequestId(message.requestId) && isWorkspaceBindingPayload(message.payload) && message.payload.requestId === message.requestId : (message.type === "host.ready" || message.type === "host.contextSnapshot" || message.type === "host.ideActionProgress" || message.type === "host.ideActionResult" || message.type === "host.applyWorkspaceEditResult" || message.type === "host.controlledAgentFileReadResult" || message.type === "host.controlledAgentEditResult" || message.type === "host.controlledAgentMultifileApplyResult" || message.type === "host.controlledAgentCommandRunResult" || message.type === "host.controlledAgentVerificationBundleResult" || message.type === "host.controlledAgentLexicalSearchResult"));
 const sendToFrame = (message) => {
   if (activeGui === "dev" && frameWindow && frameTargetOrigin) {
     frameWindow.postMessage(message, frameTargetOrigin);
@@ -1941,6 +2068,13 @@ window.addEventListener("message", (event) => {
         frameReadyRequestId = event.data.requestId;
         vscode.postMessage(event.data);
         replayHostReady();
+      } else if (event.data.type === "gui.unloaded") {
+        frameReady = false;
+        frameReadyRequestId = undefined;
+        vscode.postMessage(event.data);
+      } else if (event.data.type === "gui.runtimeRefresh") {
+        frameReadyRequestId = event.data.requestId;
+        vscode.postMessage(event.data);
       } else if (isPrivilegedGuiMessageType(event.data.type) && canForwardPrivilegedGuiMessage()) {
         vscode.postMessage(event.data);
       } else if (!isPrivilegedGuiMessageType(event.data.type)) {
@@ -2176,6 +2310,8 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
     hasOnlyKeys(record, ["version", "type", "requestId", "payload"]) &&
     record.version === bridgeVersion &&
     ((record.type === "gui.ready" && isBoundedRequestId(record.requestId) && isGuiReadyPayload(record.payload)) ||
+      (record.type === "gui.unloaded" && record.requestId === undefined && isEmptyPayload(record.payload)) ||
+      (record.type === "gui.runtimeRefresh" && isRequiredRequestId(record.requestId) && isEmptyPayload(record.payload)) ||
       (record.type === "gui.ideActionRequest" && parseIdeActionRequest(record as GuiMessage) !== undefined) ||
       (record.type === "gui.applyWorkspaceEditRequest" && isBoundedForwardedApplyWorkspaceEditMessage(record) && parseApplyWorkspaceEditRequest(record as GuiMessage) !== undefined) ||
       (record.type === "gui.controlledAgentFileReadRequest" && isBoundedForwardedControlledFileReadMessage(record) && isControlledFileReadGuiMessage(record)) ||
@@ -2185,6 +2321,10 @@ export function isGuiMessage(value: unknown): value is GuiMessage {
       (record.type === "gui.controlledAgentVerificationBundleRequest" && isBoundedForwardedControlledVerificationBundleMessage(record) && isControlledVerificationBundleGuiMessage(record)) ||
       (record.type === "gui.controlledAgentLexicalSearchRequest" && isBoundedForwardedControlledLexicalSearchMessage(record) && isControlledLexicalSearchGuiMessage(record)))
   );
+}
+
+function isEmptyPayload(value: unknown): boolean {
+  return value === undefined || (isPlainRecord(value) && Object.keys(value).length === 0);
 }
 
 export function isInvalidApplyWorkspaceEditRequestMessage(value: unknown): value is GuiMessage & { requestId: string } {

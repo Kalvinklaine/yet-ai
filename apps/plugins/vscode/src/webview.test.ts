@@ -59,9 +59,97 @@ async function main(): Promise<void> {
     await assertPreReadyControlledVerificationBundleRejectsWithoutExecution(webview);
     assertFrameReadinessBlocksStaleHostReady(webview);
     assertControlledLexicalSearchRejectsRawOutputAtWebviewGate(webview);
+    await assertWorkspaceBindingResolution(webview);
+    assertWorkspaceBindingStaleGuard(webview);
+    assertWorkspaceBindingWrapperValidation(webview);
   } finally {
     moduleWithLoad._load = originalLoad;
   }
+}
+
+async function assertWorkspaceBindingResolution(webview: typeof import("./webview")): Promise<void> {
+  const connection = { runtimeUrl: "http://127.0.0.1:8001", sessionToken: "safeLocalSessionValue" };
+  const root = "/Users/private/workspace-binding-root";
+  const calls: Array<{ input: string; init?: RequestInit }> = [];
+  const fetchBinding = async (input: string | URL, init?: RequestInit) => {
+    calls.push({ input: input.toString(), init });
+    return new Response(JSON.stringify({
+      projectId: "prj_AbCdEfGhIjKlMnOpQrStUA",
+      displayName: "Safe Workspace",
+      status: "available",
+      revision: "1",
+      createdAt: "2026-07-26T00:00:00Z",
+      lastOpenedAt: null,
+      rootAvailable: true,
+      cloudRequired: false,
+      providerAccess: "direct",
+    }), { status: 200, headers: { "Content-Type": "application/json" } });
+  };
+  const bound = await webview.resolveWorkspaceBinding(connection, [{ uri: { scheme: "file", fsPath: root } }], "workspace-bind-1", fetchBinding);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].input, "http://127.0.0.1:8001/v1/projects/resolve-local-workspace");
+  assert.equal(calls[0].init?.method, "POST");
+  assert.deepEqual(calls[0].init?.headers, {
+    Authorization: "Bearer safeLocalSessionValue",
+    "Content-Type": "application/json",
+    "X-Yet-AI-Caller": "ide_host",
+  });
+  assert.deepEqual(JSON.parse(String(calls[0].init?.body)), { root });
+  assert.deepEqual(bound, {
+    version: "2026-05-15",
+    type: "host.workspaceBinding",
+    requestId: "workspace-bind-1",
+    payload: {
+      protocolVersion: "workspace_binding_v1",
+      requestId: "workspace-bind-1",
+      state: "auto_bound",
+      projectId: "prj_AbCdEfGhIjKlMnOpQrStUA",
+      displayName: "Safe Workspace",
+    },
+  });
+  assert.equal(JSON.stringify(bound).includes(root), false);
+  assert.equal(JSON.stringify(bound).includes(connection.sessionToken), false);
+
+  const noRoot = await webview.resolveWorkspaceBinding(connection, [], "workspace-bind-none", fetchBinding);
+  const duplicateRoot = await webview.resolveWorkspaceBinding(connection, [{ uri: { scheme: "file", fsPath: root } }, { uri: { scheme: "file", fsPath: root } }], "workspace-bind-duplicate", fetchBinding);
+  const multipleRoots = await webview.resolveWorkspaceBinding(connection, [{ uri: { scheme: "file", fsPath: root } }, { uri: { scheme: "file", fsPath: "/Users/private/other" } }], "workspace-bind-many", fetchBinding);
+  const remoteRoot = await webview.resolveWorkspaceBinding(connection, [{ uri: { scheme: "vscode-remote", fsPath: root } }], "workspace-bind-remote", fetchBinding);
+  const ambiguousRoot = await webview.resolveWorkspaceBinding(connection, [{ uri: { scheme: "file", fsPath: root } }, { uri: { scheme: "vscode-remote", fsPath: root } }], "workspace-bind-ambiguous", fetchBinding);
+  assert.equal(noRoot.payload?.state, "selection_required");
+  assert.equal((noRoot.payload as any).reason, "no_root");
+  assert.equal(duplicateRoot.payload?.state, "auto_bound");
+  assert.equal((multipleRoots.payload as any).reason, "multiple_roots");
+  assert.equal((remoteRoot.payload as any).reason, "root_unavailable");
+  assert.equal((ambiguousRoot.payload as any).reason, "multiple_roots");
+  assert.equal(calls.length, 2);
+
+  const failed = await webview.resolveWorkspaceBinding(connection, [{ uri: { scheme: "file", fsPath: root } }], "workspace-bind-failed", async () => new Response("private failure", { status: 500 }));
+  const malformed = await webview.resolveWorkspaceBinding(connection, [{ uri: { scheme: "file", fsPath: root } }], "workspace-bind-malformed", async () => new Response(JSON.stringify({ projectId: "readable", displayName: root }), { status: 200 }));
+  const absentToken = await webview.resolveWorkspaceBinding({ runtimeUrl: connection.runtimeUrl }, [{ uri: { scheme: "file", fsPath: root } }], "workspace-bind-token", fetchBinding);
+  for (const result of [failed, malformed, absentToken]) {
+    assert.equal((result.payload as any).reason, "root_unavailable");
+    assert.equal(JSON.stringify(result).includes(root), false);
+    assert.equal(JSON.stringify(result).includes("private failure"), false);
+  }
+}
+
+function assertWorkspaceBindingStaleGuard(webview: typeof import("./webview")): void {
+  assert.equal(webview.isCurrentWorkspaceBindingDelivery({ disposed: false, generation: 2, latestGeneration: 2, guiReady: true, requestId: "ready-2", latestRequestId: "ready-2" }), true);
+  assert.equal(webview.isCurrentWorkspaceBindingDelivery({ disposed: true, generation: 2, latestGeneration: 2, guiReady: true, requestId: "ready-2", latestRequestId: "ready-2" }), false);
+  assert.equal(webview.isCurrentWorkspaceBindingDelivery({ disposed: false, generation: 1, latestGeneration: 2, guiReady: true, requestId: "ready-1", latestRequestId: "ready-1" }), false);
+  assert.equal(webview.isCurrentWorkspaceBindingDelivery({ disposed: false, generation: 2, latestGeneration: 2, guiReady: true, requestId: "ready-1", latestRequestId: "ready-2" }), false);
+}
+
+function assertWorkspaceBindingWrapperValidation(webview: typeof import("./webview")): void {
+  const html = renderDevWebview(webview, "/tmp/yet-ai-extension");
+  assert.equal(html.includes('message.type === "host.workspaceBinding"'), true);
+  assert.equal(html.includes("message.payload.requestId === message.requestId"), true);
+  assert.equal(html.includes('message.type === "gui.runtimeRefresh"'), true);
+  assert.equal(html.includes('message.type === "gui.unloaded"'), true);
+  assert.equal(html.includes("frameReadyRequestId = event.data.requestId"), true);
+  assert.equal(html.includes("frameReadyRequestId = undefined"), true);
+  assert.equal(html.includes("/Users/private/workspace-binding-root"), false);
+  assert.equal(html.includes("safeLocalSessionValue"), false);
 }
 
 function assertDevBootstrapLifecycleIsTerminal(webview: typeof import("./webview")): void {
@@ -215,7 +303,7 @@ function assertHostReadyIncludesMetadataOnlyCapabilities(webview: typeof import(
     { runtimeUrl: "http://127.0.0.1:8001", sessionToken: "safeLocalSessionValue" } as never,
     "ready-with-capabilities",
   );
-  const capabilities = hostReady.payload?.controlledCapabilities as Record<string, any> | undefined;
+  const capabilities = (hostReady.payload as Record<string, any> | undefined)?.controlledCapabilities as Record<string, any> | undefined;
   assert.equal(capabilities?.protocolVersion, "controlled_host_capabilities_v2");
   assert.equal(capabilities?.hostSurface, "vscode");
   assert.equal(capabilities?.authority, "metadata_only");
