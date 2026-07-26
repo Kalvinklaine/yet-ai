@@ -2010,6 +2010,7 @@ const replayHostReady = () => {
     sendToFrame(latestHostReady);
   }
 };
+const canForwardWorkspaceBinding = (message) => frameReady && frameReadyRequestId !== undefined && latestHostReady && latestHostReady.requestId === frameReadyRequestId && message.requestId === frameReadyRequestId;
 const mountPackagedFallback = () => {
   activeGui = packagedFallbackHtml ? "packaged" : "unavailable";
   frameReady = false;
@@ -2094,6 +2095,7 @@ window.addEventListener("message", (event) => {
       replayHostReady();
       return;
     }
+    if (event.data.type === "host.workspaceBinding" && !canForwardWorkspaceBinding(event.data)) return;
     sendToFrame(event.data);
   }
 });

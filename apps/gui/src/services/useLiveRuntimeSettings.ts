@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { createBridgeAdapter, type BridgeAdapter, type HostReadyPayload, type WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createBridgeAdapter, type BridgeAdapter, type HostMessage, type HostReadyPayload, type WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
 import { isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, type RuntimeSettings } from "./runtimeClient";
 
 const defaultSettings: RuntimeSettings = { baseUrl: "http://127.0.0.1:8001", token: "", runtimeAccess: "direct" };
@@ -28,9 +28,24 @@ export function resolveHostReadyRuntimeSettings(current: RuntimeSettings, payloa
   };
 }
 
+export function resolveWorkspaceBindingUpdate(
+  currentRequestId: string | null,
+  message: Pick<HostMessage, "type" | "requestId" | "payload">,
+): { requestId: string | null; binding: WorkspaceBindingPayload | null; changed: boolean } {
+  if (message.type === "host.ready") {
+    const requestId = message.requestId ?? null;
+    return { requestId, binding: null, changed: requestId !== currentRequestId };
+  }
+  if (message.type !== "host.workspaceBinding" || currentRequestId === null || message.requestId !== currentRequestId) {
+    return { requestId: currentRequestId, binding: null, changed: false };
+  }
+  return { requestId: currentRequestId, binding: message.payload as WorkspaceBindingPayload, changed: true };
+}
+
 export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter; workspaceBinding: WorkspaceBindingPayload | null } {
   const [settings, setSettings] = useState<RuntimeSettings>(readInitialRuntimeSettings);
   const [workspaceBinding, setWorkspaceBinding] = useState<WorkspaceBindingPayload | null>(null);
+  const hostReadyRequestId = useRef<string | null>(null);
   const [bridgeAdapter] = useState(() => createBridgeAdapter(() => undefined));
   const updateSettings = useCallback((next: RuntimeSettings) => {
     setSettings({ baseUrl: next.baseUrl, token: next.token ?? "", runtimeAccess: next.runtimeAccess ?? "direct" });
@@ -41,8 +56,12 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
       if (message.type === "host.ready") {
         const payload = message.payload as HostReadyPayload | undefined;
         setSettings((current) => resolveHostReadyRuntimeSettings(current, payload) ?? current);
+        const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
+        hostReadyRequestId.current = update.requestId;
+        if (update.changed) setWorkspaceBinding(null);
       } else if (message.type === "host.workspaceBinding") {
-        setWorkspaceBinding(message.payload as WorkspaceBindingPayload);
+        const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
+        if (update.changed) setWorkspaceBinding(update.binding);
       }
     });
     return () => {

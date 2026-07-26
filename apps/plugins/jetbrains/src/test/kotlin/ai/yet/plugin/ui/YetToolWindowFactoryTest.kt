@@ -752,6 +752,7 @@ class YetToolWindowFactoryTest {
         assertContains(html, "\"gui-ready-\" + frameGeneration + \"-\" + sequence + \"-\" + token")
         assertContains(html, "message.requestId === currentReadyRequestId()")
         assertContains(html, "acceptedHostReadyRequestId === currentReadyRequestId()")
+        assertContains(html, "message.type !== \"host.workspaceBinding\" || message.requestId === currentReadyRequestId()")
         assertFalse(html.contains("\"gui-ready-\" + frameGeneration + \"-\" + sequence;"))
         assertFalse(html.contains("currentGuiReadyRequestId = event.data.requestId"))
     }

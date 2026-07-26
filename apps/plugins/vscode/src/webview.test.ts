@@ -148,6 +148,8 @@ function assertWorkspaceBindingWrapperValidation(webview: typeof import("./webvi
   assert.equal(html.includes('message.type === "gui.unloaded"'), true);
   assert.equal(html.includes("frameReadyRequestId = event.data.requestId"), true);
   assert.equal(html.includes("frameReadyRequestId = undefined"), true);
+  assert.equal(html.includes("const canForwardWorkspaceBinding = (message) => frameReady && frameReadyRequestId !== undefined && latestHostReady && latestHostReady.requestId === frameReadyRequestId && message.requestId === frameReadyRequestId"), true);
+  assert.equal(html.includes('event.data.type === "host.workspaceBinding" && !canForwardWorkspaceBinding(event.data)'), true);
   assert.equal(html.includes("/Users/private/workspace-binding-root"), false);
   assert.equal(html.includes("safeLocalSessionValue"), false);
 }
