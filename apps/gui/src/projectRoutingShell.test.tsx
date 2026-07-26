@@ -117,6 +117,7 @@ describe("ProjectRouterShell", () => {
     await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
       version: "2026-05-15",
       type: "host.ready",
+      requestId: "ready-direct",
       payload: { runtimeUrl: "http://127.0.0.1:9123", sessionToken: "hidden-session" },
     } })));
 
@@ -136,6 +137,7 @@ describe("ProjectRouterShell", () => {
     await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
       version: "2026-05-15",
       type: "host.ready",
+      requestId: "ready-proxy",
       payload: { runtimeUrl: "http://127.0.0.1:9123", runtimeProxyBaseUrl: "/panel/panel-projects", sessionToken: "server-side" },
     } })));
     expect(hubSettings).toEqual({ baseUrl: "/panel/panel-projects", token: "", runtimeAccess: "same_origin_proxy" });
@@ -143,6 +145,7 @@ describe("ProjectRouterShell", () => {
     await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
       version: "2026-05-15",
       type: "host.ready",
+      requestId: "ready-stale",
       payload: { runtimeUrl: "http://127.0.0.1:9777", sessionToken: "stale-direct" },
     } })));
     expect(hubSettings).toEqual({ baseUrl: "/panel/panel-projects", token: "", runtimeAccess: "same_origin_proxy" });

@@ -59,15 +59,14 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
     const unsubscribe = bridgeAdapter.subscribe((message) => {
       if (message.type === "host.ready") {
         const payload = message.payload as HostReadyPayload | undefined;
+        const resolved = resolveHostReadyRuntimeSettings(settingsRef.current, payload);
+        if (!resolved || typeof message.requestId !== "string" || message.requestId.length === 0) return;
         const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
         hostReadyRequestId.current = update.requestId;
         if (update.changed) setWorkspaceBinding(null);
-        const resolved = resolveHostReadyRuntimeSettings(settingsRef.current, payload);
-        setHostReadyGeneration(resolved && update.requestId ? update.requestId : null);
-        if (resolved) {
-          settingsRef.current = resolved;
-          setSettings(resolved);
-        }
+        setHostReadyGeneration(message.requestId);
+        settingsRef.current = resolved;
+        setSettings(resolved);
       } else if (message.type === "host.workspaceBinding") {
         const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
         if (update.changed) setWorkspaceBinding(update.binding);
