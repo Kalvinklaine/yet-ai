@@ -18,7 +18,7 @@ function project(displayName = "Cozy Project") {
   return { projectId, displayName, status: "available", revision: "1", createdAt: "2026-07-20T10:00:00Z", lastOpenedAt: "2026-07-26T10:00:00Z", rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
 
-function installFetch(options: { chats?: unknown[]; failAgent?: boolean } = {}) {
+function installFetch(options: { chats?: unknown[]; failAgent?: boolean; projects?: unknown[] } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/ping")) return response({ ready: true });
@@ -28,7 +28,7 @@ function installFetch(options: { chats?: unknown[]; failAgent?: boolean } = {}) 
     if (url.endsWith(`/p/${projectId}/v1/agent-progress`)) return options.failAgent ? response({ error: "private data omitted" }, 503) : response({ snapshots: [], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith(`/p/${projectId}/v1/chats`) && init?.method === "POST") return response({ chatId: "chat-new", title: "New chat", createdAt: "2026-07-26T12:00:00Z", updatedAt: "2026-07-26T12:00:00Z", messages: [] });
     if (url.endsWith(`/p/${projectId}/v1/chats`)) return response({ chats: options.chats ?? [] });
-    if (url.endsWith("/v1/projects")) return response({ projects: [project()], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
+    if (url.endsWith("/v1/projects")) return response({ projects: options.projects ?? [project()], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
     return response({}, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -147,6 +147,40 @@ describe("CurrentWorkspaceDashboard", () => {
     await flush();
 
     expect(container?.textContent).toContain("No conversations yet.");
+  });
+
+  it("filters non-canonical, unavailable, and unsafe project summaries", async () => {
+    installFetch({ projects: [
+      project("Safe Project"),
+      { ...project("Bad identifier"), projectId: "prj_invalid" },
+      { ...project("Archived Project"), status: "archived" },
+      { ...project("Missing Root"), rootAvailable: false },
+      { ...project("/Users/private/workspace"), projectId: "prj_bcdefghijklmnopqrstuvQ" },
+      { ...project("token secret"), projectId: "prj_cdefghijklmnopqrstuvw" },
+    ] });
+    await renderDashboard(binding("selection_required"));
+    await flush();
+
+    const choices = Array.from(container?.querySelectorAll(".workspace-project-choices button") ?? []).map((item) => item.textContent);
+    expect(choices).toEqual(["Safe Project"]);
+    expect(container?.textContent).not.toContain("/Users/private/workspace");
+    expect(container?.textContent).not.toContain("token secret");
+  });
+
+  it("passes explicit selection authority for selection-required Start and Resume", async () => {
+    const fetchMock = installFetch({ chats: [{ chatId: "chat-latest", title: "Latest", createdAt: "2026-07-26T10:00:00Z", updatedAt: "2026-07-26T11:00:00Z", messageCount: 4 }] });
+    const onOpen = await renderDashboard(binding("selection_required"));
+    await flush();
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Cozy Project")?.click());
+    await flush();
+
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Resume last")?.click());
+    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" }, projectId);
+
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
+    await flush();
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true);
+    expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-new" }, projectId);
   });
 
   it("starts exactly one scoped chat and opens it", async () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
+import { isSafeWorkspaceDisplayName, type WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
 import { createProjectRuntimeSettings, getProject, listProjects, type ProjectSummary } from "../services/projectClient";
 import { parseProjectId, type AppRoute, type ProjectId } from "../services/projectRouting";
 import { createChat, getAgentProgress, getModels, getPing, listChats, type AgentProgressSnapshot, type ChatSummary, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
@@ -16,7 +16,7 @@ type DashboardProps = {
   settings: RuntimeSettings;
   binding: WorkspaceBindingPayload | null;
   hostReadyGeneration?: string | null;
-  onOpen: (route: Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>) => void;
+  onOpen: (route: Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>, selectedProjectId?: ProjectId) => void;
 };
 
 const loading = { status: "loading" } as const;
@@ -80,7 +80,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     void listProjects(settings, controller.signal).then((result) => {
       if (controller.signal.aborted) return;
       setProjects(result.ok
-        ? { status: "ready", data: result.data.projects.filter((project) => project.status === "available" && project.rootAvailable) }
+        ? { status: "ready", data: result.data.projects.flatMap(toSafeAvailableProject) }
         : { status: "error", message: "Existing projects could not be loaded." });
     });
     return () => controller.abort();
@@ -116,7 +116,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     setStartError(null);
     const result = await createChat(createProjectRuntimeSettings(settings, selection.projectId));
     if (result.ok && chatIdPattern.test(result.data.chatId)) {
-      onOpen({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId });
+      openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId });
       return;
     }
     setStarting(false);
@@ -145,7 +145,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
           <DashboardSection title="Active work" state={activeWork} ready={activeWork.status === "ready" && activeSnapshots.length ? `${activeSnapshots.length} active or blocked run${activeSnapshots.length === 1 ? "" : "s"}` : undefined} empty="No active agent work." />
         </div>
         <div className="workspace-dashboard-actions" aria-label="Workspace actions">
-          {latestChat && chatIdPattern.test(latestChat.chatId) && <button type="button" onClick={() => onOpen({ kind: "project", projectId: selection.projectId, page: "chat", chatId: latestChat.chatId })}>Resume last</button>}
+          {latestChat && chatIdPattern.test(latestChat.chatId) && <button type="button" onClick={() => openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: latestChat.chatId })}>Resume last</button>}
           <button type="button" onClick={() => void startNew()} disabled={starting}>{starting ? "Starting…" : "Start new chat"}</button>
           <button type="button" className="secondary-button" onClick={() => onOpen({ kind: "settings" })}>Settings</button>
           <button type="button" className="secondary-button" onClick={loadGlobal}>Diagnostics</button>
@@ -155,6 +155,14 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
       </>}
     </DashboardFrame>
   );
+
+  function openSelectedProject(route: Extract<AppRoute, { kind: "project" }>) {
+    if (binding?.state === "selection_required") {
+      onOpen(route, selection?.projectId);
+    } else {
+      onOpen(route);
+    }
+  }
 }
 
 function DashboardFrame({ children }: { children: ReactNode }) {
@@ -171,7 +179,14 @@ function DashboardSection<T>({ title, state, ready, empty }: { title: string; st
 
 function toSelectedProject(projectId: string, displayName: string): SelectedProject | null {
   const parsed = parseProjectId(projectId);
-  return parsed ? { projectId: parsed, displayName } : null;
+  return parsed && isSafeWorkspaceDisplayName(displayName) ? { projectId: parsed, displayName } : null;
+}
+
+function toSafeAvailableProject(project: ProjectSummary): ProjectSummary[] {
+  const selected = project.status === "available" && project.rootAvailable
+    ? toSelectedProject(project.projectId, project.displayName)
+    : null;
+  return selected ? [{ ...project, projectId: selected.projectId, displayName: selected.displayName }] : [];
 }
 
 function newestFirst(chats: ChatSummary[]): ChatSummary[] {

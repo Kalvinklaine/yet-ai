@@ -1386,7 +1386,7 @@ function isOpaqueProjectId(value: unknown): boolean {
   return typeof value === "string" && /^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(value);
 }
 
-function isSafeWorkspaceDisplayName(value: unknown): boolean {
+export function isSafeWorkspaceDisplayName(value: unknown): value is string {
   return typeof value === "string" &&
     Array.from(value).length > 0 &&
     Array.from(value).length <= 120 &&

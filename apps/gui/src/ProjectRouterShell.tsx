@@ -4,7 +4,8 @@ import { ProjectHub } from "./components/ProjectHub";
 import { ProjectShell } from "./components/ProjectShell";
 import { LegacyData } from "./components/LegacyData";
 import { CurrentWorkspaceDashboard } from "./components/CurrentWorkspaceDashboard";
-import { ProjectLink, navigateProjectRoute, parseProjectRoute, subscribeToProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
+import { ProjectLink, navigateProjectRoute, parseProjectId, parseProjectRoute, subscribeToProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
+import type { WorkspaceBindingPayload } from "./bridge/bridgeAdapter";
 import { useLiveRuntimeSettings } from "./services/useLiveRuntimeSettings";
 
 export function ProjectRouterShell() {
@@ -22,15 +23,22 @@ export function ProjectRouterShell() {
   const [openedHostedRoute, setOpenedHostedRoute] = useState<OpenedHostedRoute | null>(null);
   const { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
-  const openHostedRoute = useCallback((nextRoute: HostedRoute) => {
-    if (hostReadyGeneration === null || workspaceBinding?.state !== "auto_bound") return;
-    if (nextRoute.kind === "project" && nextRoute.projectId !== workspaceBinding.projectId) return;
-    setOpenedHostedRoute({ route: nextRoute, generation: hostReadyGeneration });
+  const openHostedRoute = useCallback((nextRoute: HostedRoute, selectedProjectId?: string) => {
+    if (hostReadyGeneration === null || !workspaceBinding) return;
+    const selectedId = selectedProjectId ? parseHostedProjectId(selectedProjectId) : null;
+    if (!isHostedRouteAllowed(nextRoute, workspaceBinding, selectedId)) return;
+    setOpenedHostedRoute({
+      route: nextRoute,
+      generation: hostReadyGeneration,
+      bindingFingerprint: workspaceBindingFingerprint(workspaceBinding),
+      selectedProjectId: selectedId,
+    });
   }, [hostReadyGeneration, workspaceBinding]);
   const authorizedHostedRoute = openedHostedRoute
     && openedHostedRoute.generation === hostReadyGeneration
-    && workspaceBinding?.state === "auto_bound"
-    && (openedHostedRoute.route.kind !== "project" || openedHostedRoute.route.projectId === workspaceBinding.projectId)
+    && workspaceBinding
+    && openedHostedRoute.bindingFingerprint === workspaceBindingFingerprint(workspaceBinding)
+    && isHostedRouteAllowed(openedHostedRoute.route, workspaceBinding, openedHostedRoute.selectedProjectId)
     ? openedHostedRoute.route
     : null;
 
@@ -63,7 +71,23 @@ export function ProjectRouterShell() {
 }
 
 type HostedRoute = Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>;
-type OpenedHostedRoute = { route: HostedRoute; generation: string };
+type OpenedHostedRoute = { route: HostedRoute; generation: string; bindingFingerprint: string; selectedProjectId: string | null };
+
+function isHostedRouteAllowed(route: HostedRoute, binding: WorkspaceBindingPayload, selectedProjectId: string | null): boolean {
+  if (route.kind !== "project") return binding.state === "auto_bound";
+  if (binding.state === "auto_bound") return selectedProjectId === null && route.projectId === binding.projectId;
+  return selectedProjectId !== null && route.projectId === selectedProjectId;
+}
+
+function workspaceBindingFingerprint(binding: WorkspaceBindingPayload): string {
+  return binding.state === "auto_bound"
+    ? `${binding.requestId}\u0000${binding.state}\u0000${binding.projectId}`
+    : `${binding.requestId}\u0000${binding.state}\u0000${binding.reason}`;
+}
+
+function parseHostedProjectId(projectId: string): string | null {
+  return parseProjectId(projectId);
+}
 
 export function isHostedChatEntry(pathname: string, entryMode: unknown): boolean {
   return entryMode === "hosted_chat" && (

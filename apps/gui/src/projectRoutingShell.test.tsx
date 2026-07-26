@@ -25,8 +25,10 @@ vi.mock("./components/LegacyData", () => ({
   LegacyData: () => <div data-testid="legacy-data">legacy</div>,
 }));
 vi.mock("./components/CurrentWorkspaceDashboard", () => ({
-  CurrentWorkspaceDashboard: ({ onOpen }: { onOpen: (route: object) => void }) => <div data-testid="workspace-dashboard">
+  CurrentWorkspaceDashboard: ({ onOpen }: { onOpen: (route: object, selectedProjectId?: string) => void }) => <div data-testid="workspace-dashboard">
     <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-new" })}>Start new chat</button>
+    <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-selected" }, "prj_abcdefghijklmnopqrstuA")}>Start selected chat</button>
+    <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_bcdefghijklmnopqrstuvQ", page: "chat", chatId: "chat-mismatch" }, "prj_abcdefghijklmnopqrstuA")}>Start mismatched chat</button>
     <button type="button" onClick={() => onOpen({ kind: "settings" })}>Settings</button>
     <button type="button" onClick={() => onOpen({ kind: "legacy" })}>Legacy data</button>
   </div>,
@@ -51,6 +53,15 @@ async function sendWorkspaceBinding(requestId: string, boundProjectId: string = 
     type: "host.workspaceBinding",
     requestId,
     payload: { protocolVersion: "workspace_binding_v1", requestId, state: "auto_bound", projectId: boundProjectId, displayName: "Workspace" },
+  } })));
+}
+
+async function sendSelectionBinding(requestId: string, reason: "no_root" | "multiple_roots" | "root_unavailable" = "multiple_roots") {
+  await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+    version: "2026-05-15",
+    type: "host.workspaceBinding",
+    requestId,
+    payload: { protocolVersion: "workspace_binding_v1", requestId, state: "selection_required", reason },
   } })));
 }
 
@@ -194,6 +205,46 @@ describe("ProjectRouterShell", () => {
     await sendWorkspaceBinding("ready-1", otherProjectId);
 
     expect(appRenderCalls).toHaveLength(rendersBeforeMismatch);
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+  });
+
+  it("authorizes only the explicitly selected project for a selection-required binding", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await sendHostReady("ready-1");
+    await sendSelectionBinding("ready-1");
+
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start mismatched chat")?.click());
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start selected chat")?.click());
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-selected");
+  });
+
+  it("re-gates an explicitly selected route when the stable binding fingerprint changes", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await sendHostReady("ready-1");
+    await sendSelectionBinding("ready-1");
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start selected chat")?.click());
+    const rendersBeforeReplacement = appRenderCalls.length;
+
+    await sendSelectionBinding("ready-1", "root_unavailable");
+
+    expect(appRenderCalls).toHaveLength(rendersBeforeReplacement);
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
   });
