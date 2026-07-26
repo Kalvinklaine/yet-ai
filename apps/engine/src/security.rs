@@ -89,6 +89,7 @@ pub struct Authenticated;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeCaller {
     JetBrainsHealth,
+    IdeHost,
     GuiRuntimeClient,
     Unknown,
 }
@@ -100,6 +101,7 @@ impl RuntimeCaller {
         };
         match value.to_str().ok() {
             Some("jetbrains_health") => Self::JetBrainsHealth,
+            Some("ide_host") => Self::IdeHost,
             Some("gui_runtime_client") => Self::GuiRuntimeClient,
             _ => Self::Unknown,
         }
@@ -108,6 +110,7 @@ impl RuntimeCaller {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::JetBrainsHealth => "jetbrains_health",
+            Self::IdeHost => "ide_host",
             Self::GuiRuntimeClient => "gui_runtime_client",
             Self::Unknown => "unknown",
         }

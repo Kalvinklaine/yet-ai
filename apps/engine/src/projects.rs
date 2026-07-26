@@ -393,6 +393,9 @@ impl ProjectRegistryRuntime {
                     .iter()
                     .find(|entry| entry.canonical_root == canonical_root)
                 {
+                    if entry.archived {
+                        return Err(ProjectRegistryError::Archived);
+                    }
                     if entry.root_binding == root_binding
                         && root_is_available(&entry.canonical_root, entry.root_binding)
                     {
@@ -1480,6 +1483,25 @@ mod tests {
         assert_eq!(one.last_opened_at, again.last_opened_at);
         assert_ne!(one.project_id, two.project_id);
         assert_eq!(runtime.list_summaries().await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn projects_archived_root_registration_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
+        let created = runtime.register(&root, Some("Archived")).await.unwrap();
+        runtime
+            .archive(&created.project_id, &created.revision)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            runtime.register(&root, Some("Ignored")).await.unwrap_err(),
+            ProjectRegistryError::Archived
+        );
+        assert_eq!(runtime.list_summaries().await.unwrap().len(), 1);
     }
 
     #[cfg(unix)]

@@ -30,6 +30,8 @@ use crate::AppState;
 mod project;
 
 const V1_BODY_LIMIT_BYTES: usize = 256 * 1024;
+const LOCAL_WORKSPACE_BODY_LIMIT_BYTES: usize = 8 * 1024;
+const LOCAL_WORKSPACE_ROOT_MAX_CHARS: usize = 4096;
 const WEB_UI_BOOTSTRAP: &str = r#"<script>window.__yetAiInitialRuntimeConfig={runtimeAccess:"same_origin_proxy",runtimeBaseUrl:"/",runtimeProxyBaseUrl:"/"};</script>"#;
 const WEB_UI_DIST_DIR_ENV: &str = "YET_AI_WEB_UI_DIST_DIR";
 
@@ -82,6 +84,11 @@ pub fn router(state: AppState) -> Router {
                 )
                 .route("/models", get(models_list))
                 .route("/projects", get(project::list))
+                .route(
+                    "/projects/resolve-local-workspace",
+                    post(resolve_local_workspace)
+                        .layer(DefaultBodyLimit::max(LOCAL_WORKSPACE_BODY_LIMIT_BYTES)),
+                )
                 .route(
                     "/projects/:project_id",
                     get(project::get).patch(project::update),
@@ -461,6 +468,43 @@ struct ProjectRegisterRequest {
     display_name: String,
     directory_session_id: String,
     directory_handle: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResolveLocalWorkspaceRequest {
+    root: String,
+    display_name: Option<String>,
+}
+
+async fn resolve_local_workspace(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    request: Result<Json<ResolveLocalWorkspaceRequest>, JsonRejection>,
+) -> Response {
+    if RuntimeCaller::from_headers(&headers) != RuntimeCaller::IdeHost {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_json_body(rejection),
+    };
+    if request.root.is_empty()
+        || request.root.chars().count() > LOCAL_WORKSPACE_ROOT_MAX_CHARS
+        || request.root.chars().any(is_c0_c1_control)
+        || !std::path::Path::new(&request.root).is_absolute()
+    {
+        return project_registry_error(ProjectRegistryError::InvalidRequest);
+    }
+    match state
+        .project_registry_runtime
+        .register(&request.root, request.display_name.as_deref())
+        .await
+    {
+        Ok(summary) => Json(summary).into_response(),
+        Err(error) => project_registry_error(error),
+    }
 }
 
 async fn project_browser_session_create(

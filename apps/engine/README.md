@@ -34,6 +34,7 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `POST /v1/project-browser/sessions`
 - `POST /v1/project-browser/sessions/{session_id}/list`
 - `POST /v1/projects`
+- `POST /v1/projects/resolve-local-workspace` (trusted IDE host only)
 
 ## Browser project isolation smoke
 
@@ -42,6 +43,8 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 ## Local project registration
 
 Browser registration starts an authenticated, short-lived discovery session rooted at the canonical user home. The API lists only immediate, non-hidden, readable child directories as sanitized basenames and opaque session-bound handles. It does not return or accept absolute paths, list files, recurse, scan for repositories, read contents, index, or watch directories. Discovery is bounded by lifetime, navigation depth, sessions, handles, and entries; canonicalization and containment checks prevent symlink escape. A successful `POST /v1/projects` consumes the selected handle.
+
+Trusted VS Code and JetBrains host code may call `POST /v1/projects/resolve-local-workspace` with bearer authentication and `X-Yet-AI-Caller: ide_host`. Its strict JSON body is `{ "root": "<local-directory>", "displayName": "<optional-label>" }`. The bounded local root is canonicalized and resolved through the same private registry, so aliases and concurrent calls return one opaque project identity. The response is only the public project summary; request roots are never echoed in responses or public logs. Missing, unreadable, unsafe, archived, or conflicting roots fail with sanitized categories. GUI callers, browser same-origin proxy callers, and unknown callers are forbidden from this path-bearing contract and must continue to use opaque browser discovery handles.
 
 The local CLI is the explicit escape hatch for directories outside the browser home boundary:
 

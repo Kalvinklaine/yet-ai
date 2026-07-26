@@ -98,6 +98,205 @@ fn authed_request(method: Method, uri: &str, body: Body) -> Request<Body> {
     builder.body(body).unwrap()
 }
 
+fn resolve_local_workspace_request(
+    root: &std::path::Path,
+    display_name: Option<&str>,
+) -> Request<Body> {
+    let mut body = json!({ "root": root });
+    if let Some(display_name) = display_name {
+        body["displayName"] = json!(display_name);
+    }
+    Request::builder()
+        .method(Method::POST)
+        .uri("/v1/projects/resolve-local-workspace")
+        .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-yet-ai-caller", "ide_host")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn resolve_local_workspace_is_idempotent_for_existing_alias_and_concurrency() {
+    let paths = test_storage_paths();
+    let workspace = paths
+        .project_dir
+        .parent()
+        .unwrap()
+        .join("private-workspace-marker");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let state = test_app_state(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths,
+    );
+    let app = app(state.clone());
+
+    let (status, created) = json_response_from(
+        app.clone(),
+        resolve_local_workspace_request(&workspace, Some("Workspace")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["displayName"], "Workspace");
+    assert_eq!(created["status"], "available");
+    assert_eq!(created["cloudRequired"], false);
+    assert_eq!(created["providerAccess"], "direct");
+    let created_text = created.to_string();
+    assert!(!created_text.contains("private-workspace-marker"));
+    assert!(created.get("canonicalRoot").is_none());
+
+    let alias = workspace.join("..").join("private-workspace-marker");
+    let (status, existing) = json_response_from(
+        app.clone(),
+        resolve_local_workspace_request(&alias, Some("Ignored")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(existing["projectId"], created["projectId"]);
+    assert_eq!(existing["displayName"], "Workspace");
+
+    let mut requests = Vec::new();
+    for _ in 0..8 {
+        requests.push(json_response_from(
+            app.clone(),
+            resolve_local_workspace_request(&workspace, None),
+        ));
+    }
+    let responses = futures_util::future::join_all(requests).await;
+    assert!(responses.iter().all(|(status, body)| {
+        *status == StatusCode::OK && body["projectId"] == created["projectId"]
+    }));
+    assert_eq!(
+        state
+            .project_registry_runtime
+            .list_summaries()
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let archived = state
+        .project_registry_runtime
+        .archive(created["projectId"].as_str().unwrap(), "1")
+        .await
+        .unwrap();
+    let (status, body) = json_response_from(
+        app,
+        resolve_local_workspace_request(&workspace, Some("No restore")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"], "archived");
+    assert!(!body.to_string().contains("private-workspace-marker"));
+    assert_eq!(
+        serde_json::to_value(archived).unwrap()["status"],
+        "archived"
+    );
+}
+
+#[tokio::test]
+async fn resolve_local_workspace_rejects_gui_unknown_and_untrusted_bearer_callers() {
+    let root = tempfile::tempdir().unwrap();
+    for caller in [
+        Some("gui_runtime_client"),
+        Some("jetbrains_health"),
+        None,
+        Some("unknown_host"),
+    ] {
+        let body = json!({ "root": root.path() }).to_string();
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/projects/resolve-local-workspace")
+            .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"))
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(caller) = caller {
+            builder = builder.header("x-yet-ai-caller", caller);
+        }
+        let (status, text) =
+            text_response_from(test_app(), builder.body(Body::from(body)).unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{caller:?}");
+        assert!(!text.contains(root.path().to_string_lossy().as_ref()));
+    }
+
+    let paths = test_storage_paths();
+    let state = test_app_state(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths,
+    );
+    let cookie = state
+        .browser_session_id
+        .cookie_value()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/projects/resolve-local-workspace")
+        .header(header::HOST, "127.0.0.1:8001")
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, cookie)
+        .header("sec-fetch-site", "same-origin")
+        .header("x-yet-ai-caller", "gui_runtime_client")
+        .body(Body::from(json!({ "root": root.path() }).to_string()))
+        .unwrap();
+    let (status, text) = text_response_from(app(state), request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(!text.contains(root.path().to_string_lossy().as_ref()));
+}
+
+#[tokio::test]
+async fn resolve_local_workspace_rejects_invalid_private_input_without_echo() {
+    let missing = std::env::temp_dir().join(format!(
+        "yet-ai-missing-private-workspace-{}",
+        TEST_STORAGE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let (status, body) = json_response(resolve_local_workspace_request(&missing, None)).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"], "root_missing");
+    assert!(!body
+        .to_string()
+        .contains(missing.to_string_lossy().as_ref()));
+
+    let root = tempfile::tempdir().unwrap();
+    for body in [
+        json!({ "root": root.path(), "displayName": "x".repeat(121) }),
+        json!({ "root": root.path(), "displayName": "Safe", "path": root.path() }),
+        json!({ "root": "relative/workspace" }),
+        json!({ "root": format!("/{}", "r".repeat(4097)) }),
+    ] {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/v1/projects/resolve-local-workspace")
+            .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("x-yet-ai-caller", "ide_host")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        let (status, text) = text_response_from(test_app(), request).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(!text.contains(root.path().to_string_lossy().as_ref()));
+        assert!(!text.contains(&"x".repeat(64)));
+        assert!(!text.contains(&"r".repeat(64)));
+    }
+
+    let oversized = json!({ "root": format!("/{}", "z".repeat(9 * 1024)) }).to_string();
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/v1/projects/resolve-local-workspace")
+        .header(header::AUTHORIZATION, format!("Bearer {TEST_TOKEN}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-yet-ai-caller", "ide_host")
+        .body(Body::from(oversized))
+        .unwrap();
+    let (status, text) = text_response_from(test_app(), request).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(text, r#"{"error":"invalid request body"}"#);
+}
+
 async fn json_response(request: Request<Body>) -> (StatusCode, Value) {
     json_response_from(test_app(), request).await
 }
