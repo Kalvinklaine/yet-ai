@@ -5,8 +5,13 @@ import { ProjectRouterShell } from "./ProjectRouterShell";
 import { navigateProjectRoute } from "./services/projectRouting";
 import type { RuntimeSettings } from "./services/runtimeClient";
 
+const appRenderCalls = vi.hoisted(() => [] as string[]);
 vi.mock("./App", () => ({
-  App: ({ route }: { route: { kind: string; page?: string; chatId?: string } }) => <div data-testid="app-route">{[route.kind, route.page, route.chatId].filter(Boolean).join(":")}</div>,
+  App: ({ route }: { route: { kind: string; page?: string; chatId?: string } }) => {
+    const label = [route.kind, route.page, route.chatId].filter(Boolean).join(":");
+    appRenderCalls.push(label);
+    return <div data-testid="app-route">{label}</div>;
+  },
 }));
 
 vi.mock("./components/ProjectShell", () => ({
@@ -20,7 +25,11 @@ vi.mock("./components/LegacyData", () => ({
   LegacyData: () => <div data-testid="legacy-data">legacy</div>,
 }));
 vi.mock("./components/CurrentWorkspaceDashboard", () => ({
-  CurrentWorkspaceDashboard: ({ onOpen }: { onOpen: (route: object) => void }) => <div data-testid="workspace-dashboard"><button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-new" })}>Start new chat</button></div>,
+  CurrentWorkspaceDashboard: ({ onOpen }: { onOpen: (route: object) => void }) => <div data-testid="workspace-dashboard">
+    <button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-new" })}>Start new chat</button>
+    <button type="button" onClick={() => onOpen({ kind: "settings" })}>Settings</button>
+    <button type="button" onClick={() => onOpen({ kind: "legacy" })}>Legacy data</button>
+  </div>,
 }));
 
 let root: ReactDOM.Root | undefined;
@@ -57,6 +66,7 @@ afterEach(() => {
   root = undefined;
   document.body.innerHTML = "";
   hubSettings = undefined;
+  appRenderCalls.length = 0;
   delete window.__yetAiInitialRuntimeConfig;
 });
 
@@ -141,9 +151,11 @@ describe("ProjectRouterShell", () => {
       root.render(<ProjectRouterShell />);
     });
     await openHostedChat(container);
+    const rendersBeforeRebind = appRenderCalls.length;
 
     await sendHostReady("ready-2", "/panel/panel-next");
 
+    expect(appRenderCalls).toHaveLength(rendersBeforeRebind);
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
   });
@@ -158,11 +170,13 @@ describe("ProjectRouterShell", () => {
       root.render(<ProjectRouterShell />);
     });
     await openHostedChat(container);
+    const rendersBeforeRetry = appRenderCalls.length;
 
     await sendHostReady("ready-1");
 
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
     expect(container.querySelector("[data-testid='workspace-dashboard']")).toBeNull();
+    expect(appRenderCalls.length).toBeGreaterThan(rendersBeforeRetry);
   });
 
   it("re-gates an open hosted project route when its correlated binding changes project", async () => {
@@ -175,10 +189,54 @@ describe("ProjectRouterShell", () => {
       root.render(<ProjectRouterShell />);
     });
     await openHostedChat(container);
+    const rendersBeforeMismatch = appRenderCalls.length;
 
     await sendWorkspaceBinding("ready-1", otherProjectId);
 
+    expect(appRenderCalls).toHaveLength(rendersBeforeMismatch);
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+  });
+
+  it.each([
+    ["Settings", "settings"],
+    ["Legacy data", "legacy"],
+  ])("authorizes the hosted %s route only for the current auto-bound generation", async (buttonText, expectedRoute) => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await sendHostReady("ready-1");
+    await sendWorkspaceBinding("ready-1");
+
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === buttonText)?.click());
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe(expectedRoute);
+    const rendersBeforeRebind = appRenderCalls.length;
+
+    await sendHostReady("ready-2", "/panel/panel-next");
+
+    expect(appRenderCalls).toHaveLength(rendersBeforeRebind);
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+  });
+
+  it.each(["Settings", "Legacy data"])("rejects the hosted %s action before the current generation is auto-bound", async (buttonText) => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === buttonText)?.click());
+
+    expect(appRenderCalls).toHaveLength(0);
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
   });
 

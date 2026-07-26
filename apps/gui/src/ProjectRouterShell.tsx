@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { App } from "./App";
 import { ProjectHub } from "./components/ProjectHub";
 import { ProjectShell } from "./components/ProjectShell";
@@ -19,29 +19,35 @@ export function ProjectRouterShell() {
     }
     return parseProjectRoute(window.location.pathname);
   });
-  const [hostedRoute, setHostedRoute] = useState<Extract<AppRoute, { kind: "legacy" | "settings" | "project" }> | null>(null);
+  const [openedHostedRoute, setOpenedHostedRoute] = useState<OpenedHostedRoute | null>(null);
   const { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
-  const hostedRouteGeneration = useRef<string | null>(null);
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
+  const openHostedRoute = useCallback((nextRoute: HostedRoute) => {
+    if (hostReadyGeneration === null || workspaceBinding?.state !== "auto_bound") return;
+    if (nextRoute.kind === "project" && nextRoute.projectId !== workspaceBinding.projectId) return;
+    setOpenedHostedRoute({ route: nextRoute, generation: hostReadyGeneration });
+  }, [hostReadyGeneration, workspaceBinding]);
+  const authorizedHostedRoute = openedHostedRoute
+    && openedHostedRoute.generation === hostReadyGeneration
+    && workspaceBinding?.state === "auto_bound"
+    && (openedHostedRoute.route.kind !== "project" || openedHostedRoute.route.projectId === workspaceBinding.projectId)
+    ? openedHostedRoute.route
+    : null;
 
   useEffect(() => subscribeToProjectRoute(window, setRoute), []);
   useEffect(() => {
-    if (!hostedChatEntry) return;
-    const generationChanged = hostedRouteGeneration.current !== hostReadyGeneration;
-    hostedRouteGeneration.current = hostReadyGeneration;
-    setHostedRoute((current) => {
+    if (!hostedChatEntry || authorizedHostedRoute) return;
+    setOpenedHostedRoute((current) => {
       if (!current) return current;
-      if (generationChanged || workspaceBinding?.state !== "auto_bound") return null;
-      if (current.kind === "project" && current.projectId !== workspaceBinding.projectId) return null;
-      return current;
+      return null;
     });
-  }, [hostReadyGeneration, hostedChatEntry, workspaceBinding]);
+  }, [authorizedHostedRoute, hostedChatEntry]);
 
   if (hostedChatEntry) {
-    if (hostedRoute) {
-      return <App route={hostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
+    if (authorizedHostedRoute) {
+      return <App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
     }
-    return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} hostReadyGeneration={hostReadyGeneration} onOpen={setHostedRoute} />;
+    return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} hostReadyGeneration={hostReadyGeneration} onOpen={openHostedRoute} />;
   }
   if (route.kind === "not_found") {
     return <RouteStatus title="Not Found" detail="This Yet AI route is not recognized." navigate={navigate} />;
@@ -55,6 +61,9 @@ export function ProjectRouterShell() {
   if (route.kind === "legacy") return <LegacyData settings={settings} navigate={navigate} />;
   return <App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
 }
+
+type HostedRoute = Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>;
+type OpenedHostedRoute = { route: HostedRoute; generation: string };
 
 export function isHostedChatEntry(pathname: string, entryMode: unknown): boolean {
   return entryMode === "hosted_chat" && (
