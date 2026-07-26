@@ -397,6 +397,39 @@ class PackagedGuiServerTest {
     }
 
     @Test
+    fun nonEventChatSubscriptionBodyUsesOrdinaryReadTimeout() {
+        val runtime = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+        runtime.createContext("/") { exchange ->
+            exchange.responseHeaders.set("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.write("{".toByteArray())
+            exchange.responseBody.flush()
+            Thread.sleep(1_000)
+            runCatching { exchange.responseBody.write("\"private\":true}".toByteArray()) }
+            exchange.close()
+        }
+        runtime.start()
+        try {
+            val runtimeOrigin = "http://127.0.0.1:${runtime.address.port}"
+            withPackagedServer(
+                mapOf("panel-timeout" to PackagedGuiPanelRuntime(runtimeOrigin, "private-timeout-token")),
+                proxyTimeouts = PackagedGuiProxyTimeouts(connectMillis = 200, readMillis = 100),
+            ) { proxy ->
+                val startedAt = System.nanoTime()
+                val response = request("${proxy.origin}/panel/panel-timeout/v1/chats/subscribe")
+                val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+
+                assertEquals(504, response.status)
+                assertEquals("{\"error\":\"runtime_proxy_timeout\"}", response.body)
+                assertTrue(elapsedMillis < 750, "buffered subscribe timed out after $elapsedMillis ms")
+                assertProxyFailureDoesNotLeak(response.body, runtimeOrigin, "private-timeout-token", "private")
+            }
+        } finally {
+            runtime.stop(0)
+        }
+    }
+
+    @Test
     fun chatSubscriptionStreamsEventsPastOrdinaryReadTimeout() {
         val upstreamCanClose = CountDownLatch(1)
         val upstreamClosed = CountDownLatch(1)
@@ -500,6 +533,60 @@ class PackagedGuiServerTest {
                 assertTrue(upstreamClosed.await(2, TimeUnit.SECONDS))
             }
         } finally {
+            runtime.stop()
+        }
+    }
+
+    @Test
+    fun disposingServerClosesActiveStreamAndWorkerPromptly() {
+        val upstreamStarted = CountDownLatch(1)
+        val upstreamClosed = CountDownLatch(1)
+        val runtime = streamingRuntimeServer { exchange ->
+            exchange.responseHeaders.set("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            upstreamStarted.countDown()
+            try {
+                while (true) {
+                    exchange.responseBody.write("data: heartbeat\n\n".toByteArray())
+                    exchange.responseBody.flush()
+                    Thread.sleep(20)
+                }
+            } catch (_: Exception) {
+                upstreamClosed.countDown()
+            } finally {
+                exchange.close()
+            }
+        }
+        val service = PackagedGuiServer()
+        val clientExecutor = Executors.newSingleThreadExecutor()
+        var connection: HttpURLConnection? = null
+        try {
+            val panel = service.registerPanel(RuntimeSettings(runtime.origin, null, null))
+            val gui = service.start() ?: error("packaged GUI test resource unavailable")
+            connection = URI("${gui.origin}${panel.proxyBaseUrl}/v1/chats/subscribe").toURL().openConnection() as HttpURLConnection
+            connection.readTimeout = 2_000
+            val client = connection
+            val responseStarted = clientExecutor.submit<Int> {
+                val status = client.responseCode
+                client.inputStream.read()
+                status
+            }
+
+            assertEquals(200, responseStarted.get(2, TimeUnit.SECONDS))
+            assertTrue(upstreamStarted.await(1, TimeUnit.SECONDS))
+            assertEquals(1, service.activeStreamCount())
+
+            val startedAt = System.nanoTime()
+            service.dispose()
+            val elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+
+            assertTrue(upstreamClosed.await(1, TimeUnit.SECONDS))
+            assertEquals(0, service.activeStreamCount())
+            assertTrue(elapsedMillis < 1_000, "server disposal took $elapsedMillis ms")
+        } finally {
+            service.dispose()
+            connection?.disconnect()
+            clientExecutor.shutdownNow()
             runtime.stop()
         }
     }

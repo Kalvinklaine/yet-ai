@@ -9,6 +9,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -20,10 +21,14 @@ import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.SynchronousQueue
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 
 @Service(Service.Level.APP)
 class PackagedGuiServer internal constructor(
@@ -53,6 +58,7 @@ class PackagedGuiServer internal constructor(
             TimeUnit.SECONDS,
             SynchronousQueue(),
         ) { runnable -> Thread(runnable, "Yet AI packaged GUI stream").apply { isDaemon = true } }
+        val activeStreams = PackagedGuiActiveStreams()
         var server: HttpServer? = null
         var wrapperServer: HttpServer? = null
         try {
@@ -60,7 +66,9 @@ class PackagedGuiServer internal constructor(
             wrapperServer = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
             server.executor = executor
             wrapperServer.executor = executor
-            server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap, streamingExecutor = streamingExecutor) }
+            server.createContext("/") { exchange ->
+                handle(exchange, ::resourceBytes, panels::toMap, streamingExecutor = streamingExecutor, activeStreams = activeStreams)
+            }
             wrapperServer.createContext("/") { exchange -> handleWrapper(exchange, panels::toMap, wrappers::toMap) }
             server.start()
             afterGuiServerStarted(server, wrapperServer, executor)
@@ -68,13 +76,13 @@ class PackagedGuiServer internal constructor(
             val origin = "http://127.0.0.1:${server.address.port}"
             val wrapperOrigin = "http://127.0.0.1:${wrapperServer.address.port}"
             val gui = PackagedGui("$origin/index.html", origin, wrapperOrigin)
-            running = RunningServer(server, wrapperServer, executor, streamingExecutor, gui)
+            running = RunningServer(server, wrapperServer, executor, streamingExecutor, activeStreams, gui)
             return gui
         } catch (error: Throwable) {
             runCatching { server?.stop(0) }
             runCatching { wrapperServer?.stop(0) }
             executor.shutdownNow()
-            streamingExecutor.shutdownNow()
+            shutdownStreams(activeStreams, streamingExecutor)
             throw error
         }
     }
@@ -112,11 +120,19 @@ class PackagedGuiServer internal constructor(
             current.server.stop(0)
             current.wrapperServer.stop(0)
             current.executor.shutdownNow()
-            current.streamingExecutor.shutdownNow()
+            shutdownStreams(current.activeStreams, current.streamingExecutor)
         }
         panels.clear()
         wrappers.clear()
         running = null
+    }
+
+    internal fun activeStreamCount(): Int = running?.activeStreams?.size ?: 0
+
+    private fun shutdownStreams(activeStreams: PackagedGuiActiveStreams, executor: ExecutorService) {
+        activeStreams.closeAll()
+        executor.shutdownNow()
+        runCatching { executor.awaitTermination(2, TimeUnit.SECONDS) }
     }
 
     private fun generatePanelId(): String {
@@ -135,6 +151,7 @@ class PackagedGuiServer internal constructor(
         val wrapperServer: HttpServer,
         val executor: ExecutorService,
         val streamingExecutor: ExecutorService,
+        val activeStreams: PackagedGuiActiveStreams,
         val gui: PackagedGui,
     )
 
@@ -157,6 +174,53 @@ data class PackagedGuiProxyRequest(val targetUrl: String, val headers: Map<Strin
 data class PackagedGuiProxyTimeouts(val connectMillis: Int = 2_000, val readMillis: Int = 10_000)
 
 private const val EVENT_STREAM_READ_TIMEOUT_MILLIS = 45_000
+
+class PackagedGuiActiveStreams {
+    private val sessions = ConcurrentHashMap.newKeySet<PackagedGuiActiveStream>()
+    private val closed = AtomicBoolean(false)
+
+    val size: Int get() = sessions.size
+
+    fun add(session: PackagedGuiActiveStream): Boolean {
+        if (closed.get()) return false
+        sessions.add(session)
+        if (!closed.get()) return true
+        sessions.remove(session)
+        return false
+    }
+
+    fun remove(session: PackagedGuiActiveStream) {
+        sessions.remove(session)
+    }
+
+    fun closeAll() {
+        closed.set(true)
+        sessions.forEach { it.close() }
+        sessions.clear()
+    }
+}
+
+class PackagedGuiActiveStream(
+    private val connection: HttpURLConnection,
+    private val input: InputStream,
+    private val exchange: HttpExchange,
+) {
+    private val closed = AtomicBoolean(false)
+
+    val isClosed: Boolean get() = closed.get()
+
+    fun closeUpstream() {
+        connection.disconnect()
+        runCatching { input.close() }
+    }
+
+    fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        runCatching { exchange.responseBody.close() }
+        runCatching { exchange.close() }
+        closeUpstream()
+    }
+}
 
 sealed class PackagedGuiProxyDecision {
     data class Forward(val request: PackagedGuiProxyRequest) : PackagedGuiProxyDecision()
@@ -200,6 +264,7 @@ fun handle(
     panels: () -> Map<String, PackagedGuiPanelRuntime> = { emptyMap() },
     proxyTimeouts: PackagedGuiProxyTimeouts = PackagedGuiProxyTimeouts(),
     streamingExecutor: ExecutorService? = null,
+    activeStreams: PackagedGuiActiveStreams? = null,
 ) {
     var exchangeOwnedByStream = false
     try {
@@ -222,6 +287,7 @@ fun handle(
                 panels(),
                 proxyTimeouts,
                 streamingExecutor,
+                activeStreams,
             )
             return
         }
@@ -389,6 +455,7 @@ private fun proxyPanelRequest(
     panels: Map<String, PackagedGuiPanelRuntime>,
     timeouts: PackagedGuiProxyTimeouts,
     streamingExecutor: ExecutorService?,
+    activeStreams: PackagedGuiActiveStreams?,
 ): Boolean {
     if (exchange.requestMethod != "GET" && exchange.requestMethod != "POST") {
         send(exchange, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(StandardCharsets.UTF_8))
@@ -404,7 +471,7 @@ private fun proxyPanelRequest(
         if (rawQuery == null) uri else URI(uri.scheme, uri.authority, uri.path, rawQuery, null)
     }
     var connection: HttpURLConnection? = null
-    var connectionOwnedByStream = false
+    var connectionOwnedElsewhere = false
     val response = try {
         connection = target.toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = timeouts.connectMillis
@@ -422,23 +489,40 @@ private fun proxyPanelRequest(
         val contentType = connection.contentType ?: "application/octet-stream"
         if (status in 200..299 && rawPath == "/v1/chats/subscribe" && isEventStream(contentType)) {
             val input = connection.inputStream
+            val session = PackagedGuiActiveStream(connection, input, exchange)
+            if (activeStreams != null && !activeStreams.add(session)) {
+                session.closeUpstream()
+                throw RejectedExecutionException()
+            }
             val streamTask = Runnable {
                 try {
-                    streamEventResponse(exchange, status, contentType, input, panelId, decision.request.headers.containsKey("Authorization"))
+                    streamEventResponse(exchange, status, contentType, input, panelId, decision.request.headers.containsKey("Authorization"), session)
                 } finally {
-                    connection.disconnect()
-                    exchange.close()
+                    activeStreams?.remove(session)
+                    session.close()
                 }
             }
-            if (streamingExecutor == null) {
-                streamTask.run()
-            } else {
-                streamingExecutor.execute(streamTask)
-                connectionOwnedByStream = true
+            try {
+                if (streamingExecutor == null) {
+                    streamTask.run()
+                } else {
+                    streamingExecutor.execute(streamTask)
+                    connectionOwnedElsewhere = true
+                }
+            } catch (error: RejectedExecutionException) {
+                activeStreams?.remove(session)
+                session.closeUpstream()
+                throw error
             }
-            return connectionOwnedByStream
+            return connectionOwnedElsewhere
         }
-        val body = (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
+        if (rawPath == "/v1/chats/subscribe") connection.readTimeout = timeouts.readMillis
+        val body = if (rawPath == "/v1/chats/subscribe" && streamingExecutor != null) {
+            connectionOwnedElsewhere = true
+            readBufferedResponse(connection, status, timeouts.readMillis)
+        } else {
+            (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
+        }
         PackagedGuiProxyResponse(status, contentType, body)
     } catch (_: SocketTimeoutException) {
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 504)
@@ -450,10 +534,33 @@ private fun proxyPanelRequest(
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 502)
         proxyFailure(502, "runtime_proxy_unavailable")
     } finally {
-        if (!connectionOwnedByStream) connection?.disconnect()
+        if (!connectionOwnedElsewhere) connection?.disconnect()
     }
     send(exchange, response.status, response.contentType, response.body)
     return false
+}
+
+private fun readBufferedResponse(
+    connection: HttpURLConnection,
+    status: Int,
+    timeoutMillis: Int,
+): ByteArray {
+    val readTask = FutureTask {
+        try {
+            (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
+        } finally {
+            connection.disconnect()
+        }
+    }
+    Thread(readTask, "Yet AI packaged GUI buffered response").apply { isDaemon = true }.start()
+    return try {
+        readTask.get(timeoutMillis.toLong(), TimeUnit.MILLISECONDS)
+    } catch (_: TimeoutException) {
+        readTask.cancel(true)
+        throw SocketTimeoutException()
+    } catch (error: ExecutionException) {
+        throw (error.cause as? IOException ?: IOException(error.cause))
+    }
 }
 
 private fun isEventStream(contentType: String): Boolean =
@@ -466,6 +573,7 @@ private fun streamEventResponse(
     input: java.io.InputStream,
     panelId: String,
     authorizationInjected: Boolean,
+    session: PackagedGuiActiveStream,
 ) {
     var responseCommitted = false
     try {
@@ -483,11 +591,11 @@ private fun streamEventResponse(
             }
         }
     } catch (_: SocketTimeoutException) {
-        if (responseCommitted) return
+        if (responseCommitted || session.isClosed) return
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, authorizationInjected, 504)
         send(exchange, 504, "application/json; charset=utf-8", proxyFailure(504, "runtime_proxy_timeout").body)
     } catch (_: IOException) {
-        if (responseCommitted) return
+        if (responseCommitted || session.isClosed) return
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, authorizationInjected, 502)
         send(exchange, 502, "application/json; charset=utf-8", proxyFailure(502, "runtime_proxy_unavailable").body)
     }
