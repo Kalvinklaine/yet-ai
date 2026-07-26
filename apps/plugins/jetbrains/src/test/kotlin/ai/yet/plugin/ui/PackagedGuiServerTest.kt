@@ -8,8 +8,10 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URI
 import java.net.ServerSocket
+import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -395,16 +397,19 @@ class PackagedGuiServerTest {
     }
 
     @Test
-    fun chatSubscriptionStreamsFirstEventBeforeUpstreamCloses() {
+    fun chatSubscriptionStreamsEventsPastOrdinaryReadTimeout() {
         val upstreamCanClose = CountDownLatch(1)
         val upstreamClosed = CountDownLatch(1)
-        val requests = mutableListOf<RuntimeRequest>()
+        val requests = Collections.synchronizedList(mutableListOf<RuntimeRequest>())
         val runtime = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
         runtime.createContext("/") { exchange ->
             requests.add(RuntimeRequest(exchange.requestURI.toString(), exchange.requestHeaders.getFirst("Authorization")))
             exchange.responseHeaders.set("Content-Type", "text/event-stream; charset=utf-8")
             exchange.sendResponseHeaders(200, 0)
             exchange.responseBody.write("data: first-event\n\n".toByteArray())
+            exchange.responseBody.flush()
+            Thread.sleep(250)
+            exchange.responseBody.write("data: second-event\n\n".toByteArray())
             exchange.responseBody.flush()
             upstreamCanClose.await(2, TimeUnit.SECONDS)
             exchange.close()
@@ -423,10 +428,11 @@ class PackagedGuiServerTest {
                 try {
                     assertEquals(200, connection.responseCode)
                     assertEquals("text/event-stream; charset=utf-8", connection.getHeaderField("Content-Type"))
-                    val firstEvent = ByteArray("data: first-event\n\n".length)
-                    connection.inputStream.readNBytes(firstEvent, 0, firstEvent.size)
+                    val expected = "data: first-event\n\ndata: second-event\n\n"
+                    val events = ByteArray(expected.length)
+                    connection.inputStream.readNBytes(events, 0, events.size)
 
-                    assertEquals("data: first-event\n\n", String(firstEvent))
+                    assertEquals(expected, String(events))
                     assertEquals(1L, upstreamClosed.count)
                     assertEquals("/v1/chats/subscribe?chat_id=chat_1", requests.single().target)
                     assertEquals("Bearer private-stream-token", requests.single().authorization)
@@ -439,6 +445,103 @@ class PackagedGuiServerTest {
         } finally {
             upstreamCanClose.countDown()
             runtime.stop(0)
+        }
+    }
+
+    @Test
+    fun rejectedSseHandoffReturnsSanitizedBadGatewayBeforeCommit() = withRuntimeServer(
+        contentType = "text/event-stream",
+        body = "data: private-provider-body\n\n",
+    ) { runtime ->
+        val rejectedExecutor = Executors.newSingleThreadExecutor().apply { shutdownNow() }
+        withPackagedServer(
+            mapOf("panel-stream" to PackagedGuiPanelRuntime(runtime.origin, "private-stream-token")),
+            streamingExecutor = rejectedExecutor,
+        ) { proxy ->
+            val response = request("${proxy.origin}/panel/panel-stream/v1/chats/subscribe")
+
+            assertEquals(502, response.status)
+            assertEquals("{\"error\":\"runtime_proxy_unavailable\"}", response.body)
+            assertProxyFailureDoesNotLeak(response.body, runtime.origin, "private-stream-token", "private-provider-body")
+        }
+    }
+
+    @Test
+    fun clientDisconnectClosesUpstreamStreamPromptly() {
+        val upstreamStarted = CountDownLatch(1)
+        val upstreamClosed = CountDownLatch(1)
+        val runtime = streamingRuntimeServer { exchange ->
+            exchange.responseHeaders.set("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            upstreamStarted.countDown()
+            try {
+                while (true) {
+                    exchange.responseBody.write("data: heartbeat\n\n".toByteArray())
+                    exchange.responseBody.flush()
+                    Thread.sleep(20)
+                }
+            } catch (_: Exception) {
+                upstreamClosed.countDown()
+            } finally {
+                exchange.close()
+            }
+        }
+        try {
+            withPackagedServer(mapOf("panel-stream" to PackagedGuiPanelRuntime(runtime.origin, null))) { proxy ->
+                val connection = URI("${proxy.origin}/panel/panel-stream/v1/chats/subscribe").toURL().openConnection() as HttpURLConnection
+                connection.readTimeout = 2_000
+                assertEquals(200, connection.responseCode)
+                assertTrue(upstreamStarted.await(1, TimeUnit.SECONDS))
+                assertTrue(connection.inputStream.read() >= 0)
+
+                connection.inputStream.close()
+                connection.disconnect()
+
+                assertTrue(upstreamClosed.await(2, TimeUnit.SECONDS))
+            }
+        } finally {
+            runtime.stop()
+        }
+    }
+
+    @Test
+    fun longLivedStreamsDoNotStarveOrdinaryPanelAssets() {
+        val streamCount = 4
+        val streamsStarted = CountDownLatch(streamCount)
+        val releaseStreams = CountDownLatch(1)
+        val runtime = streamingRuntimeServer { exchange ->
+            exchange.responseHeaders.set("Content-Type", "text/event-stream")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.write("data: ready\n\n".toByteArray())
+            exchange.responseBody.flush()
+            streamsStarted.countDown()
+            releaseStreams.await(3, TimeUnit.SECONDS)
+            exchange.close()
+        }
+        val clients = mutableListOf<HttpURLConnection>()
+        try {
+            withPackagedServer(
+                mapOf("panel-stream" to PackagedGuiPanelRuntime(runtime.origin, null)),
+                resources = mapOf("/yet-ai-gui/assets/index.js" to "asset-ok".toByteArray()),
+            ) { proxy ->
+                repeat(streamCount) {
+                    val connection = URI("${proxy.origin}/panel/panel-stream/v1/chats/subscribe?id=$it").toURL().openConnection() as HttpURLConnection
+                    connection.readTimeout = 2_000
+                    assertEquals(200, connection.responseCode)
+                    assertTrue(connection.inputStream.read() >= 0)
+                    clients.add(connection)
+                }
+                assertTrue(streamsStarted.await(1, TimeUnit.SECONDS))
+
+                val asset = request("${proxy.origin}/panel/panel-stream/assets/index.js")
+
+                assertEquals(200, asset.status)
+                assertEquals("asset-ok", asset.body)
+            }
+        } finally {
+            releaseStreams.countDown()
+            clients.forEach { it.disconnect() }
+            runtime.stop()
         }
     }
 
@@ -545,13 +648,20 @@ private class RuntimeTestServer(private val server: HttpServer, val requests: Mu
     fun stop() = server.stop(0)
 }
 
-private fun withRuntimeServer(status: Int = 200, delayMillis: Long = 0, body: String = "runtime-ok", block: (RuntimeTestServer) -> Unit) {
+private fun withRuntimeServer(
+    status: Int = 200,
+    delayMillis: Long = 0,
+    body: String = "runtime-ok",
+    contentType: String? = null,
+    block: (RuntimeTestServer) -> Unit,
+) {
     val requests = mutableListOf<RuntimeRequest>()
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
     server.createContext("/") { exchange ->
         requests.add(RuntimeRequest(exchange.requestURI.rawPath + exchange.requestURI.rawQuery?.let { "?$it" }.orEmpty(), exchange.requestHeaders.getFirst("Authorization")))
         if (delayMillis > 0) Thread.sleep(delayMillis)
         val responseBody = body.toByteArray()
+        contentType?.let { exchange.responseHeaders.set("Content-Type", it) }
         exchange.sendResponseHeaders(status, responseBody.size.toLong())
         exchange.responseBody.use { it.write(responseBody) }
         exchange.close()
@@ -569,12 +679,15 @@ private fun withPackagedServer(
     wrappers: Map<String, String> = emptyMap(),
     resources: Map<String, ByteArray> = emptyMap(),
     proxyTimeouts: PackagedGuiProxyTimeouts = PackagedGuiProxyTimeouts(),
+    streamingExecutor: ExecutorService = Executors.newCachedThreadPool(),
     block: (TestServer) -> Unit,
 ) {
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+    val requestExecutor = Executors.newFixedThreadPool(4)
+    server.executor = requestExecutor
     server.createContext("/") { exchange ->
         if (wrappers.isEmpty()) {
-            handle(exchange, resources::get, { panels.toMap() }, proxyTimeouts)
+            handle(exchange, resources::get, { panels.toMap() }, proxyTimeouts, streamingExecutor)
         } else {
             handleWrapper(exchange, { panels.toMap() }, { wrappers.toMap() })
         }
@@ -584,7 +697,17 @@ private fun withPackagedServer(
         block(TestServer(server))
     } finally {
         server.stop(0)
+        requestExecutor.shutdownNow()
+        streamingExecutor.shutdownNow()
     }
+}
+
+private fun streamingRuntimeServer(handler: (com.sun.net.httpserver.HttpExchange) -> Unit): RuntimeTestServer {
+    val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+    server.executor = Executors.newCachedThreadPool()
+    server.createContext("/", handler)
+    server.start()
+    return RuntimeTestServer(server, mutableListOf())
 }
 
 private fun assertProxyFailureDoesNotLeak(body: String, vararg forbidden: String) {

@@ -20,6 +20,10 @@ import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.SynchronousQueue
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 @Service(Service.Level.APP)
 class PackagedGuiServer internal constructor(
@@ -42,6 +46,13 @@ class PackagedGuiServer internal constructor(
         val executor = Executors.newFixedThreadPool(4) { runnable ->
             Thread(runnable, "Yet AI packaged GUI server").apply { isDaemon = true }
         }
+        val streamingExecutor = ThreadPoolExecutor(
+            0,
+            16,
+            60,
+            TimeUnit.SECONDS,
+            SynchronousQueue(),
+        ) { runnable -> Thread(runnable, "Yet AI packaged GUI stream").apply { isDaemon = true } }
         var server: HttpServer? = null
         var wrapperServer: HttpServer? = null
         try {
@@ -49,7 +60,7 @@ class PackagedGuiServer internal constructor(
             wrapperServer = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
             server.executor = executor
             wrapperServer.executor = executor
-            server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap) }
+            server.createContext("/") { exchange -> handle(exchange, ::resourceBytes, panels::toMap, streamingExecutor = streamingExecutor) }
             wrapperServer.createContext("/") { exchange -> handleWrapper(exchange, panels::toMap, wrappers::toMap) }
             server.start()
             afterGuiServerStarted(server, wrapperServer, executor)
@@ -57,12 +68,13 @@ class PackagedGuiServer internal constructor(
             val origin = "http://127.0.0.1:${server.address.port}"
             val wrapperOrigin = "http://127.0.0.1:${wrapperServer.address.port}"
             val gui = PackagedGui("$origin/index.html", origin, wrapperOrigin)
-            running = RunningServer(server, wrapperServer, executor, gui)
+            running = RunningServer(server, wrapperServer, executor, streamingExecutor, gui)
             return gui
         } catch (error: Throwable) {
             runCatching { server?.stop(0) }
             runCatching { wrapperServer?.stop(0) }
             executor.shutdownNow()
+            streamingExecutor.shutdownNow()
             throw error
         }
     }
@@ -100,6 +112,7 @@ class PackagedGuiServer internal constructor(
             current.server.stop(0)
             current.wrapperServer.stop(0)
             current.executor.shutdownNow()
+            current.streamingExecutor.shutdownNow()
         }
         panels.clear()
         wrappers.clear()
@@ -117,7 +130,13 @@ class PackagedGuiServer internal constructor(
 
     private fun resourceBytes(path: String): ByteArray? = PackagedGuiServer::class.java.getResourceAsStream(path)?.use { it.readBytes() }
 
-    private data class RunningServer(val server: HttpServer, val wrapperServer: HttpServer, val executor: ExecutorService, val gui: PackagedGui)
+    private data class RunningServer(
+        val server: HttpServer,
+        val wrapperServer: HttpServer,
+        val executor: ExecutorService,
+        val streamingExecutor: ExecutorService,
+        val gui: PackagedGui,
+    )
 
     companion object {
         fun getInstance(): PackagedGuiServer = service()
@@ -180,7 +199,9 @@ fun handle(
     loadResource: (String) -> ByteArray?,
     panels: () -> Map<String, PackagedGuiPanelRuntime> = { emptyMap() },
     proxyTimeouts: PackagedGuiProxyTimeouts = PackagedGuiProxyTimeouts(),
+    streamingExecutor: ExecutorService? = null,
 ) {
+    var exchangeOwnedByStream = false
     try {
         val panelIndex = panelIndexRoute(exchange.requestURI.rawPath)
         if (panelIndex != null) {
@@ -194,7 +215,14 @@ fun handle(
         }
         val panelRoute = panelProxyRoute(exchange.requestURI.rawPath)
         if (panelRoute != null) {
-            proxyPanelRequest(exchange, panelRoute.first, panelRoute.second, panels(), proxyTimeouts)
+            exchangeOwnedByStream = proxyPanelRequest(
+                exchange,
+                panelRoute.first,
+                panelRoute.second,
+                panels(),
+                proxyTimeouts,
+                streamingExecutor,
+            )
             return
         }
         if (exchange.requestMethod != "GET") {
@@ -213,7 +241,7 @@ fun handle(
         }
         send(exchange, 200, mimeType(resource), body)
     } finally {
-        exchange.close()
+        if (!exchangeOwnedByStream) exchange.close()
     }
 }
 
@@ -360,26 +388,27 @@ private fun proxyPanelRequest(
     rawPath: String,
     panels: Map<String, PackagedGuiPanelRuntime>,
     timeouts: PackagedGuiProxyTimeouts,
-) {
+    streamingExecutor: ExecutorService?,
+): Boolean {
     if (exchange.requestMethod != "GET" && exchange.requestMethod != "POST") {
         send(exchange, 405, "text/plain; charset=utf-8", "method not allowed".toByteArray(StandardCharsets.UTF_8))
-        return
+        return false
     }
     val decision = packagedGuiProxyDecision(panelId, rawPath, panels)
     if (decision !is PackagedGuiProxyDecision.Forward) {
         send(exchange, 404, "text/plain; charset=utf-8", "not found".toByteArray(StandardCharsets.UTF_8))
-        return
+        return false
     }
     val target = URI(decision.request.targetUrl).let { uri ->
         val rawQuery = exchange.requestURI.rawQuery
         if (rawQuery == null) uri else URI(uri.scheme, uri.authority, uri.path, rawQuery, null)
     }
     var connection: HttpURLConnection? = null
-    var streamingResponseStarted = false
+    var connectionOwnedByStream = false
     val response = try {
         connection = target.toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = timeouts.connectMillis
-        connection.readTimeout = timeouts.readMillis
+        connection.readTimeout = if (rawPath == "/v1/chats/subscribe") EVENT_STREAM_READ_TIMEOUT_MILLIS else timeouts.readMillis
         connection.requestMethod = exchange.requestMethod
         connection.instanceFollowRedirects = false
         decision.request.headers.forEach { (name, value) -> connection.setRequestProperty(name, value) }
@@ -392,42 +421,75 @@ private fun proxyPanelRequest(
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), status)
         val contentType = connection.contentType ?: "application/octet-stream"
         if (status in 200..299 && rawPath == "/v1/chats/subscribe" && isEventStream(contentType)) {
-            connection.readTimeout = EVENT_STREAM_READ_TIMEOUT_MILLIS
-            streamingResponseStarted = true
-            streamEventResponse(exchange, status, contentType, connection.inputStream)
-            return
+            val input = connection.inputStream
+            val streamTask = Runnable {
+                try {
+                    streamEventResponse(exchange, status, contentType, input, panelId, decision.request.headers.containsKey("Authorization"))
+                } finally {
+                    connection.disconnect()
+                    exchange.close()
+                }
+            }
+            if (streamingExecutor == null) {
+                streamTask.run()
+            } else {
+                streamingExecutor.execute(streamTask)
+                connectionOwnedByStream = true
+            }
+            return connectionOwnedByStream
         }
         val body = (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
         PackagedGuiProxyResponse(status, contentType, body)
     } catch (_: SocketTimeoutException) {
-        if (streamingResponseStarted) return
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 504)
         proxyFailure(504, "runtime_proxy_timeout")
     } catch (_: IOException) {
-        if (streamingResponseStarted) return
+        YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 502)
+        proxyFailure(502, "runtime_proxy_unavailable")
+    } catch (_: RejectedExecutionException) {
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 502)
         proxyFailure(502, "runtime_proxy_unavailable")
     } finally {
-        connection?.disconnect()
+        if (!connectionOwnedByStream) connection?.disconnect()
     }
     send(exchange, response.status, response.contentType, response.body)
+    return false
 }
 
 private fun isEventStream(contentType: String): Boolean =
     contentType.substringBefore(';').trim().equals("text/event-stream", ignoreCase = true)
 
-private fun streamEventResponse(exchange: HttpExchange, status: Int, contentType: String, input: java.io.InputStream) {
-    exchange.responseHeaders.set("Content-Type", contentType)
-    exchange.responseHeaders.set("Cache-Control", "no-store")
-    exchange.sendResponseHeaders(status, 0)
-    input.use { upstream ->
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        while (true) {
-            val count = upstream.read(buffer)
-            if (count < 0) return
-            exchange.responseBody.write(buffer, 0, count)
-            exchange.responseBody.flush()
+private fun streamEventResponse(
+    exchange: HttpExchange,
+    status: Int,
+    contentType: String,
+    input: java.io.InputStream,
+    panelId: String,
+    authorizationInjected: Boolean,
+) {
+    var responseCommitted = false
+    try {
+        exchange.responseHeaders.set("Content-Type", contentType)
+        exchange.responseHeaders.set("Cache-Control", "no-store")
+        exchange.sendResponseHeaders(status, 0)
+        responseCommitted = true
+        input.use { upstream ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = upstream.read(buffer)
+                if (count < 0) return
+                exchange.responseBody.write(buffer, 0, count)
+                exchange.responseBody.flush()
+            }
         }
+    } catch (_: SocketTimeoutException) {
+        if (responseCommitted) return
+        YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, authorizationInjected, 504)
+        send(exchange, 504, "application/json; charset=utf-8", proxyFailure(504, "runtime_proxy_timeout").body)
+    } catch (_: IOException) {
+        if (responseCommitted) return
+        YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, authorizationInjected, 502)
+        send(exchange, 502, "application/json; charset=utf-8", proxyFailure(502, "runtime_proxy_unavailable").body)
     }
 }
 
