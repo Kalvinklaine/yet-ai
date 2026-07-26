@@ -24,7 +24,9 @@ use crate::project_memory;
 use crate::projects::ProjectRegistryError;
 use crate::provider_auth;
 use crate::providers;
-use crate::security::{Authenticated, RuntimeCaller, CALLER_HEADER_NAME};
+use crate::security::{
+    Authenticated, AuthenticationMethod, RuntimeCaller, WorkspaceAuthenticated, CALLER_HEADER_NAME,
+};
 use crate::AppState;
 
 mod project;
@@ -478,12 +480,14 @@ struct ResolveLocalWorkspaceRequest {
 }
 
 async fn resolve_local_workspace(
-    _auth: Authenticated,
+    auth: WorkspaceAuthenticated,
     State(state): State<AppState>,
     headers: HeaderMap,
     request: Result<Json<ResolveLocalWorkspaceRequest>, JsonRejection>,
 ) -> Response {
-    if RuntimeCaller::from_headers(&headers) != RuntimeCaller::IdeHost {
+    if auth.method() != AuthenticationMethod::Bearer
+        || RuntimeCaller::from_headers(&headers) != RuntimeCaller::IdeHost
+    {
         return StatusCode::FORBIDDEN.into_response();
     }
     let Json(request) = match request {
@@ -499,7 +503,7 @@ async fn resolve_local_workspace(
     }
     match state
         .project_registry_runtime
-        .register(&request.root, request.display_name.as_deref())
+        .resolve_or_register_ide_workspace(&request.root, request.display_name.as_deref())
         .await
     {
         Ok(summary) => Json(summary).into_response(),

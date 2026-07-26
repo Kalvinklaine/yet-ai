@@ -406,6 +406,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn project_browser_archived_root_registration_preserves_existing_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Workspace");
+        std::fs::create_dir(&root).unwrap();
+        let registry = ProjectRegistryRuntime::new(&crate::storage::StoragePaths {
+            project_dir: temp.path().join("legacy"),
+            config_dir: temp.path().join("config"),
+            cache_dir: temp.path().join("cache"),
+        });
+        let created = registry.register(&root, Some("Workspace")).await.unwrap();
+        registry
+            .archive(&created.project_id, &created.revision)
+            .await
+            .unwrap();
+        let browser = ProjectBrowserRuntime::with_home(Some(temp.path().to_path_buf()));
+        let session = browser.create_session().await.unwrap();
+        let workspace = browser
+            .list(&session.session_id, &session.root.handle)
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.display_name == "Workspace")
+            .unwrap();
+
+        let existing = browser
+            .register(
+                &registry,
+                &session.session_id,
+                &workspace.handle,
+                "Ignored",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(existing.project_id, created.project_id);
+        assert_eq!(existing.display_name, "Workspace");
+        assert_eq!(existing.status, crate::projects::ProjectStatus::Archived);
+    }
+
+    #[tokio::test]
     async fn project_browser_stale_session_and_depth_limit_fail_closed() {
         let temp = tempfile::tempdir().unwrap();
         let mut current = temp.path().to_path_buf();

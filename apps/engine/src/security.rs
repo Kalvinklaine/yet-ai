@@ -84,7 +84,27 @@ pub enum AuthTokenError {
     Empty,
 }
 
-pub struct Authenticated;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AuthenticationMethod {
+    Bearer,
+    BrowserSession,
+}
+
+pub struct Authenticated(AuthenticationMethod);
+
+impl Authenticated {
+    pub fn method(&self) -> AuthenticationMethod {
+        self.0
+    }
+}
+
+pub struct WorkspaceAuthenticated(AuthenticationMethod);
+
+impl WorkspaceAuthenticated {
+    pub fn method(&self) -> AuthenticationMethod {
+        self.0
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeCaller {
@@ -210,7 +230,14 @@ fn is_same_origin_web_ui_request(
     browser_session_id: &BrowserSessionId,
 ) -> bool {
     RuntimeCaller::from_headers(headers) == RuntimeCaller::GuiRuntimeClient
-        && header_value_eq(headers, SEC_FETCH_SITE_HEADER_NAME, "same-origin")
+        && is_valid_browser_session_request(headers, browser_session_id)
+}
+
+fn is_valid_browser_session_request(
+    headers: &HeaderMap,
+    browser_session_id: &BrowserSessionId,
+) -> bool {
+    header_value_eq(headers, SEC_FETCH_SITE_HEADER_NAME, "same-origin")
         && request_uses_loopback_host_with_port(headers)
         && has_valid_browser_session_cookie(headers, browser_session_id)
 }
@@ -419,7 +446,7 @@ impl FromRequestParts<AppState> for Authenticated {
     ) -> Result<Self, Self::Rejection> {
         let Some(value) = parts.headers.get(header::AUTHORIZATION) else {
             if is_same_origin_web_ui_request(&parts.headers, &state.browser_session_id) {
-                return Ok(Self);
+                return Ok(Self(AuthenticationMethod::BrowserSession));
             }
             return Err(reject(parts, AuthRejectReason::MissingHeader));
         };
@@ -430,7 +457,35 @@ impl FromRequestParts<AppState> for Authenticated {
             return Err(reject(parts, AuthRejectReason::EmptyBearer));
         }
         if state.auth_token.is_valid_bearer(value) {
-            Ok(Self)
+            Ok(Self(AuthenticationMethod::Bearer))
+        } else {
+            Err(reject(parts, AuthRejectReason::TokenMismatch))
+        }
+    }
+}
+
+#[axum::async_trait]
+impl FromRequestParts<AppState> for WorkspaceAuthenticated {
+    type Rejection = Response<Body>;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let Some(value) = parts.headers.get(header::AUTHORIZATION) else {
+            if is_valid_browser_session_request(&parts.headers, &state.browser_session_id) {
+                return Ok(Self(AuthenticationMethod::BrowserSession));
+            }
+            return Err(reject(parts, AuthRejectReason::MissingHeader));
+        };
+        let Ok(value) = value.to_str() else {
+            return Err(reject(parts, AuthRejectReason::InvalidHeader));
+        };
+        if value == "Bearer" || value == "Bearer " {
+            return Err(reject(parts, AuthRejectReason::EmptyBearer));
+        }
+        if state.auth_token.is_valid_bearer(value) {
+            Ok(Self(AuthenticationMethod::Bearer))
         } else {
             Err(reject(parts, AuthRejectReason::TokenMismatch))
         }

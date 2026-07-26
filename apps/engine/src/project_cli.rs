@@ -194,6 +194,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn project_cli_add_archived_root_preserves_existing_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let storage = paths(&temp);
+        let runtime = ProjectRegistryRuntime::new(&storage);
+        let created = runtime.register(&root, Some("Archived")).await.unwrap();
+        runtime
+            .archive(&created.project_id, &created.revision)
+            .await
+            .unwrap();
+
+        let output = run_with_storage(
+            &args(&["project", "add", root.to_str().unwrap(), "--name", "Ignored"]),
+            &storage,
+            temp.path().to_path_buf(),
+            8001,
+        )
+        .await
+        .unwrap();
+        let existing: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(existing["projectId"], created.project_id);
+        assert_eq!(existing["displayName"], "Archived");
+        assert_eq!(existing["status"], "archived");
+        assert!(!output.contains(root.to_str().unwrap()));
+    }
+
+    #[tokio::test]
     async fn project_cli_and_server_like_runtime_preserve_each_others_projects() {
         let temp = tempfile::tempdir().unwrap();
         let cli_root = temp.path().join("cli-root");

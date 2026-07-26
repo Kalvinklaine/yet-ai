@@ -378,6 +378,25 @@ impl ProjectRegistryRuntime {
         root: impl AsRef<Path>,
         display_name: Option<&str>,
     ) -> Result<ProjectSummary, ProjectRegistryError> {
+        self.register_with_archived_policy(root, display_name, false)
+            .await
+    }
+
+    pub async fn resolve_or_register_ide_workspace(
+        &self,
+        root: impl AsRef<Path>,
+        display_name: Option<&str>,
+    ) -> Result<ProjectSummary, ProjectRegistryError> {
+        self.register_with_archived_policy(root, display_name, true)
+            .await
+    }
+
+    async fn register_with_archived_policy(
+        &self,
+        root: impl AsRef<Path>,
+        display_name: Option<&str>,
+        archived_fails_closed: bool,
+    ) -> Result<ProjectSummary, ProjectRegistryError> {
         let canonical_root = canonical_directory(root.as_ref()).await?;
         let root_binding = readable_root_binding(&canonical_root)?;
         self.validate_registration_root(&canonical_root)?;
@@ -393,7 +412,7 @@ impl ProjectRegistryRuntime {
                     .iter()
                     .find(|entry| entry.canonical_root == canonical_root)
                 {
-                    if entry.archived {
+                    if archived_fails_closed && entry.archived {
                         return Err(ProjectRegistryError::Archived);
                     }
                     if entry.root_binding == root_binding
@@ -1486,7 +1505,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn projects_archived_root_registration_fails_closed() {
+    async fn projects_archived_root_registration_preserves_existing_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
+        let created = runtime.register(&root, Some("Archived")).await.unwrap();
+        runtime
+            .archive(&created.project_id, &created.revision)
+            .await
+            .unwrap();
+
+        let existing = runtime.register(&root, Some("Ignored")).await.unwrap();
+        assert_eq!(existing.project_id, created.project_id);
+        assert_eq!(existing.display_name, "Archived");
+        assert_eq!(existing.status, ProjectStatus::Archived);
+        assert_eq!(runtime.list_summaries().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn projects_ide_resolver_archived_root_fails_closed() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
@@ -1498,7 +1536,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            runtime.register(&root, Some("Ignored")).await.unwrap_err(),
+            runtime
+                .resolve_or_register_ide_workspace(&root, Some("Ignored"))
+                .await
+                .unwrap_err(),
             ProjectRegistryError::Archived
         );
         assert_eq!(runtime.list_summaries().await.unwrap().len(), 1);

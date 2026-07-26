@@ -240,7 +240,7 @@ async fn resolve_local_workspace_rejects_gui_unknown_and_untrusted_bearer_caller
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::COOKIE, cookie)
         .header("sec-fetch-site", "same-origin")
-        .header("x-yet-ai-caller", "gui_runtime_client")
+        .header("x-yet-ai-caller", "ide_host")
         .body(Body::from(json!({ "root": root.path() }).to_string()))
         .unwrap();
     let (status, text) = text_response_from(app(state), request).await;
