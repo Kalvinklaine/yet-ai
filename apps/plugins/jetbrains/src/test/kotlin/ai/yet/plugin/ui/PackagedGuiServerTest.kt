@@ -670,6 +670,69 @@ class PackagedGuiServerTest {
     }
 
     @Test
+    fun disposingServerCancelsHangingBufferedResponseWithoutLeakingWork() {
+        val bufferedStarted = CountDownLatch(1)
+        val runtime = streamingRuntimeServer { exchange ->
+            exchange.responseHeaders.set("Content-Type", "application/json")
+            exchange.sendResponseHeaders(200, 0)
+            bufferedStarted.countDown()
+            try {
+                while (true) {
+                    exchange.responseBody.write(" ".toByteArray())
+                    exchange.responseBody.flush()
+                    Thread.sleep(20)
+                }
+            } catch (_: Exception) {
+            } finally {
+                exchange.close()
+            }
+        }
+        val service = PackagedGuiServer()
+        val clientExecutor = Executors.newSingleThreadExecutor()
+        try {
+            val panel = service.registerPanel(RuntimeSettings(runtime.origin, null, null))
+            val gui = service.start() ?: error("packaged GUI test resource unavailable")
+            val response = clientExecutor.submit {
+                runCatching { request("${gui.origin}${panel.proxyBaseUrl}/v1/chats/subscribe") }
+            }
+            assertTrue(bufferedStarted.await(1, TimeUnit.SECONDS))
+            assertTrue(awaitCondition { service.activeWorkCount() == 1 })
+
+            service.dispose()
+
+            response.get(2, TimeUnit.SECONDS)
+            assertEquals(0, service.activeWorkCount())
+        } finally {
+            service.dispose()
+            clientExecutor.shutdownNow()
+            runtime.stop()
+        }
+    }
+
+    @Test
+    fun unregisterThenUpdateSamePanelIdPermitsNewBufferedRequest() = withRuntimeServer { runtime ->
+        val service = PackagedGuiServer()
+        try {
+            val panelId = "reused-panel"
+            val settings = RuntimeSettings(runtime.origin, null, null)
+            service.updatePanel(panelId, settings)
+            val gui = service.start() ?: error("packaged GUI test resource unavailable")
+
+            assertEquals(200, request("${gui.origin}/panel/$panelId/v1/chats/subscribe").status)
+            service.unregisterPanel(panelId)
+            service.updatePanel(panelId, settings)
+
+            val response = request("${gui.origin}/panel/$panelId/v1/chats/subscribe")
+
+            assertEquals(200, response.status)
+            assertEquals("runtime-ok", response.body)
+            assertEquals(0, service.activeWorkCount())
+        } finally {
+            service.dispose()
+        }
+    }
+
+    @Test
     fun longLivedStreamsDoNotStarveOrdinaryPanelAssets() {
         val streamCount = 4
         val streamsStarted = CountDownLatch(streamCount)
@@ -851,6 +914,7 @@ private fun withPackagedServer(
     val requestExecutor = Executors.newFixedThreadPool(4)
     val bufferedExecutor = Executors.newFixedThreadPool(4)
     val activeWork = PackagedGuiActiveWorkRegistry()
+    panels.keys.forEach(activeWork::activatePanel)
     server.executor = requestExecutor
     server.createContext("/") { exchange ->
         if (wrappers.isEmpty()) {
@@ -886,6 +950,15 @@ private fun assertProxyFailureDoesNotLeak(body: String, vararg forbidden: String
 private fun isReachable(server: HttpServer): Boolean = runCatching {
     request("http://127.0.0.1:${server.address.port}/")
 }.isSuccess
+
+private fun awaitCondition(timeoutMillis: Long = 1_000, condition: () -> Boolean): Boolean {
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
+    while (System.nanoTime() < deadline) {
+        if (condition()) return true
+        Thread.sleep(10)
+    }
+    return condition()
+}
 
 private fun request(url: String, method: String = "GET"): Response {
     val connection = URI(url).toURL().openConnection() as HttpURLConnection

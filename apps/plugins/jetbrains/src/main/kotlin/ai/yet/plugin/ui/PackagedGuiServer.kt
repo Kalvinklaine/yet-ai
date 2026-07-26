@@ -19,6 +19,7 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ExecutionException
@@ -67,6 +68,7 @@ class PackagedGuiServer internal constructor(
             SynchronousQueue(),
         ) { runnable -> Thread(runnable, "Yet AI packaged GUI buffered response").apply { isDaemon = true } }
         val activeWork = PackagedGuiActiveWorkRegistry()
+        panels.keys.forEach(activeWork::activatePanel)
         var server: HttpServer? = null
         var wrapperServer: HttpServer? = null
         try {
@@ -109,9 +111,11 @@ class PackagedGuiServer internal constructor(
         return PackagedGuiPanel(panelId, "/panel/$panelId")
     }
 
+    @Synchronized
     fun updatePanel(panelId: String, settings: RuntimeSettings) {
         if (!isValidPanelId(panelId)) return
         panels[panelId] = PackagedGuiPanelRuntime(settings.runtimeUrl, settings.sessionToken)
+        running?.activeWork?.activatePanel(panelId)
     }
 
     @Synchronized
@@ -204,7 +208,7 @@ interface PackagedGuiActiveWork {
 
 class PackagedGuiActiveWorkRegistry {
     private val work = mutableSetOf<PackagedGuiActiveWork>()
-    private val closedPanels = mutableSetOf<String>()
+    private val activePanels = mutableSetOf<String>()
     private var closed = false
 
     val size: Int @Synchronized get() = work.size
@@ -212,8 +216,13 @@ class PackagedGuiActiveWorkRegistry {
 
     @Synchronized
     fun add(item: PackagedGuiActiveWork): Boolean {
-        if (closed || item.panelId in closedPanels) return false
+        if (closed || item.panelId !in activePanels) return false
         return work.add(item)
+    }
+
+    @Synchronized
+    fun activatePanel(panelId: String) {
+        if (!closed) activePanels.add(panelId)
     }
 
     @Synchronized
@@ -224,6 +233,7 @@ class PackagedGuiActiveWorkRegistry {
     fun closeAll() {
         val closing = synchronized(this) {
             closed = true
+            activePanels.clear()
             work.toList().also { work.clear() }
         }
         closing.forEach { it.close() }
@@ -231,7 +241,7 @@ class PackagedGuiActiveWorkRegistry {
 
     fun closePanel(panelId: String) {
         val closing = synchronized(this) {
-            closedPanels.add(panelId)
+            activePanels.remove(panelId)
             work.filter { it.panelId == panelId }.also { work.removeAll(it.toSet()) }
         }
         closing.forEach { it.close() }
@@ -516,6 +526,7 @@ private fun proxyPanelRequest(
     }
     var connection: HttpURLConnection? = null
     var connectionOwnedElsewhere = false
+    var locallyClosed = false
     val response = try {
         connection = target.toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = timeouts.connectMillis
@@ -571,6 +582,9 @@ private fun proxyPanelRequest(
     } catch (_: SocketTimeoutException) {
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 504)
         proxyFailure(504, "runtime_proxy_timeout")
+    } catch (_: PackagedGuiProxyLocallyClosedException) {
+        locallyClosed = true
+        proxyFailure(502, "runtime_proxy_unavailable")
     } catch (_: IOException) {
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 502)
         proxyFailure(502, "runtime_proxy_unavailable")
@@ -580,7 +594,11 @@ private fun proxyPanelRequest(
     } finally {
         if (!connectionOwnedElsewhere) connection?.disconnect()
     }
-    send(exchange, response.status, response.contentType, response.body)
+    if (locallyClosed) {
+        runCatching { send(exchange, response.status, response.contentType, response.body) }
+    } else {
+        send(exchange, response.status, response.contentType, response.body)
+    }
     return false
 }
 
@@ -619,10 +637,23 @@ private fun readBufferedResponse(
         activeWork?.remove(reader)
         reader.close()
         throw SocketTimeoutException()
+    } catch (_: CancellationException) {
+        activeWork?.remove(reader)
+        val locallyClosed = reader.isClosed
+        reader.close()
+        if (locallyClosed) throw PackagedGuiProxyLocallyClosedException()
+        throw IOException("buffered proxy response cancelled")
+    } catch (_: InterruptedException) {
+        Thread.currentThread().interrupt()
+        activeWork?.remove(reader)
+        reader.close()
+        throw PackagedGuiProxyLocallyClosedException()
     } catch (error: ExecutionException) {
         throw (error.cause as? IOException ?: IOException(error.cause))
     }
 }
+
+private class PackagedGuiProxyLocallyClosedException : IOException()
 
 class PackagedGuiBufferedReader(
     override val panelId: String,
@@ -633,6 +664,8 @@ class PackagedGuiBufferedReader(
     private val input = AtomicReference<InputStream?>()
 
     override val isStream: Boolean = false
+
+    val isClosed: Boolean get() = closed.get()
 
     fun attach(task: Future<*>) {
         if (!future.compareAndSet(null, task) || closed.get()) task.cancel(true)
