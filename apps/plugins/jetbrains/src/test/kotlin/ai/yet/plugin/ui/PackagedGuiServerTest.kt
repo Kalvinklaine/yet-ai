@@ -8,7 +8,9 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.URI
 import java.net.ServerSocket
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -389,6 +391,54 @@ class PackagedGuiServerTest {
             assertEquals(504, response.status)
             assertEquals("{\"error\":\"runtime_proxy_timeout\"}", response.body)
             assertProxyFailureDoesNotLeak(response.body, runtime.origin, sessionToken, "slow-private-path", "provider-secret-body", "timed out")
+        }
+    }
+
+    @Test
+    fun chatSubscriptionStreamsFirstEventBeforeUpstreamCloses() {
+        val upstreamCanClose = CountDownLatch(1)
+        val upstreamClosed = CountDownLatch(1)
+        val requests = mutableListOf<RuntimeRequest>()
+        val runtime = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
+        runtime.createContext("/") { exchange ->
+            requests.add(RuntimeRequest(exchange.requestURI.toString(), exchange.requestHeaders.getFirst("Authorization")))
+            exchange.responseHeaders.set("Content-Type", "text/event-stream; charset=utf-8")
+            exchange.sendResponseHeaders(200, 0)
+            exchange.responseBody.write("data: first-event\n\n".toByteArray())
+            exchange.responseBody.flush()
+            upstreamCanClose.await(2, TimeUnit.SECONDS)
+            exchange.close()
+            upstreamClosed.countDown()
+        }
+        runtime.start()
+        try {
+            val runtimeOrigin = "http://127.0.0.1:${runtime.address.port}"
+            withPackagedServer(
+                mapOf("panel-stream" to PackagedGuiPanelRuntime(runtimeOrigin, "private-stream-token")),
+                proxyTimeouts = PackagedGuiProxyTimeouts(connectMillis = 200, readMillis = 100),
+            ) { proxy ->
+                val connection = URI("${proxy.origin}/panel/panel-stream/v1/chats/subscribe?chat_id=chat_1").toURL().openConnection() as HttpURLConnection
+                connection.connectTimeout = 2_000
+                connection.readTimeout = 1_000
+                try {
+                    assertEquals(200, connection.responseCode)
+                    assertEquals("text/event-stream; charset=utf-8", connection.getHeaderField("Content-Type"))
+                    val firstEvent = ByteArray("data: first-event\n\n".length)
+                    connection.inputStream.readNBytes(firstEvent, 0, firstEvent.size)
+
+                    assertEquals("data: first-event\n\n", String(firstEvent))
+                    assertEquals(1L, upstreamClosed.count)
+                    assertEquals("/v1/chats/subscribe?chat_id=chat_1", requests.single().target)
+                    assertEquals("Bearer private-stream-token", requests.single().authorization)
+                    assertFalse(YetProxyAuthDiagnosticsStore.snapshot().toString().contains("private-stream-token"))
+                } finally {
+                    upstreamCanClose.countDown()
+                    connection.disconnect()
+                }
+            }
+        } finally {
+            upstreamCanClose.countDown()
+            runtime.stop(0)
         }
     }
 

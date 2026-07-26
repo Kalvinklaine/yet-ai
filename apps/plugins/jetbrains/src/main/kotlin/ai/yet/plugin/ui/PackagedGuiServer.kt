@@ -137,6 +137,8 @@ data class PackagedGuiProxyRequest(val targetUrl: String, val headers: Map<Strin
 
 data class PackagedGuiProxyTimeouts(val connectMillis: Int = 2_000, val readMillis: Int = 10_000)
 
+private const val EVENT_STREAM_READ_TIMEOUT_MILLIS = 45_000
+
 sealed class PackagedGuiProxyDecision {
     data class Forward(val request: PackagedGuiProxyRequest) : PackagedGuiProxyDecision()
     data object Reject : PackagedGuiProxyDecision()
@@ -373,6 +375,7 @@ private fun proxyPanelRequest(
         if (rawQuery == null) uri else URI(uri.scheme, uri.authority, uri.path, rawQuery, null)
     }
     var connection: HttpURLConnection? = null
+    var streamingResponseStarted = false
     val response = try {
         connection = target.toURL().openConnection() as HttpURLConnection
         connection.connectTimeout = timeouts.connectMillis
@@ -387,19 +390,45 @@ private fun proxyPanelRequest(
         }
         val status = connection.responseCode
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), status)
-        val contentType = connection.headerFields["Content-Type"]?.firstOrNull() ?: "application/octet-stream"
+        val contentType = connection.contentType ?: "application/octet-stream"
+        if (status in 200..299 && rawPath == "/v1/chats/subscribe" && isEventStream(contentType)) {
+            connection.readTimeout = EVENT_STREAM_READ_TIMEOUT_MILLIS
+            streamingResponseStarted = true
+            streamEventResponse(exchange, status, contentType, connection.inputStream)
+            return
+        }
         val body = (if (status >= 400) connection.errorStream else connection.inputStream)?.use { it.readBytes() } ?: ByteArray(0)
         PackagedGuiProxyResponse(status, contentType, body)
     } catch (_: SocketTimeoutException) {
+        if (streamingResponseStarted) return
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 504)
         proxyFailure(504, "runtime_proxy_timeout")
     } catch (_: IOException) {
+        if (streamingResponseStarted) return
         YetProxyAuthDiagnosticsStore.sameOriginProxyRequest(panelId, decision.request.headers.containsKey("Authorization"), 502)
         proxyFailure(502, "runtime_proxy_unavailable")
     } finally {
         connection?.disconnect()
     }
     send(exchange, response.status, response.contentType, response.body)
+}
+
+private fun isEventStream(contentType: String): Boolean =
+    contentType.substringBefore(';').trim().equals("text/event-stream", ignoreCase = true)
+
+private fun streamEventResponse(exchange: HttpExchange, status: Int, contentType: String, input: java.io.InputStream) {
+    exchange.responseHeaders.set("Content-Type", contentType)
+    exchange.responseHeaders.set("Cache-Control", "no-store")
+    exchange.sendResponseHeaders(status, 0)
+    input.use { upstream ->
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        while (true) {
+            val count = upstream.read(buffer)
+            if (count < 0) return
+            exchange.responseBody.write(buffer, 0, count)
+            exchange.responseBody.flush()
+        }
+    }
 }
 
 private data class PackagedGuiProxyResponse(val status: Int, val contentType: String, val body: ByteArray)
