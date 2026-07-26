@@ -3,13 +3,14 @@ import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectHub } from "./ProjectHub";
 import * as client from "../services/projectClient";
+import type { ProjectNavigation } from "../services/projectRouting";
 
 vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), listProjects: vi.fn(), archiveProject: vi.fn(), restoreProject: vi.fn(), updateProject: vi.fn(), startDirectoryDiscovery: vi.fn(), listDirectoryDiscovery: vi.fn(), registerProject: vi.fn() }));
 const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
 const summary = (name: string, status: "available" | "missing" | "archived" = "available") => ({ projectId: "prj_abcdefghijklmnopqrstuv" as client.ProjectSummary["projectId"], displayName: name, status, revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: status === "available", cloudRequired: false as const, providerAccess: "direct" as const });
 let root: ReactDOM.Root | undefined;
 afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ""; vi.restoreAllMocks(); });
-async function render() { const container = document.createElement("div"); document.body.append(container); await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectHub settings={settings} navigate={() => undefined} />); }); return container; }
+async function render(navigate: ProjectNavigation = () => undefined) { const container = document.createElement("div"); document.body.append(container); await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectHub settings={settings} navigate={navigate} />); }); return container; }
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
 
 describe("ProjectHub", () => {
@@ -29,6 +30,45 @@ describe("ProjectHub", () => {
     expect(container.textContent).toContain("Unscoped legacy data");
     for (const forbidden of ["/Users/private", "worker", "LSP", "cron", "token-secret", "8001"]) expect(container.textContent).not.toContain(forbidden);
     expect(container.querySelector("table")?.querySelectorAll("th").length).toBe(5);
+  });
+
+  it("launches an available project in the same window or a safe canonical new tab", async () => {
+    const project = summary("Launchable");
+    const navigate = vi.fn();
+    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [project], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
+    const container = await render(navigate);
+    const row = Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.textContent?.includes("Launchable")) as HTMLTableRowElement;
+    const sameWindow = Array.from(row.querySelectorAll("a")).find((link) => link.textContent === "Open") as HTMLAnchorElement;
+    const newTab = Array.from(row.querySelectorAll("a")).find((link) => link.textContent === "Open in new tab") as HTMLAnchorElement;
+    expect(newTab.getAttribute("href")).toBe(`/p/${project.projectId}/`);
+    expect(newTab.getAttribute("target")).toBe("_blank");
+    expect(newTab.getAttribute("rel")).toBe("noopener noreferrer");
+    sameWindow.click();
+    expect(navigate).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith({ kind: "project", projectId: project.projectId, page: "home" });
+  });
+
+  it("does not launch missing or archived projects or expose private values", async () => {
+    const missing = { ...summary("Missing", "missing"), projectId: "prj_1234567890123456789012" as client.ProjectSummary["projectId"] };
+    const archived = { ...summary("Archived", "archived"), projectId: "prj_abcdefghijklmnopqrstu_" as client.ProjectSummary["projectId"] };
+    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [missing, archived], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
+    const container = await render();
+    for (const name of ["Missing", "Archived"]) {
+      const row = Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.querySelector("strong")?.textContent === name) as HTMLTableRowElement;
+      expect(row.querySelectorAll("a")).toHaveLength(0);
+      expect(row.textContent).not.toContain("Open in new tab");
+    }
+    expect(container.innerHTML).not.toContain("/Users/private");
+    expect(container.innerHTML).not.toContain("token-secret");
+  });
+
+  it("shows loading without a false empty state", async () => {
+    const pending = deferred<Awaited<ReturnType<typeof client.listProjects>>>();
+    vi.mocked(client.listProjects).mockReturnValue(pending.promise);
+    const container = await render();
+    expect(container.textContent).toContain("Loading projects");
+    expect(container.textContent).not.toContain("Give your work a clear home");
+    await act(async () => { pending.resolve({ ok: true, data: { projects: [], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } }); await pending.promise; });
   });
 
   it("shows a bounded registry error", async () => {
