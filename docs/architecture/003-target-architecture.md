@@ -325,6 +325,66 @@ The current code foundation proves that `same_origin_proxy` is host-agnostic: th
 
 A dedicated visual/browser GUI smoke is planned in GitHub issue #2. Until that issue is implemented and verified, docs and reports should describe it as planned only. The planned smoke must stay local-first, use loopback/mock fixtures, and require no provider credentials, hosted Yet AI backend, managed model gateway, product credit balance, or cloud workspace.
 
+#### Shared dashboard and trusted workspace binding target
+
+This section records an approved target contract for a future implementation wave. It does not claim that the shared dashboard, hosted Current Workspace Dashboard, or IDE workspace binding described here is implemented. The implemented browser-first project registry and isolation boundary remains authoritative; this target adds a later trusted-host binding path without weakening its opaque-ID, request-scoped project, storage, or legacy-data separation rules.
+
+##### Landing surfaces
+
+The browser and trusted IDE hosts share engine-owned data contracts, status meanings, and recovery semantics, but they do not need pixel-identical layouts:
+
+- **Browser:** `/projects` remains the canonical web home and becomes the full **Projects/Dashboard**. It presents local engine readiness, provider/model readiness, registered projects, recent project activity and resumable conversations, active or blocked work, diagnostics, and setup actions as independently loading sections. The project list remains a primary launcher. **Open** uses same-window navigation, while an explicit **Open in new window/tab** action uses only the canonical `/p/<opaqueProjectId>/` project-home URL with safe browser semantics such as `target="_blank"` and `rel="noopener noreferrer"`.
+- **Trusted VS Code and JetBrains hosts:** hosted entry opens a compact **Current Workspace Dashboard**, not the legacy unscoped chat route. It presents the bound or selected project identity, runtime/provider/model readiness, recent project conversations, active or blocked work, and explicit **Resume last**, **Start new chat**, **Settings**, and **Diagnostics** actions. The full transcript, composer, chat subscription, and chat-specific state must not mount until the user explicitly chooses **Resume last** or **Start new chat**.
+
+Every dashboard section has its own loading, ready, empty, blocked, and error state. A section must not show a false empty state while its source is still loading or has failed. Browser and hosted layouts may differ in density and platform affordances, but the same status must mean the same thing and offer equivalent safe recovery actions. Legacy unscoped chats and data remain explicitly labeled compatibility access only and are never the default browser or IDE landing state.
+
+##### Trusted single-root binding flow
+
+Workspace binding is a trusted host-to-engine operation, not a GUI filesystem capability:
+
+1. VS Code or JetBrains determines the local workspace roots through its native trusted host API.
+2. With **exactly one local root**, the host sends that raw root directly to a dedicated authenticated loopback engine find-or-register operation. The engine canonicalizes and validates the directory, uses the existing private project registry to find the same canonical root or idempotently register it, applies the registry's concurrency and filesystem-identity rules, and returns only the safe public project summary with its opaque `projectId`.
+3. With **zero roots**, the host does not guess, infer, or register a directory. The Current Workspace Dashboard offers selection from safe existing project summaries and appropriate open-workspace/setup guidance.
+4. With **multiple roots**, the host does not choose a root or register every root automatically. The dashboard requires explicit user selection from safe existing projects; a later root-selection or multi-root design requires its own reviewed contract.
+5. After successful binding or explicit project selection, all project data requests use `/p/:projectId/...` and resolve an immutable engine-owned `ProjectContext`. The GUI and plugin must not maintain a second path-based project registry or a mutable process-global current project.
+
+The find-or-register operation is authenticated local control-plane work. It does not scan project contents, index the workspace, attach context, call a provider, start chat, or grant file-read, edit, shell, git, tool, agent, or mutation authority. Registration by trusted host reuses the same engine canonicalization, identity, opaque-ID, project-isolation, and safe-summary policies as browser registration; only the trusted input channel differs.
+
+##### Privacy and error boundary
+
+The raw workspace-root value supplied by the host may travel through exactly one product boundary: from the trusted VS Code or JetBrains host directly to the authenticated loopback engine operation. That submitted value is private transient control input; the engine canonicalizes it and must not persist the submitted representation. It must never travel through or appear in:
+
+- a host-to-GUI or GUI-to-host bridge payload;
+- GUI-facing HTTP or SSE responses, dashboard state, chat context, model prompts, exports, or copied diagnostics;
+- browser or IDE-webview URLs, including project-home links;
+- `localStorage`, `sessionStorage`, IndexedDB, GUI caches, plugin settings, or other browser/webview/client persistence;
+- public, support, CI, host, proxy, engine, or GUI logs and normal diagnostics;
+- public error bodies, exception text, metrics labels, activity summaries, screenshots, or test fixtures.
+
+Only opaque project IDs and bounded sanitized project summaries cross into GUI-facing contracts. After canonicalization, engine-owned private registry storage may retain the canonical root identity under the existing project-isolation policy; no client-side storage may retain either the submitted or canonical root. Project operational storage remains keyed by `projectId`, not by the root or display label. Workspace roots are not provider data and must not be sent to configured providers or local model runtimes.
+
+Failures are attributed to one bounded layer: trusted host/workspace discovery, local proxy or transport, runtime/project binding, provider/model readiness, or tool/session state. The engine maps canonicalization, registry, identity, permission, and storage failures to the existing sanitized project-control taxonomy without echoing the submitted root or raw OS/storage error. Hosts and proxies log only safe categories and correlation metadata. The GUI renders safe recovery actions such as retry, select an existing project, open a workspace, return to Projects, revalidate, Settings, or Diagnostics; it never reconstructs or displays the raw root as an error fallback.
+
+##### Host parity and ownership
+
+VS Code and JetBrains must implement the same binding cardinality, privacy, opaque-identity, status, and explicit-chat-entry contract. Host-specific APIs, lifecycle code, proxy transport, and UI integration may differ. Neither plugin may duplicate engine project registration, canonicalization, storage, provider adapters, credentials, chat history, or AI behavior. Plugins remain thin trusted hosts that discover root cardinality, call the authenticated local engine, host the GUI, and bridge only sanitized results.
+
+This target preserves local-first BYOK. Dashboard readiness, workspace binding, project storage, provider setup, and project chat must not require a hosted Yet AI backend, Yet AI account, managed model gateway, product credit balance, or cloud workspace. Configured provider and local-runtime calls remain direct from the engine, and raw provider credentials remain engine-owned.
+
+##### Non-goals for this wave
+
+This contract does not approve or imply:
+
+- implementation completeness, production readiness, marketplace readiness, or release readiness;
+- a broad `App.tsx` rewrite or a pixel-identical browser, VS Code, and JetBrains layout;
+- automatic registration for zero-root or multi-root workspaces, multi-root project identity, project inference, background discovery, workspace scanning, or indexing;
+- automatic legacy-data migration, guessed legacy ownership, or legacy chat as a default landing route;
+- chat mount, chat creation, provider calls, context attachment, or agent start merely because workspace binding succeeded;
+- raw filesystem paths in GUI contracts, bridge messages, URLs, browser/webview storage, public diagnostics, public logs, errors, prompts, or provider requests;
+- new file-read, edit, apply, shell, git, tool, provider-tool, task, agent, or workspace-mutation authority;
+- a hosted service dependency, cloud workspace, plugin-owned project registry, plugin-owned provider adapter, or plugin-owned credential store;
+- copied third-party source, wording, UI, or assets.
+
 ### `apps/plugins/vscode`
 
 The VS Code plugin should own:
