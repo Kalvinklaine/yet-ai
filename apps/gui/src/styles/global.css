@@ -142,6 +142,71 @@ textarea {
   padding: 26px;
 }
 
+.workbench-surface-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  border: 1px solid #d8e1f6;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.94);
+  padding: 8px;
+  box-shadow: 0 10px 28px rgba(28, 40, 72, 0.06);
+}
+
+.workbench-surface-tabs,
+.workbench-compact-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.compact-status-label {
+  color: #45546c;
+  font-size: 12px;
+}
+
+.workbench-surface-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #45546c;
+  padding: 8px 11px;
+}
+
+.workbench-surface-tabs button:not(:disabled):hover,
+.workbench-surface-tabs button.active {
+  border-color: #bfd0ff;
+  background: #eaf0ff;
+  color: #2441a1;
+  box-shadow: none;
+  transform: none;
+}
+
+.surface-count {
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  padding: 3px 6px;
+  text-transform: uppercase;
+}
+
+.surface-count.ok {
+  background: #e8f8ef;
+  color: #167347;
+}
+
+.surface-count.warn {
+  background: #fff4d7;
+  color: #8a5a00;
+}
+
 .secondary-card {
   box-shadow: 0 10px 28px rgba(28, 40, 72, 0.05);
 }
@@ -948,8 +1013,8 @@ pre,
   position: relative;
   align-items: stretch;
   min-height: 0;
-  height: min(88vh, 980px);
-  max-height: 980px;
+  height: min(92vh, 1080px);
+  max-height: 1080px;
 }
 
 .conversations-panel,
@@ -1442,6 +1507,13 @@ pre,
   display: none !important;
 }
 
+.host-vscode .debug-card:not([hidden]),
+.host-jetbrains .debug-card:not([hidden]),
+.host-vscode .agent-progress-card:not([hidden]),
+.host-jetbrains .agent-progress-card:not([hidden]) {
+  display: grid;
+}
+
 .chats-toggle,
 .conversations-drawer,
 .conversation-drawer-backdrop {
@@ -1803,6 +1875,25 @@ pre,
 }
 
 @media (max-width: 960px) {
+  .workbench-surface-toolbar,
+  .workbench-compact-status {
+    align-items: stretch;
+  }
+
+  .workbench-surface-toolbar {
+    display: grid;
+  }
+
+  .workbench-surface-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .workbench-surface-tabs button {
+    justify-content: center;
+    min-width: 0;
+  }
+
   .chat-workbench,
   .conversations-layout {
     grid-template-columns: 1fr;
@@ -1937,6 +2028,18 @@ pre,
 
   .chat-primary-card {
     padding: 10px;
+  }
+
+  .workbench-surface-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 18;
+    margin-bottom: 6px;
+  }
+
+  .workbench-compact-status {
+    overflow-x: auto;
+    flex-wrap: nowrap;
   }
 
   .chat-workbench,

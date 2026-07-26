@@ -249,6 +249,7 @@ type CodingTaskTemplate = {
 };
 
 type RuntimeConnectionSource = "startup" | "manual" | "host.ready";
+type WorkbenchSurface = "chat" | "setup" | "debug";
 
 type VerificationOutputBundleItem = Extract<ExplicitContextBundleItem, { kind: "verification_output" }>;
 type WorkspaceSnippetSearchResultPayload = IdeActionResultPayload & { action: "searchWorkspaceSnippets"; status: "succeeded"; queryLabel: string; resultCount: number; snippets: WorkspaceSnippetSearchResult[]; truncated: boolean };
@@ -449,6 +450,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
   const [conversationNotice, setConversationNotice] = useState<string | null>(null);
   const [compactConversationsOpen, setCompactConversationsOpen] = useState(false);
+  const [workbenchSurface, setWorkbenchSurface] = useState<WorkbenchSurface>("chat");
   const [chatInput, setChatInput] = useState("");
   const [manualRunnerDraftPlan, setManualRunnerDraftPlan] = useState("");
   const [codingTaskGoal, setCodingTaskGoal] = useState("");
@@ -2517,6 +2519,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   };
 
   const showProviderSetupFocus = () => {
+    setWorkbenchSurface("setup");
     setProviderDetailsOpen(true);
     setProviderSetupHighlight(true);
     setProviderSetupFocusRequest((current) => current + 1);
@@ -3776,6 +3779,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const hostedWebview = bridgeHost === "vscode" || bridgeHost === "jetbrains";
   const hostCapabilityEvaluation = useMemo(() => evaluateHostCapabilityMetadata(bridgeHost), [bridgeHost]);
   const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, controlledHostCapabilityDisplayHost(controlledHostCapabilities, bridgeHost)), [bridgeHost, controlledHostCapabilities]);
+  const setupNeedsAttention = !canSendChat || Boolean(activeConnectionError || activeModelError || providerError || activeProviderAuthError);
+  const debugNeedsAttention = Boolean(chatError || chatHistoryError || activeConnectionError || activeModelError || providerError || activeProviderAuthError || agentProgress.error);
 
   return (
     <main className={`app-shell host-${bridgeHost} ${activeChatSummaries.length <= 1 ? "single-conversation" : "multi-conversation"}`} data-project-page={projectPage}>
@@ -3825,9 +3830,25 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       {showMemoryPage && <section className="card stack" aria-label="Project memory page"><ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} /></section>}
 
       {showChatPage && <div>
-      {projectPage === undefined && <CodingSessionTracePanel entries={tracePanelEntries} />}
+      {projectPage === undefined && <nav className="workbench-surface-toolbar" aria-label="Chat workbench surfaces">
+        <div className="workbench-surface-tabs" role="tablist" aria-label="Chat, setup, and debug surfaces">
+          <button type="button" role="tab" id="workbench-tab-chat" aria-selected={workbenchSurface === "chat"} aria-expanded={workbenchSurface === "chat"} aria-controls="workbench-panel-chat" className={workbenchSurface === "chat" ? "active" : ""} onClick={() => setWorkbenchSurface("chat")}>Chat</button>
+          <button type="button" role="tab" id="workbench-tab-setup" aria-selected={workbenchSurface === "setup"} aria-expanded={workbenchSurface === "setup"} aria-controls="workbench-panel-setup" className={workbenchSurface === "setup" ? "active" : ""} onClick={() => setWorkbenchSurface("setup")}>
+            Setup <span className={`surface-count ${setupNeedsAttention ? "warn" : "ok"}`}>{setupNeedsAttention ? "attention" : "ready"}</span>
+          </button>
+          <button type="button" role="tab" id="workbench-tab-debug" aria-selected={workbenchSurface === "debug"} aria-expanded={workbenchSurface === "debug"} aria-controls="workbench-panel-debug" className={workbenchSurface === "debug" ? "active" : ""} onClick={() => setWorkbenchSurface("debug")}>
+            Debug / Trace {debugNeedsAttention && <span className="surface-count warn">error</span>}
+          </button>
+        </div>
+        <div className="workbench-compact-status" role="status" aria-live="polite">
+          <strong className="compact-status-label">Chat readiness</strong>
+          <span className={`badge ${canSendChat ? "ok" : "warn"}`}>{canSendChat ? "send ready" : "setup needed"}</span>
+          <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
+          {debugNeedsAttention && <span className="badge warn">error details available</span>}
+        </div>
+      </nav>}
 
-      <section className="card stack chat-primary-card">
+      <section id={projectPage === undefined ? "workbench-panel-chat" : undefined} role={projectPage === undefined ? "tabpanel" : undefined} aria-labelledby={projectPage === undefined ? "workbench-tab-chat" : undefined} hidden={projectPage === undefined && workbenchSurface !== "chat"} className="card stack chat-primary-card">
         <div className="chat-hero-row">
           <div className="stack">
             <span className="badge ok">primary chat</span>
@@ -3839,7 +3860,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
             <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
           </div>
         </div>
-        {projectPage === undefined && <div className={`readiness-card ${canSendChat ? "ready" : "warn"}`}>
+        {projectPage === undefined && <div hidden={workbenchSurface !== "setup"} className={`readiness-card ${canSendChat ? "ready" : "warn"}`}>
           <div className="row">
             <strong>Chat readiness</strong>
             <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
@@ -3881,7 +3902,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           />
         </div>}
         {projectPage === undefined && hostedWebview && (
-          <details className="compact-host-setup" data-testid="compact-host-setup">
+          <details hidden={workbenchSurface !== "setup"} className="compact-host-setup" data-testid="compact-host-setup">
             <summary>
               <span className="compact-summary-title">Provider setup</span>
               <span className={`badge ${connectionStatus === "connected" ? "ok" : connectionStatus === "error" ? "warn" : ""}`}>runtime {connectionStatus}</span>
@@ -3900,7 +3921,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         )}
         {chatError && <ErrorBox error={chatError} />}
         {chatHistoryError && <ErrorBox error={chatHistoryError} />}
-        <div className="chat-workbench">
+        <div className="chat-workbench" hidden={projectPage === undefined && workbenchSurface !== "chat"}>
           <aside className="conversations-panel conversations-rail stack" aria-label="Local conversations">
             <div className="row">
               <h3>Conversations</h3>
@@ -4020,19 +4041,13 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                 </details>
               </div>}
             </form>}
-            {!hostedWebview && <details className="debug-details chat-secondary-debug" data-testid="sse-debug-details">
-              <summary>SSE debug details</summary>
-              <div className="timeline">
-                {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
-              </div>
-            </details>}
           </section>
         </div>
       </section>
       </div>}
 
 
-      {projectPage === undefined && <section className="card stack secondary-card runtime-card">
+      {projectPage === undefined && <section id="workbench-panel-setup" role="tabpanel" aria-labelledby="workbench-tab-setup" hidden={workbenchSurface !== "setup"} className="card stack secondary-card runtime-card">
         <details className="debug-details" data-testid="runtime-connection-details" open={runtimeDetailsOpen} onToggle={(event) => setRuntimeDetailsOpen(event.currentTarget.open)}>
           <summary><h2>Local runtime connection</h2></summary>
         <div className="form-grid">
@@ -4083,7 +4098,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         </details>
       </section>}
 
-      {(showAgentPage || projectPage === undefined) && <section className="card stack secondary-card agent-progress-card" aria-label="Agent progress">
+      {(showAgentPage || projectPage === undefined) && <section hidden={projectPage === undefined && workbenchSurface !== "debug"} className="card stack secondary-card agent-progress-card" aria-label="Agent progress">
         <details className="debug-details" data-testid="agent-progress-details">
           <summary><h2>Agent progress</h2></summary>
         <div className="row">
@@ -4094,7 +4109,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         </details>
       </section>}
 
-      {projectPage === undefined && <section ref={providerSetupCardRef} className={`card stack secondary-card provider-setup-card${providerSetupHighlight ? " provider-setup-card-highlight" : ""}`}>
+      {projectPage === undefined && <section ref={providerSetupCardRef} hidden={workbenchSurface !== "setup"} className={`card stack secondary-card provider-setup-card${providerSetupHighlight ? " provider-setup-card-highlight" : ""}`}>
         <details className="debug-details provider-setup-details" data-testid="provider-setup-details" open={providerDetailsOpen} onToggle={(event) => setProviderDetailsOpen(event.currentTarget.open)}>
           <summary><h2>Provider setup</h2><span className="subtle">BYOK, local, demo, login</span></summary>
         {runtimeConnected && !apiKeyChatReady && !experimentalOauthChatReady && (
@@ -4253,7 +4268,14 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       </section>}
 
 
-      {projectPage === undefined && <section className="card stack secondary-card debug-card">
+      {projectPage === undefined && <section id="workbench-panel-debug" role="tabpanel" aria-labelledby="workbench-tab-debug" hidden={workbenchSurface !== "debug"} className="card stack secondary-card debug-card">
+        <CodingSessionTracePanel entries={tracePanelEntries} />
+        <details className="debug-details chat-secondary-debug" data-testid="sse-debug-details">
+          <summary>SSE debug details</summary>
+          <div className="timeline">
+            {timeline.length === 0 ? <span>No SSE events yet.</span> : timeline.map((entry, index) => <div className="timeline-entry" key={`${index}:${entry}`}>{entry}</div>)}
+          </div>
+        </details>
         <details className="debug-details" data-testid="bridge-debug-details">
           <summary>Diagnostics / bridge debug</summary>
           <p className="subtle">Compact UI keeps bridge internals collapsed. Browser mock mode is non-privileged and logs sanitized bridge messages only.</p>

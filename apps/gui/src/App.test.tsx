@@ -7636,6 +7636,47 @@ describe("active editor attached context", () => {
 });
 
 describe("chat panel", () => {
+  it("defaults to roomy Chat and discloses Setup and Debug without losing setup input", async () => {
+    mockRuntimeResponses({ runtimeFailure: true });
+    renderApp();
+    await flushAsync();
+
+    const chatTab = container?.querySelector<HTMLButtonElement>("#workbench-tab-chat");
+    const setupTab = container?.querySelector<HTMLButtonElement>("#workbench-tab-setup");
+    const debugTab = container?.querySelector<HTMLButtonElement>("#workbench-tab-debug");
+    const chatPanel = container?.querySelector<HTMLElement>("#workbench-panel-chat");
+    const setupPanel = container?.querySelector<HTMLElement>("#workbench-panel-setup");
+    const debugPanel = container?.querySelector<HTMLElement>("#workbench-panel-debug");
+
+    expect(chatTab?.getAttribute("aria-selected")).toBe("true");
+    expect(chatTab?.getAttribute("aria-expanded")).toBe("true");
+    expect(chatPanel?.hidden).toBe(false);
+    expect(setupPanel?.hidden).toBe(true);
+    expect(debugPanel?.hidden).toBe(true);
+    expect(container?.querySelector(".chat-workbench")?.hasAttribute("hidden")).toBe(false);
+    expect(setupTab?.textContent).toContain("attention");
+    expect(container?.querySelector(".workbench-compact-status")?.textContent).toContain("setup needed");
+    expect(container?.querySelector(".workbench-compact-status")?.textContent).toContain("error details available");
+
+    await act(async () => setupTab?.click());
+    expect(setupTab?.getAttribute("aria-selected")).toBe("true");
+    expect(setupTab?.getAttribute("aria-expanded")).toBe("true");
+    expect(chatPanel?.hidden).toBe(true);
+    expect(setupPanel?.hidden).toBe(false);
+    expect(container?.querySelector<HTMLElement>(".provider-setup-card")?.hidden).toBe(false);
+    await act(async () => setInputValue(sessionTokenInput(), "surface-local-token"));
+
+    await act(async () => debugTab?.click());
+    expect(debugTab?.getAttribute("aria-selected")).toBe("true");
+    expect(debugPanel?.hidden).toBe(false);
+    expect(container?.querySelector("[data-testid='coding-session-trace-details']")).toBeTruthy();
+    expect(container?.querySelector("[data-testid='sse-debug-details']")).toBeTruthy();
+
+    await act(async () => setupTab?.click());
+    expect(sessionTokenInput().value).toBe("surface-local-token");
+    expect(browserStorageDump()).not.toContain("surface-local-token");
+  });
+
   it("uses adaptive chat workbench structure with composer pinned outside the scroll region", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const proposal = ideActionProposal({ action: "getContextSnapshot", summary: "Inspect context." });
@@ -7672,7 +7713,6 @@ describe("chat panel", () => {
       "debug-details",
       "chat-scroll-region",
       "chat-composer",
-      "debug-details chat-secondary-debug",
     ]);
     expect(threadPane?.classList.contains("chat-thread-pane")).toBe(true);
     expect(getComputedStyle(composer as Element).position).not.toBe("sticky");
