@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { App } from "./App";
 import { ProjectHub } from "./components/ProjectHub";
 import { ProjectShell } from "./components/ProjectShell";
@@ -21,9 +21,21 @@ export function ProjectRouterShell() {
   });
   const [hostedRoute, setHostedRoute] = useState<Extract<AppRoute, { kind: "legacy" | "settings" | "project" }> | null>(null);
   const { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
+  const hostedRouteGeneration = useRef<string | null>(null);
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
 
   useEffect(() => subscribeToProjectRoute(window, setRoute), []);
+  useEffect(() => {
+    if (!hostedChatEntry) return;
+    const generationChanged = hostedRouteGeneration.current !== hostReadyGeneration;
+    hostedRouteGeneration.current = hostReadyGeneration;
+    setHostedRoute((current) => {
+      if (!current) return current;
+      if (generationChanged || workspaceBinding?.state !== "auto_bound") return null;
+      if (current.kind === "project" && current.projectId !== workspaceBinding.projectId) return null;
+      return current;
+    });
+  }, [hostReadyGeneration, hostedChatEntry, workspaceBinding]);
 
   if (hostedChatEntry) {
     if (hostedRoute) {

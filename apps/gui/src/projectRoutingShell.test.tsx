@@ -24,6 +24,33 @@ vi.mock("./components/CurrentWorkspaceDashboard", () => ({
 }));
 
 let root: ReactDOM.Root | undefined;
+const projectId = "prj_abcdefghijklmnopqrstuA";
+const otherProjectId = "prj_bcdefghijklmnopqrstuvQ";
+
+async function sendHostReady(requestId: string, runtimeProxyBaseUrl = "/panel/panel-test") {
+  await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+    version: "2026-05-15",
+    type: "host.ready",
+    requestId,
+    payload: { runtimeProxyBaseUrl },
+  } })));
+}
+
+async function sendWorkspaceBinding(requestId: string, boundProjectId: string = projectId) {
+  await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+    version: "2026-05-15",
+    type: "host.workspaceBinding",
+    requestId,
+    payload: { protocolVersion: "workspace_binding_v1", requestId, state: "auto_bound", projectId: boundProjectId, displayName: "Workspace" },
+  } })));
+}
+
+async function openHostedChat(container: HTMLElement, requestId = "ready-1") {
+  await sendHostReady(requestId);
+  await sendWorkspaceBinding(requestId);
+  act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click());
+  expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
+}
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -101,8 +128,58 @@ describe("ProjectRouterShell", () => {
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
 
-    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click());
+    await openHostedChat(container);
+  });
+
+  it("returns an open hosted chat to the dashboard for a new accepted ready generation", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await openHostedChat(container);
+
+    await sendHostReady("ready-2", "/panel/panel-next");
+
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+  });
+
+  it("preserves an open hosted chat for an accepted same-ID retry", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await openHostedChat(container);
+
+    await sendHostReady("ready-1");
+
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).toBeNull();
+  });
+
+  it("re-gates an open hosted project route when its correlated binding changes project", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await openHostedChat(container);
+
+    await sendWorkspaceBinding("ready-1", otherProjectId);
+
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
   });
 
   it("applies trusted live host runtime settings to the hub", async () => {
@@ -167,8 +244,8 @@ describe("ProjectRouterShell", () => {
   });
 
   it("follows real browser back and forward popstate changes across chat and page routes", () => {
-    const projectId = "prj_abcdefghijklmnopqrstuA" as never;
-    window.history.replaceState(null, "", `/p/${projectId}/chat/chat-a`);
+    const browserProjectId = projectId as never;
+    window.history.replaceState(null, "", `/p/${browserProjectId}/chat/chat-a`);
     const container = document.createElement("div");
     document.body.append(container);
     act(() => {
@@ -177,17 +254,17 @@ describe("ProjectRouterShell", () => {
     });
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-a");
 
-    window.history.pushState(null, "", `/p/${projectId}/memory`);
+    window.history.pushState(null, "", `/p/${browserProjectId}/memory`);
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:memory");
 
-    window.history.replaceState(null, "", `/p/${projectId}/chat/chat-a`);
+    window.history.replaceState(null, "", `/p/${browserProjectId}/chat/chat-a`);
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-a");
 
     act(() => root?.unmount());
     root = undefined;
-    window.history.replaceState(null, "", `/p/${projectId}/agent`);
+    window.history.replaceState(null, "", `/p/${browserProjectId}/agent`);
     act(() => window.dispatchEvent(new PopStateEvent("popstate")));
     expect(container.textContent).toBe("");
   });
