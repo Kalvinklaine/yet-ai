@@ -404,7 +404,7 @@ class PackagedGuiServerTest {
             exchange.sendResponseHeaders(200, 0)
             exchange.responseBody.write("{".toByteArray())
             exchange.responseBody.flush()
-            Thread.sleep(1_000)
+            Thread.sleep(300)
             runCatching { exchange.responseBody.write("\"private\":true}".toByteArray()) }
             exchange.close()
         }
@@ -422,6 +422,7 @@ class PackagedGuiServerTest {
                 assertEquals(504, response.status)
                 assertEquals("{\"error\":\"runtime_proxy_timeout\"}", response.body)
                 assertTrue(elapsedMillis < 750, "buffered subscribe timed out after $elapsedMillis ms")
+                assertEquals(0, proxy.activeWork.size)
                 assertProxyFailureDoesNotLeak(response.body, runtimeOrigin, "private-timeout-token", "private")
             }
         } finally {
@@ -592,6 +593,83 @@ class PackagedGuiServerTest {
     }
 
     @Test
+    fun unregisterPanelClosesOnlyItsActiveWorkPromptly() {
+        val bufferedStarted = CountDownLatch(1)
+        val bufferedClosed = CountDownLatch(1)
+        val firstStreamClosed = CountDownLatch(1)
+        val secondStreamClosed = CountDownLatch(1)
+        val runtime = streamingRuntimeServer { exchange ->
+            if (exchange.requestURI.rawQuery == "mode=buffered") {
+                exchange.responseHeaders.set("Content-Type", "application/json")
+                exchange.sendResponseHeaders(200, 0)
+                bufferedStarted.countDown()
+                try {
+                    while (true) {
+                        exchange.responseBody.write(" ".toByteArray())
+                        exchange.responseBody.flush()
+                        Thread.sleep(20)
+                    }
+                } catch (_: Exception) {
+                    bufferedClosed.countDown()
+                } finally {
+                    exchange.close()
+                }
+            } else {
+                val closed = if (exchange.requestURI.rawQuery == "stream=first") firstStreamClosed else secondStreamClosed
+                exchange.responseHeaders.set("Content-Type", "text/event-stream")
+                exchange.sendResponseHeaders(200, 0)
+                try {
+                    while (true) {
+                        exchange.responseBody.write("data: active\n\n".toByteArray())
+                        exchange.responseBody.flush()
+                        Thread.sleep(20)
+                    }
+                } catch (_: Exception) {
+                    closed.countDown()
+                } finally {
+                    exchange.close()
+                }
+            }
+        }
+        val service = PackagedGuiServer()
+        val clientExecutor = Executors.newSingleThreadExecutor()
+        val streamClients = mutableListOf<HttpURLConnection>()
+        try {
+            val first = service.registerPanel(RuntimeSettings(runtime.origin, null, null))
+            val second = service.registerPanel(RuntimeSettings(runtime.origin, null, null))
+            val gui = service.start() ?: error("packaged GUI test resource unavailable")
+            val bufferedResponse = clientExecutor.submit<Response> {
+                request("${gui.origin}${first.proxyBaseUrl}/v1/chats/subscribe?mode=buffered")
+            }
+            assertTrue(bufferedStarted.await(1, TimeUnit.SECONDS))
+            for ((panel, query) in listOf(first to "first", second to "second")) {
+                val client = URI("${gui.origin}${panel.proxyBaseUrl}/v1/chats/subscribe?stream=$query").toURL().openConnection() as HttpURLConnection
+                client.readTimeout = 2_000
+                assertEquals(200, client.responseCode)
+                assertTrue(client.inputStream.read() >= 0)
+                streamClients.add(client)
+            }
+            assertEquals(3, service.activeWorkCount())
+
+            service.unregisterPanel(first.id)
+
+            assertTrue(bufferedClosed.await(1, TimeUnit.SECONDS))
+            assertTrue(firstStreamClosed.await(1, TimeUnit.SECONDS))
+            assertTrue(bufferedResponse.get(2, TimeUnit.SECONDS).status in listOf(502, 504))
+            assertEquals(1L, secondStreamClosed.count)
+            assertEquals(1, service.activeStreamCount())
+            assertEquals(1, service.activeWorkCount())
+            assertTrue(streamClients[1].inputStream.read() >= 0)
+            assertEquals(200, request(gui.forPanel(second).indexUrl).status)
+        } finally {
+            service.dispose()
+            streamClients.forEach { it.disconnect() }
+            clientExecutor.shutdownNow()
+            runtime.stop()
+        }
+    }
+
+    @Test
     fun longLivedStreamsDoNotStarveOrdinaryPanelAssets() {
         val streamCount = 4
         val streamsStarted = CountDownLatch(streamCount)
@@ -725,7 +803,7 @@ class PackagedGuiServerTest {
 private data class Response(val status: Int, val body: String, val contentType: String?, val cacheControl: String?)
 private data class RuntimeRequest(val target: String, val authorization: String?)
 
-private class TestServer(private val server: HttpServer) {
+private class TestServer(private val server: HttpServer, val activeWork: PackagedGuiActiveWorkRegistry) {
     val origin = "http://127.0.0.1:${server.address.port}"
     fun stop() = server.stop(0)
 }
@@ -771,20 +849,24 @@ private fun withPackagedServer(
 ) {
     val server = HttpServer.create(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0)
     val requestExecutor = Executors.newFixedThreadPool(4)
+    val bufferedExecutor = Executors.newFixedThreadPool(4)
+    val activeWork = PackagedGuiActiveWorkRegistry()
     server.executor = requestExecutor
     server.createContext("/") { exchange ->
         if (wrappers.isEmpty()) {
-            handle(exchange, resources::get, { panels.toMap() }, proxyTimeouts, streamingExecutor)
+            handle(exchange, resources::get, { panels.toMap() }, proxyTimeouts, streamingExecutor, bufferedExecutor, activeWork)
         } else {
             handleWrapper(exchange, { panels.toMap() }, { wrappers.toMap() })
         }
     }
     server.start()
     try {
-        block(TestServer(server))
+        block(TestServer(server, activeWork))
     } finally {
         server.stop(0)
         requestExecutor.shutdownNow()
+        activeWork.closeAll()
+        bufferedExecutor.shutdownNow()
         streamingExecutor.shutdownNow()
     }
 }
