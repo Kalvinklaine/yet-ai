@@ -3,6 +3,7 @@ import { App } from "./App";
 import { ProjectHub } from "./components/ProjectHub";
 import { ProjectShell } from "./components/ProjectShell";
 import { LegacyData } from "./components/LegacyData";
+import { CurrentWorkspaceDashboard } from "./components/CurrentWorkspaceDashboard";
 import { ProjectLink, navigateProjectRoute, parseProjectRoute, subscribeToProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
 import { useLiveRuntimeSettings } from "./services/useLiveRuntimeSettings";
 
@@ -18,13 +19,17 @@ export function ProjectRouterShell() {
     }
     return parseProjectRoute(window.location.pathname);
   });
-  const { settings, updateSettings, bridgeAdapter } = useLiveRuntimeSettings();
+  const [hostedRoute, setHostedRoute] = useState<Extract<AppRoute, { kind: "legacy" | "settings" | "project" }> | null>(null);
+  const { settings, updateSettings, bridgeAdapter, workspaceBinding } = useLiveRuntimeSettings();
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
 
   useEffect(() => subscribeToProjectRoute(window, setRoute), []);
 
   if (hostedChatEntry) {
-    return <App route={{ kind: "legacy" }} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
+    if (hostedRoute) {
+      return <App route={hostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
+    }
+    return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} onOpen={setHostedRoute} />;
   }
   if (route.kind === "not_found") {
     return <RouteStatus title="Not Found" detail="This Yet AI route is not recognized." navigate={navigate} />;

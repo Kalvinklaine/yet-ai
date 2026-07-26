@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { createBridgeAdapter, type BridgeAdapter, type HostReadyPayload } from "../bridge/bridgeAdapter";
+import { createBridgeAdapter, type BridgeAdapter, type HostReadyPayload, type WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
 import { isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, type RuntimeSettings } from "./runtimeClient";
 
 const defaultSettings: RuntimeSettings = { baseUrl: "http://127.0.0.1:8001", token: "", runtimeAccess: "direct" };
@@ -28,8 +28,9 @@ export function resolveHostReadyRuntimeSettings(current: RuntimeSettings, payloa
   };
 }
 
-export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter } {
+export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter; workspaceBinding: WorkspaceBindingPayload | null } {
   const [settings, setSettings] = useState<RuntimeSettings>(readInitialRuntimeSettings);
+  const [workspaceBinding, setWorkspaceBinding] = useState<WorkspaceBindingPayload | null>(null);
   const [bridgeAdapter] = useState(() => createBridgeAdapter(() => undefined));
   const updateSettings = useCallback((next: RuntimeSettings) => {
     setSettings({ baseUrl: next.baseUrl, token: next.token ?? "", runtimeAccess: next.runtimeAccess ?? "direct" });
@@ -37,11 +38,12 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
 
   useEffect(() => {
     const unsubscribe = bridgeAdapter.subscribe((message) => {
-      if (message.type !== "host.ready") return;
-      const payload = message.payload as HostReadyPayload | undefined;
-      setSettings((current) => {
-        return resolveHostReadyRuntimeSettings(current, payload) ?? current;
-      });
+      if (message.type === "host.ready") {
+        const payload = message.payload as HostReadyPayload | undefined;
+        setSettings((current) => resolveHostReadyRuntimeSettings(current, payload) ?? current);
+      } else if (message.type === "host.workspaceBinding") {
+        setWorkspaceBinding(message.payload as WorkspaceBindingPayload);
+      }
     });
     return () => {
       unsubscribe();
@@ -49,5 +51,5 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
     };
   }, [bridgeAdapter]);
 
-  return { settings, updateSettings, bridgeAdapter };
+  return { settings, updateSettings, bridgeAdapter, workspaceBinding };
 }

@@ -19,6 +19,9 @@ vi.mock("./components/ProjectHub", () => ({
 vi.mock("./components/LegacyData", () => ({
   LegacyData: () => <div data-testid="legacy-data">legacy</div>,
 }));
+vi.mock("./components/CurrentWorkspaceDashboard", () => ({
+  CurrentWorkspaceDashboard: ({ onOpen }: { onOpen: (route: object) => void }) => <div data-testid="workspace-dashboard"><button type="button" onClick={() => onOpen({ kind: "project", projectId: "prj_abcdefghijklmnopqrstuA", page: "chat", chatId: "chat-new" })}>Start new chat</button></div>,
+}));
 
 let root: ReactDOM.Root | undefined;
 
@@ -83,7 +86,7 @@ describe("ProjectRouterShell", () => {
   it.each([
     "/panel/panel-test/hosted-chat",
     "/vscode/hosted-chat",
-  ])("renders hosted chat only with the strict wrapper path and bootstrap flag: %s", async (pathname) => {
+  ])("renders the hosted workspace dashboard only with the strict wrapper path and bootstrap flag: %s", async (pathname) => {
     window.history.replaceState(null, "", pathname);
     window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
     const container = document.createElement("div");
@@ -95,7 +98,11 @@ describe("ProjectRouterShell", () => {
     });
 
     expect(window.location.pathname).toBe(pathname);
-    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("legacy");
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click());
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
   });
 
   it("applies trusted live host runtime settings to the hub", async () => {

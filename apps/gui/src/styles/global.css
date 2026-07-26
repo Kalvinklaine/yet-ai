@@ -2067,6 +2067,82 @@ summary {
   padding: 24px;
 }
 
+.workspace-dashboard-shell {
+  min-height: 100vh;
+  background: radial-gradient(circle at 16% 0%, #e8efff 0, transparent 42%), #f6f8fc;
+  color: #172033;
+  padding: 24px;
+}
+
+.workspace-dashboard {
+  width: min(820px, 100%);
+  margin: 0 auto;
+}
+
+.workspace-dashboard-product {
+  color: #2f5bea;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.workspace-dashboard-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.workspace-dashboard-heading h1 {
+  margin: 8px 0;
+  font-size: clamp(28px, 6vw, 42px);
+  letter-spacing: -.035em;
+}
+
+.workspace-dashboard-heading p,
+.workspace-dashboard-card p {
+  margin: 0;
+  color: #65728a;
+}
+
+.workspace-dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.workspace-dashboard-card {
+  border: 1px solid #dfe5f0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .9);
+  padding: 18px;
+  box-shadow: 0 12px 30px rgba(23, 32, 51, .06);
+}
+
+.workspace-dashboard-card h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.workspace-dashboard-actions,
+.workspace-project-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.workspace-dashboard-error {
+  color: #a12d2d;
+}
+
+@media (max-width: 620px) {
+  .workspace-dashboard-shell { padding: 18px 14px; }
+  .workspace-dashboard-heading { flex-direction: column; }
+  .workspace-dashboard-grid { grid-template-columns: 1fr; }
+  .workspace-dashboard-actions button { flex: 1 1 140px; }
+}
+
 .project-list-heading,
 .legacy-project-entry,
 .project-home-welcome {
