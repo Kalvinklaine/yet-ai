@@ -383,11 +383,22 @@ describe("project lifecycle scope", () => {
     });
     await flushAsync();
 
+    expect(container?.textContent).toContain("Attached context");
+    expect(container?.textContent).toContain("not attached");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
+
     await dispatchHostContextSnapshot({ selection: { text: "stale shell context" } }, "ready-stale");
+    expect(container?.textContent).not.toContain("stale shell context");
+    expect(attachedContextToggleOptional()).toBeUndefined();
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
+
     await dispatchHostContextSnapshot({ selection: { text: "current shell context" } }, "ready-current");
 
     expect(container?.textContent).toContain("current shell context");
     expect(container?.textContent).not.toContain("stale shell context");
+    expect(attachedContextToggle().checked).toBe(true);
+    expect(browserStorageDump()).not.toContain("current shell context");
   });
 
   it("re-gates seeded authority when its identity changes on the same mount", async () => {
