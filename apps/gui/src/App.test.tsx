@@ -220,7 +220,7 @@ describe("project lifecycle scope", () => {
     await dispatchHostContextSnapshot({
       file: { displayPath: "src/draft.ts", workspaceRelativePath: "src/draft.ts", languageId: "typescript" },
       selection: { startLine: 2, startCharacter: 0, endLine: 2, endCharacter: 20, text: "const draft = true;" },
-    });
+    }, "ready-a");
     expect(container?.textContent).toContain("src/draft.ts");
 
     await act(async () => setTextareaValue(chatInput(), "send draft context"));
@@ -275,7 +275,7 @@ describe("project lifecycle scope", () => {
     renderHostedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-a");
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
     await flushAsync();
-    await dispatchHostContextSnapshot({ selection: { text: "project A only" } });
+    await dispatchHostContextSnapshot({ selection: { text: "project A only" } }, "ready-a");
 
     await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} />));
     expect(container?.textContent).not.toContain("project A only");
@@ -300,14 +300,14 @@ describe("project lifecycle scope", () => {
     await flushAsync();
 
     await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} hostedAuthorityKey="test-hosted-authority" hostReadyGeneration="ready-b" />));
-    await dispatchHostContextSnapshot({ selection: { text: "delayed project A context" } });
+    await dispatchHostContextSnapshot({ selection: { text: "delayed project A context" } }, "ready-a");
     expect(container?.textContent).not.toContain("delayed project A context");
 
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
-    await dispatchHostContextSnapshot({ selection: { text: "stale ready A context" } });
+    await dispatchHostContextSnapshot({ selection: { text: "stale ready A context" } }, "ready-a");
     expect(container?.textContent).not.toContain("stale ready A context");
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-b");
-    await dispatchHostContextSnapshot({ selection: { text: "fresh project B context" } });
+    await dispatchHostContextSnapshot({ selection: { text: "fresh project B context" } }, "ready-b");
     expect(container?.textContent).toContain("fresh project B context");
     await act(async () => setTextareaValue(chatInput(), "send project B context"));
     await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
@@ -346,6 +346,69 @@ describe("project lifecycle scope", () => {
     await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} />));
     expect(container.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
+  });
+
+  it("rejects mismatched project ready before runtime or drawer state mutates", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
+    renderHostedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-a");
+    await flushAsync();
+    fetchMock.mockClear();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: "wrong-token" }, "wrong-ready");
+    await flushAsync();
+
+    expect(fetchMock.mock.calls).toHaveLength(0);
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8765", sessionToken: "right-token" }, "ready-a");
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).startsWith("http://127.0.0.1:8765/") && new Headers(init?.headers).get("Authorization") === "Bearer right-token")).toBe(true);
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
+  });
+
+  it("accepts project snapshots only from the accepted ready generation", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [], createChatThread: chatThread("chat-snapshot-b", "Snapshot B", []) });
+    renderHostedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-a");
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} hostedAuthorityKey="test-hosted-authority" hostReadyGeneration="ready-b" />));
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-b");
+
+    await dispatchHostContextSnapshot({ selection: { text: "snapshot A stale" } }, "ready-a");
+    await dispatchHostContextSnapshot({ selection: { text: "snapshot missing id" } });
+    await dispatchHostContextSnapshot({ selection: { text: "snapshot B current" } }, "ready-b");
+    expect(container?.textContent).toContain("snapshot B current");
+    expect(container?.textContent).not.toContain("snapshot A stale");
+    expect(container?.textContent).not.toContain("snapshot missing id");
+
+    await act(async () => setTextareaValue(chatInput(), "send current snapshot"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
+    await flushAsync();
+    const commandCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats/chat-snapshot-b/commands`) && init?.method === "POST");
+    expect(String(commandCall?.[1]?.body)).toContain("snapshot B current");
+    expect(String(commandCall?.[1]?.body)).not.toContain("snapshot A stale");
+    expect(String(commandCall?.[1]?.body)).not.toContain("snapshot missing id");
+  });
+
+  it("drops pending active-file excerpts when the ready generation changes", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
+    renderHostedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-a");
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
+    await flushAsync();
+    await act(async () => { findButton("Attach active file excerpt").click(); });
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} hostedAuthorityKey="test-hosted-authority" hostReadyGeneration="ready-b" />));
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-b");
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ path: "src/stale.ts", text: "stale excerpt body" }));
+
+    expect(container?.textContent).not.toContain("src/stale.ts");
+    expect(container?.textContent).not.toContain("stale excerpt body");
   });
 
   it("keeps the first project prompt after create failure and retries once", async () => {
@@ -13195,13 +13258,13 @@ function runtimeStatusPayload(payload: Record<string, unknown> = {}) {
   };
 }
 
-async function dispatchHostContextSnapshot(payload: Record<string, unknown>) {
+async function dispatchHostContextSnapshot(payload: Record<string, unknown>, requestId?: string) {
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {
         version: bridgeVersion,
         type: "host.contextSnapshot",
-        requestId: "context-001",
+        requestId,
         payload: {
           kind: "active_editor",
           source: "vscode",

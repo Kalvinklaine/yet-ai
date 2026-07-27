@@ -571,6 +571,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const pendingApplyProposalRequestIdRef = useRef<string | null>(null);
   const pendingIdeActionRequestIdRef = useRef<string | null>(null);
   const pendingIdeActionChatIdRef = useRef<string | null>(null);
+  const pendingIdeActionHostReadyGenerationRef = useRef<string | null>(null);
   const controlledFileReadCorrelationRef = useRef<ControlledAgentFileReadRequestCorrelation | null>(null);
   const controlledFileReadCompletedRequestIdRef = useRef<string | null>(null);
   const controlledEditCorrelationRef = useRef<ControlledAgentEditRequestCorrelation | null>(null);
@@ -1163,6 +1164,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const clearIdeActionState = useCallback(() => {
     pendingIdeActionRequestIdRef.current = null;
     pendingIdeActionChatIdRef.current = null;
+    pendingIdeActionHostReadyGenerationRef.current = null;
     completedIdeActionRequestChatsRef.current.clear();
     ideActionProposalIdentityRef.current = null;
     setIdeActionProposal(null);
@@ -1238,6 +1240,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
     pendingIdeActionRequestIdRef.current = null;
     pendingIdeActionChatIdRef.current = null;
+    pendingIdeActionHostReadyGenerationRef.current = null;
     setIdeActionAttempt(null);
     setIdeActionNote("Cleared pending IDE action state in the GUI only. No host-side cancellation was requested.");
   }, []);
@@ -1443,6 +1446,12 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [updateRuntimeSettings]);
 
   const applyHostReady = useCallback((payload: HostReadyPayload | undefined, requestId?: string) => {
+    if (projectId) {
+      const authority = projectHostAuthorityPropsRef.current;
+      if (authority.projectId !== projectId || !authority.hostedAuthorityKey || !authority.hostReadyGeneration || requestId !== authority.hostReadyGeneration) {
+        return;
+      }
+    }
     const resolvedSettings = resolveHostReadyRuntimeSettings(settingsRef.current, payload);
     if (!payload || !resolvedSettings) return;
     const readyPayload = payload;
@@ -1453,14 +1462,12 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     hostReadyAppliedRef.current = true;
     if (projectId) {
       const authority = projectHostAuthorityPropsRef.current;
-      if (authority.projectId === projectId && authority.hostedAuthorityKey && authority.hostReadyGeneration && requestId === authority.hostReadyGeneration) {
-        projectHostAuthorityAcceptedRef.current = {
-          projectId,
-          hostedAuthorityKey: authority.hostedAuthorityKey,
-          hostReadyGeneration: authority.hostReadyGeneration,
-        };
-        setProjectHostAuthorityReady(true);
-      }
+      projectHostAuthorityAcceptedRef.current = {
+        projectId,
+        hostedAuthorityKey: authority.hostedAuthorityKey!,
+        hostReadyGeneration: authority.hostReadyGeneration!,
+      };
+      setProjectHostAuthorityReady(true);
     }
     preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("host.ready");
@@ -1793,7 +1800,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         const currentChatId = chatIdRef.current;
-        if (projectId && !hasCurrentProjectHostAuthority()) return;
+        if (projectId && (!hasCurrentProjectHostAuthority() || message.requestId !== projectHostAuthorityAcceptedRef.current?.hostReadyGeneration)) return;
         if (!currentChatId && !projectId) return;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: currentChatId });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext) && !attachedContextRequiresAcknowledgement(nextContext));
@@ -1844,6 +1851,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         appendTrace({ family: "edit.applyResult", title: "Edit apply result received", status: payload.status === "applied" ? "succeeded" : payload.status === "denied" || payload.status === "rejected" ? "rejected" : "failed", summary: payload.message, requestId, details: { status: payload.status, appliedEditCount: payload.appliedEditCount ?? 0, affectedFiles: payload.affectedFiles ?? [] } });
       } else if (message.type === "host.ideActionProgress") {
         const requestId = message.requestId ?? "unknown";
+        if (projectId && (!hasCurrentProjectHostAuthority() || pendingIdeActionHostReadyGenerationRef.current !== projectHostAuthorityAcceptedRef.current?.hostReadyGeneration)) {
+          return;
+        }
         if (requestId !== pendingIdeActionRequestIdRef.current || pendingIdeActionChatIdRef.current !== chatIdRef.current) {
           if (pendingIdeActionRequestIdRef.current && pendingIdeActionChatIdRef.current === chatIdRef.current) {
             setIdeActionNote("Ignored stale IDE action progress.");
@@ -1872,6 +1882,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         } : current);
       } else if (message.type === "host.ideActionResult") {
         const requestId = message.requestId ?? "unknown";
+        if (projectId && (!hasCurrentProjectHostAuthority() || pendingIdeActionHostReadyGenerationRef.current !== projectHostAuthorityAcceptedRef.current?.hostReadyGeneration)) {
+          return;
+        }
         const completedChatId = completedIdeActionRequestChatsRef.current.get(requestId);
         if (completedChatId) {
           if (completedChatId === chatIdRef.current) {
@@ -1906,6 +1919,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         }
         pendingIdeActionRequestIdRef.current = null;
         pendingIdeActionChatIdRef.current = null;
+        pendingIdeActionHostReadyGenerationRef.current = null;
         setIdeActionNote(null);
         if (payload.status === "succeeded" && payload.action === "getActiveFileExcerpt" && payload.contextAttachment) {
           const attachment = payload.contextAttachment;
@@ -3225,6 +3239,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     const label = ideActionLabel(payload.action);
     pendingIdeActionRequestIdRef.current = requestId;
     pendingIdeActionChatIdRef.current = chatIdRef.current;
+    pendingIdeActionHostReadyGenerationRef.current = projectId ? projectHostAuthorityAcceptedRef.current?.hostReadyGeneration ?? null : null;
     setIdeActionNote(null);
     setIdeActionAttempt({
       requestId,
