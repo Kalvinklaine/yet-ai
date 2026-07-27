@@ -410,7 +410,7 @@ export function generateApplyRequestSessionNonce(): string {
   return `s${hex}`;
 }
 
-export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; navigate?: ProjectNavigation; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter }) {
+export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter, hostedAuthorityKey }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; navigate?: ProjectNavigation; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter; hostedAuthorityKey?: string }) {
   const projectId = route.kind === "project" ? route.projectId : undefined;
   const projectPage = route.kind === "project" ? route.page : undefined;
   const showChatPage = projectPage === undefined || projectPage === "chat";
@@ -507,6 +507,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
   const hostReadyAppliedRef = useRef(isSameOriginProxyBaseUrl(initialRuntimeSettings.baseUrl));
+  const hostedAuthorityKeyRef = useRef(hostedAuthorityKey);
+  const projectHostAuthorityReadyRef = useRef(Boolean(projectId && hostedAuthorityKey));
+  const [projectHostAuthorityReady, setProjectHostAuthorityReady] = useState(Boolean(projectId && hostedAuthorityKey));
   const preHostRuntimeRefreshRequestedAtRef = useRef<number | null>(null);
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
@@ -1374,11 +1377,26 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       project_errors: () => { setChatError(null); setProjectMemoryStatus(null); setWorkspaceSnippetStatus(null); setApplyNote(null); setIdeActionNote(null); },
     };
     if (projectScopeController.transition(projectId, resetters)) {
+      projectHostAuthorityReadyRef.current = false;
+      setProjectHostAuthorityReady(false);
       settingsRevisionRef.current += 1;
       setSettingsRevision(settingsRevisionRef.current);
       setProjectScopeRevision((current) => current + 1);
     }
   }, [abortActiveStream, clearControlledCommandRunState, clearControlledEditState, clearControlledFileReadState, clearControlledMultifileApplyState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, projectId, projectScopeController]);
+
+  useEffect(() => {
+    if (hostedAuthorityKeyRef.current === hostedAuthorityKey) {
+      return;
+    }
+    hostedAuthorityKeyRef.current = hostedAuthorityKey;
+    projectHostAuthorityReadyRef.current = false;
+    setProjectHostAuthorityReady(false);
+    setAttachedContext(null);
+    setIncludeAttachedContext(false);
+    setAttachedContextAcknowledged(false);
+    setAttachedContextStatus(null);
+  }, [hostedAuthorityKey]);
 
   useEffect(() => () => projectScopeController.dispose(), [projectScopeController]);
 
@@ -1423,6 +1441,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     const nextToken = resolvedSettings.token;
     const wasHostReadyApplied = hostReadyAppliedRef.current;
     hostReadyAppliedRef.current = true;
+    if (projectId) {
+      projectHostAuthorityReadyRef.current = true;
+      setProjectHostAuthorityReady(true);
+    }
     preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("host.ready");
     const changed = updateRuntimeSettings(resolvedSettings);
@@ -1445,7 +1467,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       summary: "IDE host supplied loopback runtime settings; token value remains hidden in memory.",
       details: { hasSessionToken: Boolean(readyPayload.sessionToken), runtimeUrl: hostRuntimeUrl },
     });
-  }, [appendTrace, updateRuntimeSettings]);
+  }, [appendTrace, projectId, updateRuntimeSettings]);
 
   useEffect(() => {
     const adapter = bridgeAdapter ?? createBridgeAdapter((entry) => setBridgeLog((current) => [entry, ...current].slice(0, 20)));
@@ -1754,6 +1776,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         const currentChatId = chatIdRef.current;
+        if (projectId && !projectHostAuthorityReadyRef.current) return;
         if (!currentChatId && !projectId) return;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: currentChatId });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext) && !attachedContextRequiresAcknowledgement(nextContext));
@@ -3177,7 +3200,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [addTimeline, appendTrace, controlledAgentEditRequest, controlledAgentPatchPlanPreview, controlledPatchPlanConfirmed, pendingControlledEditRequestId]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
-    if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || pendingIdeActionRequestIdRef.current) {
+    if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || (projectId && !projectHostAuthorityReadyRef.current) || pendingIdeActionRequestIdRef.current) {
       return;
     }
     ideActionCounterRef.current += 1;
@@ -3203,7 +3226,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     });
     addTimeline(`IDE action requested ${requestId}`);
     appendTrace({ family: payload.action === "runVerificationCommand" ? "verification.runRequested" : "ide.request", title: payload.action === "runVerificationCommand" ? "Verification command requested" : "IDE action requested", status: "pending", summary: `${label} requested.`, requestId, details: { action: payload.action, commandId: "commandId" in payload ? payload.commandId : undefined, workspaceRelativePath: "workspaceRelativePath" in payload ? payload.workspaceRelativePath : undefined } });
-  }, [addTimeline, appendTrace, bridgeHost, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle]);
+  }, [addTimeline, appendTrace, bridgeHost, projectId]);
 
   const searchWorkspaceSnippets = () => {
     const validation = workspaceSnippetQueryValidation;
@@ -3847,6 +3870,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   );
 
   const hostedWebview = bridgeHost === "vscode" || bridgeHost === "jetbrains";
+  const ideActionsAuthorized = hostedWebview && (!projectId || projectHostAuthorityReady);
   const hostCapabilityEvaluation = useMemo(() => evaluateHostCapabilityMetadata(bridgeHost), [bridgeHost]);
   const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, controlledHostCapabilityDisplayHost(controlledHostCapabilities, bridgeHost)), [bridgeHost, controlledHostCapabilities]);
   const setupNeedsAttention = !canSendChat || Boolean(activeConnectionError || activeModelError || providerError || activeProviderAuthError);
@@ -4068,7 +4092,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>
                 </div>
               </div>
-              {(projectPage === undefined || hostedWebview) && <div className="composer-tools">
+              {(projectPage === undefined || ideActionsAuthorized) && <div className="composer-tools">
                 {projectPage === undefined && <details className="composer-tool-drawer" data-testid="task-agent-tools-drawer">
                   <summary>
                     <span className="compact-summary-title">Task / Agent tools</span>

@@ -291,6 +291,56 @@ describe("project lifecycle scope", () => {
     expect(body.payload?.context).toBeUndefined();
   });
 
+  it("blocks a delayed old-project snapshot until current-scope readiness and then accepts fresh context", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [], createChatThread: chatThread("chat-project-b", "Project B", []) });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    await flushAsync();
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} hostedAuthorityKey="test-hosted-authority" />));
+    await dispatchHostContextSnapshot({ selection: { text: "delayed project A context" } });
+    expect(container?.textContent).not.toContain("delayed project A context");
+
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    await dispatchHostContextSnapshot({ selection: { text: "fresh project B context" } });
+    expect(container?.textContent).toContain("fresh project B context");
+    await act(async () => setTextareaValue(chatInput(), "send project B context"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
+    await flushAsync();
+
+    const commandCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/p/${projectB}/v1/chats/chat-project-b/commands`) && init?.method === "POST");
+    const body = JSON.parse(String(commandCall?.[1]?.body)) as { payload?: { context?: { selection?: { text?: string } } } };
+    expect(body.payload?.context?.selection?.text).toBe("fresh project B context");
+    expect(String(commandCall?.[1]?.body)).not.toContain("delayed project A context");
+  });
+
+  it("gates project IDE actions on hosted authority and current host readiness", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} />));
+
+    expect(container.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} hostedAuthorityKey="authority-a" />));
+    expect(container.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    await flushAsync();
+    expect(container.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
+    await act(async () => { findButton("Get IDE context").click(); });
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} />));
+    expect(container.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
+    expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
+  });
+
   it("keeps the first project prompt after create failure and retries once", async () => {
     let createCount = 0;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -13349,7 +13399,7 @@ function renderAppRoute(route: Parameters<typeof App>[0]["route"]) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  act(() => root?.render(<App route={route} />));
+  act(() => root?.render(<App route={route} hostedAuthorityKey={route?.kind === "project" ? "test-hosted-authority" : undefined} />));
 }
 
 
