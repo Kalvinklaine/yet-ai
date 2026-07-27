@@ -13,6 +13,8 @@ const packagedGuiRoot = path.join(root, "apps", "plugins", "vscode", "media", "g
 const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-wrapper-browser");
 const bridgeVersion = "2026-05-15";
+const projectId = "prj_abcdefghijklmnopqrstuA";
+const projectDisplayName = "VS Code Smoke Workspace";
 const hostedChatPath = "/vscode/hosted-chat";
 const devWrapperPath = "/vscode-wrapper-dev-test";
 const devFallbackWrapperPath = "/vscode-wrapper-dev-fallback-test";
@@ -161,14 +163,14 @@ try {
 
   await page.goto(`${guiBaseUrl}${devWrapperPath}`, { waitUntil: "domcontentloaded" });
   const devFrame = page.frameLocator("iframe");
-  await devFrame.getByText("Chat readiness", { exact: false }).first().waitFor({ state: "attached", timeout: 10_000 });
+  await devFrame.getByText("Current Workspace Dashboard", { exact: false }).first().waitFor({ state: "attached", timeout: 10_000 });
   const devHostedEntry = await devFrame.locator("body").evaluate(() => ({ pathname: window.location.pathname, entryMode: window.__yetAiInitialRuntimeConfig?.entryMode }));
   if (devHostedEntry.pathname !== hostedChatPath || devHostedEntry.entryMode !== "hosted_chat") failures.push("VS Code dev iframe did not complete the wrapper-owned hosted bootstrap before GUI routing.");
   const devBootstrapRequestCount = await page.evaluate(() => window.__yetAiDevBootstrapRequestCount);
   if (devBootstrapRequestCount < 2) failures.push(`VS Code dev iframe did not retry after the forced dropped bootstrap request (${devBootstrapRequestCount} request(s)).`);
 
   await page.goto(`${guiBaseUrl}${devFallbackWrapperPath}`, { waitUntil: "domcontentloaded" });
-  await expectBodyVisibleText(page, "Chat readiness", "VS Code packaged fallback after dropped dev bootstrap", 10_000);
+  await expectAttachedText(page, "Current Workspace Dashboard", "VS Code packaged fallback after dropped dev bootstrap", 10_000);
   const fallbackState = await page.evaluate(() => ({
     iframeCount: document.querySelectorAll("iframe").length,
     packageMountCount: window.__yetAiPackagedFallbackMountCount,
@@ -183,10 +185,8 @@ try {
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const hostedEntry = await page.evaluate(() => ({ pathname: window.location.pathname, entryMode: window.__yetAiInitialRuntimeConfig?.entryMode }));
   if (hostedEntry.pathname !== hostedChatPath || hostedEntry.entryMode !== "hosted_chat") failures.push("VS Code wrapper did not provide strict hosted-chat path and entry-mode evidence.");
-  await expectHiddenHeroTitle(page, "VS Code hosted packaged GUI hero title");
-  await expectBodyVisibleText(page, "Chat readiness", "hosted chat readiness card");
-  await expectAttachedText(page, "Conversations", "hosted conversations workbench");
-  await expectAttachedText(page, "Coding Actions", "hosted coding actions workbench");
+  await expectAttachedText(page, "Current Workspace Dashboard", "hosted current-workspace dashboard");
+  await expectBodyVisibleText(page, "Connecting workspace", "hosted binding gate");
   const bodyText = (await page.locator("body").innerText()).trim();
   if (bodyText.length < 80) failures.push(`Packaged GUI body text is too short or blank (${bodyText.length} characters).`);
 
@@ -194,15 +194,16 @@ try {
   if (guiReady?.version !== bridgeVersion || guiReady?.payload?.supportedBridgeVersion !== bridgeVersion) {
     failures.push("VS Code-like acquireVsCodeApi bridge did not collect strict gui.ready.");
   }
-  await expectAttachedText(page, "bridge vscode", "VS Code bridge mode badge before host messages");
   await page.waitForTimeout(100);
+  const hostedReadyRequestId = `vscode-smoke-ready-${randomUUID()}`;
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.ready",
-    requestId: guiReady?.requestId,
+    requestId: hostedReadyRequestId,
     payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
   });
+  await dispatchHostMessage(page, workspaceBindingMessage(hostedReadyRequestId));
   await dispatchHostMessage(page, {
     version: bridgeVersion,
     type: "host.runtimeStatus",
@@ -220,11 +221,32 @@ try {
       authority: "metadata_only",
     },
   });
-  await expectAttachedText(page, "bridge vscode", "VS Code bridge mode badge");
+  await expectBodyVisibleText(page, projectDisplayName, "VS Code single-root bound workspace");
+  await expectBodyVisibleText(page, "Start new chat", "VS Code explicit chat entry");
+  assertNoChatRuntimeBeforeExplicitStart("VS Code dashboard");
+  if (await page.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) failures.push("VS Code dashboard mounted a composer before explicit Start.");
+  await page.getByRole("button", { name: "Start new chat", exact: true }).click();
+  await expectBodyVisibleText(page, "Project chat", "VS Code explicit project chat entry");
+  await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
+  const legacyGuiReady = await waitForGuiMessage(page, "gui.ready");
+  const legacyReadyRequestId = `vscode-smoke-ready-${randomUUID()}`;
+  await dispatchHostMessage(page, { version: bridgeVersion, type: "host.ready", requestId: legacyReadyRequestId, payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false } });
+  await dispatchHostMessage(page, workspaceBindingMessage(legacyReadyRequestId));
+  await page.getByRole("button", { name: "Legacy data", exact: true }).click();
+  await page.getByRole("tab", { name: "Chat", exact: true }).waitFor({ state: "visible", timeout: 10_000 });
+  await dispatchHostMessage(page, { version: bridgeVersion, type: "host.ready", requestId: legacyReadyRequestId, payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false } });
+  await assertWorkbenchDisclosure(page, "VS Code");
+  if (legacyGuiReady?.version !== bridgeVersion) failures.push("VS Code legacy workbench reload did not produce a fresh gui.ready generation.");
   await expectAttachedText(page, "VS Code controlled actions", "controlled action availability");
+  await page.getByRole("tab", { name: /^Setup/ }).click();
   await expectAttachedText(page, "Provider setup", "VS Code provider setup surface");
-  await expectBodyVisibleText(page, "Demo Mode", "VS Code demo-mode setup surface");
   await expectAttachedText(page, "Runtime connected", "VS Code runtime readiness surface");
+  const providerSetupDetails = page.locator("[data-testid='provider-setup-details']").first();
+  if (!await providerSetupDetails.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) {
+    await providerSetupDetails.locator(":scope > summary").click();
+  }
+  await expectBodyVisibleText(page, "Demo Mode", "VS Code demo-mode setup surface");
+  await page.getByRole("tab", { name: "Chat", exact: true }).click();
 
   await assertBlockedAuthorityHostPayloadsIgnored(page);
 
@@ -1087,6 +1109,33 @@ async function dispatchHostMessage(page, message) {
   }, message);
 }
 
+function workspaceBindingMessage(requestId) {
+  return {
+    version: bridgeVersion,
+    type: "host.workspaceBinding",
+    requestId,
+    payload: { protocolVersion: "workspace_binding_v1", requestId, state: "auto_bound", projectId, displayName: projectDisplayName },
+  };
+}
+
+function assertNoChatRuntimeBeforeExplicitStart(label) {
+  const chatRequests = runtimeRequestLog.filter((entry) => /\/v1\/chats(?:\/|$)/.test(entry.pathname) && (entry.method !== "GET" || /\/commands$|\/subscribe$/.test(entry.pathname)));
+  if (chatRequests.length > 0) failures.push(`${label} issued chat create/command/SSE traffic before explicit Start: ${chatRequests.map((entry) => `${entry.method} ${entry.pathname}`).join(", ")}.`);
+}
+
+async function assertWorkbenchDisclosure(page, label) {
+  const chat = page.getByRole("tab", { name: "Chat", exact: true });
+  const setup = page.getByRole("tab", { name: /^Setup/ });
+  const debug = page.getByRole("tab", { name: /^Debug \/ Trace/ });
+  if (await chat.getAttribute("aria-selected") !== "true") failures.push(`${label} did not open with Chat selected.`);
+  await setup.click();
+  await page.locator("#workbench-panel-setup:not([hidden])").waitFor({ state: "visible", timeout: 10_000 });
+  await debug.click();
+  await page.locator("#workbench-panel-debug:not([hidden])").waitFor({ state: "visible", timeout: 10_000 });
+  await chat.click();
+  await page.locator("#workbench-panel-chat:not([hidden])").waitFor({ state: "visible", timeout: 10_000 });
+}
+
 async function startMockRuntimeServer() {
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -1134,20 +1183,39 @@ async function startMockRuntimeServer() {
       json(response, 200, { notes: [mockProjectMemoryNote()], cloudRequired: false, providerAccess: "direct" });
       return;
     }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/projects") {
+      json(response, 200, { projects: [mockProjectSummary()], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === `/v1/projects/${projectId}`) {
+      json(response, 200, mockProjectSummary());
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === `/p/${projectId}/v1/agent-progress`) {
+      json(response, 200, { snapshots: [], cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === `/p/${projectId}/v1/chats`) {
+      json(response, 201, mockProposalChatThread());
+      return;
+    }
+    const scopedPath = requestUrl.pathname.startsWith(`/p/${projectId}/v1/`)
+      ? requestUrl.pathname.slice(`/p/${projectId}`.length)
+      : requestUrl.pathname;
     if (request.method === "POST" && requestUrl.pathname === "/v1/project-memory/search") {
       const body = JSON.parse(await readBody(request));
       json(response, 200, { queryLabel: String(body.query ?? ""), matches: [{ note: mockProjectMemoryNote(), scoreLabel: "literal" }], cloudRequired: false, providerAccess: "direct" });
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
+    if (request.method === "GET" && scopedPath === "/v1/chats") {
       json(response, 200, { chats: [mockProposalChatSummary()] });
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/chats/chat-001") {
+    if (request.method === "GET" && scopedPath === "/v1/chats/chat-001") {
       json(response, 200, mockProposalChatThread());
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/chats/subscribe") {
+    if (request.method === "GET" && scopedPath === "/v1/chats/subscribe") {
       const chat = mockProposalChatThread();
       response.writeHead(200, { ...corsHeaders(), "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" });
       response.write(`event: snapshot\ndata: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: chat.chatId, payload: { thread: chat, messages: chat.messages, runtime: { streaming: false, waitingForResponse: false } } })}\n\n`);
@@ -1155,7 +1223,7 @@ async function startMockRuntimeServer() {
       response.on("close", () => mockChatSubscribers.delete(response));
       return;
     }
-    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(requestUrl.pathname);
+    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(scopedPath);
     if (request.method === "POST" && commandMatch) {
       const chatId = decodeURIComponent(commandMatch[1]);
       const body = JSON.parse(await readBody(request));
@@ -1250,6 +1318,10 @@ function assertNoChatCommandContext(command, label) {
 
 function mockProjectMemoryNote() {
   return { id: memoryNoteId, title: memoryNoteTitle, text: memoryNoteText, tags: ["parity"], source: "manual", createdAt: memoryNoteUpdatedAt, updatedAt: memoryNoteUpdatedAt };
+}
+
+function mockProjectSummary() {
+  return { projectId, displayName: projectDisplayName, status: "available", revision: "1", createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
 
 function mockEditProposalChatMessage() {

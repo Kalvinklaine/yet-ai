@@ -83,6 +83,9 @@ try {
   await expectText(pageA, "Last opened");
   await expectText(pageA, "Add local project");
   await expectText(pageA, "Unscoped legacy data");
+  const alphaNewTab = pageA.getByRole("link", { name: "Open Alpha safe label in new tab" });
+  assert(await alphaNewTab.getAttribute("href") === `/p/${projectA.projectId}/`, "Project dashboard new-tab href was not canonical and project-id-only.");
+  assert(await alphaNewTab.getAttribute("target") === "_blank" && (await alphaNewTab.getAttribute("rel"))?.includes("noopener"), "Project dashboard new-tab launcher was not safely isolated.");
   const hubText = await pageA.locator("body").innerText();
   assert(!hubText.includes(projectARoot) && !hubText.includes(projectBRoot), "Project hub exposed a raw project root.");
   for (const forbidden of ["Authorization", "Bearer ", token, "worker", "LSP", "cron", "session token", "directoryHandle"]) {
@@ -192,6 +195,18 @@ try {
   await expectText(pageA, "Legacy");
   const legacyText = await pageA.locator("body").innerText();
   assert(!legacyText.includes("alpha-memory-only") && !legacyText.includes("beta-memory-only"), "Legacy UI blended project memory.");
+
+  await pageA.goto(`${baseUrl}/chat`);
+  const chatTab = pageA.getByRole("tab", { name: "Chat", exact: true });
+  const setupTab = pageA.getByRole("tab", { name: /^Setup/ });
+  const debugTab = pageA.getByRole("tab", { name: /^Debug \/ Trace/ });
+  assert(await chatTab.getAttribute("aria-selected") === "true", "Browser chat did not default to the Chat disclosure tab.");
+  await setupTab.click();
+  await pageA.locator("#workbench-panel-setup:not([hidden])").waitFor({ state: "visible", timeout: timeoutMs });
+  await debugTab.click();
+  await pageA.locator("#workbench-panel-debug:not([hidden])").waitFor({ state: "visible", timeout: timeoutMs });
+  await chatTab.click();
+  await pageA.locator("#workbench-panel-chat:not([hidden])").waitFor({ state: "visible", timeout: timeoutMs });
 
   let lifecycle = await api("POST", `/v1/projects/${projectA.projectId}/archive`, { expectedRevision: "2" });
   assert(lifecycle.status === "archived", "Archive did not return archived lifecycle state.");

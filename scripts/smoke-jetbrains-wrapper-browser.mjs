@@ -18,8 +18,10 @@ const indexPath = path.join(distRoot, "index.html");
 const packagedGuiRoot = path.join(root, "apps", "plugins", "jetbrains", "build", "generated", "resources", "yet-ai-gui", "yet-ai-gui");
 const packagedGuiIndexPath = path.join(packagedGuiRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "jetbrains-wrapper-browser");
-const requiredVisibleText = ["Chat readiness", "Conversations", "Coding Actions"];
+const requiredVisibleText = ["Current Workspace Dashboard", "Connecting workspace"];
 const bridgeVersion = "2026-05-15";
+const projectId = "prj_abcdefghijklmnopqrstuA";
+const projectDisplayName = "JetBrains Smoke Workspace";
 const readinessTimeoutMs = 100;
 const pluginLikeViewport = { width: 800, height: 800 };
 const headed = process.argv.includes("--headed");
@@ -307,7 +309,7 @@ try {
       || getComputedStyle(element).visibility === "hidden"
       || (hero !== null && (getComputedStyle(hero).display === "none" || getComputedStyle(hero).visibility === "hidden"));
   }).catch(() => false);
-  if (!hiddenHeroTitle) failures.push("Hosted JetBrains iframe did not hide the in-webview hero title.");
+  if (!hiddenHeroTitle && await frameLocator.locator(".workspace-dashboard-shell").count() === 0) failures.push("Hosted JetBrains iframe did not hide the in-webview hero title.");
 
   const initialBodyText = await frameLocator.locator("body").evaluate((body) => body.textContent ?? "").catch(() => "");
   for (const text of requiredVisibleText) {
@@ -399,6 +401,9 @@ try {
     });
   }, { version: bridgeVersion, runtimeUrl: panelBasePath, requestId: activeReadyRequestId });
 
+  await enterJetBrainsProjectChat(page, frameLocator, activeReadyRequestId);
+  const legacyReadyRequestId = await reloadJetBrainsLegacyWorkbench(page, frameLocator);
+
   const runtimeInput = frameLocator.getByLabel("Runtime base URL");
   await page.waitForTimeout(250);
   const runtimeInputValue = await runtimeInput.inputValue({ timeout: 5000 }).catch(() => "");
@@ -417,8 +422,8 @@ try {
   if (!bridgeIdentityAttached) {
     failures.push("GUI did not expose JetBrains host identity / bridge mode after wrapper bootstrap.");
   }
-  await assertSingleBackslashContextPathRejected(page, bridgeVersion, activeReadyRequestId);
-  await assertSecretLikeContextPathRejected(page, bridgeVersion, activeReadyRequestId);
+  await assertSingleBackslashContextPathRejected(page, bridgeVersion, legacyReadyRequestId);
+  await assertSecretLikeContextPathRejected(page, bridgeVersion, legacyReadyRequestId);
   await page.evaluate(({ version }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
@@ -584,6 +589,7 @@ try {
 
   await assertHostedCompactOpenAiLoginFlow(page, frameLocator);
   await frameLocator.locator("[data-testid='provider-auth-state'][data-provider-auth-status='connected']").first().waitFor({ state: "attached", timeout: 5000 }).catch(() => failures.push("Hosted compact OpenAI login smoke did not leave provider auth connected."));
+  await frameLocator.getByRole("tab", { name: "Chat", exact: true }).click();
   await frameLocator.getByText("Ready to send.", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("GUI did not show compact ready-to-send status for the experimental account path."));
   await assertJetBrainsAgentRunAndContextBudgetSurfaces(page, frameLocator);
   if (failures.length > 0) {
@@ -785,6 +791,58 @@ async function assertPanelScopedBootstrap(page) {
   if (bootstrap?.entryMode !== "hosted_chat" || bootstrap?.runtimeAccess !== "same_origin_proxy" || bootstrap?.runtimeBaseUrl !== panelBasePath || bootstrap?.runtimeProxyBaseUrl !== panelBasePath) {
     failures.push(`Panel index did not inject PackagedGuiServer bootstrap config: ${JSON.stringify(bootstrap)}.`);
   }
+}
+
+async function enterJetBrainsProjectChat(page, frameLocator, requestId) {
+  if (await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").count() > 0) return;
+  const chatTraffic = runtimeRequestLog.filter((entry) => /\/v1\/chats(?:\/|$)/.test(entry.pathname) && (entry.method !== "GET" || /\/commands$|\/subscribe$/.test(entry.pathname)));
+  if (chatTraffic.length > 0) failures.push(`JetBrains dashboard issued chat create/command/SSE traffic before explicit Start: ${formatRuntimeRequestLog(chatTraffic)}.`);
+  await page.evaluate(({ version, requestId, projectId, displayName }) => {
+    window.__yetAiSendHostMessageToFrame({
+      version,
+      type: "host.workspaceBinding",
+      requestId,
+      payload: { protocolVersion: "workspace_binding_v1", requestId, state: "auto_bound", projectId, displayName },
+    });
+  }, { version: bridgeVersion, requestId, projectId, displayName: projectDisplayName });
+  await frameLocator.getByText(projectDisplayName, { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(async (error) => {
+    throw new Error(`JetBrains workspace binding did not open the dashboard. ${messageOf(error)} Body: ${(await frameLocator.locator("body").innerText()).slice(0, 1200)}`);
+  });
+  if (await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) failures.push("JetBrains dashboard mounted a composer before explicit Start.");
+  await frameLocator.getByRole("button", { name: "Start new chat", exact: true }).click();
+  await frameLocator.getByText("Project chat", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 });
+}
+
+async function reloadJetBrainsLegacyWorkbench(page, frameLocator) {
+  const sequenceBeforeReload = await page.evaluate(() => window.__yetAiGuiReadySequence ?? 0);
+  const previousFrameNonce = await page.evaluate(() => window.__yetAiCurrentFrameNonce);
+  await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => { frame.src = url; }, `${panelGuiBaseUrl}/hosted-chat?legacy-continuation=${randomUUID()}`);
+  const ready = await forceFreshGuiReadyAfterReload(page, { version: bridgeVersion, origin: guiBaseUrl, sequenceBeforeReload, previousFrameNonce });
+  assertRandomReadyRequestId(ready.currentRequestId, "legacy continuation after project Start");
+  await page.evaluate(({ version, requestId, runtimeUrl }) => {
+    window.__yetAiSendHostMessageToFrame({ version, type: "host.ready", requestId, payload: { runtimeUrl: "http://127.0.0.1:8001", runtimeProxyBaseUrl: runtimeUrl, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false } });
+  }, { version: bridgeVersion, requestId: ready.currentRequestId, runtimeUrl: panelBasePath });
+  await enterJetBrainsLegacyWorkbench(page, frameLocator, ready.currentRequestId);
+  return ready.currentRequestId;
+}
+
+async function enterJetBrainsLegacyWorkbench(page, frameLocator, requestId) {
+  await page.evaluate(({ version, requestId, projectId, displayName }) => {
+    window.__yetAiSendHostMessageToFrame({ version, type: "host.workspaceBinding", requestId, payload: { protocolVersion: "workspace_binding_v1", requestId, state: "auto_bound", projectId, displayName } });
+  }, { version: bridgeVersion, requestId, projectId, displayName: projectDisplayName });
+  const legacy = frameLocator.getByRole("button", { name: "Legacy data", exact: true });
+  await legacy.waitFor({ state: "visible", timeout: 5000 });
+  await legacy.click();
+  const chat = frameLocator.getByRole("tab", { name: "Chat", exact: true });
+  const setup = frameLocator.getByRole("tab", { name: /^Setup/ });
+  const debug = frameLocator.getByRole("tab", { name: /^Debug \/ Trace/ });
+  await chat.waitFor({ state: "visible", timeout: 5000 });
+  if (await chat.getAttribute("aria-selected") !== "true") failures.push("JetBrains workbench did not default to Chat.");
+  await setup.click();
+  await frameLocator.locator("#workbench-panel-setup:not([hidden])").waitFor({ state: "visible", timeout: 5000 });
+  await debug.click();
+  await frameLocator.locator("#workbench-panel-debug:not([hidden])").waitFor({ state: "visible", timeout: 5000 });
+  await chat.click();
 }
 
 async function assertCrossOriginWrapperGlobalsBlocked(frameLocator, wrapperOrigin, iframeOrigin) {
@@ -1149,6 +1207,8 @@ async function openProviderDetailsForAuthControl(providerDetails, providerSummar
 }
 
 async function assertHostedCompactOpenAiLoginFlow(page, frameLocator) {
+  const setupTab = frameLocator.getByRole("tab", { name: /^Setup/ }).first();
+  if (await setupTab.isVisible().catch(() => false)) await setupTab.click();
   const compactSetup = frameLocator.locator("[data-testid='compact-host-setup']").first();
   if (await compactSetup.isVisible().catch(() => false)) {
     await compactSetup.locator(":scope > summary").click().catch(() => undefined);
@@ -1682,6 +1742,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
       type: "host.ready",
       requestId,
       payload: {
+        runtimeUrl: "http://127.0.0.1:8001",
         runtimeProxyBaseUrl: readyUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
@@ -1689,7 +1750,7 @@ async function assertOldDocumentGuiReadyCannotAuthorizeDelivery(page, frameLocat
       },
     });
   }, { bridgeVersion: version, readyUrl: runtimeUrl, requestId: currentRequestId });
-  await frameLocator.getByLabel("Runtime base URL").inputValue({ timeout: 5000 }).catch(() => failures.push("Current gui.ready path did not keep working after old-document regression."));
+  await frameLocator.getByText("Current Workspace Dashboard", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => failures.push("Current gui.ready path did not keep the dashboard available after old-document regression."));
 }
 
 
@@ -1838,6 +1899,7 @@ async function resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, 
       type: "host.ready",
       requestId: currentRequestId,
       payload: {
+        runtimeUrl: "http://127.0.0.1:8001",
         runtimeProxyBaseUrl: readyUrl,
         productId: "yet-ai",
         displayName: "Yet AI",
@@ -1850,6 +1912,8 @@ async function resendCurrentHostReadyAndWaitForRuntimeInput(page, frameLocator, 
       payload: {},
     });
   }, { bridgeVersion: version, readyUrl: runtimeUrl, currentRequestId: requestId });
+
+  await enterJetBrainsLegacyWorkbench(page, frameLocator, requestId);
 
   const runtimeInput = frameLocator.getByLabel("Runtime base URL");
   const deadline = Date.now() + 5000;
@@ -2096,10 +2160,6 @@ function assertJetBrainsHostedLayout(metrics, label) {
   if (metrics.conversationsRailVisible) failures.push(`${label}: left conversations rail is visible in compact hosted layout.`);
   if (metrics.chatReadinessCardVisible) failures.push(`${label}: full chat readiness card is visible in compact hosted layout.`);
   if (metrics.firstMessageWizardVisible) failures.push(`${label}: verbose first-message wizard is visible in compact hosted layout.`);
-  if (!metrics.compactSetupVisible) failures.push(`${label}: compact Setup strip is not visible in hosted layout.`);
-  if (!metrics.runtimeDetailsAttached || !metrics.runtimeCardVisible) failures.push(`${label}: runtime refresh/status setup card is not mounted and visible below compact chat.`);
-  if (!metrics.providerDetailsAttached || !metrics.providerCardVisible) failures.push(`${label}: provider/API-key/OpenAI account setup card is not mounted and visible below compact chat.`);
-  if (metrics.setupControlCount < 1) failures.push(`${label}: no visible/accesssible compact setup control for provider/API key/OpenAI account/Demo Mode/runtime was found.`);
   if (!metrics.sendVisible || !metrics.sendEnabled || !metrics.sendReachableAfterInnerScroll) failures.push(`${label}: Send is not visible/enabled/reachable after inner panel scroll (${JSON.stringify(metrics.sendRectAfterInnerScroll)} in ${JSON.stringify(metrics.viewport)}).`);
   if (!metrics.sendHitTestAfterInnerScroll?.ok) failures.push(`${label}: Send center is covered or not hit-testable after inner scroll (${JSON.stringify(metrics.sendHitTestAfterInnerScroll)}).`);
   if (metrics.outerOverflow && !metrics.hasUsablePanelScrollOwner) failures.push(`${label}: hosted iframe overflows without a usable panel scroll owner (document ${metrics.documentScrollHeight} > ${metrics.documentClientHeight}, outer moved: ${metrics.outerScrollMoves}, chat moved: ${metrics.chatScrollMoves}).`);
@@ -3075,6 +3135,23 @@ async function startMockRuntimeServer() {
       json(response, 200, payload);
       return;
     }
+    if (request.method === "GET" && requestUrl.pathname === "/v1/projects") {
+      json(response, 200, { projects: [mockProjectSummary()], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === `/v1/projects/${projectId}`) {
+      json(response, 200, mockProjectSummary());
+      return;
+    }
+    if (request.method === "GET" && requestUrl.pathname === `/p/${projectId}/v1/agent-progress`) {
+      json(response, 200, { snapshots: [], cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "POST" && requestUrl.pathname === `/p/${projectId}/v1/chats`) {
+      json(response, 201, { chatId: "chat-001", title: "JetBrains smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messages: [] });
+      return;
+    }
+    const scopedPath = requestUrl.pathname.startsWith(`/p/${projectId}/v1/`) ? requestUrl.pathname.slice(`/p/${projectId}`.length) : requestUrl.pathname;
     if (request.method === "POST" && requestUrl.pathname === "/v1/provider-auth/openai/start") {
       let body;
       try {
@@ -3138,11 +3215,15 @@ async function startMockRuntimeServer() {
       json(response, 200, payload);
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
+    if (request.method === "GET" && scopedPath === "/v1/chats") {
       json(response, 200, { chats: [] });
       return;
     }
-    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(requestUrl.pathname);
+    if (request.method === "GET" && scopedPath === "/v1/chats/chat-001") {
+      json(response, 200, { chatId: "chat-001", title: "JetBrains smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messages: [] });
+      return;
+    }
+    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(scopedPath);
     if (request.method === "POST" && commandMatch) {
       let body;
       try {
@@ -3183,7 +3264,7 @@ async function startMockRuntimeServer() {
       }
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/chats/subscribe") {
+    if (request.method === "GET" && scopedPath === "/v1/chats/subscribe") {
       chatSubscriptionCount += 1;
       const chatId = requestUrl.searchParams.get("chat_id") ?? "chat-001";
       response.writeHead(200, {
@@ -3422,6 +3503,10 @@ function readyDemoProvider() {
   };
 }
 
+function mockProjectSummary() {
+  return { projectId, displayName: projectDisplayName, status: "available", revision: "1", createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
+}
+
 function readyDemoModel() {
   return {
     id: "yet-demo-chat",
@@ -3606,7 +3691,7 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
       await servePanelIndexHtml(response, realStaticRoot);
       return;
     }
-    if (requestUrl.pathname.startsWith(`${panelBasePath}/v1/`)) {
+    if (requestUrl.pathname.startsWith(`${panelBasePath}/v1/`) || requestUrl.pathname.startsWith(`${panelBasePath}/p/`)) {
       await forwardPanelProxyRequest(request, response, runtimeBaseUrl, `${requestUrl.pathname.slice(panelBasePath.length)}${requestUrl.search}`, true);
       return;
     }
@@ -3731,7 +3816,7 @@ async function forwardPanelProxyRequest(request, response, runtimeBaseUrl, rawPa
     response.end("Method not allowed");
     return;
   }
-  if (request.method === "GET" && rawPath.startsWith("/v1/chats/subscribe")) {
+  if (request.method === "GET" && /^(?:\/p\/[^/]+)?\/v1\/chats\/subscribe(?:\?|$)/.test(rawPath)) {
     await forwardEventStreamProxyRequest(request, response, runtimeBaseUrl, rawPath, requireAuthorization);
     return;
   }
