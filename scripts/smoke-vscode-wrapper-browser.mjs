@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
@@ -154,13 +154,9 @@ try {
   await page.addInitScript(() => {
     window.__yetAiVsCodeMessages = [];
     window.__yetAiHostMessages = [];
-    window.__yetAiVsCodeReadySequence = 0;
     window.acquireVsCodeApi = () => ({
       postMessage(message) {
-        const collected = message?.type === "gui.ready"
-          ? { ...message, requestId: `vscode-gui-ready-${++window.__yetAiVsCodeReadySequence}-${crypto.randomUUID()}` }
-          : message;
-        window.__yetAiVsCodeMessages.push(collected);
+        window.__yetAiVsCodeMessages.push(message);
       },
     });
   });
@@ -198,8 +194,9 @@ try {
   if (guiReady?.version !== bridgeVersion || guiReady?.payload?.supportedBridgeVersion !== bridgeVersion) {
     failures.push("VS Code-like acquireVsCodeApi bridge did not collect strict gui.ready.");
   }
-  const hostedReadyRequestId = guiReady?.requestId;
-  if (typeof hostedReadyRequestId !== "string" || hostedReadyRequestId.length === 0) failures.push("VS Code hosted gui.ready did not provide its authoritative requestId.");
+  if (guiReady?.requestId !== undefined) failures.push("VS Code GUI gui.ready unexpectedly minted the host correlation requestId.");
+  const hostedReadyRequestId = createProductionHostRequestId();
+  assertProductionHostRequestId(hostedReadyRequestId, "hosted gui.ready remint");
   await page.waitForTimeout(100);
 
   await dispatchHostMessage(page, {
@@ -234,8 +231,10 @@ try {
   await expectBodyVisibleText(page, "Project chat", "VS Code explicit project chat entry");
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const legacyGuiReady = await waitForGuiMessage(page, "gui.ready");
-  const legacyReadyRequestId = legacyGuiReady?.requestId;
-  if (typeof legacyReadyRequestId !== "string" || legacyReadyRequestId.length === 0 || legacyReadyRequestId === hostedReadyRequestId) failures.push("VS Code legacy reload did not provide a distinct authoritative gui.ready requestId.");
+  if (legacyGuiReady?.requestId !== undefined) failures.push("VS Code GUI legacy reload unexpectedly minted the host correlation requestId.");
+  const legacyReadyRequestId = createProductionHostRequestId();
+  assertProductionHostRequestId(legacyReadyRequestId, "legacy reload host remint");
+  if (legacyReadyRequestId === hostedReadyRequestId) failures.push("VS Code host correlation model reused the prior generation requestId after reload.");
   await dispatchHostMessage(page, { version: bridgeVersion, type: "host.ready", requestId: legacyReadyRequestId, payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false } });
   await dispatchHostMessage(page, workspaceBindingMessage(hostedReadyRequestId));
   await page.waitForTimeout(150);
@@ -1126,6 +1125,16 @@ function workspaceBindingMessage(requestId) {
     requestId,
     payload: { protocolVersion: "workspace_binding_v1", requestId, state: "auto_bound", projectId, displayName: projectDisplayName },
   };
+}
+
+function createProductionHostRequestId() {
+  return `${Date.now().toString(36)}-${randomBytes(24).toString("base64url")}`;
+}
+
+function assertProductionHostRequestId(requestId, label) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(requestId) || /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(requestId)) {
+    failures.push(`VS Code production host request-id remint was not bounded for ${label}.`);
+  }
 }
 
 function assertNoChatRuntimeBeforeExplicitStart(label) {

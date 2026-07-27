@@ -141,6 +141,9 @@ let nextAssistantResponseContent;
 const maxRuntimeRequestBodyBytes = 1024 * 1024;
 const maxPendingHostMessages = 32;
 const maxPendingDiagnostics = 16;
+const safeProxySegment = /^[A-Za-z0-9_-]+$/;
+const projectGuiSendPrompt = "Send through the real JetBrains project composer.";
+const projectGuiSendResponse = "JetBrains project GUI Send smoke";
 
 const scrollIntoViewIfNeeded = async (locator) => {
   await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
@@ -799,41 +802,47 @@ async function enterJetBrainsProjectChat(page, frameLocator, requestId) {
   const chatTraffic = runtimeRequestLog.filter((entry) => /\/v1\/chats(?:\/|$)/.test(entry.pathname) && (entry.method !== "GET" || /\/commands$|\/subscribe$/.test(entry.pathname)));
   if (chatTraffic.length > 0) failures.push(`JetBrains dashboard issued chat create/command/SSE traffic before explicit Start: ${formatRuntimeRequestLog(chatTraffic)}.`);
   projectPhaseRuntimeLogStart ??= runtimeRequestLog.length;
-  await page.evaluate(({ version, requestId, projectId, displayName }) => {
+  const readiness = await fetch(`${panelGuiBaseUrl}/v1/demo-mode`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true }) });
+  if (!readiness.ok) failures.push(`JetBrains project mock readiness setup returned ${readiness.status}.`);
+  await page.evaluate(({ version, requestId, projectId, displayName, runtimeUrl }) => {
+    window.__yetAiSendHostMessageToFrame({ version, type: "host.ready", requestId, payload: { runtimeUrl: "http://127.0.0.1:8001", runtimeProxyBaseUrl: runtimeUrl, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false } });
     window.__yetAiSendHostMessageToFrame({
       version,
       type: "host.workspaceBinding",
       requestId,
       payload: { protocolVersion: "workspace_binding_v1", requestId, state: "auto_bound", projectId, displayName },
     });
-  }, { version: bridgeVersion, requestId, projectId, displayName: projectDisplayName });
+  }, { version: bridgeVersion, requestId, projectId, displayName: projectDisplayName, runtimeUrl: panelBasePath });
   await frameLocator.getByText(projectDisplayName, { exact: true }).first().waitFor({ state: "visible", timeout: 5000 }).catch(async (error) => {
     throw new Error(`JetBrains workspace binding did not open the dashboard. ${messageOf(error)} Body: ${(await frameLocator.locator("body").innerText()).slice(0, 1200)}`);
   });
   if (await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) failures.push("JetBrains dashboard mounted a composer before explicit Start.");
   await frameLocator.getByRole("button", { name: "Start new chat", exact: true }).click();
   await frameLocator.getByText("Project chat", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 });
-  const commandProbe = await fetch(`${panelGuiBaseUrl}/p/${projectId}/v1/chats/chat-001/commands`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ type: "abort", requestId: "project-proxy-command-probe", payload: {} }),
-  });
-  if (!commandProbe.ok) failures.push(`JetBrains project command proxy probe returned ${commandProbe.status}.`);
-  const subscribeController = new AbortController();
-  const subscribeProbe = await fetch(`${panelGuiBaseUrl}/p/${projectId}/v1/chats/subscribe?chat_id=chat-001`, {
-    headers: { accept: "text/event-stream" },
-    signal: subscribeController.signal,
-  });
-  if (!subscribeProbe.ok || !String(subscribeProbe.headers.get("content-type")).startsWith("text/event-stream")) failures.push(`JetBrains project SSE proxy probe returned ${subscribeProbe.status} ${String(subscribeProbe.headers.get("content-type"))}.`);
-  subscribeController.abort();
   chatCommandRequest = undefined;
   chatCommandRequestCount = 0;
   chatAbortRequestCount = 0;
+  nextAssistantResponseContent = projectGuiSendResponse;
+  const composer = frameLocator.getByPlaceholder("Ask about the current file, selection, or project...");
+  await composer.waitFor({ state: "visible", timeout: 5000 });
+  await frameLocator.getByRole("button", { name: "Send", exact: true }).waitFor({ state: "visible", timeout: 5000 });
+  await composer.fill(projectGuiSendPrompt);
+  await clickSendButtonWithActionability(frameLocator, "JetBrains project GUI Send evidence");
+  await frameLocator.getByText(projectGuiSendResponse, { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
+    .catch(() => failures.push("JetBrains project GUI Send did not render its SSE assistant response."));
+  if (chatCommandRequestCount !== 1 || chatCommandRequest?.type !== "user_message" || chatCommandRequest?.payload?.content !== projectGuiSendPrompt) {
+    failures.push(`JetBrains project GUI Send did not cause exactly one expected user command: count=${chatCommandRequestCount}, body=${JSON.stringify(chatCommandRequest)}.`);
+  }
+  demoModeEnabled = false;
 }
 
 async function reloadJetBrainsLegacyWorkbench(page, frameLocator) {
   assertProjectScopedChatProxyCoverage();
   projectPhaseRuntimeLogStart = undefined;
+  chatCommandRequest = undefined;
+  chatCommandRequestCount = 0;
+  chatAbortRequestCount = 0;
+  chatSubscriptionCount = 0;
   const sequenceBeforeReload = await page.evaluate(() => window.__yetAiGuiReadySequence ?? 0);
   const previousFrameNonce = await page.evaluate(() => window.__yetAiCurrentFrameNonce);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => { frame.src = url; }, `${panelGuiBaseUrl}/hosted-chat?legacy-continuation=${randomUUID()}`);
@@ -3241,7 +3250,7 @@ async function startMockRuntimeServer() {
       return;
     }
     if (request.method === "GET" && scopedPath === "/v1/chats") {
-      json(response, 200, { chats: [] });
+      json(response, 200, { chats: [{ chatId: "chat-001", title: "JetBrains smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messageCount: 0 }] });
       return;
     }
     if (request.method === "GET" && scopedPath === "/v1/chats/chat-001") {
@@ -3748,6 +3757,7 @@ async function assertPackagedGuiPanelServerParity(panelGuiBaseUrl) {
     throw new Error(`JetBrains wrapper smoke HEAD hosted-chat returned ${headHostedChatResponse.status} instead of 405.`);
   }
   assertPanelProxyPathValidation();
+  await assertPanelProxyHttpRejections(panelGuiBaseUrl);
   const indexHtml = await readFile(packagedGuiIndexPath, "utf8");
   const assetPaths = Array.from(indexHtml.matchAll(/(?:src|href)="\.\/(assets\/[^"?#]+\.(?:js|css))"/g), (match) => match[1]);
   for (const [extension, expectedMime] of [[".js", "application/javascript; charset=utf-8"], [".css", "text/css; charset=utf-8"]]) {
@@ -3940,18 +3950,45 @@ function classifyPanelProxyPath(rawPath) {
   const decodedPathname = safeDecodePath(rawPathname);
   if (decodedPathname === undefined || decodedPathname.includes("\\") || decodedPathname.includes("//")) return undefined;
   const segments = decodedPathname.split("/").slice(1);
-  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) return undefined;
+  if (segments.some((segment) => !safeProxySegment.test(segment))) return undefined;
   const global = segments[0] === "v1" && segments.length >= 2;
   const scoped = segments[0] === "p" && /^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(segments[1] ?? "") && segments[2] === "v1" && segments.length >= 4;
   if (!global && !scoped) return undefined;
   return { rawPath, pathname: decodedPathname, projectId: scoped ? segments[1] : undefined };
 }
 
+async function assertPanelProxyHttpRejections(panelGuiBaseUrl) {
+  const invalidPaths = [
+    "/v1/%2e%2e/chats",
+    "/v1/chats%2Fsubscribe",
+    "/v1/chats.bad",
+    `/p/${projectId.slice(0, -1)}B/v1/chats`,
+  ];
+  for (const invalidPath of invalidPaths) {
+    const upstreamCount = runtimeRequestLog.length;
+    const status = await rawHttpGetStatus(`${panelGuiBaseUrl}${invalidPath}`);
+    if (status !== 404) throw new Error(`JetBrains panel proxy malformed HTTP path ${invalidPath} returned ${status} instead of 404.`);
+    if (runtimeRequestLog.length !== upstreamCount) throw new Error(`JetBrains panel proxy malformed HTTP path ${invalidPath} reached upstream.`);
+  }
+}
+
+function rawHttpGetStatus(value) {
+  const target = new URL(value);
+  return new Promise((resolve, reject) => {
+    const request = http.request({ hostname: target.hostname, port: target.port, method: "GET", path: `${target.pathname}${target.search}` }, (response) => {
+      response.resume();
+      response.on("end", () => resolve(response.statusCode ?? 0));
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
 function assertPanelProxyPathValidation() {
   for (const value of ["/v1/ping", `/p/${projectId}/v1/chats`, `/p/${projectId}/v1/chats/subscribe?chat_id=chat-001`]) {
     if (classifyPanelProxyPath(value) === undefined) throw new Error(`JetBrains panel proxy rejected valid path ${value}.`);
   }
-  for (const value of ["/v1", "/v2/chats", "/v1/../chats", "/v1/%2e%2e/chats", "/v1/chats%2Fsubscribe", "/v1/chats%5Csubscribe", "/v1/chats\\subscribe", "/v1//chats", `/p/${projectId.slice(0, -1)}B/v1/chats`, `/p/${projectId}/v1/../chats`, `/p/${projectId}/v1/chats%2Fsubscribe`]) {
+  for (const value of ["/v1", "/v2/chats", "/v1/../chats", "/v1/%2e%2e/chats", "/v1/chats%2Fsubscribe", "/v1/chats%5Csubscribe", "/v1/chats\\subscribe", "/v1/chats.bad", "/v1//chats", `/p/${projectId.slice(0, -1)}B/v1/chats`, `/p/${projectId}/v1/../chats`, `/p/${projectId}/v1/chats%2Fsubscribe`]) {
     if (classifyPanelProxyPath(value) !== undefined) throw new Error(`JetBrains panel proxy accepted malformed path ${value}.`);
   }
 }
