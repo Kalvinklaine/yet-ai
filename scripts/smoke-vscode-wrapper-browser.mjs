@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
+import Module, { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -11,6 +12,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const guiDistRoot = path.join(root, "apps", "gui", "dist");
 const packagedGuiRoot = path.join(root, "apps", "plugins", "vscode", "media", "gui");
 const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
+const vscodePluginRoot = path.join(root, "apps", "plugins", "vscode");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "vscode-wrapper-browser");
 const bridgeVersion = "2026-05-15";
 const projectId = "prj_abcdefghijklmnopqrstuA";
@@ -109,8 +111,9 @@ let observedRuntimeAuthorization = false;
 let demoModeEnabled = !demoModeFirstMessage;
 
 await requirePackagedGui();
+const renderProductionWebviewHtml = await loadProductionWebviewRenderer();
 const { chromium } = await requireChromium();
-const guiServer = await startStaticServer(packagedGuiRoot);
+const guiServer = await startStaticServer(packagedGuiRoot, renderProductionWebviewHtml);
 const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
 const runtimeServer = await startMockRuntimeServer();
 const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
@@ -196,7 +199,7 @@ try {
     failures.push("VS Code-like acquireVsCodeApi bridge did not collect strict gui.ready.");
   }
   const hostedReadyRequestId = requireProductionHostedReadyRequestId(guiReady, "hosted bootstrap gui.ready");
-  await page.waitForTimeout(100);
+  await assertOneAuthoritativeReadyGeneration(page, hostedReadyRequestId, "initial hosted document");
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -231,6 +234,7 @@ try {
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const legacyGuiReady = await waitForGuiMessage(page, "gui.ready");
   const legacyReadyRequestId = requireProductionHostedReadyRequestId(legacyGuiReady, "legacy reload bootstrap gui.ready");
+  await assertOneAuthoritativeReadyGeneration(page, legacyReadyRequestId, "reloaded hosted document");
   if (legacyReadyRequestId === hostedReadyRequestId) failures.push("VS Code production hosted bootstrap reused the prior generation gui.ready requestId after reload.");
   await dispatchHostMessage(page, { version: bridgeVersion, type: "host.ready", requestId: legacyReadyRequestId, payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false } });
   await dispatchHostMessage(page, workspaceBindingMessage(hostedReadyRequestId));
@@ -703,6 +707,52 @@ async function requireChromium() {
   }
 }
 
+async function loadProductionWebviewRenderer() {
+  const compiledWebviewPath = path.join(vscodePluginRoot, "out", "webview.js");
+  try {
+    await stat(compiledWebviewPath);
+  } catch {
+    console.error("VS Code wrapper browser smoke failed: compiled production webview renderer is missing.");
+    console.error("Run `npm --prefix apps/plugins/vscode run compile` before the wrapper smoke.");
+    process.exit(1);
+  }
+  const originalLoad = Module._load;
+  try {
+    Module._load = function load(request, parent, isMain) {
+      if (request === "vscode") {
+        return {
+          Uri: {
+            joinPath(base, ...segments) {
+              const fsPath = path.join(base.fsPath, ...segments);
+              return { fsPath, path: fsPath, toString: () => fsPath };
+            },
+          },
+          workspace: { workspaceFolders: [] },
+        };
+      }
+      return originalLoad.call(this, request, parent, isMain);
+    };
+    const productionModule = createRequire(import.meta.url)(compiledWebviewPath);
+    if (typeof productionModule.renderWebviewHtml !== "function") throw new Error("renderWebviewHtml export is unavailable");
+    const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
+    return (origin) => productionModule.renderWebviewHtml(
+      {
+        cspSource: origin,
+        asWebviewUri(uri) {
+          const relativePath = path.relative(packagedGuiRoot, uri.fsPath).split(path.sep).join("/");
+          if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) throw new Error("Production renderer requested an asset outside the packaged GUI root.");
+          return { toString: () => `${origin}/${relativePath}` };
+        },
+      },
+      { fsPath: vscodePluginRoot, path: vscodePluginRoot },
+      identity,
+      { runtimeUrl: "http://127.0.0.1:8001" },
+    );
+  } finally {
+    Module._load = originalLoad;
+  }
+}
+
 async function waitForGuiMessage(page, type) {
   await page.waitForFunction((messageType) => window.__yetAiVsCodeMessages?.some((message) => message?.type === messageType), type, { timeout: 10_000 });
   return await page.evaluate((messageType) => window.__yetAiVsCodeMessages.find((message) => message?.type === messageType), type);
@@ -715,6 +765,15 @@ async function waitForGuiMessageAfter(page, type, previousCount) {
 
 async function getGuiMessageCount(page, type) {
   return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
+}
+
+async function assertOneAuthoritativeReadyGeneration(page, expectedRequestId, label) {
+  await page.waitForTimeout(300);
+  const readyMessages = await page.evaluate(() => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === "gui.ready"));
+  const requestIds = [...new Set(readyMessages.map((message) => message?.requestId))];
+  if (readyMessages.length === 0 || requestIds.length !== 1 || requestIds[0] !== expectedRequestId) {
+    failures.push(`${label} emitted rotating gui.ready generations (${requestIds.map((requestId) => JSON.stringify(requestId)).join(", ") || "none"}).`);
+  }
 }
 
 async function openComposerDrawer(page, testId) {
@@ -1368,7 +1427,7 @@ async function readBody(request) {
   return Buffer.concat(chunks).toString("utf8") || "{}";
 }
 
-async function startStaticServer(staticRoot) {
+async function startStaticServer(staticRoot, renderWebviewHtml) {
   const realStaticRoot = await realpath(staticRoot);
   const server = http.createServer(async (request, response) => {
     let pathname;
@@ -1394,6 +1453,13 @@ async function startStaticServer(staticRoot) {
       return;
     }
     const hostedEntry = pathname === hostedChatPath;
+    if (hostedEntry && !hasDevBootstrap) {
+      const address = server.address();
+      const origin = `http://127.0.0.1:${address.port}`;
+      response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      response.end(renderWebviewHtml(origin));
+      return;
+    }
     const requestedPath = path.normalize(path.join(realStaticRoot, hostedEntry ? "/index.html" : pathname));
     try {
       const realRequestedPath = await realpath(requestedPath);
@@ -1402,8 +1468,7 @@ async function startStaticServer(staticRoot) {
       if (hostedEntry) {
         const chunks = [];
         for await (const chunk of createReadStream(realRequestedPath)) chunks.push(chunk);
-        const bootstrapScript = hasDevBootstrap ? "" : `<script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat"};const vscode=acquireVsCodeApi();const bytes=crypto.getRandomValues(new Uint8Array(24));const suffix=btoa(String.fromCharCode(...bytes)).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/g,"");const requestId=Date.now().toString(36)+"-"+suffix;window.yetAiBootstrap={bridgeVersion:${scriptJson(bridgeVersion)},requestId};vscode.postMessage({version:${scriptJson(bridgeVersion)},type:"gui.ready",requestId,payload:{supportedBridgeVersion:${scriptJson(bridgeVersion)}}});</script>`;
-        const html = Buffer.concat(chunks).toString("utf8").replace("<head>", `<head><base href="/">${bootstrapScript}`);
+        const html = Buffer.concat(chunks).toString("utf8").replace("<head>", '<head><base href="/">');
         response.end(html);
       } else {
         createReadStream(realRequestedPath).pipe(response);

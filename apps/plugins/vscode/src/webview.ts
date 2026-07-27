@@ -1844,7 +1844,7 @@ export function renderWebviewHtml(
   const placeholder = connection.guiDevUrl || packagedGui ? "" : `<main><h1>${escapeHtml(identity.vscode.displayName)}</h1><p>Local runtime shell is ready.</p><p>Runtime: <code>${escapeHtml(connection.runtimeUrl)}</code></p><p>Run <code>cd apps/gui && npm run build</code> and <code>cd apps/plugins/vscode && npm run copy:gui</code> to package the GUI, or set <code>yetai.guiDevUrl</code> to a loopback Vite dev server during development.</p></main>`;
   const rewrittenPackagedGuiHtml = packagedGui ? rewritePackagedGuiHtml(packagedGui.html, packagedGui.root, webview) : undefined;
   const packagedGuiHtml = connection.guiDevUrl ? "" : rewrittenPackagedGuiHtml ?? "";
-  return `<!DOCTYPE html>
+  return String.raw`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1863,12 +1863,23 @@ iframe { width: 100vw; height: 100vh; border: 0; }
 history.replaceState(null, "", ${serializeScriptJson(vscodeHostedChatPath)});
 window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
 </script>
-${placeholder}${frameSource}${packagedGuiHtml}
+${placeholder}${frameSource}
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
-window["acquireVsCodeApi"] = () => vscode;
 const bootstrap = ${bootstrap};
 window.yetAiBootstrap = bootstrap;
+const packagedVscode = {
+  postMessage(message) {
+    if (message?.type === "gui.ready") {
+      vscode.postMessage({ ...message, requestId: bootstrap.requestId });
+      return;
+    }
+    vscode.postMessage(message);
+  },
+  getState: () => vscode.getState?.(),
+  setState: (state) => vscode.setState?.(state),
+};
+window["acquireVsCodeApi"] = () => packagedVscode;
 const frame = document.querySelector("iframe");
 const frameWindow = frame?.contentWindow;
 const frameTargetOrigin = bootstrap.guiDevOrigin;
@@ -2100,6 +2111,7 @@ window.addEventListener("message", (event) => {
   }
 });
 </script>
+${packagedGuiHtml}
 </body>
 </html>`;
 }

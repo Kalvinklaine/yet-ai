@@ -260,9 +260,12 @@ function assertDevIframeForwardsVerificationBundleResult(webview: typeof import(
 }
 
 function assertHostedChatBootstrapPrecedesPackagedGui(webview: typeof import("./webview")): void {
+  const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "yet-ai-vscode-hosted-bootstrap-"));
+  fs.mkdirSync(path.join(extensionRoot, "media", "gui"), { recursive: true });
+  fs.writeFileSync(path.join(extensionRoot, "media", "gui", "index.html"), '<!doctype html><html><head><script type="module" src="./assets/gui.js"></script></head><body><main id="packaged-gui-marker"></main></body></html>');
   const html = webview.renderWebviewHtml(
     { cspSource: "vscode-resource:", asWebviewUri: (uri: { toString(): string }) => uri.toString() } as never,
-    { fsPath: "/tmp/yet-ai-extension", path: "/tmp/yet-ai-extension" } as never,
+    { fsPath: extensionRoot, path: extensionRoot } as never,
     {
       product: { id: "yet-ai", displayName: "Yet AI" },
       engine: { binaryName: "yet-lsp" },
@@ -275,7 +278,15 @@ function assertHostedChatBootstrapPrecedesPackagedGui(webview: typeof import("./
   assert.equal(html.includes('history.replaceState(null, "", "/vscode/hosted-chat")'), true);
   assert.equal(html.includes('window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" }'), true);
   assert.ok(html.indexOf("window.__yetAiInitialRuntimeConfig") < html.indexOf("window.yetAiBootstrap"));
+  assert.ok(html.indexOf("window.yetAiBootstrap") < html.indexOf('src="' + extensionRoot + '/media/gui/assets/gui.js"'));
   assert.equal((html.match(/acquireVsCodeApi\(\)/g) ?? []).length, 1);
+  assert.equal((html.match(/vscode\.postMessage\(\{ version: bootstrap\.bridgeVersion, type: "gui\.ready", requestId: bootstrap\.requestId/g) ?? []).length, 1);
+  assert.equal(html.includes('if (message?.type === "gui.ready")'), true);
+  assert.equal(html.includes("vscode.postMessage({ ...message, requestId: bootstrap.requestId })"), true);
+  assert.equal(html.indexOf("window[\"acquireVsCodeApi\"] = () => packagedVscode") < html.indexOf("packaged-gui-marker"), true);
+  for (const script of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)) {
+    if (script[1].trim().length > 0) new Function(script[1]);
+  }
 
   const devHtml = webview.renderWebviewHtml(
     { cspSource: "vscode-resource:", asWebviewUri: (uri: { toString(): string }) => uri.toString() } as never,
@@ -292,6 +303,7 @@ function assertHostedChatBootstrapPrecedesPackagedGui(webview: typeof import("./
   assert.equal(devHtml.includes('type: "yet-ai.hosted-bootstrap", token: bootstrap.guiDevBootstrapToken, entryMode: "hosted_chat"'), true);
   assert.equal(devHtml.includes('event.data.type === "yet-ai.hosted-bootstrap.request" && event.data.token === hostedBootstrapMessage.token'), true);
   assert.equal(devHtml.includes('postMessage(message, "*")'), false);
+  fs.rmSync(extensionRoot, { recursive: true, force: true });
 }
 
 function assertHostReadyIncludesMetadataOnlyCapabilities(webview: typeof import("./webview")): void {
