@@ -390,6 +390,42 @@ describe("project lifecycle scope", () => {
     expect(container?.textContent).not.toContain("stale shell context");
   });
 
+  it("re-gates seeded authority when its identity changes on the same mount", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
+    const runtimeSettings = {
+      baseUrl: "http://127.0.0.1:8001",
+      token: "",
+      runtimeAccess: "direct" as const,
+    };
+    renderShellAuthorizedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-seed-a", runtimeSettings);
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: "seed A context" } }, "ready-seed-a");
+    expect(container?.textContent).toContain("seed A context");
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
+
+    await act(async () => root?.render(<App
+      route={{ kind: "project", projectId: projectA, page: "chat" }}
+      runtimeSettings={runtimeSettings}
+      hostedAuthorityKey="changed-hosted-authority"
+      hostReadyGeneration="ready-seed-b"
+    />));
+
+    expect(container?.textContent).not.toContain("seed A context");
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
+    await dispatchHostContextSnapshot({ selection: { text: "stale seed A context" } }, "ready-seed-a");
+    await dispatchHostContextSnapshot({ selection: { text: "premature seed B context" } }, "ready-seed-b");
+    expect(container?.textContent).not.toContain("stale seed A context");
+    expect(container?.textContent).not.toContain("premature seed B context");
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
+
+    await dispatchHostReady({ runtimeUrl: runtimeSettings.baseUrl }, "ready-seed-b");
+    await dispatchHostContextSnapshot({ selection: { text: "accepted seed B context" } }, "ready-seed-b");
+    expect(container?.textContent).toContain("accepted seed B context");
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
+  });
+
   it("rejects mismatched project ready before runtime or drawer state mutates", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });

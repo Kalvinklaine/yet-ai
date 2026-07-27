@@ -7,14 +7,28 @@ import { navigateProjectRoute } from "./services/projectRouting";
 import type { RuntimeSettings } from "./services/runtimeClient";
 
 const appRenderCalls = vi.hoisted(() => [] as string[]);
-const appAuthorityCalls = vi.hoisted(() => [] as Array<{ hostedAuthorityKey?: string; hostReadyGeneration?: string | null }>);
+const appAuthorityCalls = vi.hoisted(() => [] as Array<{ hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings }>);
 const deferredHostedOpen = vi.hoisted(() => ({ run: null as null | (() => boolean) }));
 vi.mock("./App", () => ({
-  App: ({ route, hostedAuthorityKey, hostReadyGeneration }: { route: { kind: string; page?: string; chatId?: string }; hostedAuthorityKey?: string; hostReadyGeneration?: string | null }) => {
+  App: ({ route, hostedAuthorityKey, hostReadyGeneration, runtimeSettings }: { route: { kind: string; page?: string; chatId?: string }; hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings }) => {
+    const [context, setContext] = React.useState("");
     const label = [route.kind, route.page, route.chatId].filter(Boolean).join(":");
     appRenderCalls.push(label);
-    appAuthorityCalls.push({ hostedAuthorityKey, hostReadyGeneration });
-    return <div data-testid="app-route">{label}</div>;
+    appAuthorityCalls.push({ hostedAuthorityKey, hostReadyGeneration, runtimeSettings });
+    React.useEffect(() => {
+      const receiveContext = (event: MessageEvent) => {
+        if (event.data?.type !== "host.contextSnapshot" || event.data?.requestId !== hostReadyGeneration) return;
+        setContext(event.data.payload?.selection?.text ?? "");
+      };
+      window.addEventListener("message", receiveContext);
+      return () => window.removeEventListener("message", receiveContext);
+    }, [hostReadyGeneration]);
+    const authorized = Boolean(hostedAuthorityKey && hostReadyGeneration && runtimeSettings?.baseUrl);
+    return <div>
+      <div data-testid="app-route">{label}</div>
+      <div data-testid="app-runtime-state">{authorized ? `runtime-ready:${hostReadyGeneration}` : "runtime-gated"}</div>
+      {context && <div data-testid="app-context">{context}</div>}
+    </div>;
   },
 }));
 
@@ -180,6 +194,52 @@ describe("ProjectRouterShell", () => {
     expect(appRenderCalls).toHaveLength(rendersBeforeRebind);
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+  });
+
+  it("remounts dashboard chat with current runtime authority and context without replaying host.ready", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    let hostReadyDispatches = 0;
+    const countHostReady = (event: MessageEvent) => {
+      if (event.data?.type === "host.ready") hostReadyDispatches += 1;
+    };
+    window.addEventListener("message", countHostReady);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    await sendHostReady("ready-remount");
+    await sendWorkspaceBinding("ready-remount");
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click());
+
+    expect(hostReadyDispatches).toBe(1);
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
+    expect(container.querySelector("[data-testid='app-runtime-state']")?.textContent).toBe("runtime-ready:ready-remount");
+    expect(appAuthorityCalls.at(-1)).toMatchObject({
+      hostReadyGeneration: "ready-remount",
+      runtimeSettings: { baseUrl: "/panel/panel-test", token: "", runtimeAccess: "same_origin_proxy" },
+    });
+
+    await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+      version: "2026-05-15",
+      type: "host.contextSnapshot",
+      requestId: "ready-stale",
+      payload: { selection: { text: "stale remount context" } },
+    } })));
+    expect(container.textContent).not.toContain("stale remount context");
+    await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+      version: "2026-05-15",
+      type: "host.contextSnapshot",
+      requestId: "ready-remount",
+      payload: { selection: { text: "current remount context" } },
+    } })));
+    expect(container.querySelector("[data-testid='app-context']")?.textContent).toBe("current remount context");
+    expect(hostReadyDispatches).toBe(1);
+    window.removeEventListener("message", countHostReady);
   });
 
   it("rejects a deferred open from an older generation even when the project is unchanged", async () => {
