@@ -412,6 +412,9 @@ export function generateApplyRequestSessionNonce(): string {
 
 export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter, hostedAuthorityKey, hostReadyGeneration }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; navigate?: ProjectNavigation; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter; hostedAuthorityKey?: string; hostReadyGeneration?: string | null }) {
   const projectId = route.kind === "project" ? route.projectId : undefined;
+  const seededProjectHostAuthority = projectId && hostedAuthorityKey && hostReadyGeneration?.trim() && runtimeSettings
+    ? { projectId, hostedAuthorityKey, hostReadyGeneration }
+    : null;
   const projectPage = route.kind === "project" ? route.page : undefined;
   const showChatPage = projectPage === undefined || projectPage === "chat";
   const showMemoryPage = projectPage === "memory";
@@ -506,12 +509,12 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const runtimeRefreshAttemptRef = useRef(0);
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
-  const hostReadyAppliedRef = useRef(isSameOriginProxyBaseUrl(initialRuntimeSettings.baseUrl));
+  const hostReadyAppliedRef = useRef(Boolean(seededProjectHostAuthority) || isSameOriginProxyBaseUrl(initialRuntimeSettings.baseUrl));
   const projectHostAuthorityPropsRef = useRef({ projectId, hostedAuthorityKey, hostReadyGeneration });
   projectHostAuthorityPropsRef.current = { projectId, hostedAuthorityKey, hostReadyGeneration };
   const projectHostAuthorityIdentityRef = useRef({ projectId, hostedAuthorityKey, hostReadyGeneration });
-  const projectHostAuthorityAcceptedRef = useRef<{ projectId: string; hostedAuthorityKey: string; hostReadyGeneration: string } | null>(null);
-  const [projectHostAuthorityReady, setProjectHostAuthorityReady] = useState(false);
+  const projectHostAuthorityAcceptedRef = useRef<{ projectId: string; hostedAuthorityKey: string; hostReadyGeneration: string } | null>(seededProjectHostAuthority);
+  const [projectHostAuthorityReady, setProjectHostAuthorityReady] = useState(Boolean(seededProjectHostAuthority));
   const hasCurrentProjectHostAuthority = () => {
     const current = projectHostAuthorityPropsRef.current;
     const accepted = projectHostAuthorityAcceptedRef.current;

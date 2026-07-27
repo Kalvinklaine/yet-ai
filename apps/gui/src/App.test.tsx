@@ -348,6 +348,48 @@ describe("project lifecycle scope", () => {
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(1);
   });
 
+  it("adopts shell-authorized hosted runtime settings on mount without replaying host.ready", async () => {
+    const postMessage = vi.fn();
+    const runtimeToken = "shell-authorized-runtime-token";
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
+    renderShellAuthorizedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-shell", {
+      baseUrl: "http://127.0.0.1:8765",
+      token: runtimeToken,
+      runtimeAccess: "direct",
+    });
+    await flushAsync();
+    await flushAsync();
+
+    const runtimeCalls = fetchMock.mock.calls.filter(([url]) => String(url).startsWith(`http://127.0.0.1:8765/p/${projectA}/v1/`));
+    expect(runtimeCalls.length).toBeGreaterThan(0);
+    expect(runtimeCalls.every(([, init]) => new Headers(init?.headers).get("Authorization") === `Bearer ${runtimeToken}`)).toBe(true);
+    expect(container?.textContent).toContain("runtime connected");
+    expect(container?.querySelector("[data-testid='chat-composer']")).not.toBeNull();
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
+    expect(findButton("Send").disabled).toBe(false);
+    expect(container?.textContent).not.toContain(runtimeToken);
+    expect(browserStorageDump()).not.toContain(runtimeToken);
+  });
+
+  it("accepts only current-generation context from shell-authorized mount without ready replay", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
+    renderShellAuthorizedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-current", {
+      baseUrl: "http://127.0.0.1:8001",
+      token: "",
+      runtimeAccess: "direct",
+    });
+    await flushAsync();
+
+    await dispatchHostContextSnapshot({ selection: { text: "stale shell context" } }, "ready-stale");
+    await dispatchHostContextSnapshot({ selection: { text: "current shell context" } }, "ready-current");
+
+    expect(container?.textContent).toContain("current shell context");
+    expect(container?.textContent).not.toContain("stale shell context");
+  });
+
   it("rejects mismatched project ready before runtime or drawer state mutates", async () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
@@ -13478,6 +13520,17 @@ function renderHostedProjectRoute(route: Extract<NonNullable<Parameters<typeof A
   document.body.append(container);
   root = createRoot(container);
   act(() => root?.render(<App route={route} hostedAuthorityKey="test-hosted-authority" hostReadyGeneration={hostReadyGeneration} />));
+}
+
+function renderShellAuthorizedProjectRoute(
+  route: Extract<NonNullable<Parameters<typeof App>[0]["route"]>, { kind: "project" }>,
+  hostReadyGeneration: string,
+  runtimeSettings: NonNullable<Parameters<typeof App>[0]["runtimeSettings"]>,
+) {
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() => root?.render(<App route={route} runtimeSettings={runtimeSettings} hostedAuthorityKey="test-hosted-authority" hostReadyGeneration={hostReadyGeneration} />));
 }
 
 
