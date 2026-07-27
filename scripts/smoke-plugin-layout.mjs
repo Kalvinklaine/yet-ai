@@ -83,7 +83,7 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await waitForGuiReady(page, name);
   const hostGeneration = createHostGeneration();
   await dispatchHostedWorkspaceAuthority(page, hostGeneration);
-  await enterCurrentWorkspaceChat(page, name, hostGeneration);
+  await enterCurrentWorkspaceChat(page, name);
   await page.waitForFunction(() => document.body.innerText.includes("ready to chat") || document.body.innerText.includes("Ready to send"), undefined, { timeout: 20_000 }).catch(() => failures.push(`Missing ${name} runtime ready state`));
   await page.waitForFunction(() => document.querySelector(".chat-scroll-region"), undefined, { timeout: 10_000 }).catch(() => failures.push(`Missing ${name} chat scroll region`));
   await openComposerDrawer(page, "ide-actions-drawer", name);
@@ -145,7 +145,8 @@ async function assertHostedEntryRoute(page, { host, hostedPath, name }) {
 }
 
 function assertLayoutMetrics(metrics, label, height, host) {
-  assert(metrics.heroHidden, `${label} hosted hero is visible`);
+  assert(metrics.routedProjectChat, `${label} layout evidence was not collected from the routed project chat phase`);
+  assert(metrics.heroState === "absent", `${label} routed project chat unexpectedly rendered a hosted hero: ${metrics.heroState}`);
   assert(host !== "jetbrains" || metrics.hostJetbrainsClass, `${label} did not render main.app-shell.host-jetbrains`);
   assert(host !== "jetbrains" || !metrics.hostBrowserClass, `${label} incorrectly kept host-browser class in JetBrains scenario`);
   assert(metrics.sendVisible && metrics.sendWithinViewport && metrics.sendEnabled, `${label} Send is not visible/enabled within viewport: ${JSON.stringify(metrics.sendRect)}`);
@@ -443,7 +444,9 @@ async function collectLayoutMetrics(page, scenario) {
     return {
       ...scenarioInfo,
       bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 500),
-      heroHidden: !(document.querySelector(".hero") instanceof HTMLElement) || getComputedStyle(document.querySelector(".hero")).display === "none",
+      heroState: heroState(document.querySelector(".hero")),
+      routedProjectChat: document.querySelector("main.app-shell[data-project-page='chat']") instanceof HTMLElement
+        && document.querySelector("[data-testid='project-chat-boundary']") instanceof HTMLElement,
       hostJetbrainsClass: document.querySelector("main.app-shell.host-jetbrains") instanceof HTMLElement,
       hostBrowserClass: document.querySelector("main.app-shell.host-browser") instanceof HTMLElement,
       ideActionsDrawerOpen: ideActionsDrawer instanceof HTMLDetailsElement ? ideActionsDrawer.open : null,
@@ -472,6 +475,14 @@ async function collectLayoutMetrics(page, scenario) {
     function rectForElement(element) {
       const box = element.getBoundingClientRect();
       return { top: box.top, bottom: box.bottom, left: box.left, right: box.right, width: box.width, height: box.height };
+    }
+    function heroState(element) {
+      if (!(element instanceof HTMLElement)) return "absent";
+      const style = getComputedStyle(element);
+      const box = element.getBoundingClientRect();
+      return style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0 || box.width === 0 || box.height === 0
+        ? "hidden"
+        : "visible";
     }
   }, scenario);
 }
@@ -518,17 +529,7 @@ async function dispatchHostedWorkspaceAuthority(page, requestId) {
   });
 }
 
-async function dispatchHostedRuntimeReady(page, requestId) {
-  await page.evaluate(({ version, requestId, payload }) => {
-    window.dispatchEvent(new MessageEvent("message", { data: { version, type: "host.ready", requestId, payload } }));
-  }, {
-    version: BRIDGE_VERSION,
-    requestId,
-    payload: { runtimeUrl: `http://127.0.0.1:${runtimeServer.port}`, sessionToken: runtimeSessionValue, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
-  });
-}
-
-async function enterCurrentWorkspaceChat(page, name, requestId) {
+async function enterCurrentWorkspaceChat(page, name) {
   await page.getByText("Current Workspace Dashboard", { exact: true }).waitFor({ state: "attached", timeout: 10_000 })
     .catch(() => { throw new Error(`${name} did not render the authorized Current Workspace Dashboard`); });
   await page.getByText(SMOKE_PROJECT_DISPLAY_NAME, { exact: true }).first().waitFor({ state: "visible", timeout: 10_000 })
@@ -539,9 +540,8 @@ async function enterCurrentWorkspaceChat(page, name, requestId) {
   await requireActionableButton(page, startNew, `${name} Start new chat button`, name);
   await startNew.click();
   await page.getByText("Project chat", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
-  await dispatchHostedRuntimeReady(page, requestId);
   await composer.waitFor({ state: "visible", timeout: 10_000 })
-    .catch(async () => { throw new Error(`${name} chat did not mount after Start new chat: ${await contextDiagnostic(page)}`); });
+    .catch(async () => { throw new Error(`${name} project chat lost the original pre-dashboard host authority after Start new chat: ${await contextDiagnostic(page)}`); });
 }
 
 async function injectActiveEditorContext(page, host, requestId) {
@@ -713,8 +713,13 @@ async function startRuntimeServer() {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const projectPrefix = `/p/${SMOKE_PROJECT_ID}`;
-    const runtimePath = url.pathname.startsWith(`${projectPrefix}/v1/`) ? url.pathname.slice(projectPrefix.length) : url.pathname;
+    const scoped = url.pathname.startsWith(`${projectPrefix}/v1/`);
+    const runtimePath = scoped ? url.pathname.slice(projectPrefix.length) : url.pathname;
     if (request.method === "OPTIONS") return empty(response, 204);
+    if (isProjectOwnedRuntimePath(url.pathname) && !scoped) {
+      failures.push(`mock runtime rejected project-owned request outside ${projectPrefix}: ${request.method ?? "GET"} ${url.pathname}`);
+      return json(response, 404, { error: "Project-owned runtime request must use the current project scope." });
+    }
     if (request.method === "GET" && runtimePath === "/v1/ping") return json(response, 200, { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: now() });
     if (request.method === "GET" && runtimePath === "/v1/caps") return json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } });
     if (request.method === "GET" && runtimePath === "/v1/demo-mode") return json(response, 200, { enabled: true, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Local canned responses." });
@@ -746,6 +751,12 @@ async function startRuntimeServer() {
     response.writeHead(404, { "content-type": "application/json", ...corsHeaders() }).end(JSON.stringify({ error: "not found" }));
   });
   return listen(server);
+}
+
+function isProjectOwnedRuntimePath(pathname) {
+  const unscopedPath = /^\/v1\/(?:chats(?:\/|$)|project-memory(?:\/|$)|agent-progress(?:\/|$))/.test(pathname);
+  const projectPath = /^\/p\/[^/]+\/v1\/(?:chats(?:\/|$)|project-memory(?:\/|$)|agent-progress(?:\/|$))/.test(pathname);
+  return unscopedPath || projectPath;
 }
 
 async function readBody(request) { const chunks = []; for await (const chunk of request) chunks.push(chunk); return Buffer.concat(chunks).toString("utf8") || "{}"; }
