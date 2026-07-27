@@ -13,6 +13,9 @@ const evidenceRoot = path.join(root, "dist", "visual-smoke", "plugin-layout");
 const runtimeSessionValue = `pl-${randomUUID()}`;
 const failures = [];
 const JETBRAINS_SMOKE_PANEL_ID = "plugin-layout-smoke";
+const BRIDGE_VERSION = "2026-05-15";
+const SMOKE_PROJECT_ID = "prj_abcdefghijklmnopqrstuA";
+const SMOKE_PROJECT_DISPLAY_NAME = "Plugin Layout Workspace";
 const LAYOUT_CONTRACT_VERSION = "T-772-plugin-layout-thresholds";
 const LAYOUT_THRESHOLDS = Object.freeze({
   maxContextHeight: 112,
@@ -78,14 +81,16 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await page.goto(`http://127.0.0.1:${guiServer.port}${hostedPath}`, { waitUntil: "domcontentloaded" });
   await assertHostedEntryRoute(page, { host, hostedPath, name });
   await waitForGuiReady(page, name);
-  await dispatchHostReady(page);
+  const hostGeneration = createHostGeneration();
+  await dispatchHostedWorkspaceAuthority(page, hostGeneration);
+  await enterCurrentWorkspaceChat(page, name, hostGeneration);
   await page.waitForFunction(() => document.body.innerText.includes("ready to chat") || document.body.innerText.includes("Ready to send"), undefined, { timeout: 20_000 }).catch(() => failures.push(`Missing ${name} runtime ready state`));
   await page.waitForFunction(() => document.querySelector(".chat-scroll-region"), undefined, { timeout: 10_000 }).catch(() => failures.push(`Missing ${name} chat scroll region`));
   await openComposerDrawer(page, "ide-actions-drawer", name);
   const explainSelectionButton = page.getByRole("button", { name: "Explain selection", exact: true });
   await requireVisibleDisabledButton(page, explainSelectionButton, `${name} Explain selection button before context`, name);
   await assertActionable(page.getByRole("button", { name: "Send", exact: true }), `${name} Send button before context`);
-  await injectActiveEditorContext(page, host);
+  await injectActiveEditorContext(page, host, hostGeneration);
   const contextReady = await waitForActiveSelectedContext(page);
   if (!contextReady) await failViewport(page, name, "active selected context was not accepted before Coding Actions checks");
   await openComposerDrawer(page, "ide-actions-drawer", name);
@@ -438,7 +443,7 @@ async function collectLayoutMetrics(page, scenario) {
     return {
       ...scenarioInfo,
       bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 500),
-      heroHidden: document.querySelector(".hero") instanceof HTMLElement && getComputedStyle(document.querySelector(".hero")).display === "none",
+      heroHidden: !(document.querySelector(".hero") instanceof HTMLElement) || getComputedStyle(document.querySelector(".hero")).display === "none",
       hostJetbrainsClass: document.querySelector("main.app-shell.host-jetbrains") instanceof HTMLElement,
       hostBrowserClass: document.querySelector("main.app-shell.host-browser") instanceof HTMLElement,
       ideActionsDrawerOpen: ideActionsDrawer instanceof HTMLDetailsElement ? ideActionsDrawer.open : null,
@@ -484,21 +489,68 @@ async function saveEvidence(page, name, metrics) {
 }
 
 async function waitForGuiReady(page, name) {
-  await page.waitForFunction(() => Array.isArray(window.__yetAiBridgePosts) && window.__yetAiBridgePosts.some((message) => message?.type === "gui.ready"), undefined, { timeout: 5000 }).catch(() => failures.push(`Missing ${name} GUI bridge ready post`));
+  const ready = await page.waitForFunction(() => {
+    if (!Array.isArray(window.__yetAiBridgePosts)) return undefined;
+    const message = window.__yetAiBridgePosts.find((candidate) => candidate?.type === "gui.ready");
+    return message ? { version: message.version, type: message.type, supportedBridgeVersion: message.payload?.supportedBridgeVersion } : undefined;
+  }, undefined, { timeout: 5000 }).then((handle) => handle.jsonValue()).catch(() => undefined);
+  if (!ready) throw new Error(`Missing ${name} GUI bridge ready post`);
+  if (ready.version !== BRIDGE_VERSION || ready.type !== "gui.ready" || ready.supportedBridgeVersion !== BRIDGE_VERSION) {
+    throw new Error(`${name} gui.ready did not match the supported bridge contract`);
+  }
 }
 
-async function dispatchHostReady(page) {
-  await page.evaluate((payload) => {
-    window.dispatchEvent(new MessageEvent("message", { data: { version: "2026-05-15", type: "host.ready", payload } }));
-  }, { runtimeUrl: `http://127.0.0.1:${runtimeServer.port}`, sessionToken: runtimeSessionValue, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false });
+function createHostGeneration() {
+  const requestId = `host-ready-${randomUUID().replaceAll("-", "")}`;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(requestId)) throw new Error("Generated invalid host readiness requestId");
+  return requestId;
 }
 
-async function injectActiveEditorContext(page, host) {
-  await page.evaluate((source) => {
+async function dispatchHostedWorkspaceAuthority(page, requestId) {
+  await page.evaluate(({ version, requestId, readyPayload, bindingPayload }) => {
+    window.dispatchEvent(new MessageEvent("message", { data: { version, type: "host.ready", requestId, payload: readyPayload } }));
+    window.dispatchEvent(new MessageEvent("message", { data: { version, type: "host.workspaceBinding", requestId, payload: { ...bindingPayload, requestId } } }));
+  }, {
+    version: BRIDGE_VERSION,
+    requestId,
+    readyPayload: { runtimeUrl: `http://127.0.0.1:${runtimeServer.port}`, sessionToken: runtimeSessionValue, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
+    bindingPayload: { protocolVersion: "workspace_binding_v1", state: "auto_bound", projectId: SMOKE_PROJECT_ID, displayName: SMOKE_PROJECT_DISPLAY_NAME },
+  });
+}
+
+async function dispatchHostedRuntimeReady(page, requestId) {
+  await page.evaluate(({ version, requestId, payload }) => {
+    window.dispatchEvent(new MessageEvent("message", { data: { version, type: "host.ready", requestId, payload } }));
+  }, {
+    version: BRIDGE_VERSION,
+    requestId,
+    payload: { runtimeUrl: `http://127.0.0.1:${runtimeServer.port}`, sessionToken: runtimeSessionValue, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
+  });
+}
+
+async function enterCurrentWorkspaceChat(page, name, requestId) {
+  await page.getByText("Current Workspace Dashboard", { exact: true }).waitFor({ state: "attached", timeout: 10_000 })
+    .catch(() => { throw new Error(`${name} did not render the authorized Current Workspace Dashboard`); });
+  await page.getByText(SMOKE_PROJECT_DISPLAY_NAME, { exact: true }).first().waitFor({ state: "visible", timeout: 10_000 })
+    .catch(() => { throw new Error(`${name} dashboard did not render the safe workspace display name`); });
+  const composer = page.getByPlaceholder("Ask about the current file, selection, or project...");
+  if (await composer.count() !== 0) throw new Error(`${name} dashboard mounted the composer before explicit Start new chat`);
+  const startNew = page.getByRole("button", { name: "Start new chat", exact: true });
+  await requireActionableButton(page, startNew, `${name} Start new chat button`, name);
+  await startNew.click();
+  await page.getByText("Project chat", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
+  await dispatchHostedRuntimeReady(page, requestId);
+  await composer.waitFor({ state: "visible", timeout: 10_000 })
+    .catch(async () => { throw new Error(`${name} chat did not mount after Start new chat: ${await contextDiagnostic(page)}`); });
+}
+
+async function injectActiveEditorContext(page, host, requestId) {
+  await page.evaluate(({ source, requestId }) => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {
         version: "2026-05-15",
         type: "host.contextSnapshot",
+        requestId,
         payload: {
           kind: "active_editor",
           source,
@@ -507,7 +559,7 @@ async function injectActiveEditorContext(page, host) {
         },
       },
     }));
-  }, host);
+  }, { source: host, requestId });
 }
 
 async function requireBuiltGui() {
@@ -660,18 +712,25 @@ async function startRuntimeServer() {
   const chats = new Map([["chat-001", { chatId: "chat-001", title: "Plugin layout smoke", createdAt: now(), updatedAt: now(), messages: [] }]]);
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    const projectPrefix = `/p/${SMOKE_PROJECT_ID}`;
+    const runtimePath = url.pathname.startsWith(`${projectPrefix}/v1/`) ? url.pathname.slice(projectPrefix.length) : url.pathname;
     if (request.method === "OPTIONS") return empty(response, 204);
-    if (request.method === "GET" && url.pathname === "/v1/ping") return json(response, 200, { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: now() });
-    if (request.method === "GET" && url.pathname === "/v1/caps") return json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } });
-    if (request.method === "GET" && url.pathname === "/v1/demo-mode") return json(response, 200, { enabled: true, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Local canned responses." });
-    if (request.method === "GET" && url.pathname === "/v1/models") return json(response, 200, { models: [demoModel()] });
-    if (request.method === "GET" && url.pathname === "/v1/providers") return json(response, 200, { providers: [demoProvider()], cloudRequired: false, providerAccess: "direct" });
-    if (request.method === "GET" && url.pathname === "/v1/provider-auth/openai/status") return json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "No account login." });
-    if (request.method === "GET" && url.pathname === "/v1/chats") return json(response, 200, { chats: Array.from(chats.values()).map((chat) => ({ chatId: chat.chatId, title: chat.title, createdAt: chat.createdAt, updatedAt: chat.updatedAt, messageCount: chat.messages.length })) });
-    const chatMatch = /^\/v1\/chats\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "GET" && runtimePath === "/v1/ping") return json(response, 200, { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: now() });
+    if (request.method === "GET" && runtimePath === "/v1/caps") return json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } });
+    if (request.method === "GET" && runtimePath === "/v1/demo-mode") return json(response, 200, { enabled: true, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Local canned responses." });
+    if (request.method === "GET" && runtimePath === "/v1/models") return json(response, 200, { models: [demoModel()] });
+    if (request.method === "GET" && runtimePath === "/v1/providers") return json(response, 200, { providers: [demoProvider()], cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && runtimePath === "/v1/provider-auth/openai/status") return json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "No account login." });
+    if (request.method === "GET" && runtimePath === "/v1/project-memory") return json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && url.pathname === "/v1/projects") return json(response, 200, { projects: [{ projectId: SMOKE_PROJECT_ID, displayName: SMOKE_PROJECT_DISPLAY_NAME, status: "available", revision: "1", createdAt: now(), lastOpenedAt: now(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" }], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && url.pathname === `/v1/projects/${SMOKE_PROJECT_ID}`) return json(response, 200, { projectId: SMOKE_PROJECT_ID, displayName: SMOKE_PROJECT_DISPLAY_NAME, status: "available", revision: "1", createdAt: now(), lastOpenedAt: now(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && runtimePath === "/v1/agent-progress") return json(response, 200, { snapshots: [], cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "POST" && runtimePath === "/v1/chats") return json(response, 201, chats.get("chat-001"));
+    if (request.method === "GET" && runtimePath === "/v1/chats") return json(response, 200, { chats: Array.from(chats.values()).map((chat) => ({ chatId: chat.chatId, title: chat.title, createdAt: chat.createdAt, updatedAt: chat.updatedAt, messageCount: chat.messages.length })) });
+    const chatMatch = /^\/v1\/chats\/([^/]+)$/.exec(runtimePath);
     if (chatMatch && request.method === "GET") return json(response, 200, chats.get(decodeURIComponent(chatMatch[1])) ?? chats.get("chat-001"));
-    if (request.method === "GET" && url.pathname === "/v1/chats/subscribe") return sse(response, chats.get(url.searchParams.get("chat_id") ?? "chat-001") ?? chats.get("chat-001"));
-    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(url.pathname);
+    if (request.method === "GET" && runtimePath === "/v1/chats/subscribe") return sse(response, chats.get(url.searchParams.get("chat_id") ?? "chat-001") ?? chats.get("chat-001"));
+    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(runtimePath);
     if (commandMatch && request.method === "POST") {
       const chatId = decodeURIComponent(commandMatch[1]);
       const body = JSON.parse(await readBody(request));
