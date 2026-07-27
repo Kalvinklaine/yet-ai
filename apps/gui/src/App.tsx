@@ -183,6 +183,14 @@ type ActiveStream = {
   unregisterScopeCancellation: () => void;
 };
 
+type AttachedContextState = {
+  payload: HostContextSnapshotPayload;
+  settingsRevision: number;
+  scopeCorrelation: ProjectScopeCorrelation;
+  chatId: string | null;
+  excerpt?: ActiveFileExcerptAttachment;
+};
+
 type AbortActiveStreamOptions = {
   finalizeStreaming?: boolean;
   addTimelineEntry?: boolean;
@@ -465,7 +473,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>(() => detectInitialBridgeHost());
   const [controlledHostCapabilities, setControlledHostCapabilities] = useState<HostReadyPayload["controlledCapabilities"] | undefined>(undefined);
-  const [attachedContext, setAttachedContext] = useState<{ payload: HostContextSnapshotPayload; settingsRevision: number; chatId: string; excerpt?: ActiveFileExcerptAttachment } | null>(null);
+  const [attachedContext, setAttachedContext] = useState<AttachedContextState | null>(null);
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
   const [attachedContextAcknowledged, setAttachedContextAcknowledged] = useState(false);
   const [attachedContextStatus, setAttachedContextStatus] = useState<string | null>(null);
@@ -694,7 +702,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const chatReadinessEvidence = apiKeyReadiness.model ? modelReadinessEvidenceText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
-  const currentAttachedContextState = chatId && attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext : null;
+  const currentAttachedContextState = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId && projectScopeController.accepts(attachedContext.scopeCorrelation) ? attachedContext : null;
   const currentAttachedContext = currentAttachedContextState?.payload ?? null;
   const currentActiveFileExcerpt = currentAttachedContextState?.excerpt ?? null;
   const codingActionsCanUseContext = Boolean(currentAttachedContext && !currentActiveFileExcerpt && hasUsableAttachedContext(currentAttachedContext) && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged));
@@ -1339,7 +1347,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         abortActiveStream("SSE stopped for previous project", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
         firstProjectChatCreateRef.current = null;
         chatHistoryAttemptRef.current += 1;
-        const nextChatId = route.kind === "project" && route.page === "chat" && route.chatId ? route.chatId : null;
+        const nextChatId = route.kind === "project" ? route.page === "chat" && route.chatId ? route.chatId : null : "chat-001";
         setChatId(nextChatId); setChatView(resetChatViewState(nextChatId ?? "")); setChatSummaries([]); setChatHistoryRevision(null);
         setChatHistoryError(null); setChatHistoryLoading(false); setMissingRoutedChatId(null); setDeletingChatId(null); setConversationNotice(null); setChatInput(""); setTimeline([]); setChatLifecycleState("idle");
       },
@@ -1746,8 +1754,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         const currentChatId = chatIdRef.current;
-        if (!currentChatId) return;
-        setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: currentChatId });
+        if (!currentChatId && !projectId) return;
+        setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: currentChatId });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext) && !attachedContextRequiresAcknowledgement(nextContext));
         setAttachedContextAcknowledged(false);
         setAttachedContextStatus(null);
@@ -1861,8 +1869,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         setIdeActionNote(null);
         if (payload.status === "succeeded" && payload.action === "getActiveFileExcerpt" && payload.contextAttachment) {
           const attachment = payload.contextAttachment;
-          if (!chatIdRef.current) return;
-          setAttachedContext({ payload: activeFileExcerptToChatContext(attachment), settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current, excerpt: attachment });
+          if (!chatIdRef.current && !projectId) return;
+          setAttachedContext({ payload: activeFileExcerptToChatContext(attachment), settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: chatIdRef.current, excerpt: attachment });
           setIncludeAttachedContext(true);
           setAttachedContextAcknowledged(false);
           setAttachedContextStatus(null);
@@ -1887,7 +1895,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       unsubscribe();
       if (!bridgeAdapter) adapter.dispose();
     };
-  }, [appendTrace, applyHostReady, bridgeAdapter, stopPendingControlledCommandRunState]);
+  }, [appendTrace, applyHostReady, bridgeAdapter, projectId, projectScopeController, stopPendingControlledCommandRunState]);
 
   const appendChatError = useCallback((message: string, code?: string) => {
     setChatView((current) => applyChatViewEvent(current, {
@@ -1903,7 +1911,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       return;
     }
     const current = attachedContextRef.current;
-    if (current?.settingsRevision === submittedContext.settingsRevision && current.chatId === submittedContext.chatId && current.payload === submittedContext.payload) {
+    if (current?.settingsRevision === submittedContext.settingsRevision && current.scopeCorrelation.generation === submittedContext.scopeCorrelation.generation && current.chatId === submittedContext.chatId && current.payload === submittedContext.payload) {
       setAttachedContext(null);
       setIncludeAttachedContext(false);
       setAttachedContextAcknowledged(false);
@@ -3430,22 +3438,22 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [appendTrace, chatView.messages, clearEditProposalState]);
 
   const applyCodingAction = (action: CodingAction) => {
-    if (!currentAttachedContext || !codingActionsCanUseContext || !chatIdRef.current) {
+    if (!currentAttachedContext || !codingActionsCanUseContext) {
       chatInputRef.current?.focus();
       return;
     }
-    setAttachedContext({ payload: currentAttachedContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
+    setAttachedContext({ payload: currentAttachedContext, settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: chatIdRef.current });
     setChatInput(action.buildPrompt(currentAttachedContext));
     setIncludeAttachedContext(true);
     chatInputRef.current?.focus();
   };
 
   const applyActiveFilePrompt = (action: ActiveFilePromptAction) => {
-    if (!currentActiveFileExcerpt || !currentAttachedContext || !chatIdRef.current) {
+    if (!currentActiveFileExcerpt || !currentAttachedContext) {
       chatInputRef.current?.focus();
       return;
     }
-    setAttachedContext({ payload: currentAttachedContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current, excerpt: currentActiveFileExcerpt });
+    setAttachedContext({ payload: currentAttachedContext, settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: chatIdRef.current, excerpt: currentActiveFileExcerpt });
     setChatInput(action.prompt);
     setIncludeAttachedContext(true);
     chatInputRef.current?.focus();
@@ -3627,6 +3635,12 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       }
       targetChatId = created.data.chatId;
       chatIdRef.current = targetChatId;
+      const draftContext = attachedContextRef.current;
+      if (draftContext?.settingsRevision === targetRevision && draftContext.chatId === null && projectScopeController.accepts(draftContext.scopeCorrelation)) {
+        const reboundContext = { ...draftContext, chatId: targetChatId };
+        attachedContextRef.current = reboundContext;
+        setAttachedContext(reboundContext);
+      }
       setChatSummaries((currentSummaries) => upsertChatSummary(currentSummaries, created.data));
       setChatHistoryRevision(targetRevision);
       setChatId(targetChatId);
@@ -3637,8 +3651,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     if (!targetChatId) {
       return;
     }
-    const attachedContextAllowed = currentAttachedContext && (currentActiveFileExcerpt || !attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged);
-    const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
+    const sendAttachedContext = attachedContextRef.current;
+    const attachedContextAllowed = sendAttachedContext && (sendAttachedContext.excerpt || !attachedContextRequiresAcknowledgement(sendAttachedContext.payload) || attachedContextAcknowledged);
+    const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && sendAttachedContext.settingsRevision === targetRevision && sendAttachedContext.chatId === targetChatId && projectScopeController.accepts(sendAttachedContext.scopeCorrelation) && hasUsableAttachedContext(sendAttachedContext.payload) ? sendAttachedContext : null;
     const submittedExplicitContextBundle = includeExplicitContextBundle ? explicitContextBundleToChatContext(explicitContextBundleItems) : undefined;
     const context = submittedExplicitContextBundle ?? (submittedAttachedContext?.excerpt ? activeFileExcerptToChatContext(submittedAttachedContext.excerpt) : submittedAttachedContext?.payload);
     setChatLifecycleState("command_submitting");
@@ -4053,8 +4068,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>
                 </div>
               </div>
-              {projectPage === undefined && <div className="composer-tools">
-                <details className="composer-tool-drawer" data-testid="task-agent-tools-drawer">
+              {(projectPage === undefined || hostedWebview) && <div className="composer-tools">
+                {projectPage === undefined && <details className="composer-tool-drawer" data-testid="task-agent-tools-drawer">
                   <summary>
                     <span className="compact-summary-title">Task / Agent tools</span>
                     <span className="badge">Agent Run</span>
@@ -4076,7 +4091,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                     <TaskMemorySuggestionsPanel summary={taskMemorySuggestions} notes={projectMemory.notes} onAttach={attachProjectMemoryNote} />
                     <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId ?? ""} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
                   </div>
-                </details>
+                </details>}
                 <details className="composer-tool-drawer" data-testid="ide-actions-drawer">
                   <summary>
                     <span className="compact-summary-title">IDE actions</span>

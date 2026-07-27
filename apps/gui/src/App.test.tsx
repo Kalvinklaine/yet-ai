@@ -206,6 +206,91 @@ describe("project lifecycle scope", () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat-001"))).toBe(false);
   });
 
+  it("rebinds draft editor context to the first engine chat and clears it after accepted Send", async () => {
+    const postMessage = vi.fn();
+    const localSetItem = vi.spyOn(Storage.prototype, "setItem");
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [], createChatThread: chatThread("chat-created", "Created", []) });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    await flushAsync();
+
+    expect(container?.querySelector("[data-testid='task-agent-tools-drawer']")).toBeNull();
+    expect(container?.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
+    await dispatchHostContextSnapshot({
+      file: { displayPath: "src/draft.ts", workspaceRelativePath: "src/draft.ts", languageId: "typescript" },
+      selection: { startLine: 2, startCharacter: 0, endLine: 2, endCharacter: 20, text: "const draft = true;" },
+    });
+    expect(container?.textContent).toContain("src/draft.ts");
+
+    await act(async () => setTextareaValue(chatInput(), "send draft context"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
+    await flushAsync();
+
+    const commandCall = fetchMock.mock.calls.find(([url, init]) => String(url).includes("/v1/chats/chat-created/commands") && init?.method === "POST");
+    const body = JSON.parse(String(commandCall?.[1]?.body)) as { payload?: { context?: { kind?: string; selection?: { text?: string } } } };
+    expect(body.payload?.context).toMatchObject({ kind: "active_editor", selection: { text: "const draft = true;" } });
+    expect(container?.textContent).not.toContain("Next send: Active editor context");
+    expect(container?.textContent).not.toContain("const draft = true;");
+    expect(localSetItem).not.toHaveBeenCalled();
+    expect(browserStorageDump()).not.toContain("const draft = true;");
+  });
+
+  it("keeps draft active-file context through create failure and attaches it on retry", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    let createCount = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") {
+        createCount += 1;
+        return Promise.resolve(createCount === 1 ? jsonResponse({ error: "create unavailable" }, 503) : jsonResponse(chatThread("chat-draft-retry", "Retry", [])));
+      }
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    await flushAsync();
+    await act(async () => { findButton("Attach active file excerpt").click(); });
+    await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ path: "src/retry.ts", text: "export const retry = true;" }));
+    await act(async () => setTextareaValue(chatInput(), "retry draft excerpt"));
+
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+    expect(container?.textContent).toContain("src/retry.ts");
+    expect(chatInput().value).toBe("retry draft excerpt");
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
+    await flushAsync();
+
+    const commandCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats/chat-draft-retry/commands`) && init?.method === "POST");
+    const body = JSON.parse(String(commandCall?.[1]?.body)) as { payload?: { context?: { kind?: string; selection?: { text?: string } } } };
+    expect(body.payload?.context).toMatchObject({ kind: "active_editor", selection: { text: "export const retry = true;" } });
+  });
+
+  it("drops draft context on project switch and restores legacy chat-001 for immediate Send", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    await flushAsync();
+    await dispatchHostContextSnapshot({ selection: { text: "project A only" } });
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} />));
+    expect(container?.textContent).not.toContain("project A only");
+    await act(async () => root?.render(<App route={{ kind: "legacy" }} />));
+    await flushAsync();
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("chat-001");
+    await act(async () => setTextareaValue(chatInput(), "legacy immediate send"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+
+    const legacyCommand = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST");
+    const body = JSON.parse(String(legacyCommand?.[1]?.body)) as { payload?: { content?: string; context?: unknown } };
+    expect(body.payload).toMatchObject({ content: "legacy immediate send" });
+    expect(body.payload?.context).toBeUndefined();
+  });
+
   it("keeps the first project prompt after create failure and retries once", async () => {
     let createCount = 0;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
