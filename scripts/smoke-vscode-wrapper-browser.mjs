@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
@@ -154,11 +154,12 @@ try {
   await page.addInitScript(() => {
     window.__yetAiVsCodeMessages = [];
     window.__yetAiHostMessages = [];
-    window.acquireVsCodeApi = () => ({
+    const vscodeApi = {
       postMessage(message) {
         window.__yetAiVsCodeMessages.push(message);
       },
-    });
+    };
+    window.acquireVsCodeApi = () => vscodeApi;
   });
 
   await page.goto(`${guiBaseUrl}${devWrapperPath}`, { waitUntil: "domcontentloaded" });
@@ -194,9 +195,7 @@ try {
   if (guiReady?.version !== bridgeVersion || guiReady?.payload?.supportedBridgeVersion !== bridgeVersion) {
     failures.push("VS Code-like acquireVsCodeApi bridge did not collect strict gui.ready.");
   }
-  if (guiReady?.requestId !== undefined) failures.push("VS Code GUI gui.ready unexpectedly minted the host correlation requestId.");
-  const hostedReadyRequestId = createProductionHostRequestId();
-  assertProductionHostRequestId(hostedReadyRequestId, "hosted gui.ready remint");
+  const hostedReadyRequestId = requireProductionHostedReadyRequestId(guiReady, "hosted bootstrap gui.ready");
   await page.waitForTimeout(100);
 
   await dispatchHostMessage(page, {
@@ -231,10 +230,8 @@ try {
   await expectBodyVisibleText(page, "Project chat", "VS Code explicit project chat entry");
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const legacyGuiReady = await waitForGuiMessage(page, "gui.ready");
-  if (legacyGuiReady?.requestId !== undefined) failures.push("VS Code GUI legacy reload unexpectedly minted the host correlation requestId.");
-  const legacyReadyRequestId = createProductionHostRequestId();
-  assertProductionHostRequestId(legacyReadyRequestId, "legacy reload host remint");
-  if (legacyReadyRequestId === hostedReadyRequestId) failures.push("VS Code host correlation model reused the prior generation requestId after reload.");
+  const legacyReadyRequestId = requireProductionHostedReadyRequestId(legacyGuiReady, "legacy reload bootstrap gui.ready");
+  if (legacyReadyRequestId === hostedReadyRequestId) failures.push("VS Code production hosted bootstrap reused the prior generation gui.ready requestId after reload.");
   await dispatchHostMessage(page, { version: bridgeVersion, type: "host.ready", requestId: legacyReadyRequestId, payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false } });
   await dispatchHostMessage(page, workspaceBindingMessage(hostedReadyRequestId));
   await page.waitForTimeout(150);
@@ -1127,14 +1124,12 @@ function workspaceBindingMessage(requestId) {
   };
 }
 
-function createProductionHostRequestId() {
-  return `${Date.now().toString(36)}-${randomBytes(24).toString("base64url")}`;
-}
-
-function assertProductionHostRequestId(requestId, label) {
+function requireProductionHostedReadyRequestId(message, label) {
+  const requestId = message?.requestId;
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(requestId) || /authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(requestId)) {
-    failures.push(`VS Code production host request-id remint was not bounded for ${label}.`);
+    throw new Error(`VS Code production hosted ${label} did not emit a nonempty bounded gui.ready requestId.`);
   }
+  return requestId;
 }
 
 function assertNoChatRuntimeBeforeExplicitStart(label) {
@@ -1407,7 +1402,7 @@ async function startStaticServer(staticRoot) {
       if (hostedEntry) {
         const chunks = [];
         for await (const chunk of createReadStream(realRequestedPath)) chunks.push(chunk);
-        const bootstrapScript = hasDevBootstrap ? "" : '<script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat"};</script>';
+        const bootstrapScript = hasDevBootstrap ? "" : `<script>window.__yetAiInitialRuntimeConfig={entryMode:"hosted_chat"};const vscode=acquireVsCodeApi();const bytes=crypto.getRandomValues(new Uint8Array(24));const suffix=btoa(String.fromCharCode(...bytes)).replace(/\\+/g,"-").replace(/\\//g,"_").replace(/=+$/g,"");const requestId=Date.now().toString(36)+"-"+suffix;window.yetAiBootstrap={bridgeVersion:${scriptJson(bridgeVersion)},requestId};vscode.postMessage({version:${scriptJson(bridgeVersion)},type:"gui.ready",requestId,payload:{supportedBridgeVersion:${scriptJson(bridgeVersion)}}});</script>`;
         const html = Buffer.concat(chunks).toString("utf8").replace("<head>", `<head><base href="/">${bootstrapScript}`);
         response.end(html);
       } else {
