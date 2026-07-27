@@ -211,8 +211,8 @@ describe("project lifecycle scope", () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     window.acquireVsCodeApi = () => ({ postMessage });
     mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [], createChatThread: chatThread("chat-created", "Created", []) });
-    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
-    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    renderHostedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-a");
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
     await flushAsync();
 
     expect(container?.querySelector("[data-testid='task-agent-tools-drawer']")).toBeNull();
@@ -249,8 +249,8 @@ describe("project lifecycle scope", () => {
       return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [] });
     });
     vi.stubGlobal("fetch", fetchMock);
-    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
-    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    renderHostedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-a");
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
     await flushAsync();
     await act(async () => { findButton("Attach active file excerpt").click(); });
     await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ path: "src/retry.ts", text: "export const retry = true;" }));
@@ -272,8 +272,8 @@ describe("project lifecycle scope", () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
-    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
-    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    renderHostedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-a");
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
     await flushAsync();
     await dispatchHostContextSnapshot({ selection: { text: "project A only" } });
 
@@ -295,15 +295,18 @@ describe("project lifecycle scope", () => {
     const postMessage = vi.fn();
     window.acquireVsCodeApi = () => ({ postMessage });
     mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [], createChatThread: chatThread("chat-project-b", "Project B", []) });
-    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
-    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    renderHostedProjectRoute({ kind: "project", projectId: projectA, page: "chat" }, "ready-a");
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
     await flushAsync();
 
-    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} hostedAuthorityKey="test-hosted-authority" />));
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} hostedAuthorityKey="test-hosted-authority" hostReadyGeneration="ready-b" />));
     await dispatchHostContextSnapshot({ selection: { text: "delayed project A context" } });
     expect(container?.textContent).not.toContain("delayed project A context");
 
-    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
+    await dispatchHostContextSnapshot({ selection: { text: "stale ready A context" } });
+    expect(container?.textContent).not.toContain("stale ready A context");
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-b");
     await dispatchHostContextSnapshot({ selection: { text: "fresh project B context" } });
     expect(container?.textContent).toContain("fresh project B context");
     await act(async () => setTextareaValue(chatInput(), "send project B context"));
@@ -328,9 +331,13 @@ describe("project lifecycle scope", () => {
     expect(container.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
     expect(postMessage.mock.calls.filter(([message]) => message.type === "gui.ideActionRequest")).toHaveLength(0);
 
-    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} hostedAuthorityKey="authority-a" />));
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} hostedAuthorityKey="authority-a" hostReadyGeneration="ready-a" />));
+    expect(container.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "wrong-ready");
     expect(container.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
     await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" });
+    expect(container.querySelector("[data-testid='ide-actions-drawer']")).toBeNull();
+    await dispatchHostReady({ runtimeUrl: "http://127.0.0.1:8001" }, "ready-a");
     await flushAsync();
     expect(container.querySelector("[data-testid='ide-actions-drawer']")).not.toBeNull();
     await act(async () => { findButton("Get IDE context").click(); });
@@ -13141,12 +13148,13 @@ function controlledHostCapabilitiesFixture() {
   };
 }
 
-async function dispatchHostReady(payload: { runtimeUrl?: string; runtimeProxyBaseUrl?: string; sessionToken?: string; controlledCapabilities?: Record<string, unknown> }) {
+async function dispatchHostReady(payload: { runtimeUrl?: string; runtimeProxyBaseUrl?: string; sessionToken?: string; controlledCapabilities?: Record<string, unknown> }, requestId?: string) {
   await act(async () => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {
         version: bridgeVersion,
         type: "host.ready",
+        requestId,
         payload: {
           ...payload,
           productId: "yet-ai",
@@ -13399,7 +13407,14 @@ function renderAppRoute(route: Parameters<typeof App>[0]["route"]) {
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
-  act(() => root?.render(<App route={route} hostedAuthorityKey={route?.kind === "project" ? "test-hosted-authority" : undefined} />));
+  act(() => root?.render(<App route={route} />));
+}
+
+function renderHostedProjectRoute(route: Extract<NonNullable<Parameters<typeof App>[0]["route"]>, { kind: "project" }>, hostReadyGeneration: string) {
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  act(() => root?.render(<App route={route} hostedAuthorityKey="test-hosted-authority" hostReadyGeneration={hostReadyGeneration} />));
 }
 
 

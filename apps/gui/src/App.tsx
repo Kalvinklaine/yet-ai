@@ -410,7 +410,7 @@ export function generateApplyRequestSessionNonce(): string {
   return `s${hex}`;
 }
 
-export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter, hostedAuthorityKey }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; navigate?: ProjectNavigation; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter; hostedAuthorityKey?: string }) {
+export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter, hostedAuthorityKey, hostReadyGeneration }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; navigate?: ProjectNavigation; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter; hostedAuthorityKey?: string; hostReadyGeneration?: string | null }) {
   const projectId = route.kind === "project" ? route.projectId : undefined;
   const projectPage = route.kind === "project" ? route.page : undefined;
   const showChatPage = projectPage === undefined || projectPage === "chat";
@@ -507,9 +507,16 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const runtimeRefreshInFlightRef = useRef(false);
   const runtimeRefreshQueuedRef = useRef(false);
   const hostReadyAppliedRef = useRef(isSameOriginProxyBaseUrl(initialRuntimeSettings.baseUrl));
-  const hostedAuthorityKeyRef = useRef(hostedAuthorityKey);
-  const projectHostAuthorityReadyRef = useRef(Boolean(projectId && hostedAuthorityKey));
-  const [projectHostAuthorityReady, setProjectHostAuthorityReady] = useState(Boolean(projectId && hostedAuthorityKey));
+  const projectHostAuthorityPropsRef = useRef({ projectId, hostedAuthorityKey, hostReadyGeneration });
+  projectHostAuthorityPropsRef.current = { projectId, hostedAuthorityKey, hostReadyGeneration };
+  const projectHostAuthorityIdentityRef = useRef({ projectId, hostedAuthorityKey, hostReadyGeneration });
+  const projectHostAuthorityAcceptedRef = useRef<{ projectId: string; hostedAuthorityKey: string; hostReadyGeneration: string } | null>(null);
+  const [projectHostAuthorityReady, setProjectHostAuthorityReady] = useState(false);
+  const hasCurrentProjectHostAuthority = () => {
+    const current = projectHostAuthorityPropsRef.current;
+    const accepted = projectHostAuthorityAcceptedRef.current;
+    return Boolean(current.projectId && current.hostedAuthorityKey && current.hostReadyGeneration && accepted?.projectId === current.projectId && accepted.hostedAuthorityKey === current.hostedAuthorityKey && accepted.hostReadyGeneration === current.hostReadyGeneration);
+  };
   const preHostRuntimeRefreshRequestedAtRef = useRef<number | null>(null);
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
@@ -1377,7 +1384,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       project_errors: () => { setChatError(null); setProjectMemoryStatus(null); setWorkspaceSnippetStatus(null); setApplyNote(null); setIdeActionNote(null); },
     };
     if (projectScopeController.transition(projectId, resetters)) {
-      projectHostAuthorityReadyRef.current = false;
+      projectHostAuthorityAcceptedRef.current = null;
       setProjectHostAuthorityReady(false);
       settingsRevisionRef.current += 1;
       setSettingsRevision(settingsRevisionRef.current);
@@ -1386,17 +1393,20 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [abortActiveStream, clearControlledCommandRunState, clearControlledEditState, clearControlledFileReadState, clearControlledMultifileApplyState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, projectId, projectScopeController]);
 
   useEffect(() => {
-    if (hostedAuthorityKeyRef.current === hostedAuthorityKey) {
+    const previous = projectHostAuthorityIdentityRef.current;
+    if (previous.projectId === projectId && previous.hostedAuthorityKey === hostedAuthorityKey && previous.hostReadyGeneration === hostReadyGeneration) {
       return;
     }
-    hostedAuthorityKeyRef.current = hostedAuthorityKey;
-    projectHostAuthorityReadyRef.current = false;
+    projectHostAuthorityIdentityRef.current = { projectId, hostedAuthorityKey, hostReadyGeneration };
+    projectHostAuthorityAcceptedRef.current = null;
     setProjectHostAuthorityReady(false);
     setAttachedContext(null);
     setIncludeAttachedContext(false);
     setAttachedContextAcknowledged(false);
     setAttachedContextStatus(null);
-  }, [hostedAuthorityKey]);
+    clearIdeActionState();
+    setCompactConversationsOpen(false);
+  }, [clearIdeActionState, hostReadyGeneration, hostedAuthorityKey, projectId]);
 
   useEffect(() => () => projectScopeController.dispose(), [projectScopeController]);
 
@@ -1432,7 +1442,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     updateRuntimeSettings({ ...settingsRef.current, token: nextToken, runtimeAccess: "direct" });
   }, [updateRuntimeSettings]);
 
-  const applyHostReady = useCallback((payload: HostReadyPayload | undefined) => {
+  const applyHostReady = useCallback((payload: HostReadyPayload | undefined, requestId?: string) => {
     const resolvedSettings = resolveHostReadyRuntimeSettings(settingsRef.current, payload);
     if (!payload || !resolvedSettings) return;
     const readyPayload = payload;
@@ -1442,8 +1452,15 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     const wasHostReadyApplied = hostReadyAppliedRef.current;
     hostReadyAppliedRef.current = true;
     if (projectId) {
-      projectHostAuthorityReadyRef.current = true;
-      setProjectHostAuthorityReady(true);
+      const authority = projectHostAuthorityPropsRef.current;
+      if (authority.projectId === projectId && authority.hostedAuthorityKey && authority.hostReadyGeneration && requestId === authority.hostReadyGeneration) {
+        projectHostAuthorityAcceptedRef.current = {
+          projectId,
+          hostedAuthorityKey: authority.hostedAuthorityKey,
+          hostReadyGeneration: authority.hostReadyGeneration,
+        };
+        setProjectHostAuthorityReady(true);
+      }
     }
     preHostRuntimeRefreshRequestedAtRef.current = null;
     setRuntimeConnectionSource("host.ready");
@@ -1475,7 +1492,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setBridgeHost(adapter.host);
     const unsubscribe = adapter.subscribe((message) => {
       if (message.type === "host.ready") {
-        applyHostReady(message.payload as HostReadyPayload | undefined);
+        applyHostReady(message.payload as HostReadyPayload | undefined, message.requestId);
       } else if (message.type === "host.runtimeStatus") {
         const payload = message.payload as HostRuntimeStatusPayload;
         const revision = settingsRevisionRef.current;
@@ -1776,7 +1793,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
         const currentChatId = chatIdRef.current;
-        if (projectId && !projectHostAuthorityReadyRef.current) return;
+        if (projectId && !hasCurrentProjectHostAuthority()) return;
         if (!currentChatId && !projectId) return;
         setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: currentChatId });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext) && !attachedContextRequiresAcknowledgement(nextContext));
@@ -3200,7 +3217,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [addTimeline, appendTrace, controlledAgentEditRequest, controlledAgentPatchPlanPreview, controlledPatchPlanConfirmed, pendingControlledEditRequestId]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
-    if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || (projectId && !projectHostAuthorityReadyRef.current) || pendingIdeActionRequestIdRef.current) {
+    if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || (projectId && !hasCurrentProjectHostAuthority()) || pendingIdeActionRequestIdRef.current) {
       return;
     }
     ideActionCounterRef.current += 1;
@@ -3870,7 +3887,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   );
 
   const hostedWebview = bridgeHost === "vscode" || bridgeHost === "jetbrains";
-  const ideActionsAuthorized = hostedWebview && (!projectId || projectHostAuthorityReady);
+  const acceptedProjectAuthority = projectHostAuthorityAcceptedRef.current;
+  const projectHostAuthorityCurrent = Boolean(projectHostAuthorityReady && projectId && hostedAuthorityKey && hostReadyGeneration && acceptedProjectAuthority?.projectId === projectId && acceptedProjectAuthority.hostedAuthorityKey === hostedAuthorityKey && acceptedProjectAuthority.hostReadyGeneration === hostReadyGeneration);
+  const ideActionsAuthorized = hostedWebview && (!projectId || projectHostAuthorityCurrent);
   const hostCapabilityEvaluation = useMemo(() => evaluateHostCapabilityMetadata(bridgeHost), [bridgeHost]);
   const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, controlledHostCapabilityDisplayHost(controlledHostCapabilities, bridgeHost)), [bridgeHost, controlledHostCapabilities]);
   const setupNeedsAttention = !canSendChat || Boolean(activeConnectionError || activeModelError || providerError || activeProviderAuthError);

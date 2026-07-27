@@ -6,11 +6,13 @@ import { navigateProjectRoute } from "./services/projectRouting";
 import type { RuntimeSettings } from "./services/runtimeClient";
 
 const appRenderCalls = vi.hoisted(() => [] as string[]);
+const appAuthorityCalls = vi.hoisted(() => [] as Array<{ hostedAuthorityKey?: string; hostReadyGeneration?: string | null }>);
 const deferredHostedOpen = vi.hoisted(() => ({ run: null as null | (() => boolean) }));
 vi.mock("./App", () => ({
-  App: ({ route }: { route: { kind: string; page?: string; chatId?: string } }) => {
+  App: ({ route, hostedAuthorityKey, hostReadyGeneration }: { route: { kind: string; page?: string; chatId?: string }; hostedAuthorityKey?: string; hostReadyGeneration?: string | null }) => {
     const label = [route.kind, route.page, route.chatId].filter(Boolean).join(":");
     appRenderCalls.push(label);
+    appAuthorityCalls.push({ hostedAuthorityKey, hostReadyGeneration });
     return <div data-testid="app-route">{label}</div>;
   },
 }));
@@ -81,6 +83,7 @@ afterEach(() => {
   document.body.innerHTML = "";
   hubSettings = undefined;
   appRenderCalls.length = 0;
+  appAuthorityCalls.length = 0;
   deferredHostedOpen.run = null;
   delete window.__yetAiInitialRuntimeConfig;
 });
@@ -154,6 +157,9 @@ describe("ProjectRouterShell", () => {
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
 
     await openHostedChat(container);
+    const currentAuthority = appAuthorityCalls[appAuthorityCalls.length - 1];
+    expect(currentAuthority).toMatchObject({ hostReadyGeneration: "ready-1" });
+    expect(currentAuthority?.hostedAuthorityKey).toBeTruthy();
   });
 
   it("returns an open hosted chat to the dashboard for a new accepted ready generation", async () => {

@@ -65,7 +65,7 @@ export function ProjectRouterShell() {
 
   if (hostedChatEntry) {
     if (authorizedHostedRoute) {
-      return <App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostedAuthorityKey={openedHostedRoute?.authorityToken} />;
+      return <App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostedAuthorityKey={openedHostedRoute?.authorityToken} hostReadyGeneration={hostReadyGeneration} />;
     }
     return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} hostReadyGeneration={hostReadyGeneration} getAuthorityToken={getHostedAuthorityToken} onOpen={openHostedRoute} />;
   }
