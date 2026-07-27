@@ -409,7 +409,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const showMemoryPage = projectPage === "memory";
   const showAgentPage = projectPage === "agent";
   const routedChatId = route.kind === "project" && route.page === "chat" ? route.chatId : undefined;
-  const initialChatId = routedChatId ?? "chat-001";
+  const initialChatId = routedChatId ?? (projectId ? null : "chat-001");
+  const initialChatViewId = initialChatId ?? "";
   const projectScopeControllerRef = useRef<ProjectScopeController>();
   if (!projectScopeControllerRef.current) {
     projectScopeControllerRef.current = new ProjectScopeController(projectId);
@@ -441,7 +442,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [chatError, setChatError] = useState<RuntimeError | null>(null);
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>();
-  const [chatId, setChatId] = useState(initialChatId);
+  const [chatId, setChatId] = useState<string | null>(initialChatId);
   const [chatSummaries, setChatSummaries] = useState<ChatSummary[]>([]);
   const [chatHistoryError, setChatHistoryError] = useState<RuntimeError | null>(null);
   const [chatHistoryRevision, setChatHistoryRevision] = useState<number | null>(null);
@@ -457,7 +458,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [modelProposalDraft, setModelProposalDraft] = useState<ModelProposalDraftState | null>(null);
   const [submittedModelProposalPrompt, setSubmittedModelProposalPrompt] = useState<SubmittedModelProposalPrompt | null>(null);
   const [adoptedProviderProposalState, setAdoptedProviderProposalState] = useState<AgentRunModelProviderProposalState | undefined>(undefined);
-  const [chatView, setChatView] = useState(() => createInitialChatViewState(initialChatId));
+  const [chatView, setChatView] = useState(() => createInitialChatViewState(initialChatViewId));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const [timeline, setTimeline] = useState<string[]>([]);
   const [codingSessionTrace, setCodingSessionTrace] = useState<CodingSessionTraceEntry[]>([]);
@@ -502,7 +503,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
   const settingsRef = useRef<ChatRuntimeSettings>(projectId ? createProjectRuntimeSettings(initialRuntimeSettings, projectId, projectScopeController.current()) : initialRuntimeSettings);
-  const chatIdRef = useRef(initialChatId);
+  const chatIdRef = useRef<string | null>(initialChatId);
+  const firstProjectChatCreateRef = useRef<{ token: symbol; revision: number; correlation: ProjectScopeCorrelation } | null>(null);
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
   const providerAuthExchangeInFlightRef = useRef(false);
@@ -692,7 +694,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const chatModelStatus = apiKeyReadiness.model ? modelStatusText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const chatReadinessEvidence = apiKeyReadiness.model ? modelReadinessEvidenceText(apiKeyReadiness.model, apiKeyReadiness.provider) : null;
   const providerAuthPendingState = useMemo(() => parseProviderAuthState(activeProviderAuthStatus), [activeProviderAuthStatus]);
-  const currentAttachedContextState = attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext : null;
+  const currentAttachedContextState = chatId && attachedContext?.settingsRevision === settingsRevision && attachedContext.chatId === chatId ? attachedContext : null;
   const currentAttachedContext = currentAttachedContextState?.payload ?? null;
   const currentActiveFileExcerpt = currentAttachedContextState?.excerpt ?? null;
   const codingActionsCanUseContext = Boolean(currentAttachedContext && !currentActiveFileExcerpt && hasUsableAttachedContext(currentAttachedContext) && (!attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged));
@@ -717,14 +719,14 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const verificationAttempt = ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null;
   const latestModelProposalAssistant = useMemo(() => submittedModelProposalPrompt ? latestAssistantMessageAfterPrompt(chatView.messages, submittedModelProposalPrompt.prompt) : undefined, [chatView.messages, submittedModelProposalPrompt]);
   const agentRunModelProposal = useMemo<AgentRunModelProposalResult>(() => evaluateAgentRunModelProposal({
-    chatId,
+    chatId: chatId ?? "",
     goal: codingTaskGoal,
     submittedPromptRequestId: submittedModelProposalPrompt?.commandRequestId,
     latestUserMessageId: submittedModelProposalPrompt?.userMessageId,
     runtimeSettingsVersion: submittedModelProposalPrompt?.runtimeSettingsVersion,
     latestAssistantMessage: latestModelProposalAssistant && submittedModelProposalPrompt ? {
       id: latestModelProposalAssistant.id,
-      chatId,
+      chatId: chatId ?? undefined,
       role: latestModelProposalAssistant.role,
       status: latestModelProposalAssistant.status,
       content: latestModelProposalAssistant.content,
@@ -1335,9 +1337,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       },
       active_chat: () => {
         abortActiveStream("SSE stopped for previous project", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
+        firstProjectChatCreateRef.current = null;
         chatHistoryAttemptRef.current += 1;
-        const nextChatId = route.kind === "project" && route.page === "chat" && route.chatId ? route.chatId : "chat-001";
-        setChatId(nextChatId); setChatView(resetChatViewState(nextChatId)); setChatSummaries([]); setChatHistoryRevision(null);
+        const nextChatId = route.kind === "project" && route.page === "chat" && route.chatId ? route.chatId : null;
+        setChatId(nextChatId); setChatView(resetChatViewState(nextChatId ?? "")); setChatSummaries([]); setChatHistoryRevision(null);
         setChatHistoryError(null); setChatHistoryLoading(false); setMissingRoutedChatId(null); setDeletingChatId(null); setConversationNotice(null); setChatInput(""); setTimeline([]); setChatLifecycleState("idle");
       },
       active_editor_context: () => {
@@ -1742,7 +1745,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         setControlledCommandRunNote(correlation.diagnostics[0]?.message ?? "Controlled verification result was blocked.");
       } else if (message.type === "host.contextSnapshot") {
         const nextContext = message.payload as HostContextSnapshotPayload;
-        setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current });
+        const currentChatId = chatIdRef.current;
+        if (!currentChatId) return;
+        setAttachedContext({ payload: nextContext, settingsRevision: settingsRevisionRef.current, chatId: currentChatId });
         setIncludeAttachedContext(hasUsableAttachedContext(nextContext) && !attachedContextRequiresAcknowledgement(nextContext));
         setAttachedContextAcknowledged(false);
         setAttachedContextStatus(null);
@@ -1769,7 +1774,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
             setApplyNote(correlation.diagnostics[0]?.message ?? "Agent Run apply result was blocked.");
             return;
           }
-          rememberCompletedApplyRequest(completedApplyRequestChatsRef.current, requestId, chatIdRef.current);
+          rememberCompletedApplyRequest(completedApplyRequestChatsRef.current, requestId, chatIdRef.current ?? "");
           pendingApplyRequestIdRef.current = null;
           pendingApplyProposalRequestIdRef.current = null;
           agentRunApplyCorrelationRef.current = null;
@@ -1781,7 +1786,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           return;
         }
         const proposalRequestId = pendingApplyProposalRequestIdRef.current;
-        rememberCompletedApplyRequest(completedApplyRequestChatsRef.current, requestId, chatIdRef.current);
+        rememberCompletedApplyRequest(completedApplyRequestChatsRef.current, requestId, chatIdRef.current ?? "");
         pendingApplyRequestIdRef.current = null;
         pendingApplyProposalRequestIdRef.current = null;
         setPendingApplyRequestId(null);
@@ -1833,7 +1838,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           return;
         }
         const payload = message.payload as IdeActionResultPayload;
-        rememberCompletedIdeActionRequest(completedIdeActionRequestChatsRef.current, requestId, chatIdRef.current);
+        rememberCompletedIdeActionRequest(completedIdeActionRequestChatsRef.current, requestId, chatIdRef.current ?? "");
         appendTrace({ family: payload.action === "runVerificationCommand" ? "verification.result" : payload.action === "getActiveFileExcerpt" ? "context.activeExcerpt" : payload.action === "searchWorkspaceSnippets" ? "context.snippets" : "ide.result", title: payload.action === "runVerificationCommand" ? "Verification result received" : "IDE action result received", status: payload.status, summary: payload.message, requestId, details: { action: payload.action, commandId: payload.commandId, exitCode: payload.exitCode, workspaceRelativePath: payload.workspaceRelativePath, resultCount: payload.resultCount } });
         const agentRunCorrelation = agentRunVerificationCorrelationRef.current;
         if (payload.action === "runVerificationCommand" && agentRunCorrelation && agentRunVerificationChatIdRef.current === chatIdRef.current) {
@@ -1856,6 +1861,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         setIdeActionNote(null);
         if (payload.status === "succeeded" && payload.action === "getActiveFileExcerpt" && payload.contextAttachment) {
           const attachment = payload.contextAttachment;
+          if (!chatIdRef.current) return;
           setAttachedContext({ payload: activeFileExcerptToChatContext(attachment), settingsRevision: settingsRevisionRef.current, chatId: chatIdRef.current, excerpt: attachment });
           setIncludeAttachedContext(true);
           setAttachedContextAcknowledged(false);
@@ -2161,12 +2167,12 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       setMissingRoutedChatId(routedChatPresent ? null : routedChatId);
       const resolution = routedChatId
         ? { nextChatId: routedChatId, shouldResetView: chatIdRef.current !== routedChatId, reason: "current_present" as const }
-        : resolveChatAfterList({ currentChatId: chatIdRef.current, summaries, defaultChatId: "chat-001" });
+        : resolveChatAfterList({ currentChatId: chatIdRef.current, summaries, defaultChatId: projectId ? null : "chat-001" });
       if (!routedChatPresent) {
         setConversationNotice(`Chat ${sanitizeDisplayText(routedChatId ?? "")} was not found in this project. The routed chat id remains selected.`);
       } else if (resolution.reason === "first_summary") {
-        setConversationNotice(`Selected ${sanitizeDisplayText(summaries[0]?.title || resolution.nextChatId)} because the previous chat is not in this local runtime list.`);
-      } else if (resolution.reason === "default_chat") {
+        setConversationNotice(`Selected ${sanitizeDisplayText(summaries[0]?.title || resolution.nextChatId || "")} because the previous chat is not in this local runtime list.`);
+      } else if (resolution.reason === "default_chat" || resolution.reason === "draft") {
         setConversationNotice("No saved conversations are available; showing a fresh local chat.");
       } else {
         setConversationNotice(null);
@@ -2175,7 +2181,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         clearEditProposalState();
         clearIdeActionState();
         setChatInput("");
-        setChatView(resetChatViewState(resolution.nextChatId));
+        setChatView(resetChatViewState(resolution.nextChatId ?? ""));
         setChatId(resolution.nextChatId);
       }
     } else {
@@ -2184,7 +2190,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       setChatHistoryRevision(revision);
     }
     setChatHistoryLoading(false);
-  }, [clearEditProposalState, clearIdeActionState, isCurrentRefresh, routedChatId]);
+  }, [clearEditProposalState, clearIdeActionState, isCurrentRefresh, projectId, routedChatId]);
 
   const loadChatThread = useCallback(async (targetChatId: string, targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = chatHistoryAttemptRef.current + 1;
@@ -2336,15 +2342,15 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       return;
     }
     if (result.ok) {
-      const fallback = resolveFallbackChatAfterDelete({ summariesBeforeDelete: chatSummaries, deletedChatId: targetChatId, activeChatId: chatIdRef.current, defaultChatId: "chat-001" });
+      const fallback = resolveFallbackChatAfterDelete({ summariesBeforeDelete: chatSummaries, deletedChatId: targetChatId, activeChatId: chatIdRef.current, defaultChatId: projectId ? null : "chat-001" });
       setChatSummaries(fallback.remainingSummaries);
       setChatHistoryRevision(targetRevision);
       if (fallback.deletedCurrent) {
         const fallbackSummary = fallback.remainingSummaries.find((summary) => summary.chatId === fallback.nextChatId);
-        setConversationNotice(fallbackSummary ? `Deleted ${targetTitle}. Selected ${sanitizeDisplayText(fallbackSummary.title || fallback.nextChatId)}.` : `Deleted ${targetTitle}. No saved conversations remain; showing a fresh local chat.`);
+        setConversationNotice(fallbackSummary ? `Deleted ${targetTitle}. Selected ${sanitizeDisplayText(fallbackSummary.title || fallback.nextChatId || "")}.` : `Deleted ${targetTitle}. No saved conversations remain; showing a fresh local chat.`);
         setChatId(fallback.nextChatId);
-        if (projectId) navigate?.({ kind: "project", projectId, page: "chat", ...(fallback.remainingSummaries.length > 0 ? { chatId: fallback.nextChatId } : {}) });
-        setChatView(resetChatViewState(fallback.nextChatId));
+        if (projectId) navigate?.({ kind: "project", projectId, page: "chat", ...(fallback.nextChatId ? { chatId: fallback.nextChatId } : {}) });
+        setChatView(resetChatViewState(fallback.nextChatId ?? ""));
         setChatInput("");
         setTimeline([]);
         setAttachedContext(null);
@@ -2706,9 +2712,12 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   };
 
   useEffect(() => {
+    if (firstProjectChatCreateRef.current && chatId) {
+      return;
+    }
     abortActiveStream("SSE stopped and abort requested for previous chat");
     setChatError(null);
-    setChatView(resetChatViewState(chatId));
+    setChatView(resetChatViewState(chatId ?? ""));
     setTimeline([]);
     setAttachedContext(null);
     setIncludeAttachedContext(false);
@@ -2717,7 +2726,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     clearEditProposalState();
     clearModelProposalState();
     clearIdeActionState();
-    if (activeChatSummary || routedChatId === chatId && missingRoutedChatId !== routedChatId) {
+    if (chatId && (activeChatSummary || routedChatId === chatId && missingRoutedChatId !== routedChatId)) {
       void loadChatThread(chatId);
     }
   }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, clearModelProposalState, loadChatThread, missingRoutedChatId, routedChatId]);
@@ -2735,7 +2744,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [chatView.messages, activeEditProposal, activeIdeActionProposal, applyResult, applyNote, ideActionNote]);
 
   const startSse = useCallback((targetChatId = chatId) => {
-    if (activeStreamRef.current) {
+    if (!targetChatId || activeStreamRef.current) {
       return;
     }
     const controller = new AbortController();
@@ -3421,7 +3430,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [appendTrace, chatView.messages, clearEditProposalState]);
 
   const applyCodingAction = (action: CodingAction) => {
-    if (!currentAttachedContext || !codingActionsCanUseContext) {
+    if (!currentAttachedContext || !codingActionsCanUseContext || !chatIdRef.current) {
       chatInputRef.current?.focus();
       return;
     }
@@ -3432,7 +3441,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   };
 
   const applyActiveFilePrompt = (action: ActiveFilePromptAction) => {
-    if (!currentActiveFileExcerpt || !currentAttachedContext) {
+    if (!currentActiveFileExcerpt || !currentAttachedContext || !chatIdRef.current) {
       chatInputRef.current?.focus();
       return;
     }
@@ -3566,13 +3575,13 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const content = chatInput.trim();
-    if (!content) {
+    if (!content || firstProjectChatCreateRef.current) {
       return;
     }
 
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
-    const targetChatId = chatIdRef.current;
+    let targetChatId = chatIdRef.current;
     setChatError(null);
     if (!canSendChat) {
       const runtimeError: RuntimeError = {
@@ -3585,6 +3594,49 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       addTimeline("Command blocked until current runtime settings are ready");
       return;
     }
+    let firstProjectChatToken: symbol | null = null;
+    if (!targetChatId && projectId) {
+      const token = Symbol("first-project-chat");
+      const correlation = createProjectScopeCorrelation(projectScopeController.current());
+      firstProjectChatToken = token;
+      firstProjectChatCreateRef.current = { token, revision: targetRevision, correlation };
+      setChatLifecycleState("command_submitting");
+      setChatHistoryLoading(true);
+      setChatHistoryError(null);
+      const created = await createChat(targetSettings);
+      const pendingCreate = firstProjectChatCreateRef.current;
+      const current = pendingCreate?.token === token
+        && pendingCreate.revision === settingsRevisionRef.current
+        && isCurrentRefresh(targetRevision)
+        && projectScopeController.accepts(correlation)
+        && chatIdRef.current === null;
+      if (!current) {
+        if (pendingCreate?.token === token) firstProjectChatCreateRef.current = null;
+        return;
+      }
+      setChatHistoryLoading(false);
+      if (!created.ok || !created.data.chatId?.trim()) {
+        firstProjectChatCreateRef.current = null;
+        const error = created.ok ? { status: "protocol", message: "The local runtime created a chat without a usable chat id." } satisfies RuntimeError : created.error;
+        setChatHistoryError(error);
+        setChatHistoryRevision(targetRevision);
+        setChatError(error);
+        setChatLifecycleState("failed");
+        addTimeline(`Chat create error: ${sanitizeDisplayText(error.message)}`);
+        return;
+      }
+      targetChatId = created.data.chatId;
+      chatIdRef.current = targetChatId;
+      setChatSummaries((currentSummaries) => upsertChatSummary(currentSummaries, created.data));
+      setChatHistoryRevision(targetRevision);
+      setChatId(targetChatId);
+      setChatView(hydrateChatViewFromThread(resetChatViewState(targetChatId), created.data));
+      setConversationNotice(`Created and selected ${sanitizeDisplayText(created.data.title || targetChatId)}.`);
+      navigate?.({ kind: "project", projectId, page: "chat", chatId: targetChatId });
+    }
+    if (!targetChatId) {
+      return;
+    }
     const attachedContextAllowed = currentAttachedContext && (currentActiveFileExcerpt || !attachedContextRequiresAcknowledgement(currentAttachedContext) || attachedContextAcknowledged);
     const submittedAttachedContext = includeAttachedContext && attachedContextAllowed && attachedContextRef.current?.settingsRevision === targetRevision && attachedContextRef.current.chatId === targetChatId && currentAttachedContext && hasUsableAttachedContext(currentAttachedContext) ? attachedContextRef.current : null;
     const submittedExplicitContextBundle = includeExplicitContextBundle ? explicitContextBundleToChatContext(explicitContextBundleItems) : undefined;
@@ -3594,13 +3646,15 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     appendTrace({ family: "chat.sendAccepted", title: "Send requested", status: "pending", summary: "User message submitted from the GUI.", details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
     const optimisticUserMessageId = `${targetChatId}-optimistic-user-${optimisticUserMessageCounterRef.current}`;
     setChatView((current) => addAcceptedUserMessage(current, content, optimisticUserMessageId));
-    setChatInput("");
     const result = await sendUserMessage(targetSettings, targetChatId, content, context);
     if (!isCurrentRefresh(targetRevision) || chatIdRef.current !== targetChatId) {
+      if (firstProjectChatCreateRef.current?.token === firstProjectChatToken) firstProjectChatCreateRef.current = null;
       setChatView((current) => removeOptimisticUserMessage(current, optimisticUserMessageId));
       return;
     }
     if (result.ok) {
+      if (firstProjectChatCreateRef.current?.token === firstProjectChatToken) firstProjectChatCreateRef.current = null;
+      setChatInput("");
       addTimeline(`Command accepted ${result.data.requestId}`);
       appendTrace({ family: "chat.sendAccepted", title: "Send accepted", status: "succeeded", summary: "Runtime accepted user message command.", requestId: result.data.requestId, details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
       if (modelProposalDraft?.prompt === content) {
@@ -3615,6 +3669,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       startSse(targetChatId);
       setChatLifecycleState((current) => current === "command_submitting" || current === "sse_connecting" ? "command_accepted" : current);
     } else {
+      if (firstProjectChatCreateRef.current?.token === firstProjectChatToken) firstProjectChatCreateRef.current = null;
       setChatError(result.error);
       setChatLifecycleState("failed");
       setChatInput(content);
@@ -3739,7 +3794,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         : "Connect the local runtime before sending."
     : chatLifecycleLabels[chatLifecycleState];
   const tracePanelEntries = codingSessionTraceWithCheckpointDecision.slice(-12);
-  const currentChatTitle = sanitizeDisplayText(activeChatSummary?.title ?? chatId);
+  const currentChatTitle = sanitizeDisplayText(activeChatSummary?.title ?? chatId ?? "New chat draft");
   const renderConversationList = (deleteHelpId: string) => (
     <div className="conversation-list" role="list" aria-label="Local conversations list">
       {activeChatSummaries.length === 0 ? (
@@ -3827,7 +3882,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
 
       {projectPage && <section className="readiness-card ready" role="status" data-testid={`project-${projectPage}-boundary`}><strong>Project {projectPage}</strong><span>All {projectPage} data below is bound to the current route project.</span></section>}
 
-      {showMemoryPage && <section className="card stack" aria-label="Project memory page"><ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} /></section>}
+      {showMemoryPage && <section className="card stack" aria-label="Project memory page"><ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId ?? ""} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} /></section>}
 
       {showChatPage && <div>
       {projectPage === undefined && <nav className="workbench-surface-toolbar" aria-label="Chat workbench surfaces">
@@ -3956,14 +4011,14 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                 <span className="subtle">{activeChatIndex >= 0 ? `Conversation ${activeChatIndex + 1} of ${activeChatSummaries.length} · ` : ""}{chatView.messages.length} visible message{chatView.messages.length === 1 ? "" : "s"} · {chatView.subscriptionReady ? "snapshot loaded" : activeChatSummary ? `${activeChatSummary.messageCount} persisted message${activeChatSummary.messageCount === 1 ? "" : "s"}` : "fresh local chat"}</span>
               </div>
               <button type="button" onClick={() => void createNewChat()} disabled={routedChatMissing}>{chatHistoryLoading ? "Loading…" : "New"}</button>
-              <span className="badge chat-id-badge">{sanitizeDisplayText(chatId)}</span>
+              <span className="badge chat-id-badge">{sanitizeDisplayText(chatId ?? "draft")}</span>
             </div>
             {!routedChatMissing && <details className="debug-details" data-testid="chat-advanced-controls">
               <summary>Advanced chat controls</summary>
               <div className="form-grid">
                 <label>
                   Chat id
-                  <input value={chatId} onChange={updateDirectChatId} />
+                  <input value={chatId ?? ""} onChange={updateDirectChatId} />
                 </label>
               </div>
             </details>}
@@ -4019,7 +4074,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                     <CodingTaskSessionPanel session={codingTaskSession} goal={codingTaskGoal} contextItems={explicitContextBundleItems} memoryAttachedCount={attachedProjectMemoryCount} modelStatus={chatReadinessLabel} canSendChat={canSendChat} latestResponseStatus={chatLifecycleLabel} editProposal={activeEditProposal} applyResult={applyResult} verificationAttempt={verificationAttempt} verificationAttached={Boolean(attachedVerificationKey)} draftPrompt={codingTaskPromptDraft} contextBudgetSummary={contextBudgetSummary} modelProposalDraft={modelProposalDraft} modelProposalResult={agentRunModelProposal} onGoalChange={setCodingTaskGoal} onUseDraftPrompt={useCodingTaskDraftPrompt} onUseDraftPlan={useCodingTaskDraftPlan} onDraftOneStepModelProposal={draftOneStepModelProposalPrompt} onFocusPrompt={focusCodingTaskPrompt} />
                     <ManualRunnerPanel host={bridgeHost} draftPlan={manualRunnerDraftPlan} planProposal={latestPlanProposal} hasContext={Boolean((currentAttachedContext && hasUsableAttachedContext(currentAttachedContext)) || explicitContextBundleItems.length > 0)} hasPrompt={Boolean(chatInput.trim())} hasAssistantActivity={chatView.messages.some((message) => message.role === "assistant") || chatLifecycleState !== "idle"} hasEditProposal={Boolean(activeEditProposal)} applyResult={applyResult} verificationAttempt={ideActionAttempt?.action === "runVerificationCommand" ? ideActionAttempt : null} verificationAttached={Boolean(attachedVerificationKey)} canSendChat={canSendChat} onDraftPlanChange={setManualRunnerDraftPlan} onFocusPrompt={() => chatInputRef.current?.focus()} />
                     <TaskMemorySuggestionsPanel summary={taskMemorySuggestions} notes={projectMemory.notes} onAttach={attachProjectMemoryNote} />
-                    <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
+                    <ProjectMemoryPanel notes={projectMemory.notes} state={projectMemory.state} error={projectMemory.error} title={projectMemoryTitle} text={projectMemoryText} tags={projectMemoryTags} query={projectMemoryQuery} status={projectMemoryStatus} attachedCount={attachedProjectMemoryCount} attachedNoteIds={attachedProjectMemoryNoteIds} canAddToBundle={explicitContextBundleItems.length < explicitContextBundleMaxItems} taskGoal={codingTaskGoal} chatId={chatId ?? ""} onTitleChange={setProjectMemoryTitle} onTextChange={setProjectMemoryText} onTagsChange={setProjectMemoryTags} onQueryChange={setProjectMemoryQuery} onCreate={() => void createProjectMemoryNote()} onSearch={() => void searchProjectMemoryNotes()} onRefresh={() => void refreshProjectMemory()} onAttach={attachProjectMemoryNote} onDetach={detachProjectMemoryNote} onDelete={(note) => void deleteProjectMemoryNote(note)} />
                   </div>
                 </details>
                 <details className="composer-tool-drawer" data-testid="ide-actions-drawer">

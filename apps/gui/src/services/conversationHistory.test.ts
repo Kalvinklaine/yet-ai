@@ -37,6 +37,14 @@ describe("conversationHistory", () => {
     });
   });
 
+  it("returns a nullable draft when a project runtime returns no summaries", () => {
+    expect(resolveChatAfterList({ currentChatId: null, summaries: [], defaultChatId: null })).toEqual({
+      nextChatId: null,
+      shouldResetView: false,
+      reason: "draft",
+    });
+  });
+
   it("removes a non-current deleted chat without resetting the active view", () => {
     expect(resolveFallbackChatAfterDelete({
       summariesBeforeDelete: [summary("chat-a"), summary("chat-b"), summary("chat-c")],
@@ -74,6 +82,20 @@ describe("conversationHistory", () => {
     })).toEqual({
       remainingSummaries: [],
       nextChatId: "chat-001",
+      deletedCurrent: true,
+      shouldResetView: true,
+    });
+  });
+
+  it("returns to a nullable draft after deleting the only project chat", () => {
+    expect(resolveFallbackChatAfterDelete({
+      summariesBeforeDelete: [summary("chat-only")],
+      deletedChatId: "chat-only",
+      activeChatId: "chat-only",
+      defaultChatId: null,
+    })).toEqual({
+      remainingSummaries: [],
+      nextChatId: null,
       deletedCurrent: true,
       shouldResetView: true,
     });

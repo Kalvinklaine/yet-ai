@@ -155,6 +155,143 @@ describe("project lifecycle scope", () => {
   const projectA = "prj_AAAAAAAAAAAAAAAAAAAAAA" as never;
   const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBQ" as never;
 
+  it("keeps an empty project in draft without synthetic chat requests", async () => {
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("draft");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat-001"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/v1/chats/subscribe"))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/commands") && init?.method === "POST")).toBe(false);
+  });
+
+  it("creates one engine-owned chat before the first project command and stream", async () => {
+    const navigate = vi.fn();
+    const calls: string[] = [];
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") {
+        calls.push("create");
+        return Promise.resolve(jsonResponse(chatThread("chat-engine-first", "Engine first", [])));
+      }
+      if (url.endsWith(`/p/${projectA}/v1/chats/chat-engine-first/commands`) && init?.method === "POST") {
+        calls.push("command");
+        return Promise.resolve(jsonResponse({ accepted: true, chatId: "chat-engine-first", requestId: "request-first", type: "user_message" }));
+      }
+      if (url.includes(`/p/${projectA}/v1/chats/subscribe?chat_id=chat-engine-first`)) {
+        calls.push("sse");
+        return Promise.resolve(sseResponse([]));
+      }
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} navigate={navigate} />));
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "first project prompt"));
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(calls).toEqual(["create", "command", "sse"]);
+    expect(navigate).toHaveBeenCalledWith({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-engine-first" });
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("chat-engine-first");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat-001"))).toBe(false);
+  });
+
+  it("keeps the first project prompt after create failure and retries once", async () => {
+    let createCount = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") {
+        createCount += 1;
+        return Promise.resolve(createCount === 1 ? jsonResponse({ error: "create unavailable" }, 503) : jsonResponse(chatThread("chat-engine-retry", "Retry", [])));
+      }
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "retry this prompt"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+    expect(chatInput().value).toBe("retry this prompt");
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
+    await flushAsync();
+
+    expect(createCount).toBe(2);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats/chat-engine-retry/commands`) && init?.method === "POST")).toHaveLength(1);
+    expect(chatInput().value).toBe("");
+  });
+
+  it("guards double Send while the first project chat is being created", async () => {
+    const create = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") return create.promise;
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "only once"));
+    await act(async () => {
+      findButton("Send").click();
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST")).toHaveLength(1);
+    create.resolve(jsonResponse(chatThread("chat-engine-once", "Once", [])));
+    await flushAsync();
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats/chat-engine-once/commands`) && init?.method === "POST")).toHaveLength(1);
+  });
+
+  it("drops a stale first-chat create completion after project switch", async () => {
+    const create = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") return create.promise;
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "stale create"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectB, page: "chat" }} />));
+    create.resolve(jsonResponse(chatThread("chat-stale-created", "Stale", [])));
+    await flushAsync();
+
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("draft");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat-stale-created/commands"))).toBe(false);
+  });
+
+  it("returns to project draft after deleting the last persisted chat", async () => {
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-project-only", "Only project chat", 1)],
+      chatThreads: { "chat-project-only": chatThread("chat-project-only", "Only project chat", [chatMessage("chat-project-only", "msg-only", "user", "Persisted project message")]) },
+    });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await flushAsync();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await act(async () => { findButton("Delete current").click(); await Promise.resolve(); });
+    await flushAsync();
+
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("draft");
+    expect(container?.textContent).toContain("No saved conversations remain; showing a fresh local chat.");
+    expect(container?.textContent).not.toContain("Persisted project message");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat-001"))).toBe(false);
+  });
+
   it.each([
     ["chat", "Project chat", "Local runtime connection", "Provider setup", "Local project memory", "Agent progress"],
     ["memory", "Project memory", "Local runtime connection", "Provider setup", "Chat with Yet AI", "Agent progress"],

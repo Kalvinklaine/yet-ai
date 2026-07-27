@@ -1,15 +1,15 @@
 import type { ChatSummary } from "./runtimeClient";
 
-export type ResolveChatAfterListReason = "current_present" | "first_summary" | "default_chat";
+export type ResolveChatAfterListReason = "current_present" | "first_summary" | "default_chat" | "draft";
 
 export type ResolveChatAfterListInput = {
-  currentChatId: string;
+  currentChatId: string | null;
   summaries: ChatSummary[];
-  defaultChatId: string;
+  defaultChatId: string | null;
 };
 
 export type ResolveChatAfterListResult = {
-  nextChatId: string;
+  nextChatId: string | null;
   shouldResetView: boolean;
   reason: ResolveChatAfterListReason;
 };
@@ -22,19 +22,19 @@ export function resolveChatAfterList({ currentChatId, summaries, defaultChatId }
   if (firstSummaryChatId) {
     return { nextChatId: firstSummaryChatId, shouldResetView: firstSummaryChatId !== currentChatId, reason: "first_summary" };
   }
-  return { nextChatId: defaultChatId, shouldResetView: defaultChatId !== currentChatId, reason: "default_chat" };
+  return { nextChatId: defaultChatId, shouldResetView: defaultChatId !== currentChatId, reason: defaultChatId === null ? "draft" : "default_chat" };
 }
 
 export type ResolveFallbackChatAfterDeleteInput = {
   summariesBeforeDelete: ChatSummary[];
   deletedChatId: string;
-  activeChatId: string;
-  defaultChatId: string;
+  activeChatId: string | null;
+  defaultChatId: string | null;
 };
 
 export type ResolveFallbackChatAfterDeleteResult = {
   remainingSummaries: ChatSummary[];
-  nextChatId: string;
+  nextChatId: string | null;
   deletedCurrent: boolean;
   shouldResetView: boolean;
 };
