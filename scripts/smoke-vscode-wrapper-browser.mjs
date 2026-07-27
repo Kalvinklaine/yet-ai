@@ -154,9 +154,13 @@ try {
   await page.addInitScript(() => {
     window.__yetAiVsCodeMessages = [];
     window.__yetAiHostMessages = [];
+    window.__yetAiVsCodeReadySequence = 0;
     window.acquireVsCodeApi = () => ({
       postMessage(message) {
-        window.__yetAiVsCodeMessages.push(message);
+        const collected = message?.type === "gui.ready"
+          ? { ...message, requestId: `vscode-gui-ready-${++window.__yetAiVsCodeReadySequence}-${crypto.randomUUID()}` }
+          : message;
+        window.__yetAiVsCodeMessages.push(collected);
       },
     });
   });
@@ -194,8 +198,9 @@ try {
   if (guiReady?.version !== bridgeVersion || guiReady?.payload?.supportedBridgeVersion !== bridgeVersion) {
     failures.push("VS Code-like acquireVsCodeApi bridge did not collect strict gui.ready.");
   }
+  const hostedReadyRequestId = guiReady?.requestId;
+  if (typeof hostedReadyRequestId !== "string" || hostedReadyRequestId.length === 0) failures.push("VS Code hosted gui.ready did not provide its authoritative requestId.");
   await page.waitForTimeout(100);
-  const hostedReadyRequestId = `vscode-smoke-ready-${randomUUID()}`;
 
   await dispatchHostMessage(page, {
     version: bridgeVersion,
@@ -229,8 +234,13 @@ try {
   await expectBodyVisibleText(page, "Project chat", "VS Code explicit project chat entry");
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const legacyGuiReady = await waitForGuiMessage(page, "gui.ready");
-  const legacyReadyRequestId = `vscode-smoke-ready-${randomUUID()}`;
+  const legacyReadyRequestId = legacyGuiReady?.requestId;
+  if (typeof legacyReadyRequestId !== "string" || legacyReadyRequestId.length === 0 || legacyReadyRequestId === hostedReadyRequestId) failures.push("VS Code legacy reload did not provide a distinct authoritative gui.ready requestId.");
   await dispatchHostMessage(page, { version: bridgeVersion, type: "host.ready", requestId: legacyReadyRequestId, payload: { runtimeUrl: runtimeBaseUrl, sessionToken: runtimeToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false } });
+  await dispatchHostMessage(page, workspaceBindingMessage(hostedReadyRequestId));
+  await page.waitForTimeout(150);
+  await expectNoVisibleText(page, projectDisplayName, "stale prior-generation VS Code workspace binding");
+  if (await page.getByRole("button", { name: "Legacy data", exact: true }).count() !== 0) failures.push("Stale prior-generation VS Code workspace binding unlocked project data before the current binding.");
   await dispatchHostMessage(page, workspaceBindingMessage(legacyReadyRequestId));
   await page.getByRole("button", { name: "Legacy data", exact: true }).click();
   await page.getByRole("tab", { name: "Chat", exact: true }).waitFor({ state: "visible", timeout: 10_000 });

@@ -123,6 +123,7 @@ let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatAbortRequestCount = 0;
 let chatSubscriptionCount = 0;
+let projectPhaseRuntimeLogStart;
 let chatCommandRequestCountBeforeEditSmoke = 0;
 let demoModeEnabled = false;
 let mockAssistantMessageCounter = 0;
@@ -797,6 +798,7 @@ async function enterJetBrainsProjectChat(page, frameLocator, requestId) {
   if (await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").count() > 0) return;
   const chatTraffic = runtimeRequestLog.filter((entry) => /\/v1\/chats(?:\/|$)/.test(entry.pathname) && (entry.method !== "GET" || /\/commands$|\/subscribe$/.test(entry.pathname)));
   if (chatTraffic.length > 0) failures.push(`JetBrains dashboard issued chat create/command/SSE traffic before explicit Start: ${formatRuntimeRequestLog(chatTraffic)}.`);
+  projectPhaseRuntimeLogStart ??= runtimeRequestLog.length;
   await page.evaluate(({ version, requestId, projectId, displayName }) => {
     window.__yetAiSendHostMessageToFrame({
       version,
@@ -811,9 +813,27 @@ async function enterJetBrainsProjectChat(page, frameLocator, requestId) {
   if (await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) failures.push("JetBrains dashboard mounted a composer before explicit Start.");
   await frameLocator.getByRole("button", { name: "Start new chat", exact: true }).click();
   await frameLocator.getByText("Project chat", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 });
+  const commandProbe = await fetch(`${panelGuiBaseUrl}/p/${projectId}/v1/chats/chat-001/commands`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "abort", requestId: "project-proxy-command-probe", payload: {} }),
+  });
+  if (!commandProbe.ok) failures.push(`JetBrains project command proxy probe returned ${commandProbe.status}.`);
+  const subscribeController = new AbortController();
+  const subscribeProbe = await fetch(`${panelGuiBaseUrl}/p/${projectId}/v1/chats/subscribe?chat_id=chat-001`, {
+    headers: { accept: "text/event-stream" },
+    signal: subscribeController.signal,
+  });
+  if (!subscribeProbe.ok || !String(subscribeProbe.headers.get("content-type")).startsWith("text/event-stream")) failures.push(`JetBrains project SSE proxy probe returned ${subscribeProbe.status} ${String(subscribeProbe.headers.get("content-type"))}.`);
+  subscribeController.abort();
+  chatCommandRequest = undefined;
+  chatCommandRequestCount = 0;
+  chatAbortRequestCount = 0;
 }
 
 async function reloadJetBrainsLegacyWorkbench(page, frameLocator) {
+  assertProjectScopedChatProxyCoverage();
+  projectPhaseRuntimeLogStart = undefined;
   const sequenceBeforeReload = await page.evaluate(() => window.__yetAiGuiReadySequence ?? 0);
   const previousFrameNonce = await page.evaluate(() => window.__yetAiCurrentFrameNonce);
   await page.locator("iframe[title='Yet AI GUI']").evaluate((frame, url) => { frame.src = url; }, `${panelGuiBaseUrl}/hosted-chat?legacy-continuation=${randomUUID()}`);
@@ -2283,7 +2303,7 @@ async function assertSecretLikeContextPathRejected(page, version, requestId) {
 }
 
 async function assertMockRuntimeRejectsBadChatBodies(baseUrl) {
-  const malformed = await fetch(`${baseUrl}/v1/chats/chat-001/commands`, {
+  const malformed = await fetch(`${baseUrl}/p/${projectId}/v1/chats/chat-001/commands`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${runtimeToken}`,
@@ -2295,7 +2315,7 @@ async function assertMockRuntimeRejectsBadChatBodies(baseUrl) {
   if (malformed.status !== 400 || !malformedText.includes("Invalid chat command JSON") || malformedText.includes("not-json")) {
     failures.push("Mock runtime did not reject malformed chat command JSON with a generic 400 response.");
   }
-  const oversized = await fetch(`${baseUrl}/v1/chats/chat-001/commands`, {
+  const oversized = await fetch(`${baseUrl}/p/${projectId}/v1/chats/chat-001/commands`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${runtimeToken}`,
@@ -3040,6 +3060,11 @@ async function startMockRuntimeServer() {
     }
     const runtimeLogEntry = { method: request.method ?? "GET", pathname: requestUrl.pathname, authorized, browserPath: request.headers["x-yet-ai-smoke-browser-path"], browserOrigin: request.headers.origin };
     runtimeRequestLog.push(runtimeLogEntry);
+    if (projectPhaseRuntimeLogStart !== undefined && /^\/v1\/chats(?:\/|$)/.test(requestUrl.pathname)) {
+      failures.push(`JetBrains project phase used forbidden unscoped chat runtime path ${request.method ?? "GET"} ${requestUrl.pathname}.`);
+      json(response, 404, { error: "Project chat requests must be scoped." });
+      return;
+    }
     const allowedOrigin = request.headers.origin === undefined;
     if (!allowedOrigin) {
       failures.push(`Mock runtime received request from unexpected origin ${String(request.headers.origin)}.`);
@@ -3691,8 +3716,9 @@ async function startPackagedGuiPanelServer(staticRoot, runtimeBaseUrl) {
       await servePanelIndexHtml(response, realStaticRoot);
       return;
     }
-    if (requestUrl.pathname.startsWith(`${panelBasePath}/v1/`) || requestUrl.pathname.startsWith(`${panelBasePath}/p/`)) {
-      await forwardPanelProxyRequest(request, response, runtimeBaseUrl, `${requestUrl.pathname.slice(panelBasePath.length)}${requestUrl.search}`, true);
+    const rawRequestPath = request.url ?? "/";
+    if (rawRequestPath.startsWith(`${panelBasePath}/v1`) || rawRequestPath.startsWith(`${panelBasePath}/p/`)) {
+      await forwardPanelProxyRequest(request, response, runtimeBaseUrl, rawRequestPath.slice(panelBasePath.length), true);
       return;
     }
     if (!requestUrl.pathname.startsWith(`${panelBasePath}/assets/`)) {
@@ -3721,6 +3747,7 @@ async function assertPackagedGuiPanelServerParity(panelGuiBaseUrl) {
   if (headHostedChatResponse.status !== 405) {
     throw new Error(`JetBrains wrapper smoke HEAD hosted-chat returned ${headHostedChatResponse.status} instead of 405.`);
   }
+  assertPanelProxyPathValidation();
   const indexHtml = await readFile(packagedGuiIndexPath, "utf8");
   const assetPaths = Array.from(indexHtml.matchAll(/(?:src|href)="\.\/(assets\/[^"?#]+\.(?:js|css))"/g), (match) => match[1]);
   for (const [extension, expectedMime] of [[".js", "application/javascript; charset=utf-8"], [".css", "text/css; charset=utf-8"]]) {
@@ -3816,17 +3843,23 @@ async function forwardPanelProxyRequest(request, response, runtimeBaseUrl, rawPa
     response.end("Method not allowed");
     return;
   }
-  if (request.method === "GET" && /^(?:\/p\/[^/]+)?\/v1\/chats\/subscribe(?:\?|$)/.test(rawPath)) {
-    await forwardEventStreamProxyRequest(request, response, runtimeBaseUrl, rawPath, requireAuthorization);
+  const classified = requireAuthorization ? classifyPanelProxyPath(rawPath) : { rawPath, pathname: rawPath };
+  if (classified === undefined) {
+    response.writeHead(404);
+    response.end("Not found");
     return;
   }
-  const target = new URL(rawPath, runtimeBaseUrl);
+  if (request.method === "GET" && classified.pathname.endsWith("/v1/chats/subscribe")) {
+    await forwardEventStreamProxyRequest(request, response, runtimeBaseUrl, classified.rawPath, requireAuthorization);
+    return;
+  }
+  const target = new URL(classified.rawPath, runtimeBaseUrl);
   const targetResponse = await fetch(target, {
     method: request.method,
     headers: {
       ...(request.headers["content-type"] ? { "content-type": String(request.headers["content-type"]) } : {}),
       ...(requireAuthorization ? { authorization: `Bearer ${runtimeToken}` } : {}),
-      "x-yet-ai-smoke-browser-path": requireAuthorization ? `${panelBasePath}${rawPath}` : rawPath,
+      "x-yet-ai-smoke-browser-path": requireAuthorization ? `${panelBasePath}${classified.rawPath}` : classified.rawPath,
     },
     body: request.method === "POST" ? request : undefined,
     duplex: request.method === "POST" ? "half" : undefined,
@@ -3851,9 +3884,24 @@ function forwardEventStreamProxyRequest(request, response, runtimeBaseUrl, rawPa
         "x-yet-ai-smoke-browser-path": requireAuthorization ? `${panelBasePath}${rawPath}` : rawPath,
       },
     }, (upstreamResponse) => {
+      const contentType = String(upstreamResponse.headers["content-type"] ?? "");
+      if (!contentType.toLowerCase().startsWith("text/event-stream")) {
+        const chunks = [];
+        upstreamResponse.on("data", (chunk) => chunks.push(chunk));
+        upstreamResponse.on("end", () => {
+          response.writeHead(upstreamResponse.statusCode ?? 502, {
+            ...corsHeaders(),
+            "content-type": contentType || "application/octet-stream",
+            "cache-control": "no-store",
+          });
+          response.end(Buffer.concat(chunks));
+          resolve();
+        });
+        return;
+      }
       response.writeHead(upstreamResponse.statusCode ?? 502, {
         ...corsHeaders(),
-        "content-type": upstreamResponse.headers["content-type"] ?? "text/event-stream",
+        "content-type": contentType,
         "cache-control": "no-cache",
         connection: "keep-alive",
       });
@@ -3882,6 +3930,29 @@ function safeDecodePath(rawPath) {
     return decodeURIComponent(rawPath.replaceAll("+", "%2B"));
   } catch {
     return undefined;
+  }
+}
+
+function classifyPanelProxyPath(rawPath) {
+  if (typeof rawPath !== "string" || rawPath.includes("\\") || /%(?:2f|5c)/i.test(rawPath)) return undefined;
+  const queryIndex = rawPath.indexOf("?");
+  const rawPathname = queryIndex === -1 ? rawPath : rawPath.slice(0, queryIndex);
+  const decodedPathname = safeDecodePath(rawPathname);
+  if (decodedPathname === undefined || decodedPathname.includes("\\") || decodedPathname.includes("//")) return undefined;
+  const segments = decodedPathname.split("/").slice(1);
+  if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) return undefined;
+  const global = segments[0] === "v1" && segments.length >= 2;
+  const scoped = segments[0] === "p" && /^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(segments[1] ?? "") && segments[2] === "v1" && segments.length >= 4;
+  if (!global && !scoped) return undefined;
+  return { rawPath, pathname: decodedPathname, projectId: scoped ? segments[1] : undefined };
+}
+
+function assertPanelProxyPathValidation() {
+  for (const value of ["/v1/ping", `/p/${projectId}/v1/chats`, `/p/${projectId}/v1/chats/subscribe?chat_id=chat-001`]) {
+    if (classifyPanelProxyPath(value) === undefined) throw new Error(`JetBrains panel proxy rejected valid path ${value}.`);
+  }
+  for (const value of ["/v1", "/v2/chats", "/v1/../chats", "/v1/%2e%2e/chats", "/v1/chats%2Fsubscribe", "/v1/chats%5Csubscribe", "/v1/chats\\subscribe", "/v1//chats", `/p/${projectId.slice(0, -1)}B/v1/chats`, `/p/${projectId}/v1/../chats`, `/p/${projectId}/v1/chats%2Fsubscribe`]) {
+    if (classifyPanelProxyPath(value) !== undefined) throw new Error(`JetBrains panel proxy accepted malformed path ${value}.`);
   }
 }
 
@@ -3994,12 +4065,34 @@ function assertPanelProxyRuntimeCoverage() {
   }
 }
 
+function assertProjectScopedChatProxyCoverage() {
+  const entries = runtimeRequestLog.slice(projectPhaseRuntimeLogStart ?? runtimeRequestLog.length);
+  const expected = [
+    ["POST", `/p/${projectId}/v1/chats`],
+    ["GET", `/p/${projectId}/v1/chats`],
+    ["GET", `/p/${projectId}/v1/chats/chat-001`],
+    ["POST", `/p/${projectId}/v1/chats/chat-001/commands`],
+    ["GET", `/p/${projectId}/v1/chats/subscribe`],
+  ];
+  for (const [method, pathname] of expected) {
+    const match = entries.find((entry) => entry.method === method && entry.pathname === pathname);
+    if (!match) {
+      failures.push(`JetBrains project phase did not reach scoped runtime path ${method} ${pathname}.`);
+      continue;
+    }
+    const expectedBrowserPath = `${panelBasePath}${pathname}`;
+    if (match.browserPath?.split("?", 1)[0] !== expectedBrowserPath) failures.push(`JetBrains project proxy browser path did not match ${expectedBrowserPath} for upstream ${pathname}.`);
+  }
+  const unscoped = entries.filter((entry) => /^\/v1\/chats(?:\/|$)/.test(entry.pathname));
+  if (unscoped.length > 0) failures.push(`JetBrains project phase observed unscoped chat fallback: ${formatRuntimeRequestLog(unscoped)}.`);
+}
+
 function countRuntimeRequests(method, pathname) {
   return runtimeRequestLog.filter((entry) => entry.method === method && entry.pathname === pathname).length;
 }
 
 function countChatCommandPosts() {
-  return runtimeRequestLog.filter((entry) => entry.method === "POST" && /^\/v1\/chats\/[^/]+\/commands$/.test(entry.pathname)).length;
+  return runtimeRequestLog.filter((entry) => entry.method === "POST" && /^(?:\/p\/[^/]+)?\/v1\/chats\/[^/]+\/commands$/.test(entry.pathname)).length;
 }
 
 function assertNoForbiddenRuntimeMutationRequests() {

@@ -196,17 +196,9 @@ try {
   const legacyText = await pageA.locator("body").innerText();
   assert(!legacyText.includes("alpha-memory-only") && !legacyText.includes("beta-memory-only"), "Legacy UI blended project memory.");
 
-  await pageA.goto(`${baseUrl}/chat`);
-  const chatTab = pageA.getByRole("tab", { name: "Chat", exact: true });
-  const setupTab = pageA.getByRole("tab", { name: /^Setup/ });
-  const debugTab = pageA.getByRole("tab", { name: /^Debug \/ Trace/ });
-  assert(await chatTab.getAttribute("aria-selected") === "true", "Browser chat did not default to the Chat disclosure tab.");
-  await setupTab.click();
-  await pageA.locator("#workbench-panel-setup:not([hidden])").waitFor({ state: "visible", timeout: timeoutMs });
-  await debugTab.click();
-  await pageA.locator("#workbench-panel-debug:not([hidden])").waitFor({ state: "visible", timeout: timeoutMs });
-  await chatTab.click();
-  await pageA.locator("#workbench-panel-chat:not([hidden])").waitFor({ state: "visible", timeout: timeoutMs });
+  await pageA.goto(`${baseUrl}/p/${projectA.projectId}/chat`);
+  await expectText(pageA, "Alpha safe label");
+  assert(await pageA.getByRole("tab", { name: "Chat", exact: true }).count() === 0, "Project-scoped browser App exposed legacy workbench tabs.");
 
   let lifecycle = await api("POST", `/v1/projects/${projectA.projectId}/archive`, { expectedRevision: "2" });
   assert(lifecycle.status === "archived", "Archive did not return archived lifecycle state.");
@@ -263,7 +255,7 @@ async function registerProject(env, projectRoot, label) {
   const output = await runEngineCli(env, ["project", "add", projectRoot, "--name", label]);
   const summary = JSON.parse(output);
   assert(summary.displayName === label, `CLI registered an unexpected project label for ${label}.`);
-  assert(/^prj_[A-Za-z0-9_-]{22}$/.test(summary.projectId), `CLI returned an invalid opaque project id for ${label}.`);
+  assert(/^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(summary.projectId), `CLI returned a noncanonical opaque project id for ${label}.`);
   assert(!output.includes(projectRoot), `CLI registration output exposed the project root for ${label}.`);
   return summary;
 }
