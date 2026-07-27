@@ -219,7 +219,7 @@ describe("ProjectRouterShell", () => {
     expect(hostReadyDispatches).toBe(1);
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
     expect(container.querySelector("[data-testid='app-runtime-state']")?.textContent).toBe("runtime-ready:ready-remount");
-    expect(appAuthorityCalls.at(-1)).toMatchObject({
+    expect(appAuthorityCalls[appAuthorityCalls.length - 1]).toMatchObject({
       hostReadyGeneration: "ready-remount",
       runtimeSettings: { baseUrl: "/panel/panel-test", token: "", runtimeAccess: "same_origin_proxy" },
     });
