@@ -710,6 +710,99 @@ describe("project lifecycle scope", () => {
     expect(clearProjectChatLaunchIntent()).toBeUndefined();
   });
 
+  it("isolates an existing chat while Start new creates exactly one engine chat and then attaches memory", async () => {
+    const note = projectMemoryNote({ id: "mem-start-new", title: "Start-new memory", text: "Attach only to the engine-created chat." });
+    const create = deferred<Response>();
+    const navigate = vi.fn();
+    createProjectChatLaunchIntent({
+      projectId: projectA,
+      source: "project_home",
+      selectedNoteIds: [note.id],
+      lifecycleGeneration: getBrowserProjectChatLifecycleGeneration(),
+    });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") return create.promise;
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-existing", "Existing chat", 1)],
+        chatThreads: { "chat-existing": chatThread("chat-existing", "Existing chat", [chatMessage("chat-existing", "old-message", "assistant", "Old thread must be unavailable")]) },
+        projectMemoryNotes: [note],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} navigate={navigate} />));
+    await flushAsync();
+
+    expect(container?.querySelector("[data-testid='project-chat-launch-create-state']")?.textContent).toContain("Starting new project chat…");
+    expect(container?.querySelector("[data-testid='chat-composer']")).toBeNull();
+    expect(container?.querySelector("[aria-label='Current chat thread']")).toBeNull();
+    expect(container?.textContent).not.toContain("Old thread must be unavailable");
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/commands") && init?.method === "POST")).toBe(false);
+
+    create.resolve(jsonResponse(chatThread("chat-start-new", "Fresh project chat", [])));
+    await flushAsync();
+    await flushAsync();
+
+    expect(navigate).toHaveBeenCalledWith({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-start-new" });
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("chat-start-new");
+    expect(container?.textContent).toContain("Attach only to the engine-created chat.");
+    expect(container?.textContent).toContain("Next send: 1 explicit item");
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/commands") && init?.method === "POST")).toBe(false);
+  });
+
+  it("fails Start new closed without reopening the existing chat", async () => {
+    createProjectChatLaunchIntent({ projectId: projectA, source: "project_home", selectedNoteIds: ["mem-create-failure"], lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") return Promise.resolve(jsonResponse({ error: "create unavailable" }, 503));
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-existing", "Existing chat", 1)],
+        chatThreads: { "chat-existing": chatThread("chat-existing", "Existing chat", [chatMessage("chat-existing", "old-message", "assistant", "Old failure thread")]) },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.querySelector("[data-testid='project-chat-launch-create-state']")?.textContent).toContain("Could not start a new project chat");
+    expect(container?.querySelector("[data-testid='chat-composer']")).toBeNull();
+    expect(container?.textContent).not.toContain("Old failure thread");
+    expect(consumeProjectChatLaunchIntent({ projectId: projectA, lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
+  });
+
+  it("drops a delayed Start-new completion after reroute and unmount", async () => {
+    const create = deferred<Response>();
+    createProjectChatLaunchIntent({ projectId: projectA, source: "project_home", selectedNoteIds: ["mem-stale-create"], lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") return create.promise;
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [chatSummary("chat-existing", "Existing chat", 0)] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    expect(container?.querySelector("[data-testid='project-chat-launch-create-state']")).not.toBeNull();
+
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "memory" }} />));
+    expect(container?.querySelector("[data-testid='project-chat-launch-create-state']")).toBeNull();
+    await act(async () => {
+      root?.unmount();
+      root = undefined;
+    });
+    create.resolve(jsonResponse(chatThread("chat-stale-start-new", "Stale new chat", [])));
+    await flushAsync();
+
+    expect(container?.textContent).toBe("");
+    expect(consumeProjectChatLaunchIntent({ projectId: projectA, lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat-stale-start-new/commands"))).toBe(false);
+  });
+
   it("keeps launch memory available across a rerender while its note request is pending", async () => {
     const note = projectMemoryNote({ id: "mem-launch-pending", title: "Pending memory", text: "Keep this memory until the request resolves." });
     const memory = deferred<Response>();

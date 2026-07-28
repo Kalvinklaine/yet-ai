@@ -24,6 +24,7 @@ let stdout = "";
 let stderr = "";
 const failures = [];
 const commandBodies = [];
+const criticalResponseFailures = [];
 
 try {
   await requireFile(binary);
@@ -73,6 +74,15 @@ try {
     if ((url.protocol === "http:" || url.protocol === "https:") && !["127.0.0.1", "localhost", "::1"].includes(url.hostname)) failures.push(`non-loopback request: ${url.origin}`);
     if (url.pathname.startsWith(`/p/${project.projectId}/v1/chats/`) && url.pathname.endsWith("/commands") && request.method() === "POST") commandBodies.push(request.postData() ?? "");
   });
+  page.on("requestfailed", (request) => {
+    const url = new URL(request.url());
+    const expectedNavigationAbort = url.pathname.endsWith("/v1/chats/subscribe") && request.failure()?.errorText.includes("ERR_ABORTED");
+    if (!expectedNavigationAbort && isCriticalAppRequest(url)) failures.push(`critical request failed: ${request.method()} ${url.pathname} ${request.failure()?.errorText ?? "unknown"}`);
+  });
+  page.on("response", (response) => {
+    const url = new URL(response.url());
+    if (isCriticalAppRequest(url) && response.status() >= 400) criticalResponseFailures.push(`${response.status()} ${response.request().method()} ${url.pathname}`);
+  });
 
   const baseUrl = `http://127.0.0.1:${port}`;
   await page.goto(`${baseUrl}/projects`);
@@ -82,7 +92,6 @@ try {
   await expectText(page, "Command Center Project command center");
   await expectText(page, "Local runtime");
   await expectText(page, "ready provider-model pairing");
-  await expectText(page, "New chat");
   await expectText(page, "Selected architecture memory");
   await expectText(page, "T-149");
   await expectText(page, "In progress");
@@ -92,9 +101,12 @@ try {
   assert(!homeEvidence.includes(noteBody), "Command center exposed a memory note body.");
 
   await page.getByLabel("Select Selected architecture memory").check();
-  await page.getByRole("button", { name: "Resume New chat" }).click();
-  await page.waitForURL(`${baseUrl}/p/${project.projectId}/chat/${chat.chatId}`);
-  const finalChatId = chat.chatId;
+  const createResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/p/${project.projectId}/v1/chats` && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Start new chat", exact: true }).click();
+  assert((await createResponse).ok(), "Start new chat create request was not accepted.");
+  await page.waitForURL(new RegExp(`${baseUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/p/${project.projectId}/chat/[A-Za-z0-9_-]+`));
+  const finalChatId = page.url().split("/").at(-1);
+  assert(Boolean(finalChatId) && finalChatId !== chat.chatId, "Start new did not bind the engine-issued fresh chat id.");
   await expectText(page, "Selected project memory attached for review");
   await expectText(page, noteBody);
   assert(commandBodies.length === 0, "Selecting memory and resuming sent a command before manual Send.");
@@ -128,11 +140,18 @@ try {
   const storage = await page.evaluate(() => ({
     local: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => { const key = localStorage.key(index) ?? ""; return [key, localStorage.getItem(key)]; })),
     session: Object.fromEntries(Array.from({ length: sessionStorage.length }, (_, index) => { const key = sessionStorage.key(index) ?? ""; return [key, sessionStorage.getItem(key)]; })),
+    documentCookie: document.cookie,
   }));
   const storageEvidence = JSON.stringify(storage);
   for (const forbidden of [sentMessage, noteBody, token, projectRoot, memory.id, "selectedNoteIds", "project_home", "raw payload"]) {
     assert(!storageEvidence.includes(forbidden), "Browser storage retained private command-center evidence.");
   }
+  const cookies = await context.cookies();
+  assert(cookies.some((cookie) => cookie.name === "yet_ai_loopback_session" && cookie.httpOnly), "Loopback session cookie was missing or not HttpOnly.");
+  for (const forbidden of [token, noteBody, sentMessage, projectRoot]) {
+    assert(!JSON.stringify(cookies).includes(forbidden), "Browser cookie metadata exposed private command-center evidence.");
+  }
+  assert(criticalResponseFailures.length === 0, `Unexpected critical non-2xx responses:\n${criticalResponseFailures.join("\n")}`);
   assert(failures.length === 0, failures.join("\n"));
   const output = `${stdout}\n${stderr}`;
   assert(!output.includes(token) && !output.includes(projectRoot) && !output.includes(noteBody), "Runtime output exposed private smoke evidence.");
@@ -192,6 +211,10 @@ function createApi(port) {
 
 function progressEvent(eventId, runId, cardId, phase, status, message, timestamp) {
   return { protocolVersion: "2026-05-29", eventId, runId, cardId, timestamp, phase, status, message };
+}
+
+function isCriticalAppRequest(url) {
+  return ["127.0.0.1", "localhost", "::1"].includes(url.hostname) && (url.pathname.startsWith("/v1/") || url.pathname.includes("/v1/"));
 }
 
 async function expectText(page, text) {

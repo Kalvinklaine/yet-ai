@@ -270,6 +270,11 @@ type ProjectMemoryState = {
   error: RuntimeError | null;
 };
 
+type LaunchIntentCreateState =
+  | { state: "idle" }
+  | { state: "creating"; intentKey: string; scopeKey: string }
+  | { state: "failed"; intentKey: string; scopeKey: string };
+
 export type LaunchMemoryBundleMerge = {
   items: ExplicitContextBundleItem[];
   addedCount: number;
@@ -502,6 +507,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [chatHistoryError, setChatHistoryError] = useState<RuntimeError | null>(null);
   const [chatHistoryRevision, setChatHistoryRevision] = useState<number | null>(null);
   const [chatHistoryLoading, setChatHistoryLoading] = useState(false);
+  const [launchIntentCreateState, setLaunchIntentCreateState] = useState<LaunchIntentCreateState>({ state: "idle" });
   const [missingRoutedChatId, setMissingRoutedChatId] = useState<string | null>(null);
   const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
   const [conversationNotice, setConversationNotice] = useState<string | null>(null);
@@ -570,8 +576,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const settingsRef = useRef<ChatRuntimeSettings>(projectId ? createProjectRuntimeSettings(initialRuntimeSettings, projectId, projectScopeController.current()) : initialRuntimeSettings);
   const chatIdRef = useRef<string | null>(initialChatId);
   const firstProjectChatCreateRef = useRef<{ token: symbol; revision: number; correlation: ProjectScopeCorrelation } | null>(null);
-  const launchIntentCreateRef = useRef(false);
+  const launchIntentCreateRef = useRef<{ token: symbol; intentKey: string; revision: number; correlation: ProjectScopeCorrelation } | null>(null);
   const launchIntentMemoryRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
   const providerAuthExchangeInFlightRef = useRef(false);
@@ -692,6 +699,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     return projectId ? createProjectRuntimeSettings(globalSettings, projectId, projectScopeController.current()) : globalSettings;
   }, [baseUrl, projectId, projectScopeController, projectScopeRevision, runtimeAccess, token]);
   settingsRef.current = settings;
+  const launchIntentScopeKey = `${projectId ?? "legacy"}:${showChatPage ? "chat" : projectPage ?? "root"}:${routedChatId ?? "draft"}:${hostReadyGeneration ?? "browser"}:${settingsRevision}`;
   chatIdRef.current = chatId;
   chatViewMessagesRef.current = chatView.messages;
   attachedContextRef.current = attachedContext;
@@ -1360,6 +1368,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const markSettingsChanged = useCallback(() => {
     abortActiveStream("SSE stopped and abort requested for previous runtime settings");
     setChatLifecycleState("idle");
+    launchIntentCreateRef.current = null;
+    setLaunchIntentCreateState({ state: "idle" });
+    clearProjectChatLaunchIntent();
     settingsRevisionRef.current += 1;
     providerTestAttemptRef.current += 1;
     setSettingsRevision(settingsRevisionRef.current);
@@ -1414,6 +1425,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       active_chat: () => {
         abortActiveStream("SSE stopped for previous project", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
         firstProjectChatCreateRef.current = null;
+        launchIntentCreateRef.current = null;
+        setLaunchIntentCreateState({ state: "idle" });
         chatHistoryAttemptRef.current += 1;
         const nextChatId = route.kind === "project" ? route.page === "chat" && route.chatId ? route.chatId : null : "chat-001";
         setChatId(nextChatId); setChatView(resetChatViewState(nextChatId ?? "")); setChatSummaries([]); setChatHistoryRevision(null);
@@ -1467,6 +1480,15 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [clearIdeActionState, hostReadyGeneration, hostedAuthorityKey, projectId]);
 
   useEffect(() => () => projectScopeController.dispose(), [projectScopeController]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      launchIntentCreateRef.current = null;
+      clearProjectChatLaunchIntent();
+    };
+  }, []);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const normalizedSettings: RuntimeSettings = { ...nextSettings, token: nextSettings.token ?? "", runtimeAccess: nextSettings.runtimeAccess ?? "direct" };
@@ -2856,36 +2878,56 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
 
   useEffect(() => {
     if (!projectId || !showChatPage) {
+      launchIntentCreateRef.current = null;
+      setLaunchIntentCreateState({ state: "idle" });
       clearProjectChatLaunchIntent();
       return;
     }
     const lifecycleGeneration = hostReadyGeneration ?? getBrowserProjectChatLifecycleGeneration();
     if (hostReadyGeneration && !projectHostAuthorityReady) return;
     const currentChatId = chatIdRef.current;
-    if (routedChatId && !activeChatSummary) return;
     const pending = peekProjectChatLaunchIntent({ projectId, lifecycleGeneration });
+    if (pending && pending.chatId === undefined && routedChatId) {
+      clearProjectChatLaunchIntent();
+      launchIntentCreateRef.current = null;
+      setLaunchIntentCreateState({ state: "idle" });
+      return;
+    }
+    if (routedChatId && !activeChatSummary) return;
     if (pending && pending.chatId === undefined) {
-      if (launchIntentCreateRef.current) return;
+      const intentKey = `${projectId}:${lifecycleGeneration}:${pending.createdAtEpochMs}`;
+      if (launchIntentCreateRef.current?.intentKey === intentKey) return;
       if (pending.selectedNoteIds.length === 0) {
         consumeProjectChatLaunchIntent({ projectId, lifecycleGeneration });
         return;
       }
-      launchIntentCreateRef.current = true;
+      const token = Symbol("project-chat-launch-intent-create");
       const targetSettings = settingsRef.current;
       const targetRevision = settingsRevisionRef.current;
       const correlation = createProjectScopeCorrelation(projectScopeController.current());
+      launchIntentCreateRef.current = { token, intentKey, revision: targetRevision, correlation };
+      setLaunchIntentCreateState({ state: "creating", intentKey, scopeKey: launchIntentScopeKey });
+      abortActiveStream("SSE stopped and abort requested before starting a new project chat");
+      setChatInput("");
       void createChat(targetSettings).then((created) => {
-        launchIntentCreateRef.current = false;
-        if (!created.ok || settingsRevisionRef.current !== targetRevision || !projectScopeController.accepts(correlation) || chatIdRef.current !== currentChatId) {
+        const activeCreate = launchIntentCreateRef.current;
+        if (!mountedRef.current || activeCreate?.token !== token || launchIntentScopeKey !== `${projectId ?? "legacy"}:${showChatPage ? "chat" : projectPage ?? "root"}:${routedChatId ?? "draft"}:${hostReadyGeneration ?? "browser"}:${settingsRevisionRef.current}`) return;
+        launchIntentCreateRef.current = null;
+        if (!created.ok || !created.data.chatId?.trim() || settingsRevisionRef.current !== targetRevision || !projectScopeController.accepts(correlation)) {
           clearProjectChatLaunchIntent();
+          setLaunchIntentCreateState({ state: "failed", intentKey, scopeKey: launchIntentScopeKey });
           return;
         }
-        if (!bindProjectChatLaunchIntentChatId({ projectId, lifecycleGeneration }, created.data.chatId)) return;
+        if (!bindProjectChatLaunchIntentChatId({ projectId, lifecycleGeneration }, created.data.chatId)) {
+          setLaunchIntentCreateState({ state: "failed", intentKey, scopeKey: launchIntentScopeKey });
+          return;
+        }
         chatIdRef.current = created.data.chatId;
         setChatId(created.data.chatId);
         setChatSummaries((current) => upsertChatSummary(current, created.data));
         setChatHistoryRevision(targetRevision);
         setChatView(hydrateChatViewFromThread(resetChatViewState(created.data.chatId), created.data));
+        setLaunchIntentCreateState({ state: "idle" });
         navigate?.({ kind: "project", projectId, page: "chat", chatId: created.data.chatId });
       });
       return;
@@ -2930,7 +2972,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         return merged.items;
       });
     });
-  }, [activeChatSummary, chatId, hostReadyGeneration, navigate, projectHostAuthorityReady, projectId, projectScopeController, routedChatId, showChatPage]);
+  }, [abortActiveStream, activeChatSummary, chatId, hostReadyGeneration, launchIntentScopeKey, navigate, projectHostAuthorityReady, projectId, projectPage, projectScopeController, routedChatId, showChatPage]);
 
   useEffect(() => () => {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
@@ -4054,6 +4096,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const controlledHostCapabilityMatrix = useMemo(() => createControlledHostCapabilityMatrixDisplay(controlledHostCapabilities, controlledHostCapabilityDisplayHost(controlledHostCapabilities, bridgeHost)), [bridgeHost, controlledHostCapabilities]);
   const setupNeedsAttention = !canSendChat || Boolean(activeConnectionError || activeModelError || providerError || activeProviderAuthError);
   const debugNeedsAttention = Boolean(chatError || chatHistoryError || activeConnectionError || activeModelError || providerError || activeProviderAuthError || agentProgress.error);
+  const launchIntentCreateVisible = launchIntentCreateState.state !== "idle" && launchIntentCreateState.scopeKey === launchIntentScopeKey;
 
   return (
     <main className={`app-shell host-${bridgeHost} ${activeChatSummaries.length <= 1 ? "single-conversation" : "multi-conversation"}`} data-project-page={projectPage}>
@@ -4194,7 +4237,13 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         )}
         {chatError && <ErrorBox error={chatError} />}
         {chatHistoryError && <ErrorBox error={chatHistoryError} />}
-        <div className="chat-workbench" hidden={projectPage === undefined && workbenchSurface !== "chat"}>
+        {launchIntentCreateVisible ? (
+          <section className={`readiness-card ${launchIntentCreateState.state === "failed" ? "warn" : "ready"}`} role="status" data-testid="project-chat-launch-create-state">
+            <strong>{launchIntentCreateState.state === "creating" ? "Starting new project chat…" : "Could not start a new project chat"}</strong>
+            <span className="subtle">{launchIntentCreateState.state === "creating" ? "Waiting for the local engine to create and bind a fresh chat. Existing conversations and Send stay unavailable." : "The previous conversation was not opened or changed. Return to the project command center and try Start new again."}</span>
+            {launchIntentCreateState.state === "failed" && projectId && <a href={buildProjectRoute({ kind: "project", projectId, page: "home" })}>Back to project command center</a>}
+          </section>
+        ) : <div className="chat-workbench" hidden={projectPage === undefined && workbenchSurface !== "chat"}>
           <aside className="conversations-panel conversations-rail stack" aria-label="Local conversations">
             <div className="row">
               <h3>Conversations</h3>
@@ -4321,7 +4370,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
               </div>}
             </form>}
           </section>
-        </div>
+        </div>}
       </section>
       </div>}
 
