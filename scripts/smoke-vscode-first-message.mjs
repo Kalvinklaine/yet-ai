@@ -14,6 +14,9 @@ const packagedGuiRoot = path.join(root, "apps", "plugins", "vscode", "media", "g
 const packagedGuiIndex = path.join(packagedGuiRoot, "index.html");
 const hostedChatPath = "/vscode/hosted-chat";
 const bridgeVersion = "2026-05-15";
+const projectId = "prj_abcdefghijklmnopqrstuA";
+const projectDisplayName = "VS Code First Message Workspace";
+const chatId = "chat-vscode-first-message-001";
 const runtimeToken = `vscsession.${randomUUID()}`;
 const providerKey = `sk-vscode-provider-${randomUUID()}`;
 const contextSentinel = `VSCODE_CONTEXT_SENTINEL_${randomUUID()}`;
@@ -28,7 +31,9 @@ let observedRuntimeAuthorization = false;
 let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatSubscriptionCount = 0;
+let chatCreated = false;
 let matchingUserMessageCommandReceived = false;
+let hostGeneration;
 let resolveMatchingUserMessageCommand;
 const matchingUserMessageCommand = new Promise((resolve) => {
   resolveMatchingUserMessageCommand = resolve;
@@ -56,13 +61,13 @@ try {
       await route.abort();
       return;
     }
-    if (url.startsWith(`${runtimeBaseUrl}/v1/chats/subscribe?`)) {
+    if (url.startsWith(`${runtimeBaseUrl}/p/${projectId}/v1/chats/subscribe?`)) {
       chatSubscriptionCount += 1;
       const authorization = route.request().headers().authorization;
       if (authorization !== `Bearer ${runtimeToken}`) {
         failures.push("SSE subscription did not use the VS Code host.ready runtime session token.");
       }
-      runtimeApiRequests.push({ method: route.request().method(), pathname: "/v1/chats/subscribe", authorized: authorization === `Bearer ${runtimeToken}` });
+      runtimeApiRequests.push({ method: route.request().method(), pathname: `/p/${projectId}/v1/chats/subscribe`, authorized: authorization === `Bearer ${runtimeToken}` });
       await route.fulfill({
         status: 200,
         headers: { "content-type": "text/event-stream", "cache-control": "no-cache", "access-control-allow-origin": "*" },
@@ -106,9 +111,10 @@ try {
 
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   await assertHostedEntryRoute(page);
-  await page.waitForFunction(() => window.__yetAiVsCodeMessages?.some((message) => message?.type === "gui.ready"), undefined, { timeout: 10_000 });
-  await expectAttachedText(page, "bridge vscode", "VS Code bridge mode before host messages");
-  await page.waitForTimeout(100);
+  await waitForGuiReady(page);
+  hostGeneration = createHostGeneration();
+  await dispatchHostedWorkspaceAuthority(page, hostGeneration);
+
   await page.evaluate(({ version }) => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {
@@ -131,35 +137,25 @@ try {
     }));
   }, { version: bridgeVersion });
 
-  await page.evaluate(({ version, runtimeUrl, token }) => {
-    window.dispatchEvent(new MessageEvent("message", {
-      data: {
-        version,
-        type: "host.ready",
-        requestId: "vscode-first-message-ready",
-        payload: {
-          runtimeUrl,
-          sessionToken: token,
-          productId: "yet-ai",
-          displayName: "Yet AI",
-          cloudRequired: false,
-        },
-      },
-    }));
-  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken });
-
   await page.waitForTimeout(100);
   if (consoleMessages.includes("Rejected invalid host bridge message")) {
     throw new Error("VS Code first-message host.ready was rejected by the GUI bridge contract.");
   }
 
-  await page.waitForFunction((runtimeUrl) => Array.from(document.querySelectorAll("input")).some((input) => input.value === runtimeUrl), runtimeBaseUrl, { timeout: 10_000 }).catch(async (error) => {
+  await page.getByText("Current Workspace Dashboard", { exact: true }).waitFor({ state: "attached", timeout: 10_000 });
+  await page.getByText(projectDisplayName, { exact: true }).first().waitFor({ state: "visible", timeout: 10_000 });
+  if (await page.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) {
+    failures.push("Current Workspace Dashboard mounted the composer before explicit Start new chat.");
+  }
+  await page.getByRole("button", { name: "Start new chat", exact: true }).click();
+  await page.getByText("Project chat", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
+  await page.locator("textarea").waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
     const body = await page.locator("body").innerText().catch(() => "");
-    throw new Error(`Timed out waiting for host.ready runtime settings. ${messageOf(error)}\nVisible body excerpt: ${sanitizeDiagnosticText(body).slice(0, 4000)}`);
+    throw new Error(`Project chat did not mount its composer after Start new chat. ${messageOf(error)}\nVisible body excerpt: ${sanitizeDiagnosticText(body).slice(0, 4000)}`);
   });
-  await expectVisibleBodyTextAny(page, ["RUNTIME CONNECTED", "Runtime connected — choose the first-message path"], "visible runtime connected state through host.ready", 20_000);
-  await expectVisibleBodyText(page, "State: Provider required", "provider-required first-message state", 20_000);
-  await expectVisibleBodyText(page, "Provider required for first message", "provider-required guidance", 20_000);
+  await page.locator("main.app-shell.host-vscode").waitFor({ state: "attached", timeout: 10_000 });
+  await expectVisibleBodyText(page, "PROVIDER REQUIRED", "provider-required first-message state", 20_000);
+  await expectVisibleBodyText(page, "Configure a provider/model or enable Demo Mode before sending.", "provider-required guidance", 20_000);
   if (!await sendButton(page).isDisabled()) {
     failures.push("Send was enabled before provider/model readiness.");
   }
@@ -168,18 +164,19 @@ try {
   }
 
   runtimeReady = true;
-  await refreshRuntime(page);
-  await expectVisibleText(page, "Ready to send using VS Code Smoke Model", "safe mock provider/model readiness", 20_000);
+  await dispatchHostedWorkspaceAuthority(page, hostGeneration);
+  await expectVisibleBodyText(page, "Sends go through VS Code Smoke Model (vscode-smoke-provider) via the local runtime", "safe mock provider/model readiness", 20_000);
+  await expectVisibleBodyText(page, "Ready to send.", "exact send readiness", 20_000);
   if (await sendButton(page).isDisabled()) {
     failures.push("Send stayed disabled after safe mock provider/model readiness.");
   }
 
-  await page.evaluate(({ version, text }) => {
+  await page.evaluate(({ version, text, requestId }) => {
     window.dispatchEvent(new MessageEvent("message", {
       data: {
         version,
         type: "host.contextSnapshot",
-        requestId: "vscode-context-smoke",
+        requestId,
         payload: {
           kind: "active_editor",
           source: "vscode",
@@ -192,7 +189,7 @@ try {
         },
       },
     }));
-  }, { version: bridgeVersion, text: contextText });
+  }, { version: bridgeVersion, text: contextText, requestId: hostGeneration });
   await expectVisibleActiveContext(page);
 
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageText);
@@ -216,6 +213,7 @@ try {
   if (chatCommandRequest?.payload?.context?.source !== "vscode" || chatCommandRequest?.payload?.context?.selection?.text !== contextText) {
     failures.push("Mock runtime did not receive the VS Code active context on the first message.");
   }
+  assertProjectOwnedRuntimeRequestsScoped();
   assertAllRuntimeApiRequestsAuthorized();
 
   const visibleState = await collectVisibleState(page);
@@ -257,19 +255,45 @@ async function requireChromium() {
   }
 }
 
-async function refreshRuntime(page) {
-  const button = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", button);
-  await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((item) => item.textContent?.trim() === "Refresh runtime" && !item.disabled), undefined, { timeout: 20_000 });
-  await button.click();
+async function waitForGuiReady(page) {
+  const ready = await page.waitForFunction(() => {
+    const message = window.__yetAiVsCodeMessages?.find((candidate) => candidate?.type === "gui.ready");
+    return message ? {
+      version: message.version,
+      type: message.type,
+      supportedBridgeVersion: message.payload?.supportedBridgeVersion,
+    } : undefined;
+  }, undefined, { timeout: 10_000 }).then((handle) => handle.jsonValue());
+  if (ready.version !== bridgeVersion || ready.type !== "gui.ready" || ready.supportedBridgeVersion !== bridgeVersion) {
+    throw new Error("VS Code first-message gui.ready did not match the supported direct bridge contract.");
+  }
 }
 
-async function openDetailsBySummary(page, summaryText, visibleLocator) {
-  if (await visibleLocator.isVisible().catch(() => false)) return;
-  const summary = page.locator("summary", { hasText: summaryText }).first();
-  await summary.waitFor({ state: "visible", timeout: 5000 });
-  await summary.click({ timeout: 5000 });
-  await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
+function createHostGeneration() {
+  const requestId = `host-ready-${randomUUID().replaceAll("-", "")}`;
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(requestId)) throw new Error("Generated invalid host readiness requestId.");
+  return requestId;
+}
+
+async function dispatchHostedWorkspaceAuthority(page, requestId) {
+  await page.evaluate(({ version, runtimeUrl, token, requestId: generation, projectId: boundProjectId, displayName }) => {
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version,
+        type: "host.ready",
+        requestId: generation,
+        payload: { runtimeUrl, sessionToken: token, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
+      },
+    }));
+    window.dispatchEvent(new MessageEvent("message", {
+      data: {
+        version,
+        type: "host.workspaceBinding",
+        requestId: generation,
+        payload: { protocolVersion: "workspace_binding_v1", requestId: generation, state: "auto_bound", projectId: boundProjectId, displayName },
+      },
+    }));
+  }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, requestId, projectId, displayName: projectDisplayName });
 }
 
 async function expectVisibleActiveContext(page) {
@@ -311,12 +335,15 @@ function sendButton(page) {
 async function startMockRuntimeServer() {
   const server = http.createServer(async (request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
+    const projectPrefix = `/p/${projectId}`;
+    const scoped = requestUrl.pathname.startsWith(`${projectPrefix}/v1/`);
+    const runtimePath = scoped ? requestUrl.pathname.slice(projectPrefix.length) : requestUrl.pathname;
     if (request.method === "OPTIONS") {
       response.writeHead(204, corsHeaders()).end();
       return;
     }
     const authorized = request.headers.authorization === `Bearer ${runtimeToken}`;
-    if (requestUrl.pathname.startsWith("/v1/")) {
+    if (requestUrl.pathname.startsWith("/v1/") || scoped) {
       runtimeApiRequests.push({ method: request.method ?? "GET", pathname: requestUrl.pathname, authorized });
     }
     if (request.headers.authorization === `Bearer ${runtimeToken}`) {
@@ -324,6 +351,11 @@ async function startMockRuntimeServer() {
     }
     if (request.headers.authorization !== `Bearer ${runtimeToken}`) {
       json(response, 401, { error: "Unauthorized local runtime request. Check the session token." });
+      return;
+    }
+    if (isProjectOwnedRuntimePath(requestUrl.pathname) && !scoped) {
+      failures.push(`Mock runtime rejected unscoped project-owned request: ${request.method ?? "GET"} ${requestUrl.pathname}`);
+      json(response, 404, { error: "Project-owned runtime request must use the current project scope." });
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/ping") {
@@ -350,28 +382,54 @@ async function startMockRuntimeServer() {
       json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "Use a safe local mock provider for this preview smoke." });
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/chats") {
-      json(response, 200, { chats: [] });
+    if (request.method === "GET" && requestUrl.pathname === "/v1/projects") {
+      json(response, 200, { projects: [mockProjectSummary()], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
       return;
     }
-    const chatMatch = /^\/v1\/chats\/([^/]+)$/.exec(requestUrl.pathname);
+    if (request.method === "GET" && requestUrl.pathname === `/v1/projects/${projectId}`) {
+      json(response, 200, mockProjectSummary());
+      return;
+    }
+    if (request.method === "GET" && runtimePath === "/v1/project-memory") {
+      json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "GET" && runtimePath === "/v1/agent-progress") {
+      json(response, 200, { snapshots: [], cloudRequired: false, providerAccess: "direct" });
+      return;
+    }
+    if (request.method === "POST" && runtimePath === "/v1/chats") {
+      chatCreated = true;
+      json(response, 201, mockChatThread());
+      return;
+    }
+    if (request.method === "GET" && runtimePath === "/v1/chats") {
+      json(response, 200, { chats: chatCreated ? [mockChatSummary()] : [] });
+      return;
+    }
+    const chatMatch = /^\/v1\/chats\/([^/]+)$/.exec(runtimePath);
     if (request.method === "GET" && chatMatch) {
-      json(response, 200, { chatId: decodeURIComponent(chatMatch[1]), title: "Preview smoke", messages: [] });
+      if (decodeURIComponent(chatMatch[1]) !== chatId) {
+        json(response, 404, { error: "Unknown chat" });
+        return;
+      }
+      json(response, 200, mockChatThread());
       return;
     }
-    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(requestUrl.pathname);
+    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(runtimePath);
     if (request.method === "POST" && commandMatch) {
       chatCommandRequestCount += 1;
       chatCommandRequest = JSON.parse(await readRequestBody(request));
-      const chatId = decodeURIComponent(commandMatch[1]);
+      const commandChatId = decodeURIComponent(commandMatch[1]);
+      if (commandChatId !== chatId) failures.push(`Chat command used ${commandChatId} instead of the engine-created chat ID.`);
       if (isMatchingUserMessageCommand(chatCommandRequest)) {
         matchingUserMessageCommandReceived = true;
         resolveMatchingUserMessageCommand();
       }
-      json(response, 200, { accepted: true, chatId, requestId: chatCommandRequest.requestId, type: chatCommandRequest.type });
+      json(response, 200, { accepted: true, chatId: commandChatId, requestId: chatCommandRequest.requestId, type: chatCommandRequest.type });
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/chats/subscribe") {
+    if (request.method === "GET" && runtimePath === "/v1/chats/subscribe") {
       json(response, 500, { error: "SSE should be fulfilled by the browser route in this deterministic preview smoke." });
       return;
     }
@@ -389,13 +447,14 @@ async function commandDrivenSseBodyFromUrl(value) {
 
 function sseBodyFromUrl(value) {
   const url = new URL(value);
-  const chatId = url.searchParams.get("chat_id") ?? "chat-001";
+  const subscribedChatId = url.searchParams.get("chat_id") ?? chatId;
+  if (subscribedChatId !== chatId) failures.push(`SSE subscribed to ${subscribedChatId} instead of the engine-created chat ID.`);
   return [
-    { seq: 0, type: "snapshot", chatId, payload: { messages: [] } },
-    { seq: 1, type: "stream_started", chatId, payload: { role: "assistant" } },
-    { seq: 2, type: "stream_delta", chatId, payload: { delta: { content: "VS Code packaged " } } },
-    { seq: 3, type: "stream_delta", chatId, payload: { delta: { content: "smoke response." } } },
-    { seq: 4, type: "stream_finished", chatId, payload: { finishReason: "stop" } },
+    { seq: 0, type: "snapshot", chatId: subscribedChatId, payload: { thread: mockChatThread(), messages: [], runtime: { streaming: false, waitingForResponse: false } } },
+    { seq: 1, type: "stream_started", chatId: subscribedChatId, payload: { role: "assistant" } },
+    { seq: 2, type: "stream_delta", chatId: subscribedChatId, payload: { delta: { content: "VS Code packaged " } } },
+    { seq: 3, type: "stream_delta", chatId: subscribedChatId, payload: { delta: { content: "smoke response." } } },
+    { seq: 4, type: "stream_finished", chatId: subscribedChatId, payload: { finishReason: "stop" } },
   ].map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "\n";
 }
 
@@ -416,6 +475,24 @@ function mockModel() {
 
 function demoModeDisabledResponse() {
   return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
+}
+
+function mockProjectSummary() {
+  return { projectId, displayName: projectDisplayName, status: "available", revision: "1", createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
+}
+
+function mockChatThread() {
+  return { chatId, title: "VS Code first-message smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messages: [] };
+}
+
+function mockChatSummary() {
+  const thread = mockChatThread();
+  return { chatId: thread.chatId, title: thread.title, createdAt: thread.createdAt, updatedAt: thread.updatedAt, messageCount: thread.messages.length };
+}
+
+function isProjectOwnedRuntimePath(pathname) {
+  return /^\/v1\/(?:chats(?:\/|$)|project-memory(?:\/|$)|agent-progress(?:\/|$))/.test(pathname)
+    || /^\/p\/[^/]+\/v1\/(?:chats(?:\/|$)|project-memory(?:\/|$)|agent-progress(?:\/|$))/.test(pathname);
 }
 
 async function startStaticServer(staticRoot) {
@@ -678,6 +755,23 @@ function assertAllRuntimeApiRequestsAuthorized() {
   const unauthorized = runtimeApiRequests.filter((entry) => !entry.authorized);
   if (unauthorized.length > 0) {
     failures.push(`Runtime /v1/* request(s) missed the VS Code host.ready bearer token: ${unauthorized.map((entry) => `${entry.method} ${entry.pathname}`).join(", ")}.`);
+  }
+}
+
+function assertProjectOwnedRuntimeRequestsScoped() {
+  const expectedPrefix = `/p/${projectId}/v1/`;
+  const unscoped = runtimeApiRequests.filter((entry) => isProjectOwnedRuntimePath(entry.pathname) && !entry.pathname.startsWith(expectedPrefix));
+  if (unscoped.length > 0) {
+    failures.push(`Project-owned runtime request(s) escaped ${expectedPrefix}: ${unscoped.map((entry) => `${entry.method} ${entry.pathname}`).join(", ")}.`);
+  }
+  for (const expected of [
+    { method: "POST", pathname: `${expectedPrefix}chats` },
+    { method: "POST", pathname: `${expectedPrefix}chats/${chatId}/commands` },
+    { method: "GET", pathname: `${expectedPrefix}chats/subscribe` },
+  ]) {
+    if (!runtimeApiRequests.some((entry) => entry.method === expected.method && entry.pathname === expected.pathname)) {
+      failures.push(`Missing project-scoped runtime evidence: ${expected.method} ${expected.pathname}.`);
+    }
   }
 }
 
