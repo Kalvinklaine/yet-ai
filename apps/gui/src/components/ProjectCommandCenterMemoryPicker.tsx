@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import {
   projectCommandCenterLimits,
   sanitizeMemorySelection,
-  shapeMemorySummaries,
+  sanitizeMemorySummariesInOrder,
   type MemoryNoteSummaryItem,
 } from "../services/projectCommandCenterData";
 
@@ -64,12 +64,10 @@ export function ProjectCommandCenterMemoryPicker({
 }
 
 function sanitizeNotes(notes: readonly MemoryNoteSummaryItem[]): MemoryNoteSummaryItem[] {
-  const shaped = shapeMemorySummaries(notes.map((note, index) => ({
+  return sanitizeMemorySummariesInOrder(notes.map((note) => ({
     id: note.noteId,
     title: note.title,
     tags: Array.isArray(note.tags) ? note.tags : [],
     summary: note.summary,
-    updatedAt: new Date(index).toISOString(),
   })));
-  return shaped.status === "ready" ? shaped.items : [];
 }

@@ -153,7 +153,9 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     conversations: conversations.status === "loading" ? loadingSection() : conversations.status === "error" ? errorSection(conversations.message) : shapeRecentConversations(conversations.data),
     memory,
     activeWork: activeWork.status === "loading" ? loadingSection() : activeWork.status === "error" ? errorSection(activeWork.message) : shapeActiveWork(activeWork.data),
-    start: starting ? { enabled: false, blockedReason: "Starting…" } : { enabled: true },
+    start: starting
+      ? { enabled: false, blockedReason: "Starting…" }
+      : commandCenterStart(summary, runtime, providerModel),
   }), [activeWork, conversations, memory, providerModel, runtime, starting, summary]);
 
   const startNew = async () => {
@@ -204,9 +206,9 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
           onNavigateActiveWork={() => openSelectedProjectWithCurrentAuthority({ kind: "project", projectId: selection.projectId, page: "agent" })}
         />
         <div className="workspace-dashboard-actions" aria-label="Workspace actions">
-          <button type="button" className="secondary-button" onClick={() => openWithCurrentAuthority({ kind: "settings" })}>Settings</button>
+          {binding.state === "auto_bound" && <button type="button" className="secondary-button" onClick={() => openWithCurrentAuthority({ kind: "settings" })}>Settings</button>}
           <button type="button" className="secondary-button" onClick={loadGlobal}>Diagnostics</button>
-          <button type="button" className="link-button" onClick={() => openWithCurrentAuthority({ kind: "legacy" })}>Legacy data</button>
+          {binding.state === "auto_bound" && <button type="button" className="link-button" onClick={() => openWithCurrentAuthority({ kind: "legacy" })}>Legacy data</button>}
         </div>
         {startError && <p className="workspace-dashboard-error" role="alert">{startError}</p>}
       </>}
@@ -274,4 +276,20 @@ function commandCenterReadiness(summary: LoadState<ProjectSummary>, runtime: Loa
     { id: "runtime", label: runtime.status === "ready" ? "Local runtime" : "Runtime status unavailable", status: runtime.status === "ready" ? "ready" : "blocked" },
     { id: "provider", label: providerModel.status === "ready" && providerModel.data > 0 ? `${providerModel.data} ready provider-model pairing${providerModel.data === 1 ? "" : "s"}` : "Provider setup required", status: providerModel.status === "ready" && providerModel.data > 0 ? "ready" : "attention" },
   ]);
+}
+
+function commandCenterStart(summary: LoadState<ProjectSummary>, runtime: LoadState<boolean>, providerModel: LoadState<number>): ProjectCommandCenterModel["start"] {
+  if (summary.status === "loading" || runtime.status === "loading" || providerModel.status === "loading") {
+    return { enabled: false, blockedReason: "Checking project, runtime, and provider readiness…" };
+  }
+  if (summary.status !== "ready" || summary.data.status !== "available" || !summary.data.rootAvailable) {
+    return { enabled: false, blockedReason: "Project context is unavailable." };
+  }
+  if (runtime.status !== "ready" || !runtime.data) {
+    return { enabled: false, blockedReason: "The local runtime is not ready." };
+  }
+  if (providerModel.status !== "ready" || providerModel.data < 1) {
+    return { enabled: false, blockedReason: "Set up a ready provider and model before starting chat." };
+  }
+  return { enabled: true };
 }

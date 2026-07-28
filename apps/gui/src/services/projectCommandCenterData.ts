@@ -53,6 +53,8 @@ export type MemorySummaryInput = Pick<ProjectMemoryNote, "id" | "title" | "tags"
   summary?: string;
 };
 
+export type MemorySummaryMetadataInput = Pick<MemorySummaryInput, "id" | "title" | "tags" | "summary">;
+
 const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 const unsafeTextPattern = /(?:[A-Za-z]:\\|(?:^|\s)[~/]|\.{2}\/|\\\\|https?:\/\/|(?:api[_ -]?key|authorization|bearer|token|secret|password)\s*[:=])/i;
 
@@ -79,18 +81,25 @@ export function shapeRecentConversations(chats: readonly ChatSummary[]): Command
 }
 
 export function shapeMemorySummaries(notes: readonly MemorySummaryInput[]): CommandCenterSection<MemoryNoteSummaryItem> {
-  const items = notes
+  const ordered = notes
     .filter((note) => safeIdPattern.test(note.id))
     .map((note) => ({ note, timestamp: validTimestamp(note.updatedAt) }))
     .sort((left, right) => right.timestamp - left.timestamp)
     .slice(0, projectCommandCenterLimits.memoryNotes)
-    .map(({ note }) => ({
+    .map(({ note }) => note);
+  return sectionFromItems(sanitizeMemorySummariesInOrder(ordered));
+}
+
+export function sanitizeMemorySummariesInOrder(notes: readonly MemorySummaryMetadataInput[]): MemoryNoteSummaryItem[] {
+  return notes
+    .filter((note) => safeIdPattern.test(note.id))
+    .slice(0, projectCommandCenterLimits.memoryNotes)
+    .map((note) => ({
       noteId: note.id,
       title: safeLabel(note.title, "Memory note", 72),
       tags: note.tags.map((tag) => safeLabel(tag, "", 24)).filter(Boolean).slice(0, 4),
       summary: safeLabel(note.summary, "Saved project context", 120),
     }));
-  return sectionFromItems(items);
 }
 
 export function shapeActiveWork(snapshots: readonly AgentProgressSnapshot[]): CommandCenterSection<ActiveWorkItem> {
