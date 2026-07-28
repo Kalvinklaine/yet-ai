@@ -84,7 +84,16 @@ try {
     reportFailures();
   }
 
+  const setupTab = page.getByRole("tab", { name: /^Setup/ }).first();
+  const chatTab = page.getByRole("tab", { name: "Chat", exact: true }).first();
   for (const text of requiredVisibleText) {
+    if (text === "Local runtime connection" || text === "Provider setup") {
+      await setupTab.click();
+      await page.locator("#workbench-panel-setup").waitFor({ state: "visible", timeout: 5000 });
+    } else if (text === "Chat with Yet AI") {
+      await chatTab.click();
+      await page.locator("#workbench-panel-chat").waitFor({ state: "visible", timeout: 5000 });
+    }
     const visible = await page.getByText(text, { exact: true }).first().isVisible().catch(() => false);
     if (!visible) {
       failures.push(`Missing visible GUI text: ${text}`);
@@ -315,8 +324,17 @@ function isJsOrCssAssetUrl(value) {
 
 async function assertBridgeDiagnostics(page) {
   const bridgeDebugDetails = page.getByTestId("bridge-debug-details");
+  const bridgeDebugCount = await bridgeDebugDetails.count();
+  if (bridgeDebugCount === 0) {
+    const debugSurfaceAttached = await page.locator("#workbench-tab-debug, #workbench-panel-debug").count() > 0;
+    if (debugSurfaceAttached) {
+      failures.push("Bridge diagnostics phase: the Debug surface is attached, but its diagnostic disclosure is absent.");
+    }
+    return;
+  }
   const bridgeDebugState = await bridgeDebugDetails.evaluate((details) => ({ open: details.open, text: details.textContent ?? "" })).catch(() => null);
   if (!bridgeDebugState) {
+    failures.push("Bridge diagnostics phase: the attached diagnostic disclosure could not be inspected.");
     return;
   }
   if (bridgeDebugState.open) {
@@ -329,7 +347,28 @@ async function assertBridgeDiagnostics(page) {
     failures.push("Bridge diagnostics disclosure contains sensitive wording while collapsed.");
   }
 
-  await bridgeDebugDetails.locator("summary").first().click();
+  const debugTab = page.getByRole("tab", { name: /^Debug \/ Trace(?: error)?$/ }).first();
+  const debugTabVisible = await debugTab.isVisible().catch(() => false);
+  if (!debugTabVisible) {
+    failures.push("Bridge diagnostics phase: the diagnostic disclosure is attached but the Debug / Trace tab is not visible.");
+    return;
+  }
+  await debugTab.click();
+
+  const debugPanel = page.locator("#workbench-panel-debug");
+  const debugPanelVisible = await debugPanel.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!debugPanelVisible) {
+    failures.push("Bridge diagnostics phase: the Debug / Trace tab did not reveal its tabpanel.");
+    return;
+  }
+
+  const bridgeDebugSummary = bridgeDebugDetails.locator(":scope > summary");
+  const bridgeDebugSummaryVisible = await bridgeDebugSummary.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!bridgeDebugSummaryVisible) {
+    failures.push("Bridge diagnostics phase: the Debug / Trace tabpanel did not reveal the diagnostic disclosure summary.");
+    return;
+  }
+  await bridgeDebugSummary.click();
   const openedBridgeDebugState = await bridgeDebugDetails.evaluate((details) => ({ open: details.open, text: details.textContent ?? "" })).catch(() => null);
   if (!openedBridgeDebugState?.open) {
     failures.push("Bridge diagnostics disclosure did not open.");
