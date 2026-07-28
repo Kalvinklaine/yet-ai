@@ -9270,6 +9270,56 @@ describe("chat panel", () => {
     expect(chatInput().value).toBe("");
   });
 
+  it("preserves a newer composer draft when an in-flight command succeeds", async () => {
+    const command = deferred<Response>();
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandResponse: command.promise });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "Message A");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setTextareaValue(chatInput(), "Draft B");
+    });
+
+    command.resolve(jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-a", type: "user_message" }));
+    await flushAsync();
+
+    expect(chatInput().value).toBe("Draft B");
+    expect(container?.textContent).toContain("Message A");
+    expect(container?.textContent).toContain("Command accepted request-a");
+  });
+
+  it("preserves a newer composer draft when an in-flight command fails", async () => {
+    const command = deferred<Response>();
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandResponse: command.promise });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "Message A");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setTextareaValue(chatInput(), "Draft B");
+    });
+
+    command.resolve(jsonResponse({ error: "command rejected" }, 500));
+    await flushAsync();
+
+    expect(chatInput().value).toBe("Draft B");
+    expect(Array.from(container?.querySelectorAll(".chat-bubble") ?? []).some((bubble) => bubble.textContent?.includes("Message A"))).toBe(false);
+    expect(container?.textContent).toContain("command rejected");
+  });
+
   it("sends multiline coding action prompts unchanged without browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const prompt = "Coding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically.";
@@ -9611,6 +9661,8 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("failed [redacted]");
     expect(container?.textContent).toContain("Recovery: Refresh runtime and resend after the local command endpoint is healthy. No automatic retry was started.");
     expect(container?.textContent).not.toContain("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+    expect(chatInput().value).toBe("Fail please");
+    expect(Array.from(container?.querySelectorAll(".chat-bubble") ?? []).some((bubble) => bubble.textContent?.includes("Fail please"))).toBe(false);
   });
 
   it("stale command acceptance after chat change does not clear the current draft", async () => {

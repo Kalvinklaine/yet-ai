@@ -3640,7 +3640,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
 
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const content = chatInput.trim();
+    const submittedChatInput = chatInput;
+    const content = submittedChatInput.trim();
     if (!content || firstProjectChatCreateRef.current) {
       return;
     }
@@ -3727,7 +3728,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
     if (result.ok) {
       if (firstProjectChatCreateRef.current?.token === firstProjectChatToken) firstProjectChatCreateRef.current = null;
-      setChatInput("");
+      setChatInput((current) => current === submittedChatInput || current === "" ? "" : current);
       addTimeline(`Command accepted ${result.data.requestId}`);
       appendTrace({ family: "chat.sendAccepted", title: "Send accepted", status: "succeeded", summary: "Runtime accepted user message command.", requestId: result.data.requestId, details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
       if (modelProposalDraft?.prompt === content) {
@@ -3745,7 +3746,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       if (firstProjectChatCreateRef.current?.token === firstProjectChatToken) firstProjectChatCreateRef.current = null;
       setChatError(result.error);
       setChatLifecycleState("failed");
-      setChatInput(content);
+      setChatInput((current) => current === submittedChatInput || current === "" ? submittedChatInput : current);
       setChatView((current) => removeOptimisticUserMessage(current, optimisticUserMessageId));
       appendChatError(result.error.message, chatRecoveryCodeForRuntimeError(result.error, "command"));
       addTimeline(`Command error: ${sanitizeDisplayText(result.error.message)}`);
