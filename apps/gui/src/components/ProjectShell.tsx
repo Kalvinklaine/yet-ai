@@ -1,37 +1,78 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { getProject, type ProjectSummary } from "../services/projectClient";
+import { createProjectRuntimeSettings, getProject, type ProjectSummary } from "../services/projectClient";
+import { listProjectMemory } from "../services/projectMemoryClient";
+import {
+  errorSection,
+  loadingSection,
+  shapeActiveWork,
+  shapeMemorySummaries,
+  shapeReadiness,
+  shapeRecentConversations,
+  type ProjectCommandCenterModel,
+} from "../services/projectCommandCenterData";
 import { ProjectLink, type AppRoute, type ProjectNavigation } from "../services/projectRouting";
-import type { RuntimeError, RuntimeSettings } from "../services/runtimeClient";
+import { getAgentProgress, listChats, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { ProjectHome } from "./ProjectHome";
 
 export function ProjectShell({ route, settings, navigate, children }: { route: Extract<AppRoute, { kind: "project" }>; settings: RuntimeSettings; navigate: ProjectNavigation; children?: ReactNode }) {
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [error, setError] = useState<RuntimeError | null>(null);
   const [loading, setLoading] = useState(true);
-  const requestRef = useRef(0);
+  const [commandCenter, setCommandCenter] = useState<ProjectCommandCenterModel | null>(null);
+  const projectRequestRef = useRef(0);
+  const commandCenterRequestRef = useRef(0);
   const load = useCallback(async () => {
-    const request = ++requestRef.current;
+    const request = ++projectRequestRef.current;
     const controller = new AbortController();
     setLoading(true);
     setError(null);
     const result = await getProject(settings, route.projectId, controller.signal);
-    if (request !== requestRef.current) return;
+    if (request !== projectRequestRef.current) return;
     if (result.ok) setProject(result.data); else setError(result.error);
     setLoading(false);
     return controller;
   }, [route.projectId, settings]);
   useEffect(() => {
-    const request = ++requestRef.current;
+    const request = ++projectRequestRef.current;
     const controller = new AbortController();
     setLoading(true);
     setError(null);
     void getProject(settings, route.projectId, controller.signal).then((result) => {
-      if (request !== requestRef.current || controller.signal.aborted) return;
+      if (request !== projectRequestRef.current || controller.signal.aborted) return;
       if (result.ok) setProject(result.data); else setError(result.error);
       setLoading(false);
     });
     return () => controller.abort();
   }, [route.projectId, settings]);
+
+  useEffect(() => {
+    if (route.page !== "home" || !project || project.projectId !== route.projectId || project.status !== "available" || !project.rootAvailable) {
+      setCommandCenter(null);
+      return;
+    }
+    const request = ++commandCenterRequestRef.current;
+    const controller = new AbortController();
+    const projectSettings = createProjectRuntimeSettings(settings, project.projectId, { generation: request, abortSignal: controller.signal });
+    setCommandCenter({
+      readiness: shapeReadiness([
+        { id: "project", label: "Local project context", status: "ready" },
+        { id: "runtime", label: "Local runtime", status: "ready" },
+        { id: "provider", label: "Direct provider access", status: "ready" },
+      ]),
+      conversations: loadingSection(),
+      memory: loadingSection(),
+      activeWork: loadingSection(),
+      start: { enabled: true },
+    });
+    const update = (patch: Partial<ProjectCommandCenterModel>) => {
+      if (request !== commandCenterRequestRef.current || controller.signal.aborted) return;
+      setCommandCenter((current) => current ? { ...current, ...patch } : current);
+    };
+    void listChats(projectSettings).then((result) => update({ conversations: result.ok ? shapeRecentConversations(result.data.chats) : errorSection("Recent conversations could not be loaded.") }));
+    void listProjectMemory(projectSettings).then((result) => update({ memory: result.ok ? shapeMemorySummaries(result.data.notes) : errorSection("Memory metadata could not be loaded.") }));
+    void getAgentProgress(projectSettings, controller.signal).then((result) => update({ activeWork: result.ok ? shapeActiveWork(result.data.snapshots) : errorSection("Active work could not be loaded.") }));
+    return () => controller.abort();
+  }, [project, route.page, route.projectId, settings]);
 
   if (loading) return <main className="project-page-shell"><section className="project-blocked-state" role="status"><h1>Loading project…</h1><p>Checking the local project boundary.</p></section></main>;
   if (error || !project) return <ProjectBlockedState title="Project unavailable" detail={error?.status === 404 ? "This project could not be found." : "Yet AI could not safely load this project."} navigate={navigate} onRetry={() => void load()} />;
@@ -46,7 +87,7 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
         <div className="row"><span className="status-label ready"><span aria-hidden="true">●</span>Ready</span><ProjectLink className="project-settings-link" route={{ kind: "settings" }} navigate={navigate}>Settings</ProjectLink></div>
       </header>
       <nav className="project-shell-nav" aria-label={`${project.displayName} navigation`}>{nav.map((item) => <ProjectLink key={item.page} route={{ kind: "project", projectId: project.projectId, page: item.page }} navigate={navigate} aria-current={route.page === item.page ? "page" : undefined}>{item.label}</ProjectLink>)}</nav>
-      {route.page === "home" ? <ProjectHome project={project} navigate={navigate} /> : children}
+      {route.page === "home" && commandCenter ? <ProjectHome key={project.projectId} project={project} model={commandCenter} navigate={navigate} /> : children}
     </main>
   );
 }
