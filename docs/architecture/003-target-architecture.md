@@ -325,9 +325,15 @@ The current code foundation proves that `same_origin_proxy` is host-agnostic: th
 
 A dedicated visual/browser GUI smoke is planned in GitHub issue #2. Until that issue is implemented and verified, docs and reports should describe it as planned only. The planned smoke must stay local-first, use loopback/mock fixtures, and require no provider credentials, hosted Yet AI backend, managed model gateway, product credit balance, or cloud workspace.
 
-#### Shared dashboard and trusted workspace binding target
+#### Shared dashboard and trusted workspace binding
 
-This section records an approved target contract for a future implementation wave. It does not claim that the shared dashboard, hosted Current Workspace Dashboard, or IDE workspace binding described here is implemented. The implemented browser-first project registry and isolation boundary remains authoritative; this target adds a later trusted-host binding path without weakening its opaque-ID, request-scoped project, storage, or legacy-data separation rules.
+The Project Command Center MVP is implemented for browser project homes and the trusted-host Current Workspace Dashboard without weakening the authoritative browser-first project registry, opaque-ID, request-scoped project, storage, or legacy-data separation rules. Browser `/projects` remains the canonical project entry. Trusted hosted entry requires validated host-ready workspace binding and short-lived authority before project data or chat mounts.
+
+The shared data layer verifies runtime and usable enabled provider/model readiness and shapes only safe project data for recent conversations, bounded memory-note summaries, and active or blocked work. The presentation component performs no fetching, storage, workspace binding, or authority work. Memory selection is explicit, capped, and held only in memory. Start or Resume creates a short-lived project/chat/generation-bound launch intent; Start new first enters dedicated creation isolation and accepts only the engine-issued chat id. Chat renders selected memory as a visible unsent one-shot attachment. Nothing is sent until manual Send; rejected handoff retains selection and accepted Send clears it. Agent progress continuity is same-project and opens only after explicit user action.
+
+`npm run smoke:project-command-center` builds the engine and GUI, serves the built GUI from loopback, and uses an isolated temporary project plus Demo Mode to verify the browser command-center journey, creation isolation, engine-issued chat identity, no command before manual Send, one-shot clear, same-project progress navigation, critical request status, HttpOnly loopback session cookie, and private-evidence boundaries. It does not use a real provider or installed IDE and is not production, release, marketplace, signing, notarization, or JetBrains parity evidence.
+
+Final S150 audit status: no open Critical or High issue was found in the milestone boundary. The UI has focused keyboard/focus, labeled-region, creation-status, narrow-viewport, reduced-motion, and long-safe-label handling. Residual risks are the existing non-failing Vite chunk-size warning, absence of real-provider CI and installed-IDE evidence, and deferred production/release/marketplace/signing and broader JetBrains parity decisions. The milestone adds no auto-send, hidden context injection, autonomous work resume, Browser trusted edit execution, hosted backend requirement, or durable raw context storage.
 
 ##### Landing surfaces
 

@@ -89,6 +89,23 @@ describe("ProjectCommandCenter", () => {
     expect(container.textContent).not.toContain("/private/root");
     expect(container.textContent).not.toContain("secret output");
   });
+
+  it("associates section headings and exposes the creation state without losing long labels", () => {
+    const longLabel = "A deliberately long but safe project label that must remain available to assistive technology";
+    render({
+      ...readyModel(),
+      conversations: { status: "ready", items: [{ chatId: "chat-long", title: longLabel, updatedLabel: "Recently updated" }] },
+      start: { enabled: false, blockedReason: "Starting…" },
+    }, { title: longLabel });
+
+    const commandCenter = container.querySelector(".project-command-center");
+    expect(commandCenter?.getAttribute("aria-busy")).toBe("true");
+    expect(button("Starting…").disabled).toBe(true);
+    expect(container.querySelector("#project-command-center-recent-conversations")?.textContent).toBe("Recent conversations");
+    expect(container.querySelector("[aria-labelledby='project-command-center-recent-conversations']")).not.toBeNull();
+    expect(button(`Resume ${longLabel}`)).not.toBeNull();
+    expect(container.textContent).toContain(longLabel);
+  });
 });
 
 function render(model: ProjectCommandCenterModel, overrides: Partial<Parameters<typeof ProjectCommandCenter>[0]> = {}) {

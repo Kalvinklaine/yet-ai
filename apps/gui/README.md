@@ -34,6 +34,22 @@ npm run smoke:browser-project-isolation
 
 It registers two temporary local projects, opens the built engine-served GUI in Playwright, and verifies the usable `/projects` landing page, safe project rows and Add Project action, direct/refreshable project routes, independent tabs, scoped chat/memory/progress UI, stale SSE retirement and controlled-state clearing on switch, archive/restore, legacy separation, and browser/log/storage leak resistance. It uses generated local credentials and Demo Mode only, with no hosted account, real provider credentials, cloud service, or non-loopback request.
 
+## Project Command Center MVP
+
+The browser `/projects` route is the Projects entry and opens each registered project into its project command center. Trusted IDE entry uses the compact Current Workspace Dashboard after host-ready workspace binding and authority validation. Both surfaces use the same presentation component and safe project-scoped data: verified local runtime and enabled provider/model readiness, recent chats, bounded memory-note summaries, and active or blocked Agent progress.
+
+Memory selection is explicit and capped. Starting or resuming creates a short-lived in-memory launch intent bound to the project, optional chat id, and current browser or host generation. Start new uses a dedicated creation state, accepts only the engine-issued chat id, and does not keep the old chat/composer mounted as the destination. The selected notes appear in chat as a visible, unsent, one-shot attachment. A rejected or failed handoff retains the selection for another explicit attempt; an accepted manual Send clears it. Opening same-project Agent progress is explicit and does not start or resume work.
+
+The focused final product proof is:
+
+```sh
+npm run smoke:project-command-center
+```
+
+This command builds the real local engine and GUI, serves the built GUI from loopback, registers an isolated temporary project, and uses Playwright with Demo Mode to verify command-center readiness, safe summaries, Start-new chat isolation, engine-issued chat identity, visible memory attachment, no command before manual Send, accepted one-shot clear, and same-project progress navigation. It also checks loopback-only requests, critical response failures, an HttpOnly loopback session cookie, and browser/runtime evidence for private-data leakage. It does not use a real provider or installed IDE and does not prove production, release, marketplace, signing, notarization, or JetBrains parity.
+
+The milestone adds no auto-send, hidden context injection, autonomous work resume, Browser trusted edit execution, hosted backend requirement, or durable raw context storage. Core use remains local-first BYOK without a Yet AI account, managed gateway, product credit balance, or cloud workspace.
+
 
 Agent progress read-only panel coverage is available from the root:
 
