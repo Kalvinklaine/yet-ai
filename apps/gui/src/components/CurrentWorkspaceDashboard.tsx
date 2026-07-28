@@ -1,9 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isSafeWorkspaceDisplayName, type WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
+import { listProjectMemory } from "../services/projectMemoryClient";
+import {
+  errorSection,
+  loadingSection,
+  shapeActiveWork,
+  shapeMemorySummaries,
+  shapeReadiness,
+  shapeRecentConversations,
+  type CommandCenterSection,
+  type MemoryNoteSummaryItem,
+  type ProjectCommandCenterModel,
+} from "../services/projectCommandCenterData";
 import { createProjectRuntimeSettings, getProject, listProjects, type ProjectSummary } from "../services/projectClient";
 import { parseProjectId, type AppRoute, type ProjectId } from "../services/projectRouting";
 import { createChat, getAgentProgress, getModels, getPing, listChats, type AgentProgressSnapshot, type ChatSummary, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { listProviders } from "../services/providersClient";
+import { ProjectCommandCenter } from "./ProjectCommandCenter";
 
 type LoadState<T> =
   | { status: "loading" }
@@ -21,24 +34,34 @@ type DashboardProps = {
   hostReadyGeneration?: string | null;
   getAuthorityToken: (selectedProjectId?: ProjectId) => HostedAuthorityToken | null;
   onOpen: (route: Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>, authorityToken: HostedAuthorityToken, selectedProjectId?: ProjectId) => boolean;
+  onSelectedMemoryNoteIdsChange?: (noteIds: string[]) => void;
 };
 
 const loading = { status: "loading" } as const;
 const chatIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
-export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGeneration, getAuthorityToken, onOpen }: DashboardProps) {
-  const [selection, setSelection] = useState<SelectedProject | null>(null);
+export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGeneration, getAuthorityToken, onOpen, onSelectedMemoryNoteIdsChange }: DashboardProps) {
+  const [chosenProject, setChosenProject] = useState<{ project: SelectedProject; bindingKey: string } | null>(null);
   const [projects, setProjects] = useState<LoadState<ProjectSummary[]>>(loading);
   const [summary, setSummary] = useState<LoadState<ProjectSummary>>(loading);
   const [conversations, setConversations] = useState<LoadState<ChatSummary[]>>(loading);
+  const [memory, setMemory] = useState<CommandCenterSection<MemoryNoteSummaryItem>>(loadingSection);
+  const [selectedMemoryNoteIds, setSelectedMemoryNoteIds] = useState<string[]>([]);
   const [activeWork, setActiveWork] = useState<LoadState<AgentProgressSnapshot[]>>(loading);
   const [runtime, setRuntime] = useState<LoadState<boolean>>(loading);
   const [providerModel, setProviderModel] = useState<LoadState<number>>(loading);
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
   const mountedRef = useRef(false);
+  const selectedMemoryChangeRef = useRef(onSelectedMemoryNoteIdsChange);
+  selectedMemoryChangeRef.current = onSelectedMemoryNoteIdsChange;
   const [startError, setStartError] = useState<string | null>(null);
   const trusted = hostReadyGeneration === undefined || (hostReadyGeneration !== null && binding !== null);
+  const bindingKey = `${hostReadyGeneration ?? "standalone"}\u0000${binding?.requestId ?? "unbound"}`;
+  const selection = useMemo(() => binding?.state === "auto_bound"
+    ? toSelectedProject(binding.projectId, binding.displayName)
+    : chosenProject?.bindingKey === bindingKey ? chosenProject.project : null,
+  [binding, bindingKey, chosenProject]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -46,13 +69,13 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
   }, []);
 
   useEffect(() => {
-    setSelection(binding?.state === "auto_bound" ? toSelectedProject(binding.projectId, binding.displayName) : null);
-  }, [binding]);
-
-  useEffect(() => {
+    setChosenProject(null);
+    setSelectedMemoryNoteIds([]);
+    selectedMemoryChangeRef.current?.([]);
     setProjects(loading);
     setSummary(loading);
     setConversations(loading);
+    setMemory(loadingSection());
     setActiveWork(loading);
     setRuntime(loading);
     setProviderModel(loading);
@@ -104,6 +127,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     const scoped = createProjectRuntimeSettings(settings, selection.projectId, { generation: 0, abortSignal: controller.signal });
     setSummary(loading);
     setConversations(loading);
+    setMemory(loadingSection());
     setActiveWork(loading);
     void getProject(settings, selection.projectId, controller.signal).then((result) => {
       if (!controller.signal.aborted) setSummary(result.ok ? { status: "ready", data: result.data } : { status: "error", message: "Project summary could not be loaded." });
@@ -111,15 +135,26 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     void listChats(scoped).then((result) => {
       if (!controller.signal.aborted) setConversations(result.ok ? { status: "ready", data: newestFirst(result.data.chats) } : { status: "error", message: "Recent conversations could not be loaded." });
     });
+    void listProjectMemory(scoped).then((result) => {
+      if (controller.signal.aborted) return;
+      setMemory(result.ok
+        ? shapeMemorySummaries(result.data.notes.map(({ id, title, tags, updatedAt }) => ({ id, title, tags, updatedAt })))
+        : errorSection("Project memory could not be loaded."));
+    });
     void getAgentProgress(scoped, controller.signal).then((result) => {
       if (!controller.signal.aborted) setActiveWork(result.ok ? { status: "ready", data: result.data.snapshots } : { status: "error", message: "Agent progress could not be loaded." });
     });
     return () => controller.abort();
   }, [selection, settings, trusted, hostReadyGeneration]);
 
-  const latestChat = conversations.status === "ready" ? conversations.data[0] : undefined;
-  const projectName = summary.status === "ready" ? summary.data.displayName : selection?.displayName;
-  const activeSnapshots = useMemo(() => activeWork.status === "ready" ? activeWork.data.filter((item) => item.status !== "done") : [], [activeWork]);
+  const projectName = selection?.displayName;
+  const commandCenterModel = useMemo<ProjectCommandCenterModel>(() => ({
+    readiness: commandCenterReadiness(summary, runtime, providerModel),
+    conversations: conversations.status === "loading" ? loadingSection() : conversations.status === "error" ? errorSection(conversations.message) : shapeRecentConversations(conversations.data),
+    memory,
+    activeWork: activeWork.status === "loading" ? loadingSection() : activeWork.status === "error" ? errorSection(activeWork.message) : shapeActiveWork(activeWork.data),
+    start: starting ? { enabled: false, blockedReason: "Starting…" } : { enabled: true },
+  }), [activeWork, conversations, memory, providerModel, runtime, starting, summary]);
 
   const startNew = async () => {
     if (!selection || startingRef.current) return;
@@ -150,22 +185,25 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
   return (
     <DashboardFrame>
       <header className="workspace-dashboard-heading">
-        <div><span className="badge ok">current workspace</span><h1>{projectName ?? "Choose a project"}</h1><p>Review local readiness, then explicitly resume or start a project chat.</p></div>
-        <span className={`status-label ${runtime.status === "ready" ? "ready" : "blocked"}`}>{runtime.status === "loading" ? "Checking runtime" : runtime.status === "ready" ? "Runtime ready" : "Runtime needs attention"}</span>
+        <div><span className="badge ok">current workspace</span><h1>Hosted workspace</h1><p>Trusted local project controls from your IDE.</p></div>
       </header>
 
-      {binding.state === "selection_required" && !selection && <ProjectChooser projects={projects} onSelect={setSelection} />}
+      {binding.state === "selection_required" && !selection && <ProjectChooser projects={projects} onSelect={(project) => setChosenProject({ project, bindingKey })} />}
 
       {selection && <>
-        <div className="workspace-dashboard-grid">
-          <DashboardSection title="Project" state={summary} ready={summary.status === "ready" ? (summary.data.rootAvailable ? "Local context ready" : "Local context unavailable") : undefined} empty="No project summary is available." />
-          <DashboardSection title="Provider & model" state={providerModel} ready={providerModel.status === "ready" ? (providerModel.data > 0 ? `${providerModel.data} ready pairing${providerModel.data === 1 ? "" : "s"}` : "Setup required") : undefined} empty="No ready provider and model pairing." />
-          <DashboardSection title="Recent conversations" state={conversations} ready={conversations.status === "ready" && conversations.data.length ? `${conversations.data.length} recent conversation${conversations.data.length === 1 ? "" : "s"}` : undefined} empty="No conversations yet." />
-          <DashboardSection title="Active work" state={activeWork} ready={activeWork.status === "ready" && activeSnapshots.length ? `${activeSnapshots.length} active or blocked run${activeSnapshots.length === 1 ? "" : "s"}` : undefined} empty="No active agent work." />
-        </div>
+        <ProjectCommandCenter
+          title={projectName ?? "Current project"}
+          model={commandCenterModel}
+          selectedMemoryNoteIds={selectedMemoryNoteIds}
+          onStart={() => void startNew()}
+          onResume={(chatId) => openSelectedProjectWithCurrentAuthority({ kind: "project", projectId: selection.projectId, page: "chat", chatId })}
+          onMemorySelectionChange={(noteIds) => {
+            setSelectedMemoryNoteIds(noteIds);
+            selectedMemoryChangeRef.current?.(noteIds);
+          }}
+          onNavigateActiveWork={() => openSelectedProjectWithCurrentAuthority({ kind: "project", projectId: selection.projectId, page: "agent" })}
+        />
         <div className="workspace-dashboard-actions" aria-label="Workspace actions">
-          {latestChat && chatIdPattern.test(latestChat.chatId) && <button type="button" onClick={() => openSelectedProjectWithCurrentAuthority({ kind: "project", projectId: selection.projectId, page: "chat", chatId: latestChat.chatId })}>Resume last</button>}
-          <button type="button" onClick={() => void startNew()} disabled={starting}>{starting ? "Starting…" : "Start new chat"}</button>
           <button type="button" className="secondary-button" onClick={() => openWithCurrentAuthority({ kind: "settings" })}>Settings</button>
           <button type="button" className="secondary-button" onClick={loadGlobal}>Diagnostics</button>
           <button type="button" className="link-button" onClick={() => openWithCurrentAuthority({ kind: "legacy" })}>Legacy data</button>
@@ -209,10 +247,6 @@ function ProjectChooser({ projects, onSelect }: { projects: LoadState<ProjectSum
   return <section className="workspace-dashboard-card stack" aria-labelledby="workspace-project-choice"><h2 id="workspace-project-choice">Select a project for this session</h2>{projects.status === "loading" ? <p role="status">Loading safe project names…</p> : projects.status === "error" ? <p role="alert">{projects.message}</p> : projects.data.length === 0 ? <p>No available projects are registered.</p> : <div className="workspace-project-choices">{projects.data.map((project) => <button type="button" className="secondary-button" key={project.projectId} onClick={() => onSelect({ projectId: project.projectId, displayName: project.displayName })}>{project.displayName}</button>)}</div>}</section>;
 }
 
-function DashboardSection<T>({ title, state, ready, empty }: { title: string; state: LoadState<T>; ready?: string; empty: string }) {
-  return <section className="workspace-dashboard-card" aria-label={title}><h2>{title}</h2>{state.status === "loading" ? <p role="status">Loading…</p> : state.status === "error" ? <p role="alert">{state.message}</p> : <p>{ready ?? empty}</p>}</section>;
-}
-
 function toSelectedProject(projectId: string, displayName: string): SelectedProject | null {
   const parsed = parseProjectId(projectId);
   return parsed && isSafeWorkspaceDisplayName(displayName) ? { projectId: parsed, displayName } : null;
@@ -231,4 +265,13 @@ function newestFirst(chats: ChatSummary[]): ChatSummary[] {
 
 function runtimeMessage(error: RuntimeError | null): string {
   return error?.status === "network" ? "The local runtime could not be reached." : "The local runtime is not ready.";
+}
+
+function commandCenterReadiness(summary: LoadState<ProjectSummary>, runtime: LoadState<boolean>, providerModel: LoadState<number>): ProjectCommandCenterModel["readiness"] {
+  if (summary.status === "loading" || runtime.status === "loading" || providerModel.status === "loading") return loadingSection();
+  return shapeReadiness([
+    { id: "project", label: summary.status === "ready" ? "Local project context" : "Project status unavailable", status: summary.status === "ready" && summary.data.rootAvailable ? "ready" : "blocked" },
+    { id: "runtime", label: runtime.status === "ready" ? "Local runtime" : "Runtime status unavailable", status: runtime.status === "ready" ? "ready" : "blocked" },
+    { id: "provider", label: providerModel.status === "ready" && providerModel.data > 0 ? `${providerModel.data} ready provider-model pairing${providerModel.data === 1 ? "" : "s"}` : "Provider setup required", status: providerModel.status === "ready" && providerModel.data > 0 ? "ready" : "attention" },
+  ]);
 }

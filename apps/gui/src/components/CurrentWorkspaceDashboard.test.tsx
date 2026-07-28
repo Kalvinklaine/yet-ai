@@ -19,7 +19,7 @@ function project(displayName = "Cozy Project") {
   return { projectId, displayName, status: "available", revision: "1", createdAt: "2026-07-20T10:00:00Z", lastOpenedAt: "2026-07-26T10:00:00Z", rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
 
-function installFetch(options: { chats?: unknown[]; failAgent?: boolean; projects?: unknown[] } = {}) {
+function installFetch(options: { chats?: unknown[]; failAgent?: boolean; projects?: unknown[]; memory?: unknown[] } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/ping")) return response({ ready: true });
@@ -27,6 +27,7 @@ function installFetch(options: { chats?: unknown[]; failAgent?: boolean; project
     if (url.endsWith("/v1/providers")) return response({ providers: [{ id: "demo", enabled: true }], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith(`/v1/projects/${projectId}`)) return response(project());
     if (url.endsWith(`/p/${projectId}/v1/agent-progress`)) return options.failAgent ? response({ error: "private data omitted" }, 503) : response({ snapshots: [], cloudRequired: false, providerAccess: "direct" });
+    if (url.endsWith(`/p/${projectId}/v1/project-memory`)) return response({ notes: options.memory ?? [], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith(`/p/${projectId}/v1/chats`) && init?.method === "POST") return response({ chatId: "chat-new", title: "New chat", createdAt: "2026-07-26T12:00:00Z", updatedAt: "2026-07-26T12:00:00Z", messages: [] });
     if (url.endsWith(`/p/${projectId}/v1/chats`)) return response({ chats: options.chats ?? [] });
     if (url.endsWith("/v1/projects")) return response({ projects: options.projects ?? [project()], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
@@ -130,8 +131,8 @@ describe("CurrentWorkspaceDashboard", () => {
     await flush();
 
     expect(container?.textContent).toContain("Cozy Project");
-    expect(container?.textContent).toContain("Runtime ready");
-    expect(container?.textContent).toContain("No conversations yet.");
+    expect(container?.textContent).toContain("Local runtimeReady");
+    expect(container?.textContent).toContain("No recent conversations.");
     expect(container?.textContent).toContain("Agent progress could not be loaded.");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/chats/subscribe"))).toBe(false);
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
@@ -147,7 +148,7 @@ describe("CurrentWorkspaceDashboard", () => {
     act(() => button?.click());
     await flush();
 
-    expect(container?.textContent).toContain("No conversations yet.");
+    expect(container?.textContent).toContain("No recent conversations.");
   });
 
   it("filters non-canonical, unavailable, and unsafe project summaries", async () => {
@@ -175,7 +176,7 @@ describe("CurrentWorkspaceDashboard", () => {
     act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Cozy Project")?.click());
     await flush();
 
-    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Resume last")?.click());
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Resume Latest")?.click());
     expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" }, authorityToken, projectId);
 
     act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
@@ -246,7 +247,13 @@ describe("CurrentWorkspaceDashboard", () => {
     });
     await flush();
 
-    expect(container?.textContent).toContain("The workspace changed. Try again.");
+    if (bindingState === "selection_required") {
+      expect(container?.textContent).toContain("Select a project for this session");
+      act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Cozy Project")?.click());
+      await flush();
+    } else {
+      expect(container?.textContent).toContain("The workspace changed. Try again.");
+    }
     const retry = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat");
     expect(retry?.disabled).toBe(false);
     onOpen.mockReturnValue(true);
@@ -281,7 +288,7 @@ describe("CurrentWorkspaceDashboard", () => {
     await renderDashboard(binding("auto_bound"), onOpen);
     await flush();
 
-    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Resume last");
+    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Resume Latest");
     act(() => resume?.click());
 
     expect(container?.textContent).toContain("The workspace changed. Try again.");
@@ -316,12 +323,34 @@ describe("CurrentWorkspaceDashboard", () => {
     const onOpen = await renderDashboard(binding("auto_bound"));
     await flush();
 
-    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Resume last");
+    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Resume Latest");
     act(() => resume?.click());
 
     expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" }, authorityToken, undefined);
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
     expect(document.body.textContent).not.toMatch(/\/Users\/|Bearer |sessionToken|multiple_roots/);
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.length).toBe(0);
+  });
+
+  it("loads bounded memory metadata and exposes selection without attaching or sending it", async () => {
+    const rawBody = "PRIVATE NOTE BODY must not render or send";
+    const onSelectedMemoryNoteIdsChange = vi.fn();
+    const fetchMock = installFetch({ memory: [{ id: "mem-safe", title: "Architecture choice", text: rawBody, tags: ["design"], source: "manual", createdAt: "2026-07-20T10:00:00Z", updatedAt: "2026-07-26T10:00:00Z" }] });
+    container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container!);
+      root.render(<CurrentWorkspaceDashboard settings={settings} binding={binding("auto_bound")} hostReadyGeneration="ready-1" getAuthorityToken={() => authorityToken} onOpen={vi.fn()} onSelectedMemoryNoteIdsChange={onSelectedMemoryNoteIdsChange} />);
+    });
+    await flush();
+
+    expect(container?.textContent).toContain("Architecture choice");
+    expect(container?.textContent).not.toContain(rawBody);
+    act(() => Array.from(container?.querySelectorAll("label") ?? []).find((item) => item.textContent?.includes("Select Architecture choice"))?.querySelector("input")?.click());
+
+    expect(onSelectedMemoryNoteIdsChange).toHaveBeenLastCalledWith(["mem-safe"]);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
   });
