@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearProjectChatLaunchIntent,
+  bindProjectChatLaunchIntentChatId,
   consumeProjectChatLaunchIntent,
   createProjectChatLaunchIntent,
   createProjectChatLaunchIntentStore,
@@ -34,6 +35,12 @@ describe("projectChatLaunchIntent", () => {
     expect(peekProjectChatLaunchIntent(match, { nowEpochMs: 1_100 })).toEqual(intent);
     expect(consumeProjectChatLaunchIntent(match, { nowEpochMs: 1_100 })).toEqual(intent);
     expect(consumeProjectChatLaunchIntent(match, { nowEpochMs: 1_100 })).toBeNull();
+  });
+
+  it("binds an engine-issued chat id to a matching draft intent", () => {
+    createProjectChatLaunchIntent({ ...baseInput, chatId: undefined }, { nowEpochMs: 1_000 });
+    expect(bindProjectChatLaunchIntentChatId({ projectId: projectA, lifecycleGeneration: "ready-1" }, "chat-created", { nowEpochMs: 1_001 })?.chatId).toBe("chat-created");
+    expect(consumeProjectChatLaunchIntent({ projectId: projectA, chatId: "chat-created", lifecycleGeneration: "ready-1" }, { nowEpochMs: 1_002 })?.selectedNoteIds).toEqual(["note-1", "note-2"]);
   });
 
   it("fails closed and consumes on project, chat, generation, and expiry mismatches", () => {

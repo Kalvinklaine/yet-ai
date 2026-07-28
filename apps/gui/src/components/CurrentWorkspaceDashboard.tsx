@@ -16,6 +16,7 @@ import { createProjectRuntimeSettings, getProject, listProjects, type ProjectSum
 import { parseProjectId, type AppRoute, type ProjectId } from "../services/projectRouting";
 import { createChat, getAgentProgress, getModels, getPing, listChats, type AgentProgressSnapshot, type ChatSummary, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { listProviders } from "../services/providersClient";
+import { clearProjectChatLaunchIntent, createProjectChatLaunchIntent } from "../services/projectChatLaunchIntent";
 import { ProjectCommandCenter } from "./ProjectCommandCenter";
 
 type LoadState<T> =
@@ -69,6 +70,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
   }, []);
 
   useEffect(() => {
+    clearProjectChatLaunchIntent();
     setChosenProject(null);
     setSelectedMemoryNoteIds([]);
     selectedMemoryChangeRef.current?.([]);
@@ -174,7 +176,8 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     setStarting(false);
     startingRef.current = false;
     if (result.ok && chatIdPattern.test(result.data.chatId)) {
-      openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId }, authorityToken, selectedProjectId);
+      createProjectChatLaunchIntent({ projectId: selection.projectId, chatId: result.data.chatId, source: "current_workspace_dashboard", selectedNoteIds: selectedMemoryNoteIds, lifecycleGeneration: hostReadyGeneration ?? "standalone" });
+      if (!openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId }, authorityToken, selectedProjectId)) clearProjectChatLaunchIntent();
       return;
     }
     setStartError("A new project chat could not be started.");
@@ -198,7 +201,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
           model={commandCenterModel}
           selectedMemoryNoteIds={selectedMemoryNoteIds}
           onStart={() => void startNew()}
-          onResume={(chatId) => openSelectedProjectWithCurrentAuthority({ kind: "project", projectId: selection.projectId, page: "chat", chatId })}
+          onResume={(chatId) => openSelectedProjectWithCurrentAuthority({ kind: "project", projectId: selection.projectId, page: "chat", chatId }, true)}
           onMemorySelectionChange={(noteIds) => {
             setSelectedMemoryNoteIds(noteIds);
             selectedMemoryChangeRef.current?.(noteIds);
@@ -215,10 +218,19 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     </DashboardFrame>
   );
 
-  function openSelectedProjectWithCurrentAuthority(route: Extract<AppRoute, { kind: "project" }>): boolean {
+  function openSelectedProjectWithCurrentAuthority(route: Extract<AppRoute, { kind: "project" }>, withMemoryIntent = false): boolean {
     const selectedProjectId = binding?.state === "selection_required" ? selection?.projectId : undefined;
     const authorityToken = getAuthorityToken(selectedProjectId);
-    return authorityToken ? openSelectedProject(route, authorityToken, selectedProjectId) : rejectOpen();
+    if (!authorityToken) {
+      clearProjectChatLaunchIntent();
+      return rejectOpen();
+    }
+    if (withMemoryIntent) {
+      createProjectChatLaunchIntent({ projectId: route.projectId, chatId: route.chatId, source: "current_workspace_dashboard", selectedNoteIds: selectedMemoryNoteIds, lifecycleGeneration: hostReadyGeneration ?? "standalone" });
+    }
+    const opened = openSelectedProject(route, authorityToken, selectedProjectId);
+    if (!opened && withMemoryIntent) clearProjectChatLaunchIntent();
+    return opened;
   }
 
   function openSelectedProject(route: Extract<AppRoute, { kind: "project" }>, authorityToken: HostedAuthorityToken, selectedProjectId?: ProjectId): boolean {

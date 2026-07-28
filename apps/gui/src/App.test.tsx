@@ -6,6 +6,7 @@ import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLim
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
 import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
 import { getProviderAuthStatus } from "./services/providerAuthClient";
+import { clearProjectChatLaunchIntent, createProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration } from "./services/projectChatLaunchIntent";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 import { GUI_BRIDGE_VERSION } from "./bridge/bridgeAdapter";
 import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
@@ -650,6 +651,38 @@ describe("project lifecycle scope", () => {
     expect(findInputValue("chat-x")).toBeDefined();
     expect(container?.textContent).toContain("Loaded from the deep link");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/p/${projectA}/v1/chats/chat-x`))).toBe(true);
+  });
+
+  it("consumes selected project memory once into the visible unsent bundle and clears it after accepted Send", async () => {
+    const note = projectMemoryNote({ id: "mem-launch", title: "Architecture choice", text: "Prefer small modules with explicit boundaries." });
+    createProjectChatLaunchIntent({
+      projectId: projectA,
+      chatId: "chat-memory",
+      source: "project_home",
+      selectedNoteIds: [note.id],
+      lifecycleGeneration: getBrowserProjectChatLifecycleGeneration(),
+    });
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-memory", "Memory chat", 0)],
+      chatThreads: { "chat-memory": chatThread("chat-memory", "Memory chat", []) },
+      projectMemoryNotes: [note],
+    });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-memory" });
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Architecture choice");
+    expect(container?.textContent).toContain("Prefer small modules with explicit boundaries.");
+    expect(chatInput().value).toBe("");
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/commands") && init?.method === "POST")).toBe(false);
+
+    await act(async () => setTextareaValue(chatInput(), "Use the reviewed memory."));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
+    await flushAsync();
+
+    expect(container?.textContent).not.toContain("Prefer small modules with explicit boundaries.");
+    expect(clearProjectChatLaunchIntent()).toBeUndefined();
   });
 
   it("keeps a missing routed chat selected without hydrating the available fallback", async () => {

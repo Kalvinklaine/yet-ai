@@ -45,6 +45,7 @@ export type ProjectChatLaunchIntentOptions = {
 
 const safeIdPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 let moduleIntent: ProjectChatLaunchIntent | null = null;
+const browserLifecycleGeneration = createBrowserLifecycleGeneration();
 
 const moduleStore: ProjectChatLaunchIntentStore = {
   read: () => moduleIntent,
@@ -111,6 +112,27 @@ export function consumeProjectChatLaunchIntent(
 
 export function clearProjectChatLaunchIntent(store: ProjectChatLaunchIntentStore = moduleStore): void {
   store.write(null);
+}
+
+export function getBrowserProjectChatLifecycleGeneration(): string {
+  return browserLifecycleGeneration;
+}
+
+export function bindProjectChatLaunchIntentChatId(
+  match: Omit<ProjectChatLaunchIntentMatch, "chatId">,
+  chatId: string,
+  options: ProjectChatLaunchIntentOptions = {},
+): ProjectChatLaunchIntent | null {
+  const store = options.store ?? moduleStore;
+  const intent = peekProjectChatLaunchIntent({ ...match, chatId: undefined }, { ...options, store });
+  const safeChatId = validateId(chatId);
+  if (!intent || intent.chatId !== undefined || !safeChatId) {
+    store.write(null);
+    return null;
+  }
+  const bound = freezeIntent({ ...intent, chatId: safeChatId });
+  store.write(bound);
+  return bound;
 }
 
 export function createProjectChatLaunchIntentStore(): ProjectChatLaunchIntentStore {
@@ -194,4 +216,10 @@ function isSource(value: unknown): value is ProjectChatLaunchIntentSource {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createBrowserLifecycleGeneration(): string {
+  const values = new Uint32Array(2);
+  globalThis.crypto?.getRandomValues?.(values);
+  return `browser-${Date.now().toString(36)}-${values[0].toString(36)}${values[1].toString(36)}`;
 }

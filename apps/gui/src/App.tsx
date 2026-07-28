@@ -72,6 +72,8 @@ import { appendControlledRunHistoryItem, createControlledRunHistoryItem, type Co
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
 import { resolveHostReadyRuntimeSettings } from "./services/useLiveRuntimeSettings";
+import { selectControlledRunProjectMemory } from "./services/controlledRunProjectMemorySelection";
+import { bindProjectChatLaunchIntentChatId, clearProjectChatLaunchIntent, consumeProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration, peekProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -526,6 +528,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const settingsRef = useRef<ChatRuntimeSettings>(projectId ? createProjectRuntimeSettings(initialRuntimeSettings, projectId, projectScopeController.current()) : initialRuntimeSettings);
   const chatIdRef = useRef<string | null>(initialChatId);
   const firstProjectChatCreateRef = useRef<{ token: symbol; revision: number; correlation: ProjectScopeCorrelation } | null>(null);
+  const launchIntentCreateRef = useRef(false);
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
   const providerAuthExchangeInFlightRef = useRef(false);
@@ -2802,6 +2805,67 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
   }, [abortActiveStream, activeChatSummary?.chatId, chatId, clearEditProposalState, clearIdeActionState, clearModelProposalState, loadChatThread, missingRoutedChatId, routedChatId]);
 
+  useEffect(() => {
+    if (!projectId || !showChatPage) {
+      clearProjectChatLaunchIntent();
+      return;
+    }
+    const lifecycleGeneration = hostReadyGeneration ?? getBrowserProjectChatLifecycleGeneration();
+    if (hostReadyGeneration && !projectHostAuthorityReady) return;
+    const currentChatId = chatIdRef.current;
+    if (routedChatId && !activeChatSummary) return;
+    if (!currentChatId) {
+      const pending = peekProjectChatLaunchIntent({ projectId, lifecycleGeneration });
+      if (!pending || pending.chatId !== undefined || launchIntentCreateRef.current) return;
+      launchIntentCreateRef.current = true;
+      const targetSettings = settingsRef.current;
+      const targetRevision = settingsRevisionRef.current;
+      const correlation = createProjectScopeCorrelation(projectScopeController.current());
+      void createChat(targetSettings).then((created) => {
+        launchIntentCreateRef.current = false;
+        if (!created.ok || settingsRevisionRef.current !== targetRevision || !projectScopeController.accepts(correlation) || chatIdRef.current !== null) {
+          clearProjectChatLaunchIntent();
+          return;
+        }
+        if (!bindProjectChatLaunchIntentChatId({ projectId, lifecycleGeneration }, created.data.chatId)) return;
+        chatIdRef.current = created.data.chatId;
+        setChatId(created.data.chatId);
+        setChatSummaries((current) => upsertChatSummary(current, created.data));
+        setChatHistoryRevision(targetRevision);
+        setChatView(hydrateChatViewFromThread(resetChatViewState(created.data.chatId), created.data));
+        navigate?.({ kind: "project", projectId, page: "chat", chatId: created.data.chatId });
+      });
+      return;
+    }
+    const intent = consumeProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
+    if (!intent) return;
+    const targetRevision = settingsRevisionRef.current;
+    const correlation = createProjectScopeCorrelation(projectScopeController.current());
+    void listProjectMemory(settingsRef.current).then((result) => {
+      if (settingsRevisionRef.current !== targetRevision || chatIdRef.current !== currentChatId || !projectScopeController.accepts(correlation)) return;
+      if (!result.ok) {
+        setExplicitContextBundleStatus("Selected project memory could not be loaded. Nothing was attached.");
+        return;
+      }
+      const selection = selectControlledRunProjectMemory({ selectedNoteIds: intent.selectedNoteIds, notes: result.data.notes, maxSelectedNotes: 3 });
+      const selected = selection.attachments.filter((attachment) => attachment.status === "selected" && attachment.selectedBody !== undefined);
+      setExplicitContextBundleItems((current) => selected.reduce((items, attachment) => addExplicitContextBundleItem(items, projectMemoryToBundleItem({
+        kind: "project_memory",
+        noteId: attachment.noteId,
+        title: attachment.titleLabel,
+        text: attachment.selectedBody!,
+        tags: attachment.tagLabels,
+        taskLabel: attachment.taskLabel,
+        sessionLabel: attachment.sessionLabel,
+        attachTraceLabel: `project-chat-launch:${intent.source}`,
+      })), current));
+      setIncludeExplicitContextBundle(true);
+      setExplicitContextBundleStatus(selected.length > 0
+        ? `Attached ${selected.length} explicitly selected project memory note${selected.length === 1 ? "" : "s"} for review before Send.${selection.attachedCount < selection.selectedCount ? " Some selected notes were safely omitted." : ""}`
+        : "Selected project memory was unavailable or unsafe. Nothing was attached.");
+    });
+  }, [activeChatSummary, chatId, hostReadyGeneration, navigate, projectHostAuthorityReady, projectId, projectScopeController, routedChatId, showChatPage]);
+
   useEffect(() => () => {
     abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
   }, [abortActiveStream]);
@@ -4135,6 +4199,11 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   {attachedVerificationKey && <span className="composer-chip">Verification attached</span>}
                   {modelProposalDraft && <span className="composer-chip">Model proposal draft</span>}
                 </div>
+                {attachedProjectMemoryItems.length > 0 && <section className="readiness-card ready stack" aria-label="Selected project memory attached for next send">
+                  <strong>Selected project memory attached for review</strong>
+                  {attachedProjectMemoryItems.map((item) => <div className="stack" key={item.key}><span>{sanitizeDisplayText(item.title)}</span><pre>{item.text}</pre></div>)}
+                  <span className="subtle">Unsent one-shot context. Review it here, then click Send explicitly or remove it from the explicit context controls.</span>
+                </section>}
                 <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setUserChatInputDraft(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">
                   <button type="submit" disabled={!canSendChat}>Send</button>

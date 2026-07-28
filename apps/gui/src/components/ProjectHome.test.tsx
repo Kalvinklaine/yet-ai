@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectHome } from "./ProjectHome";
 import type { ProjectSummary } from "../services/projectClient";
 import type { ProjectCommandCenterModel } from "../services/projectCommandCenterData";
+import { clearProjectChatLaunchIntent, consumeProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration } from "../services/projectChatLaunchIntent";
 
 const project: ProjectSummary = { projectId: "prj_abcdefghijklmnopqrstuA" as ProjectSummary["projectId"], displayName: "Quiet Garden", status: "available", revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 const model: ProjectCommandCenterModel = {
@@ -14,7 +15,7 @@ const model: ProjectCommandCenterModel = {
   start: { enabled: true },
 };
 let root: ReactDOM.Root | undefined;
-afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ""; });
+afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ""; clearProjectChatLaunchIntent(); });
 
 describe("ProjectHome", () => {
   it("renders safe readiness and navigation summaries without private content", () => {
@@ -56,5 +57,17 @@ describe("ProjectHome", () => {
       { kind: "project", projectId: project.projectId, page: "memory" },
     ]);
     expect(localStorage.length).toBe(0); expect(sessionStorage.length).toBe(0);
+  });
+
+  it("creates selected-memory launch intent only on explicit Resume", () => {
+    const navigate = vi.fn();
+    const container = document.createElement("div"); document.body.append(container);
+    act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectHome project={project} model={model} navigate={navigate} />); });
+    expect(consumeProjectChatLaunchIntent({ projectId: project.projectId, chatId: "chat-recent", lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
+    act(() => container.querySelector("input[type='checkbox']")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    act(() => Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === "Resume Recent design")?.click());
+    const intent = consumeProjectChatLaunchIntent({ projectId: project.projectId, chatId: "chat-recent", lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() });
+    expect(intent?.selectedNoteIds).toEqual(["note-1"]);
+    expect(navigate).toHaveBeenCalledWith({ kind: "project", projectId: project.projectId, page: "chat", chatId: "chat-recent" });
   });
 });

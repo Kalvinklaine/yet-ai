@@ -7,6 +7,7 @@ import { CurrentWorkspaceDashboard, type HostedAuthorityToken } from "./componen
 import { ProjectLink, navigateProjectRoute, parseProjectId, parseProjectRoute, subscribeToProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
 import type { WorkspaceBindingPayload } from "./bridge/bridgeAdapter";
 import { useLiveRuntimeSettings } from "./services/useLiveRuntimeSettings";
+import { clearProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
 
 export function ProjectRouterShell() {
   const hostedChatEntry = isHostedChatEntry(window.location.pathname, window.__yetAiInitialRuntimeConfig?.entryMode);
@@ -34,10 +35,15 @@ export function ProjectRouterShell() {
   }, []);
   const openHostedRoute = useCallback((nextRoute: HostedRoute, originatingToken: HostedAuthorityToken, selectedProjectId?: string) => {
     const { workspaceBinding: currentBinding } = hostedAuthorityRef.current;
-    if (!currentBinding) return false;
+    if (!currentBinding) {
+      clearProjectChatLaunchIntent();
+      return false;
+    }
     const selectedId = selectedProjectId ? parseHostedProjectId(selectedProjectId) : null;
-    if (originatingToken !== getHostedAuthorityToken(selectedProjectId)) return false;
-    if (!isHostedRouteAllowed(nextRoute, currentBinding, selectedId)) return false;
+    if (originatingToken !== getHostedAuthorityToken(selectedProjectId) || !isHostedRouteAllowed(nextRoute, currentBinding, selectedId)) {
+      clearProjectChatLaunchIntent();
+      return false;
+    }
     setOpenedHostedRoute({
       route: nextRoute,
       authorityToken: originatingToken,
@@ -59,6 +65,7 @@ export function ProjectRouterShell() {
     if (!hostedChatEntry || authorizedHostedRoute) return;
     setOpenedHostedRoute((current) => {
       if (!current) return current;
+      clearProjectChatLaunchIntent();
       return null;
     });
   }, [authorizedHostedRoute, hostedChatEntry]);
