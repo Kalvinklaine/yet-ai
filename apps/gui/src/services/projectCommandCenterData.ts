@@ -1,4 +1,5 @@
 import type { ProjectMemoryNote } from "./projectMemoryClient";
+import { redactSecrets } from "./redaction";
 import type { AgentProgressSnapshot, ChatSummary } from "./runtimeClient";
 
 export const projectCommandCenterLimits = {
@@ -127,7 +128,9 @@ function safeLabel(value: unknown, fallback: string, maxLength: number): string 
   if (typeof value !== "string") return fallback;
   const normalized = value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
   if (!normalized || unsafeTextPattern.test(normalized)) return fallback;
-  return normalized.slice(0, maxLength);
+  const redacted = redactSecrets(normalized);
+  if (redacted.includes("[redacted]")) return fallback;
+  return redacted.slice(0, maxLength);
 }
 
 function validTimestamp(value: string): number {

@@ -5,6 +5,7 @@ import {
   sanitizeMemorySelection,
   shapeActiveWork,
   shapeMemorySummaries,
+  shapeReadiness,
   shapeRecentConversations,
 } from "./projectCommandCenterData";
 import type { AgentProgressSnapshot, ChatSummary } from "./runtimeClient";
@@ -59,15 +60,83 @@ describe("projectCommandCenterData", () => {
     expect(sanitizeMemorySelection(["note-1", "../unsafe", "note-1", "note-2", "note-3", "note-4"])).toEqual(["note-1", "note-2", "note-3"]);
     expect(shapeRecentConversations([chat("../bad", "Bad", "invalid")])).toEqual({ status: "empty" });
   });
+
+  it("fails closed for shared redaction patterns across displayed fields", () => {
+    const jwt = `${"a".repeat(16)}.${"b".repeat(16)}.${"c".repeat(16)}`;
+    const opaque = "z".repeat(64);
+    const conversations = shapeRecentConversations([
+      chat("chat-sk", `Release sk-secret123456789 tail`, "2026-07-28T10:00:00Z"),
+      chat("chat-jwt", `Session ${jwt} tail`, "2026-07-28T09:00:00Z"),
+    ]);
+    const memory = shapeMemorySummaries([
+      {
+        id: "note-secret",
+        title: `Token ${opaque} tail`,
+        tags: ["safe", "Bearer bearer-secret-value", "auth.json", "raw output: PRIVATE_BODY"],
+        summary: "provider response: RAW_PROVIDER_BODY",
+        updatedAt: "2026-07-28T10:00:00Z",
+      },
+    ]);
+    const readiness = shapeReadiness([
+      { id: "project", label: "/Users/alice/workspace", status: "blocked" },
+      { id: "runtime", label: "Runtime ready", status: "ready" },
+      { id: "provider", label: "https://private.example/status", status: "attention" },
+    ]);
+    const activeWork = shapeActiveWork([
+      progress("run-secret", "running", "2026-07-28T10:00:00Z", "Bearer work-secret-value"),
+    ]);
+
+    expect(conversations).toMatchObject({ status: "ready", items: [
+      { title: "Untitled conversation" },
+      { title: "Untitled conversation" },
+    ] });
+    expect(memory).toEqual({ status: "ready", items: [{
+      noteId: "note-secret",
+      title: "Memory note",
+      tags: ["safe"],
+      summary: "Saved project context",
+    }] });
+    expect(readiness).toMatchObject({ status: "ready", items: [
+      { label: "Project status unavailable" },
+      { label: "Runtime ready" },
+      { label: "Provider status unavailable" },
+    ] });
+    expect(activeWork).toMatchObject({ status: "ready", items: [{ cardLabel: "Project work" }] });
+
+    const shaped = JSON.stringify({ conversations, memory, readiness, activeWork });
+    for (const fragment of ["secret123456789", jwt, opaque, "bearer-secret-value", "auth.json", "PRIVATE_BODY", "RAW_PROVIDER_BODY", "/Users/alice", "private.example", "work-secret-value", "[redacted]"]) {
+      expect(shaped).not.toContain(fragment);
+    }
+  });
+
+  it("fails closed for redacted errors while preserving safe bounded labels", () => {
+    expect(errorSection("Request failed Authorization: Bearer hidden-secret-value")).toEqual({
+      status: "error",
+      message: "This section could not be loaded.",
+    });
+    expect(errorSection("raw prompt: PRIVATE_PROMPT_BODY")).toEqual({
+      status: "error",
+      message: "This section could not be loaded.",
+    });
+
+    const safeTitle = "Ordinary project discussion ".repeat(4);
+    const conversations = shapeRecentConversations([chat("chat-safe", safeTitle, "2026-07-28T10:00:00Z")]);
+    expect(conversations).toEqual({ status: "ready", items: [{
+      chatId: "chat-safe",
+      title: safeTitle.slice(0, 72),
+      updatedLabel: "2026-07-28T10:00:00.000Z",
+    }] });
+    expect(errorSection("Temporary runtime hiccup")).toEqual({ status: "error", message: "Temporary runtime hiccup" });
+  });
 });
 
 function chat(chatId: string, title: string, updatedAt: string): ChatSummary {
   return { chatId, title, updatedAt, createdAt: updatedAt, messageCount: 1 };
 }
 
-function progress(runId: string, status: AgentProgressSnapshot["status"], updatedAt: string): AgentProgressSnapshot {
+function progress(runId: string, status: AgentProgressSnapshot["status"], updatedAt: string, cardId = "S142"): AgentProgressSnapshot {
   return {
-    protocolVersion: "2026-05-29", runId, cardId: "S142", startedAt: updatedAt, updatedAt,
+    protocolVersion: "2026-05-29", runId, cardId, startedAt: updatedAt, updatedAt,
     phase: status === "done" ? "done" : "editing", status, message: "raw progress payload",
     elapsedMs: 1, ageMs: 1, outputTail: "secret output", recentEvents: [],
   };
