@@ -1,20 +1,27 @@
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectShell } from "./ProjectShell";
 import * as client from "../services/projectClient";
 import * as memoryClient from "../services/projectMemoryClient";
 import { parseProjectId } from "../services/projectRouting";
+import * as providersClient from "../services/providersClient";
 import * as runtimeClient from "../services/runtimeClient";
 
 vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), getProject: vi.fn() }));
 vi.mock("../services/projectMemoryClient", async (original) => ({ ...await original<typeof import("../services/projectMemoryClient")>(), listProjectMemory: vi.fn() }));
-vi.mock("../services/runtimeClient", async (original) => ({ ...await original<typeof import("../services/runtimeClient")>(), listChats: vi.fn(), getAgentProgress: vi.fn() }));
+vi.mock("../services/providersClient", async (original) => ({ ...await original<typeof import("../services/providersClient")>(), listProviders: vi.fn() }));
+vi.mock("../services/runtimeClient", async (original) => ({ ...await original<typeof import("../services/runtimeClient")>(), listChats: vi.fn(), getAgentProgress: vi.fn(), getPing: vi.fn(), getModels: vi.fn() }));
 const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
 const projectId = parseProjectId("prj_abcdefghijklmnopqrstuA")!;
 const project = { projectId, displayName: "Quiet Garden", status: "available" as const, revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false as const, providerAccess: "direct" as const };
 let root: ReactDOM.Root | undefined;
 afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ""; vi.restoreAllMocks(); });
+beforeEach(() => {
+  vi.mocked(runtimeClient.getPing).mockResolvedValue({ ok: true, data: ping(true) });
+  vi.mocked(runtimeClient.getModels).mockResolvedValue({ ok: true, data: { models: [readyModel()] } });
+  vi.mocked(providersClient.listProviders).mockResolvedValue({ ok: true, data: { providers: [readyProvider()], cloudRequired: false, providerAccess: "direct" } });
+});
 async function render(status: client.ProjectSummary["status"] = "available", page: "home" | "chat" = "home") {
   vi.mocked(client.getProject).mockResolvedValue({ ok: true, data: { ...project, status, rootAvailable: status === "available" } });
   vi.mocked(runtimeClient.listChats).mockResolvedValue({ ok: true, data: { chats: [] } });
@@ -57,6 +64,61 @@ describe("ProjectShell", () => {
     expect(scopedSettings).toMatchObject({ apiBase: `/p/${projectId}/v1`, projectScope: { projectId } });
   });
 
+  it("gates Start on verified runtime and provider-model readiness", async () => {
+    let container = await render();
+    expect(startButton(container).disabled).toBe(false);
+    expect(container.textContent).toContain("1 ready provider-model pairing");
+
+    act(() => root?.unmount()); root = undefined; document.body.innerHTML = "";
+    vi.mocked(runtimeClient.getPing).mockResolvedValue({ ok: true, data: ping(false) });
+    container = await render();
+    expect(startButton(container).disabled).toBe(true);
+    expect(container.textContent).toContain("The local runtime is not ready.");
+
+    act(() => root?.unmount()); root = undefined; document.body.innerHTML = "";
+    vi.mocked(runtimeClient.getPing).mockResolvedValue({ ok: true, data: ping(true) });
+    vi.mocked(providersClient.listProviders).mockResolvedValue({ ok: true, data: { providers: [], cloudRequired: false, providerAccess: "direct" } });
+    container = await render();
+    expect(startButton(container).disabled).toBe(true);
+    expect(container.textContent).toContain("Set up a ready provider and model before starting chat.");
+  });
+
+  it("rejects ready models without chat and streaming capabilities", async () => {
+    vi.mocked(runtimeClient.getModels).mockResolvedValue({ ok: true, data: { models: [{ ...readyModel(), capabilities: { chat: true, streaming: false, tools: false, reasoning: false } }] } });
+    const container = await render();
+    expect(startButton(container).disabled).toBe(true);
+    expect(container.textContent).toContain("Provider setup required");
+  });
+
+  it("shows readiness loading until verification completes", async () => {
+    let resolvePing!: (value: Awaited<ReturnType<typeof runtimeClient.getPing>>) => void;
+    vi.mocked(runtimeClient.getPing).mockReturnValue(new Promise((resolve) => { resolvePing = resolve; }));
+    const container = await render();
+    expect(startButton(container).disabled).toBe(true);
+    expect(container.textContent).toContain("Loading readiness");
+    await act(async () => resolvePing({ ok: true, data: ping(true) }));
+    expect(startButton(container).disabled).toBe(false);
+  });
+
+  it("ignores late readiness after settings change", async () => {
+    let resolveFirstModels!: (value: Awaited<ReturnType<typeof runtimeClient.getModels>>) => void;
+    vi.mocked(client.getProject).mockResolvedValue({ ok: true, data: project });
+    vi.mocked(runtimeClient.listChats).mockResolvedValue({ ok: true, data: { chats: [] } });
+    vi.mocked(memoryClient.listProjectMemory).mockResolvedValue({ ok: true, data: { notes: [] } });
+    vi.mocked(runtimeClient.getAgentProgress).mockResolvedValue({ ok: true, data: { snapshots: [], cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(runtimeClient.getModels)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveFirstModels = resolve; }))
+      .mockResolvedValue({ ok: true, data: { models: [] } });
+    const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectShell route={{ kind: "project", projectId, page: "home" }} settings={settings} navigate={() => undefined} />); });
+    const newSettings = { ...settings, baseUrl: "/new-runtime" };
+    await act(async () => { root?.render(<ProjectShell route={{ kind: "project", projectId, page: "home" }} settings={newSettings} navigate={() => undefined} />); });
+    expect(startButton(container).disabled).toBe(true);
+    await act(async () => resolveFirstModels({ ok: true, data: { models: [readyModel()] } }));
+    expect(startButton(container).disabled).toBe(true);
+    expect(container.textContent).toContain("Provider setup required");
+  });
+
   it("ignores a late project response after the route changes", async () => {
     const secondId = parseProjectId("prj_123456789012345678901g")!;
     vi.mocked(runtimeClient.listChats).mockResolvedValue({ ok: true, data: { chats: [] } });
@@ -95,3 +157,21 @@ describe("ProjectShell", () => {
     expect(container.textContent).not.toContain("Old project chat");
   });
 });
+
+function readyModel(): runtimeClient.ModelSummary {
+  return { id: "demo", displayName: "Demo", providerId: "provider-1", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } };
+}
+
+function ping(ready: boolean): runtimeClient.PingResponse {
+  return { productId: "yet-ai", displayName: "Yet AI", version: "1", ready, serverTime: "2026-07-28T10:00:00Z" };
+}
+
+function readyProvider(): providersClient.ProviderSummary {
+  return { id: "provider-1", kind: "openai-compatible", displayName: "Provider", enabled: true, baseUrl: "https://example.test", auth: { type: "api_key", configured: true }, models: [readyModel()], capabilities: { chat: true, completion: false, embeddings: false } };
+}
+
+function startButton(container: HTMLElement): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Start new chat");
+  if (!button) throw new Error("Missing Start new chat button");
+  return button;
+}

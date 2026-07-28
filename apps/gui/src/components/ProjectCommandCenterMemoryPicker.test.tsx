@@ -69,7 +69,8 @@ describe("ProjectCommandCenterMemoryPicker", () => {
     const localWrite = vi.spyOn(Storage.prototype, "setItem");
     render(Array.from({ length: 8 }, (_, index) => note(`note-${index}`, `Note ${index}`)), [], vi.fn());
     expect(container.querySelectorAll("input[type='checkbox']")).toHaveLength(6);
-    act(() => checkbox("Select Note 7").click());
+    expect(container.textContent).not.toContain("Note 7");
+    act(() => checkbox("Select Note 5").click());
     expect(localWrite).not.toHaveBeenCalled();
   });
 });

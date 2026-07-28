@@ -11,7 +11,9 @@ import {
   type ProjectCommandCenterModel,
 } from "../services/projectCommandCenterData";
 import { ProjectLink, type AppRoute, type ProjectNavigation } from "../services/projectRouting";
-import { getAgentProgress, listChats, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
+import { listProviders, type ProviderSummary } from "../services/providersClient";
+import { resolveProviderModelReadiness } from "../services/providerReadiness";
+import { getAgentProgress, getModels, getPing, listChats, type ModelSummary, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { ProjectHome } from "./ProjectHome";
 
 export function ProjectShell({ route, settings, navigate, children }: { route: Extract<AppRoute, { kind: "project" }>; settings: RuntimeSettings; navigate: ProjectNavigation; children?: ReactNode }) {
@@ -54,20 +56,30 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
     const controller = new AbortController();
     const projectSettings = createProjectRuntimeSettings(settings, project.projectId, { generation: request, abortSignal: controller.signal });
     setCommandCenter({
-      readiness: shapeReadiness([
-        { id: "project", label: "Local project context", status: "ready" },
-        { id: "runtime", label: "Local runtime", status: "ready" },
-        { id: "provider", label: "Direct provider access", status: "ready" },
-      ]),
+      readiness: loadingSection(),
       conversations: loadingSection(),
       memory: loadingSection(),
       activeWork: loadingSection(),
-      start: { enabled: true },
+      start: { enabled: false, blockedReason: "Checking project, runtime, and provider readiness…" },
     });
     const update = (patch: Partial<ProjectCommandCenterModel>) => {
       if (request !== commandCenterRequestRef.current || controller.signal.aborted) return;
       setCommandCenter((current) => current ? { ...current, ...patch } : current);
     };
+    void Promise.all([getPing(settings, controller.signal), getModels(settings, controller.signal), listProviders(settings, controller.signal)]).then(([ping, models, providers]) => {
+      const runtimeReady = ping.ok && ping.data.ready;
+      const readyPairings = models.ok && providers.ok ? countReadyProviderModels(models.data.models, providers.data.providers) : 0;
+      update({
+        readiness: shapeReadiness([
+          { id: "project", label: "Local project context", status: "ready" },
+          { id: "runtime", label: runtimeReady ? "Local runtime" : "Runtime status unavailable", status: runtimeReady ? "ready" : "blocked" },
+          { id: "provider", label: readyPairings > 0 ? `${readyPairings} ready provider-model pairing${readyPairings === 1 ? "" : "s"}` : "Provider setup required", status: readyPairings > 0 ? "ready" : "attention" },
+        ]),
+        start: runtimeReady && readyPairings > 0
+          ? { enabled: true }
+          : { enabled: false, blockedReason: !runtimeReady ? "The local runtime is not ready." : "Set up a ready provider and model before starting chat." },
+      });
+    });
     void listChats(projectSettings).then((result) => update({ conversations: result.ok ? shapeRecentConversations(result.data.chats) : errorSection("Recent conversations could not be loaded.") }));
     void listProjectMemory(projectSettings).then((result) => update({ memory: result.ok ? shapeMemorySummaries(result.data.notes) : errorSection("Memory metadata could not be loaded.") }));
     void getAgentProgress(projectSettings, controller.signal).then((result) => update({ activeWork: result.ok ? shapeActiveWork(result.data.snapshots) : errorSection("Active work could not be loaded.") }));
@@ -90,6 +102,11 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
       {route.page === "home" && commandCenter ? <ProjectHome key={project.projectId} project={project} model={commandCenter} navigate={navigate} /> : children}
     </main>
   );
+}
+
+function countReadyProviderModels(models: ModelSummary[], providers: ProviderSummary[]): number {
+  const enabledProviders = providers.filter((provider) => provider.enabled);
+  return models.filter((model) => resolveProviderModelReadiness([model], enabledProviders, null).ready).length;
 }
 
 function ProjectBlockedState({ title, detail, navigate, onRetry }: { title: string; detail: string; navigate: ProjectNavigation; onRetry?: () => void }) {

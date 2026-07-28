@@ -268,10 +268,11 @@ describe("CurrentWorkspaceDashboard", () => {
 
   it("keeps create failures generic and allows another Start", async () => {
     const fetchMock = installFetch();
+    const defaultFetch = fetchMock.getMockImplementation()!;
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
       String(input).endsWith(`/p/${projectId}/v1/chats`) && init?.method === "POST"
         ? response({ error: "failed" }, 500)
-        : response({}, 404));
+        : defaultFetch(input, init));
     await renderDashboard(binding("auto_bound"));
     await flush();
 
