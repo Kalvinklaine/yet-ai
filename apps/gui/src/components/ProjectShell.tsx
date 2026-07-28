@@ -11,9 +11,9 @@ import {
   type ProjectCommandCenterModel,
 } from "../services/projectCommandCenterData";
 import { ProjectLink, type AppRoute, type ProjectNavigation } from "../services/projectRouting";
-import { listProviders, type ProviderSummary } from "../services/providersClient";
-import { resolveProviderModelReadiness } from "../services/providerReadiness";
-import { getAgentProgress, getModels, getPing, listChats, type ModelSummary, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
+import { listProviders } from "../services/providersClient";
+import { countReadyProviderModels } from "../services/providerReadiness";
+import { getAgentProgress, getModels, getPing, listChats, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { ProjectHome } from "./ProjectHome";
 
 export function ProjectShell({ route, settings, navigate, children }: { route: Extract<AppRoute, { kind: "project" }>; settings: RuntimeSettings; navigate: ProjectNavigation; children?: ReactNode }) {
@@ -102,11 +102,6 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
       {route.page === "home" && commandCenter ? <ProjectHome key={project.projectId} project={project} model={commandCenter} navigate={navigate} /> : children}
     </main>
   );
-}
-
-function countReadyProviderModels(models: ModelSummary[], providers: ProviderSummary[]): number {
-  const enabledProviders = providers.filter((provider) => provider.enabled);
-  return models.filter((model) => resolveProviderModelReadiness([model], enabledProviders, null).ready).length;
 }
 
 function ProjectBlockedState({ title, detail, navigate, onRetry }: { title: string; detail: string; navigate: ProjectNavigation; onRetry?: () => void }) {

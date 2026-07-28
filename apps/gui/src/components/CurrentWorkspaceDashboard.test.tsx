@@ -3,6 +3,7 @@ import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
+import { consumeProjectChatLaunchIntent } from "../services/projectChatLaunchIntent";
 import { CurrentWorkspaceDashboard, type HostedAuthorityToken } from "./CurrentWorkspaceDashboard";
 
 const projectId = "prj_abcdefghijklmnopqrstuA";
@@ -19,12 +20,15 @@ function project(displayName = "Cozy Project") {
   return { projectId, displayName, status: "available", revision: "1", createdAt: "2026-07-20T10:00:00Z", lastOpenedAt: "2026-07-26T10:00:00Z", rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
 
-function installFetch(options: { chats?: unknown[]; failAgent?: boolean; projects?: unknown[]; memory?: unknown[] } = {}) {
+const readyModel = { id: "demo", displayName: "Demo", providerId: "demo", readiness: { status: "ready" }, capabilities: { chat: true, streaming: true, tools: false, reasoning: false } };
+const readyProvider = { id: "demo", kind: "demo-local", displayName: "Demo", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [{ ...readyModel, providerId: undefined }], capabilities: { chat: true, completion: false, embeddings: false } };
+
+function installFetch(options: { chats?: unknown[]; failAgent?: boolean; projects?: unknown[]; memory?: unknown[]; models?: unknown[]; providers?: unknown[] } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/ping")) return response({ ready: true });
-    if (url.endsWith("/v1/models")) return response({ models: [{ id: "demo", displayName: "Demo", readiness: { status: "ready" } }] });
-    if (url.endsWith("/v1/providers")) return response({ providers: [{ id: "demo", enabled: true }], cloudRequired: false, providerAccess: "direct" });
+    if (url.endsWith("/v1/models")) return response({ models: options.models ?? [readyModel] });
+    if (url.endsWith("/v1/providers")) return response({ providers: options.providers ?? [readyProvider], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith(`/v1/projects/${projectId}`)) return response(project());
     if (url.endsWith(`/p/${projectId}/v1/agent-progress`)) return options.failAgent ? response({ error: "private data omitted" }, 503) : response({ snapshots: [], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith(`/p/${projectId}/v1/project-memory`)) return response({ notes: options.memory ?? [], cloudRequired: false, providerAccess: "direct" });
@@ -183,6 +187,40 @@ describe("CurrentWorkspaceDashboard", () => {
     await flush();
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true);
     expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-new" }, authorityToken, projectId);
+  });
+
+  it("keeps Start blocked unless an enabled provider has a matching ready chat-streaming model", async () => {
+    const cases = [
+      { models: [{ ...readyModel, providerId: "other" }], providers: [readyProvider] },
+      { models: [{ ...readyModel, capabilities: { ...readyModel.capabilities, chat: false } }], providers: [readyProvider] },
+      { models: [{ ...readyModel, capabilities: { ...readyModel.capabilities, streaming: false } }], providers: [readyProvider] },
+    ];
+    for (const readiness of cases) {
+      installFetch(readiness);
+      await renderDashboard(binding("auto_bound"));
+      await flush();
+      expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(true);
+      act(() => root?.unmount());
+      root = undefined;
+      container?.remove();
+    }
+
+    installFetch();
+    await renderDashboard(binding("auto_bound"));
+    await flush();
+    expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(false);
+  });
+
+  it("starts and resumes without minting an intent when memory selection is empty", async () => {
+    installFetch({ chats: [{ chatId: "chat-latest", title: "Latest", createdAt: "2026-07-26T10:00:00Z", updatedAt: "2026-07-26T11:00:00Z", messageCount: 4 }] });
+    await renderDashboard(binding("auto_bound"));
+    await flush();
+
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Resume Latest")?.click());
+    expect(consumeProjectChatLaunchIntent({ projectId, chatId: "chat-latest", lifecycleGeneration: "standalone" })).toBeNull();
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
+    await flush();
+    expect(consumeProjectChatLaunchIntent({ projectId, chatId: "chat-new", lifecycleGeneration: "standalone" })).toBeNull();
   });
 
   it("starts exactly one scoped chat and opens it", async () => {

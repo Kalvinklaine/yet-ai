@@ -2817,6 +2817,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     if (!currentChatId) {
       const pending = peekProjectChatLaunchIntent({ projectId, lifecycleGeneration });
       if (!pending || pending.chatId !== undefined || launchIntentCreateRef.current) return;
+      if (pending.selectedNoteIds.length === 0) {
+        consumeProjectChatLaunchIntent({ projectId, lifecycleGeneration });
+        return;
+      }
       launchIntentCreateRef.current = true;
       const targetSettings = settingsRef.current;
       const targetRevision = settingsRevisionRef.current;
@@ -2839,6 +2843,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
     const intent = consumeProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
     if (!intent) return;
+    if (intent.selectedNoteIds.length === 0) return;
     const targetRevision = settingsRevisionRef.current;
     const correlation = createProjectScopeCorrelation(projectScopeController.current());
     void listProjectMemory(settingsRef.current).then((result) => {

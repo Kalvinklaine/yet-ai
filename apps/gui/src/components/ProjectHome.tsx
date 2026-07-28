@@ -9,13 +9,15 @@ export function ProjectHome({ project, model, navigate }: { project: ProjectSumm
   const [selectedMemoryNoteIds, setSelectedMemoryNoteIds] = useState<string[]>([]);
   const projectRoute = (page: "chat" | "memory" | "agent") => ({ kind: "project" as const, projectId: project.projectId, page });
   const openChat = (chatId?: string) => {
-    createProjectChatLaunchIntent({
-      projectId: project.projectId,
-      ...(chatId ? { chatId } : {}),
-      source: "project_home",
-      selectedNoteIds: selectedMemoryNoteIds,
-      lifecycleGeneration: getBrowserProjectChatLifecycleGeneration(),
-    });
+    if (selectedMemoryNoteIds.length > 0) {
+      createProjectChatLaunchIntent({
+        projectId: project.projectId,
+        ...(chatId ? { chatId } : {}),
+        source: "project_home",
+        selectedNoteIds: selectedMemoryNoteIds,
+        lifecycleGeneration: getBrowserProjectChatLifecycleGeneration(),
+      });
+    }
     navigate({ ...projectRoute("chat"), ...(chatId ? { chatId } : {}) });
   };
 

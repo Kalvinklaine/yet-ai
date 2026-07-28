@@ -6,7 +6,7 @@ import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLim
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
 import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
 import { getProviderAuthStatus } from "./services/providerAuthClient";
-import { clearProjectChatLaunchIntent, createProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration } from "./services/projectChatLaunchIntent";
+import { clearProjectChatLaunchIntent, consumeProjectChatLaunchIntent, createProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration } from "./services/projectChatLaunchIntent";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
 import { GUI_BRIDGE_VERSION } from "./bridge/bridgeAdapter";
 import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
@@ -683,6 +683,28 @@ describe("project lifecycle scope", () => {
 
     expect(container?.textContent).not.toContain("Prefer small modules with explicit boundaries.");
     expect(clearProjectChatLaunchIntent()).toBeUndefined();
+  });
+
+  it("consumes an empty legacy launch intent without fetching memory or changing bundle status", async () => {
+    createProjectChatLaunchIntent({
+      projectId: projectA,
+      chatId: "chat-empty-memory",
+      source: "project_home",
+      selectedNoteIds: [],
+      lifecycleGeneration: getBrowserProjectChatLifecycleGeneration(),
+    });
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-empty-memory", "Empty memory chat", 0)],
+      chatThreads: { "chat-empty-memory": chatThread("chat-empty-memory", "Empty memory chat", []) },
+    });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-empty-memory" });
+    await flushAsync();
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith(`/p/${projectA}/v1/project-memory`))).toBe(false);
+    expect(container?.textContent).not.toContain("Selected project memory");
+    expect(consumeProjectChatLaunchIntent({ projectId: projectA, chatId: "chat-empty-memory", lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
   });
 
   it("keeps a missing routed chat selected without hydrating the available fallback", async () => {

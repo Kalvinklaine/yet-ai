@@ -71,6 +71,11 @@ export function resolveProviderModelReadiness(models: ModelSummary[], enabledPro
   return modelReadinessResult({ ...model, providerId: model.providerId ?? provider.id }, provider);
 }
 
+export function countReadyProviderModels(models: ModelSummary[], providers: ProviderSummary[]): number {
+  const enabledProviders = providers.filter((provider) => provider.enabled);
+  return models.filter((model) => resolveProviderModelReadiness([model], enabledProviders, null).ready).length;
+}
+
 function modelReadinessResult(model: ModelSummary, provider: ProviderSummary): ProviderModelReadiness {
   const missingMessage = missingModelMetadataMessage(model);
   if (missingMessage) {

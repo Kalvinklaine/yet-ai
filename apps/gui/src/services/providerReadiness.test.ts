@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderSummary } from "./providersClient";
 import type { ModelSummary } from "./runtimeClient";
-import { classifyProviderReadinessState, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelReadinessEvidenceText, modelStatusText, modelUnreadyMessage, providerFamilyLabel, readinessStatusLabel, resolveProviderModelReadiness, runtimeModelErrorMessage } from "./providerReadiness";
+import { classifyProviderReadinessState, countReadyProviderModels, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelReadinessEvidenceText, modelStatusText, modelUnreadyMessage, providerFamilyLabel, readinessStatusLabel, resolveProviderModelReadiness, runtimeModelErrorMessage } from "./providerReadiness";
 
 function model(overrides: Partial<ModelSummary> = {}): ModelSummary {
   return {
@@ -61,6 +61,14 @@ describe("provider readiness", () => {
     expect(readiness.mismatch).toBe(false);
     expect(readiness.model).toBe(selected);
     expect(readiness.provider?.id).toBe("openai-api");
+  });
+
+  it("counts only enabled matching ready chat-streaming provider models", () => {
+    expect(countReadyProviderModels([model()], [provider()])).toBe(1);
+    expect(countReadyProviderModels([model({ providerId: "other" })], [provider()])).toBe(0);
+    expect(countReadyProviderModels([model({ capabilities: { chat: false, streaming: true, tools: false, reasoning: false } })], [provider()])).toBe(0);
+    expect(countReadyProviderModels([model({ capabilities: { chat: true, streaming: false, tools: false, reasoning: false } })], [provider()])).toBe(0);
+    expect(countReadyProviderModels([model()], [provider({ enabled: false })])).toBe(0);
   });
 
   it("falls back to a configured provider model when runtime does not report a selected model", () => {

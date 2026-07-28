@@ -70,4 +70,15 @@ describe("ProjectHome", () => {
     expect(intent?.selectedNoteIds).toEqual(["note-1"]);
     expect(navigate).toHaveBeenCalledWith({ kind: "project", projectId: project.projectId, page: "chat", chatId: "chat-recent" });
   });
+
+  it("starts and resumes without launch intents when no memory is selected", () => {
+    const navigate = vi.fn();
+    const container = document.createElement("div"); document.body.append(container);
+    act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectHome project={project} model={model} navigate={navigate} />); });
+
+    act(() => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Start new chat")?.click());
+    expect(consumeProjectChatLaunchIntent({ projectId: project.projectId, lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
+    act(() => Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === "Resume Recent design")?.click());
+    expect(consumeProjectChatLaunchIntent({ projectId: project.projectId, chatId: "chat-recent", lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
+  });
 });

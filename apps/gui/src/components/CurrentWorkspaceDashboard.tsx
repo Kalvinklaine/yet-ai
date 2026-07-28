@@ -16,6 +16,7 @@ import { createProjectRuntimeSettings, getProject, listProjects, type ProjectSum
 import { parseProjectId, type AppRoute, type ProjectId } from "../services/projectRouting";
 import { createChat, getAgentProgress, getModels, getPing, listChats, type AgentProgressSnapshot, type ChatSummary, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { listProviders } from "../services/providersClient";
+import { countReadyProviderModels } from "../services/providerReadiness";
 import { clearProjectChatLaunchIntent, createProjectChatLaunchIntent } from "../services/projectChatLaunchIntent";
 import { ProjectCommandCenter } from "./ProjectCommandCenter";
 
@@ -101,9 +102,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
         setProviderModel({ status: "error", message: "Provider or model readiness could not be loaded." });
         return;
       }
-      const readyModels = models.data.models.filter((model) => model.readiness?.status === "ready").length;
-      const enabledProviders = providers.data.providers.filter((provider) => provider.enabled).length;
-      setProviderModel({ status: "ready", data: Math.min(readyModels, enabledProviders) });
+      setProviderModel({ status: "ready", data: countReadyProviderModels(models.data.models, providers.data.providers) });
     });
     return () => controller.abort();
   }, [settings, trusted, hostReadyGeneration]);
@@ -176,7 +175,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     setStarting(false);
     startingRef.current = false;
     if (result.ok && chatIdPattern.test(result.data.chatId)) {
-      createProjectChatLaunchIntent({ projectId: selection.projectId, chatId: result.data.chatId, source: "current_workspace_dashboard", selectedNoteIds: selectedMemoryNoteIds, lifecycleGeneration: hostReadyGeneration ?? "standalone" });
+      if (selectedMemoryNoteIds.length > 0) createProjectChatLaunchIntent({ projectId: selection.projectId, chatId: result.data.chatId, source: "current_workspace_dashboard", selectedNoteIds: selectedMemoryNoteIds, lifecycleGeneration: hostReadyGeneration ?? "standalone" });
       if (!openSelectedProject({ kind: "project", projectId: selection.projectId, page: "chat", chatId: result.data.chatId }, authorityToken, selectedProjectId)) clearProjectChatLaunchIntent();
       return;
     }
@@ -225,11 +224,12 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
       clearProjectChatLaunchIntent();
       return rejectOpen();
     }
-    if (withMemoryIntent) {
+    const createMemoryIntent = withMemoryIntent && selectedMemoryNoteIds.length > 0;
+    if (createMemoryIntent) {
       createProjectChatLaunchIntent({ projectId: route.projectId, chatId: route.chatId, source: "current_workspace_dashboard", selectedNoteIds: selectedMemoryNoteIds, lifecycleGeneration: hostReadyGeneration ?? "standalone" });
     }
     const opened = openSelectedProject(route, authorityToken, selectedProjectId);
-    if (!opened && withMemoryIntent) clearProjectChatLaunchIntent();
+    if (!opened && createMemoryIntent) clearProjectChatLaunchIntent();
     return opened;
   }
 
