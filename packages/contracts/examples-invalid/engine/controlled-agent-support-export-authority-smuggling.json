@@ -1,0 +1,27 @@
+{
+  "kind": "controlled_agent_support_export",
+  "version": "2026-07-28",
+  "exportId": "support-export-invalid-authority",
+  "generatedAt": "2026-07-28T15:00:00Z",
+  "scope": { "workflowScope": "single_controlled_run", "hostSurface": "vscode", "hostLabel": "VS Code controlled task", "artifactKind": "support_summary", "artifactLabel": "Sanitized support evidence" },
+  "custody": { "source": "engine_sanitized_metadata", "destination": "user_selected_local_destination", "providerAccess": "not_used", "localFirst": true, "cloudRequired": false, "rawPayloadPersisted": false },
+  "limits": { "maxStageSummaries": 12, "maxOmissionCategories": 18, "maxDiagnosticCodes": 12, "maxLabelCharacters": 120, "retentionPolicy": "consumer_managed_local_file" },
+  "stages": [{ "stage": "export", "status": "completed", "outcomeCode": "ok_sanitized", "itemCount": 1 }],
+  "outcome": { "status": "completed", "summaryLabel": "Sanitized export completed", "stageCount": 1, "unsafeItemCount": 0 },
+  "omissions": [{ "category": "automatic_actions", "disposition": "rejected", "count": 1 }],
+  "redactionCounters": { "unsafeLabels": 0, "credentialMarkers": 0, "privatePaths": 0, "payloadMarkers": 0, "storageMarkers": 0, "claimMarkers": 0 },
+  "diagnosticCodes": ["ok_sanitized"],
+  "authority": {
+    "executionAllowed": true,
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "commandAllowed": false,
+    "shellAllowed": false,
+    "providerCallAllowed": false,
+    "bridgeDispatchAllowed": false,
+    "browserStorageReadAllowed": false,
+    "automaticActionsAllowed": false,
+    "productionClaimAllowed": false,
+    "releaseClaimAllowed": false
+  }
+}

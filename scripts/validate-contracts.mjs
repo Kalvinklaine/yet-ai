@@ -207,6 +207,10 @@ const mappings = [
     `packages/contracts/examples/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-workflow-transcript.schema.json"
   ]),
+  [
+    "packages/contracts/examples/engine/controlled-agent-support-export-valid.json",
+    "packages/contracts/schemas/engine/controlled-agent-support-export.schema.json"
+  ],
   ...[
     "tool-authority-policy-metadata-only.json",
     "tool-authority-policy-bounded-edit-confirmation.json",
@@ -1540,6 +1544,14 @@ const invalidMappings = [
   ].map((fileName) => [
     `packages/contracts/examples-invalid/engine/${fileName}`,
     "packages/contracts/schemas/engine/controlled-agent-workflow-transcript.schema.json"
+  ]),
+  ...[
+    "controlled-agent-support-export-authority-smuggling.json",
+    "controlled-agent-support-export-raw-data.json",
+    "controlled-agent-support-export-raw-fields.json"
+  ].map((fileName) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    "packages/contracts/schemas/engine/controlled-agent-support-export.schema.json"
   ]),
   ...[
     "controlled-agent-lexical-search-assistant-minted.json",

@@ -1,0 +1,87 @@
+{
+  "kind": "controlled_agent_support_export",
+  "version": "2026-07-28",
+  "exportId": "support-export-001",
+  "generatedAt": "2026-07-28T15:00:00Z",
+  "scope": {
+    "workflowScope": "single_controlled_run",
+    "hostSurface": "vscode",
+    "hostLabel": "VS Code controlled task",
+    "artifactKind": "support_summary",
+    "artifactLabel": "Sanitized local support evidence"
+  },
+  "custody": {
+    "source": "engine_sanitized_metadata",
+    "destination": "user_selected_local_destination",
+    "providerAccess": "direct_user_configured",
+    "localFirst": true,
+    "cloudRequired": false,
+    "rawPayloadPersisted": false
+  },
+  "limits": {
+    "maxStageSummaries": 12,
+    "maxOmissionCategories": 18,
+    "maxDiagnosticCodes": 12,
+    "maxLabelCharacters": 120,
+    "retentionPolicy": "consumer_managed_local_file"
+  },
+  "stages": [
+    {
+      "stage": "proposal",
+      "status": "completed",
+      "outcomeCode": "ok_sanitized",
+      "itemCount": 1,
+      "durationMs": 1400
+    },
+    {
+      "stage": "verification",
+      "status": "completed",
+      "outcomeCode": "ok_sanitized",
+      "itemCount": 1,
+      "durationMs": 9200
+    },
+    {
+      "stage": "export",
+      "status": "completed",
+      "outcomeCode": "omitted_raw_payload",
+      "itemCount": 1,
+      "durationMs": 80
+    }
+  ],
+  "outcome": {
+    "status": "completed",
+    "summaryLabel": "Sanitized metadata export completed",
+    "stageCount": 3,
+    "unsafeItemCount": 2
+  },
+  "omissions": [
+    { "category": "raw_prompts", "disposition": "not_collected", "count": 0 },
+    { "category": "raw_responses", "disposition": "not_collected", "count": 0 },
+    { "category": "command_output", "disposition": "omitted", "count": 1 },
+    { "category": "private_paths", "disposition": "redacted", "count": 1 },
+    { "category": "credentials", "disposition": "rejected", "count": 0 },
+    { "category": "browser_storage_dumps", "disposition": "not_collected", "count": 0 }
+  ],
+  "redactionCounters": {
+    "unsafeLabels": 0,
+    "credentialMarkers": 0,
+    "privatePaths": 1,
+    "payloadMarkers": 1,
+    "storageMarkers": 0,
+    "claimMarkers": 0
+  },
+  "diagnosticCodes": ["ok_sanitized", "omitted_raw_payload", "omitted_private_path"],
+  "authority": {
+    "executionAllowed": false,
+    "fileReadAllowed": false,
+    "fileWriteAllowed": false,
+    "commandAllowed": false,
+    "shellAllowed": false,
+    "providerCallAllowed": false,
+    "bridgeDispatchAllowed": false,
+    "browserStorageReadAllowed": false,
+    "automaticActionsAllowed": false,
+    "productionClaimAllowed": false,
+    "releaseClaimAllowed": false
+  }
+}

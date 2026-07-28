@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.yet-ai.example/contracts/engine/controlled-agent-support-export.schema.json",
+  "title": "Controlled Agent Support Export",
+  "description": "Strict metadata-only support and export evidence with sanitized labels, bounded summaries, omission categories, redaction counters, safe diagnostics, and no action authority or raw payload persistence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "version",
+    "exportId",
+    "generatedAt",
+    "scope",
+    "custody",
+    "limits",
+    "stages",
+    "outcome",
+    "omissions",
+    "redactionCounters",
+    "diagnosticCodes",
+    "authority"
+  ],
+  "properties": {
+    "kind": { "type": "string", "const": "controlled_agent_support_export" },
+    "version": { "type": "string", "const": "2026-07-28" },
+    "exportId": { "$ref": "#/$defs/safeId" },
+    "generatedAt": { "$ref": "#/$defs/utcTimestamp" },
+    "scope": { "$ref": "#/$defs/scope" },
+    "custody": { "$ref": "#/$defs/custody" },
+    "limits": { "$ref": "#/$defs/limits" },
+    "stages": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": { "$ref": "#/$defs/stage" }
+    },
+    "outcome": { "$ref": "#/$defs/outcome" },
+    "omissions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 18,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/omission" }
+    },
+    "redactionCounters": { "$ref": "#/$defs/redactionCounters" },
+    "diagnosticCodes": {
+      "type": "array",
+      "maxItems": 12,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/diagnosticCode" }
+    },
+    "authority": { "$ref": "#/$defs/authority" }
+  },
+  "$defs": {
+    "safeId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "safeLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^(?!.*(?:[Rr]aw [Pp]rompt|[Rr]aw [Rr]esponse|[Ff]ile [Bb]ody|[Rr]aw [Dd]iff|[Rr]eplacement [Tt]ext|[Cc]ommand [Oo]utput|[Pp]rovider [Pp]ayload|[Bb]ridge [Pp]ayload|[Bb]rowser [Ss]torage|[Aa]uthorization|[Bb]earer|[Aa][Pp][Ii] [Kk]ey|[Pp]roduction [Rr]eady|[Rr]elease [Rr]eady|[Mm]arketplace [Rr]eady))[A-Za-z0-9][A-Za-z0-9 ._()-]*$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "boundedCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workflowScope", "hostSurface", "hostLabel", "artifactKind", "artifactLabel"],
+      "properties": {
+        "workflowScope": { "type": "string", "enum": ["single_controlled_run", "selected_controlled_runs"] },
+        "hostSurface": { "type": "string", "enum": ["vscode", "jetbrains", "browser_preview", "local_mock"] },
+        "hostLabel": { "$ref": "#/$defs/safeLabel" },
+        "artifactKind": { "type": "string", "enum": ["support_summary", "export_evidence"] },
+        "artifactLabel": { "$ref": "#/$defs/safeLabel" }
+      }
+    },
+    "custody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "destination", "providerAccess", "localFirst", "cloudRequired", "rawPayloadPersisted"],
+      "properties": {
+        "source": { "type": "string", "const": "engine_sanitized_metadata" },
+        "destination": { "type": "string", "const": "user_selected_local_destination" },
+        "providerAccess": { "type": "string", "enum": ["direct_user_configured", "not_used", "mock_only"] },
+        "localFirst": { "type": "boolean", "const": true },
+        "cloudRequired": { "type": "boolean", "const": false },
+        "rawPayloadPersisted": { "type": "boolean", "const": false }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxStageSummaries", "maxOmissionCategories", "maxDiagnosticCodes", "maxLabelCharacters", "retentionPolicy"],
+      "properties": {
+        "maxStageSummaries": { "type": "integer", "const": 12 },
+        "maxOmissionCategories": { "type": "integer", "const": 18 },
+        "maxDiagnosticCodes": { "type": "integer", "const": 12 },
+        "maxLabelCharacters": { "type": "integer", "const": 120 },
+        "retentionPolicy": { "type": "string", "const": "consumer_managed_local_file" }
+      }
+    },
+    "stage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "status", "outcomeCode", "itemCount"],
+      "properties": {
+        "stage": { "type": "string", "enum": ["setup", "context", "proposal", "review", "apply", "verification", "recovery", "export"] },
+        "status": { "type": "string", "enum": ["not_started", "completed", "blocked", "failed", "omitted"] },
+        "outcomeCode": { "$ref": "#/$defs/diagnosticCode" },
+        "itemCount": { "$ref": "#/$defs/boundedCount" },
+        "durationMs": { "type": "integer", "minimum": 0, "maximum": 86400000 }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summaryLabel", "stageCount", "unsafeItemCount"],
+      "properties": {
+        "status": { "type": "string", "enum": ["completed", "blocked", "failed", "partial"] },
+        "summaryLabel": { "$ref": "#/$defs/safeLabel" },
+        "stageCount": { "type": "integer", "minimum": 1, "maximum": 12 },
+        "unsafeItemCount": { "$ref": "#/$defs/boundedCount" }
+      }
+    },
+    "omission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "disposition", "count"],
+      "properties": {
+        "category": {
+          "type": "string",
+          "enum": [
+            "raw_prompts",
+            "raw_responses",
+            "file_bodies",
+            "diffs",
+            "replacement_text",
+            "command_material",
+            "command_output",
+            "provider_payloads",
+            "bridge_payloads",
+            "credentials",
+            "private_paths",
+            "browser_storage_dumps",
+            "automatic_actions",
+            "production_claims",
+            "release_claims",
+            "unsupported_fields",
+            "unsafe_labels",
+            "other_unsafe_metadata"
+          ]
+        },
+        "disposition": { "type": "string", "enum": ["not_collected", "omitted", "redacted", "rejected"] },
+        "count": { "$ref": "#/$defs/boundedCount" }
+      }
+    },
+    "redactionCounters": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unsafeLabels", "credentialMarkers", "privatePaths", "payloadMarkers", "storageMarkers", "claimMarkers"],
+      "properties": {
+        "unsafeLabels": { "$ref": "#/$defs/boundedCount" },
+        "credentialMarkers": { "$ref": "#/$defs/boundedCount" },
+        "privatePaths": { "$ref": "#/$defs/boundedCount" },
+        "payloadMarkers": { "$ref": "#/$defs/boundedCount" },
+        "storageMarkers": { "$ref": "#/$defs/boundedCount" },
+        "claimMarkers": { "$ref": "#/$defs/boundedCount" }
+      }
+    },
+    "diagnosticCode": {
+      "type": "string",
+      "enum": [
+        "ok_sanitized",
+        "blocked_unsafe_metadata",
+        "omitted_raw_payload",
+        "omitted_private_path",
+        "redacted_credential_marker",
+        "unsupported_host",
+        "stale_evidence",
+        "limit_reached",
+        "incomplete_evidence"
+      ]
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "executionAllowed",
+        "fileReadAllowed",
+        "fileWriteAllowed",
+        "commandAllowed",
+        "shellAllowed",
+        "providerCallAllowed",
+        "bridgeDispatchAllowed",
+        "browserStorageReadAllowed",
+        "automaticActionsAllowed",
+        "productionClaimAllowed",
+        "releaseClaimAllowed"
+      ],
+      "properties": {
+        "executionAllowed": { "type": "boolean", "const": false },
+        "fileReadAllowed": { "type": "boolean", "const": false },
+        "fileWriteAllowed": { "type": "boolean", "const": false },
+        "commandAllowed": { "type": "boolean", "const": false },
+        "shellAllowed": { "type": "boolean", "const": false },
+        "providerCallAllowed": { "type": "boolean", "const": false },
+        "bridgeDispatchAllowed": { "type": "boolean", "const": false },
+        "browserStorageReadAllowed": { "type": "boolean", "const": false },
+        "automaticActionsAllowed": { "type": "boolean", "const": false },
+        "productionClaimAllowed": { "type": "boolean", "const": false },
+        "releaseClaimAllowed": { "type": "boolean", "const": false }
+      }
+    }
+  }
+}
