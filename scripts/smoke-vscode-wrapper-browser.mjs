@@ -101,7 +101,7 @@ const assistantIdeActionProposal = {
   range: proposalRange,
 };
 const mockChatMessages = [{ id: proposalAssistantMessageId, chatId: "chat-001", role: "assistant", content: JSON.stringify(assistantIdeActionProposal), createdAt: new Date(0).toISOString(), status: "complete" }];
-const mockChatSubscribers = new Set();
+const mockChatSubscribers = new Map();
 const runtimeRequestLog = [];
 const chatCommandBodies = [];
 const chatCommandObservers = new Set();
@@ -1292,8 +1292,14 @@ async function startMockRuntimeServer() {
       const chat = mockProposalChatThread();
       response.writeHead(200, { ...corsHeaders(), "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache" });
       response.write(`event: snapshot\ndata: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: chat.chatId, payload: { thread: chat, messages: chat.messages, runtime: { streaming: false, waitingForResponse: false } } })}\n\n`);
-      mockChatSubscribers.add(response);
-      response.on("close", () => mockChatSubscribers.delete(response));
+      const subscribers = mockChatSubscribers.get(chat.chatId) ?? new Set();
+      const subscriber = { response, nextSeq: 1 };
+      subscribers.add(subscriber);
+      mockChatSubscribers.set(chat.chatId, subscribers);
+      response.on("close", () => {
+        subscribers.delete(subscriber);
+        if (subscribers.size === 0) mockChatSubscribers.delete(chat.chatId);
+      });
       return;
     }
     const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(scopedPath);
@@ -1307,14 +1313,14 @@ async function startMockRuntimeServer() {
       const assistantMessage = { id: `assistant-visual-chat-${mockChatMessages.length}`, chatId, role: "assistant", content: "VS Code wrapper canned chat response.", createdAt, status: "complete" };
       if (body.payload?.content === editProposalPrompt) {
         mockChatMessages.push(userMessage, mockEditProposalChatMessage());
-        pushMockChatEvent({ seq: mockChatMessages.length - 1, type: "message_added", chatId, payload: { message: userMessage } });
-        pushMockChatEvent({ seq: mockChatMessages.length, type: "message_added", chatId, payload: { message: mockChatMessages.at(-1) } });
+        pushMockChatEvent({ type: "message_added", chatId, payload: { message: userMessage } });
+        pushMockChatEvent({ type: "message_added", chatId, payload: { message: mockChatMessages.at(-1) } });
         json(response, 200, { accepted: true, chatId, requestId: body.requestId ?? "vscode-wrapper-edit-proposal-chat", type: body.type });
         return;
       }
       mockChatMessages.push(userMessage, assistantMessage);
-      pushMockChatEvent({ seq: mockChatMessages.length - 1, type: "message_added", chatId, payload: { message: userMessage } });
-      pushMockChatEvent({ seq: mockChatMessages.length, type: "message_added", chatId, payload: { message: assistantMessage } });
+      pushMockChatEvent({ type: "message_added", chatId, payload: { message: userMessage } });
+      pushMockChatEvent({ type: "message_added", chatId, payload: { message: assistantMessage } });
       json(response, 200, { accepted: true, chatId, requestId: body.requestId ?? "vscode-wrapper-visual-chat", type: body.type });
       return;
     }
@@ -1416,8 +1422,10 @@ function mockProposalChatThread() {
 }
 
 function pushMockChatEvent(event) {
-  for (const subscriber of mockChatSubscribers) {
-    subscriber.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  for (const subscriber of mockChatSubscribers.get(event.chatId) ?? []) {
+    const sequencedEvent = { ...event, seq: subscriber.nextSeq };
+    subscriber.nextSeq += 1;
+    subscriber.response.write(`event: ${event.type}\ndata: ${JSON.stringify(sequencedEvent)}\n\n`);
   }
 }
 
