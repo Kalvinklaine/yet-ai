@@ -710,6 +710,35 @@ describe("project lifecycle scope", () => {
     expect(clearProjectChatLaunchIntent()).toBeUndefined();
   });
 
+  it("keeps launch memory available across a rerender while its note request is pending", async () => {
+    const note = projectMemoryNote({ id: "mem-launch-pending", title: "Pending memory", text: "Keep this memory until the request resolves." });
+    const memory = deferred<Response>();
+    createProjectChatLaunchIntent({
+      projectId: projectA,
+      chatId: "chat-memory-pending",
+      source: "project_home",
+      selectedNoteIds: [note.id],
+      lifecycleGeneration: getBrowserProjectChatLifecycleGeneration(),
+    });
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(`/p/${projectA}/v1/project-memory`)) return memory.promise;
+      return mockRuntimeResponse(input, init, {
+        ...readyRuntimeOptions(),
+        chats: [chatSummary("chat-memory-pending", "Pending memory chat", 0)],
+        chatThreads: { "chat-memory-pending": chatThread("chat-memory-pending", "Pending memory chat", []) },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-memory-pending" });
+    await flushAsync();
+    await act(async () => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat", chatId: "chat-memory-pending" }} />));
+    memory.resolve(jsonResponse({ notes: [note], cloudRequired: false, providerAccess: "direct" }));
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Keep this memory until the request resolves.");
+    expect(container?.textContent).toContain("Next send: 1 explicit item");
+  });
+
   it("retains launch memory after rejected Send for explicit retry", async () => {
     const note = projectMemoryNote({ id: "mem-launch-retry", title: "Retry memory", text: "Keep this reviewed memory after rejection." });
     createProjectChatLaunchIntent({ projectId: projectA, chatId: "chat-memory-retry", source: "project_home", selectedNoteIds: [note.id], lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() });

@@ -11,7 +11,10 @@ const model: ProjectCommandCenterModel = {
   readiness: { status: "ready", items: [{ id: "project", label: "Local project context", status: "ready" }] },
   conversations: { status: "ready", items: [{ chatId: "chat-recent", title: "Recent design", updatedLabel: "Recently updated" }] },
   memory: { status: "ready", items: [{ noteId: "note-1", title: "Architecture", tags: ["design"], summary: "Safe summary" }] },
-  activeWork: { status: "ready", items: [{ runId: "run-1", cardLabel: "S143", status: "active", updatedLabel: "Recently updated" }] },
+  activeWork: { status: "ready", items: [
+    { runId: "run-1", cardLabel: "S143", status: "active", updatedLabel: "Recently updated" },
+    { runId: "run-2", cardLabel: "S144", status: "blocked", updatedLabel: "Recently updated" },
+  ] },
   start: { enabled: true },
 };
 let root: ReactDOM.Root | undefined;
@@ -48,11 +51,13 @@ describe("ProjectHome", () => {
     act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectHome project={project} model={model} navigate={navigate} />); });
     const button = (label: string) => Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === label)!;
     act(() => button("Resume Recent design").click());
-    act(() => button("Open S143").click());
+    act(() => button("Open S143 in Agent").click());
+    act(() => button("Open S144 in Agent").click());
     const memory = container.querySelector("a[href$='/memory']") as HTMLAnchorElement;
     act(() => memory.click());
     expect(navigate.mock.calls.map(([route]) => route)).toEqual([
       { kind: "project", projectId: project.projectId, page: "chat", chatId: "chat-recent" },
+      { kind: "project", projectId: project.projectId, page: "agent" },
       { kind: "project", projectId: project.projectId, page: "agent" },
       { kind: "project", projectId: project.projectId, page: "memory" },
     ]);

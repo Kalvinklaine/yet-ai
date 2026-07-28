@@ -46,13 +46,31 @@ describe("ProjectCommandCenter", () => {
     act(() => button("Start new chat").click());
     act(() => button("Resume recent design chat").click());
     act(() => checkbox("Select Architecture note").click());
-    act(() => button("Open S142").click());
+    act(() => button("Open S142 in Agent").click());
 
     expect(onStart).toHaveBeenCalledOnce();
     expect(onResume).toHaveBeenCalledWith("chat-1");
     expect(onMemorySelectionChange).toHaveBeenCalledWith(["note-1"]);
     expect(onNavigateActiveWork).toHaveBeenCalledWith("run-1");
     expect(localWrite).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes active and blocked work and opens each only after an explicit click", () => {
+    const onNavigateActiveWork = vi.fn();
+    render({
+      ...readyModel(),
+      activeWork: { status: "ready", items: [
+        { runId: "run-active", cardLabel: "S149 active", status: "active", updatedLabel: "Recently updated" },
+        { runId: "run-blocked", cardLabel: "S149 blocked", status: "blocked", updatedLabel: "Recently updated" },
+      ] },
+    }, { onNavigateActiveWork });
+
+    expect(container.textContent).toContain("In progress");
+    expect(container.textContent).toContain("Needs attention");
+    expect(onNavigateActiveWork).not.toHaveBeenCalled();
+    act(() => button("Open S149 active in Agent").click());
+    act(() => button("Open S149 blocked in Agent").click());
+    expect(onNavigateActiveWork.mock.calls).toEqual([["run-active"], ["run-blocked"]]);
   });
 
   it("enforces the memory selection limit and keeps raw fields outside the DOM", () => {

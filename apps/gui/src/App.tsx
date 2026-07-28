@@ -571,6 +571,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const chatIdRef = useRef<string | null>(initialChatId);
   const firstProjectChatCreateRef = useRef<{ token: symbol; revision: number; correlation: ProjectScopeCorrelation } | null>(null);
   const launchIntentCreateRef = useRef(false);
+  const launchIntentMemoryRef = useRef<string | null>(null);
   const providerTestAttemptRef = useRef(0);
   const providerAuthMutationAttemptRef = useRef(0);
   const providerAuthExchangeInFlightRef = useRef(false);
@@ -2862,9 +2863,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     if (hostReadyGeneration && !projectHostAuthorityReady) return;
     const currentChatId = chatIdRef.current;
     if (routedChatId && !activeChatSummary) return;
-    if (!currentChatId) {
-      const pending = peekProjectChatLaunchIntent({ projectId, lifecycleGeneration });
-      if (!pending || pending.chatId !== undefined || launchIntentCreateRef.current) return;
+    const pending = peekProjectChatLaunchIntent({ projectId, lifecycleGeneration });
+    if (pending && pending.chatId === undefined) {
+      if (launchIntentCreateRef.current) return;
       if (pending.selectedNoteIds.length === 0) {
         consumeProjectChatLaunchIntent({ projectId, lifecycleGeneration });
         return;
@@ -2875,7 +2876,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       const correlation = createProjectScopeCorrelation(projectScopeController.current());
       void createChat(targetSettings).then((created) => {
         launchIntentCreateRef.current = false;
-        if (!created.ok || settingsRevisionRef.current !== targetRevision || !projectScopeController.accepts(correlation) || chatIdRef.current !== null) {
+        if (!created.ok || settingsRevisionRef.current !== targetRevision || !projectScopeController.accepts(correlation) || chatIdRef.current !== currentChatId) {
           clearProjectChatLaunchIntent();
           return;
         }
@@ -2889,18 +2890,28 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       });
       return;
     }
-    const intent = consumeProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
+    if (!currentChatId) return;
+    const intent = peekProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
     if (!intent) return;
-    if (intent.selectedNoteIds.length === 0) return;
+    if (intent.selectedNoteIds.length === 0) {
+      consumeProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
+      return;
+    }
     const targetRevision = settingsRevisionRef.current;
     const correlation = createProjectScopeCorrelation(projectScopeController.current());
+    const intentKey = `${projectId}:${currentChatId}:${intent.createdAtEpochMs}`;
+    if (launchIntentMemoryRef.current === intentKey) return;
+    launchIntentMemoryRef.current = intentKey;
     void listProjectMemory(settingsRef.current).then((result) => {
+      if (launchIntentMemoryRef.current === intentKey) launchIntentMemoryRef.current = null;
       if (settingsRevisionRef.current !== targetRevision || chatIdRef.current !== currentChatId || !projectScopeController.accepts(correlation)) return;
+      const consumed = consumeProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
+      if (!consumed) return;
       if (!result.ok) {
         setExplicitContextBundleStatus("Selected project memory could not be loaded. Nothing was attached.");
         return;
       }
-      const selection = selectControlledRunProjectMemory({ selectedNoteIds: intent.selectedNoteIds, notes: result.data.notes, maxSelectedNotes: 3 });
+      const selection = selectControlledRunProjectMemory({ selectedNoteIds: consumed.selectedNoteIds, notes: result.data.notes, maxSelectedNotes: 3 });
       const selected = selection.attachments.filter((attachment) => attachment.status === "selected" && attachment.selectedBody !== undefined);
       const candidates = selected.map((attachment) => projectMemoryToBundleItem({
         kind: "project_memory",
@@ -2910,7 +2921,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         tags: attachment.tagLabels,
         taskLabel: attachment.taskLabel,
         sessionLabel: attachment.sessionLabel,
-        attachTraceLabel: `project-chat-launch:${intent.source}`,
+        attachTraceLabel: `project-chat-launch:${consumed.source}`,
       }));
       setExplicitContextBundleItems((current) => {
         const merged = mergeLaunchMemoryBundleItems(current, candidates, selection.selectedCount);

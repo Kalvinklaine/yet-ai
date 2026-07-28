@@ -55,7 +55,7 @@ export function ProjectCommandCenter({
           const limitReached = selectedIds.length >= projectCommandCenterLimits.memorySelections && !checked;
           return <article><label><input type="checkbox" checked={checked} disabled={limitReached} onChange={() => toggleMemory(item.noteId)} /> Select {item.title}</label><p>{item.summary}</p>{item.tags.length > 0 && <span aria-label="Memory tags">{item.tags.join(" · ")}</span>}</article>;
         }} />
-        <CommandCenterSection title="Active work" section={model.activeWork} emptyLabel="No active work." renderItem={(item) => <article><strong>{item.cardLabel}</strong><span>{item.status === "blocked" ? "Needs attention" : "In progress"} · {item.updatedLabel}</span><button type="button" onClick={() => onNavigateActiveWork(item.runId)} aria-label={`Open ${item.cardLabel}`}>Open work</button></article>} />
+        <CommandCenterSection title="Active work" section={model.activeWork} emptyLabel="No active work." renderItem={(item) => <article><strong>{item.cardLabel}</strong><span>{item.status === "blocked" ? "Needs attention" : "In progress"} · {item.updatedLabel}</span><button type="button" onClick={() => onNavigateActiveWork(item.runId)} aria-label={`Open ${item.cardLabel} in Agent`}>Open in Agent</button></article>} />
       </div>
     </section>
   );
