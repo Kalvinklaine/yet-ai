@@ -9320,6 +9320,42 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("command rejected");
   });
 
+  it.each([
+    ["success", "Message A"],
+    ["failure", "Message A"],
+    ["success", "  Message A \n"],
+    ["failure", "  Message A \n"],
+    ["success", " \n "],
+    ["failure", " \n "],
+  ] as const)("preserves a newer raw %s draft after same-text or whitespace retyping", async (outcome, newerDraft) => {
+    const command = deferred<Response>();
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandResponse: command.promise });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => {
+      setTextareaValue(chatInput(), "Message A");
+    });
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      setTextareaValue(chatInput(), "temporary edit");
+      setTextareaValue(chatInput(), newerDraft);
+    });
+
+    command.resolve(outcome === "success"
+      ? jsonResponse({ accepted: true, chatId: "chat-001", requestId: `request-${outcome}`, type: "user_message" })
+      : jsonResponse({ error: "command rejected" }, 500));
+    await flushAsync();
+
+    expect(chatInput().value).toBe(newerDraft);
+    const commandCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST");
+    expect(commandCalls).toHaveLength(1);
+    expect(JSON.parse(String(commandCalls[0]?.[1]?.body))).toMatchObject({ payload: { content: "Message A" } });
+  });
+
   it("sends multiline coding action prompts unchanged without browser storage", async () => {
     const localSetItem = vi.spyOn(Storage.prototype, "setItem");
     const prompt = "Coding action: propose_safe_edit\n\nPropose a safe edit for the selected code. Nothing is applied automatically.";

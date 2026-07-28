@@ -606,6 +606,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const chatInputRef = useRef<HTMLTextAreaElement | null>(null);
   const chatScrollRegionRef = useRef<HTMLDivElement | null>(null);
   const optimisticUserMessageCounterRef = useRef(0);
+  const chatInputUserLineageRef = useRef(0);
   const modelProposalDraftCounterRef = useRef(0);
   const [controlledFileReadResultMetadata, setControlledFileReadResultMetadata] = useState<unknown>(null);
   const [pendingControlledFileReadRequestId, setPendingControlledFileReadRequestId] = useState<string | null>(null);
@@ -3641,6 +3642,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const submitChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const submittedChatInput = chatInput;
+    const submittedChatInputUserLineage = chatInputUserLineageRef.current;
     const content = submittedChatInput.trim();
     if (!content || firstProjectChatCreateRef.current) {
       return;
@@ -3728,7 +3730,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
     if (result.ok) {
       if (firstProjectChatCreateRef.current?.token === firstProjectChatToken) firstProjectChatCreateRef.current = null;
-      setChatInput((current) => current === submittedChatInput || current === "" ? "" : current);
+      if (chatInputUserLineageRef.current === submittedChatInputUserLineage) {
+        setChatInput("");
+      }
       addTimeline(`Command accepted ${result.data.requestId}`);
       appendTrace({ family: "chat.sendAccepted", title: "Send accepted", status: "succeeded", summary: "Runtime accepted user message command.", requestId: result.data.requestId, details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
       if (modelProposalDraft?.prompt === content) {
@@ -3746,7 +3750,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       if (firstProjectChatCreateRef.current?.token === firstProjectChatToken) firstProjectChatCreateRef.current = null;
       setChatError(result.error);
       setChatLifecycleState("failed");
-      setChatInput((current) => current === submittedChatInput || current === "" ? submittedChatInput : current);
+      if (chatInputUserLineageRef.current === submittedChatInputUserLineage) {
+        setChatInput(submittedChatInput);
+      }
       setChatView((current) => removeOptimisticUserMessage(current, optimisticUserMessageId));
       appendChatError(result.error.message, chatRecoveryCodeForRuntimeError(result.error, "command"));
       addTimeline(`Command error: ${sanitizeDisplayText(result.error.message)}`);
@@ -4124,7 +4130,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   {attachedVerificationKey && <span className="composer-chip">Verification attached</span>}
                   {modelProposalDraft && <span className="composer-chip">Model proposal draft</span>}
                 </div>
-                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
+                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => {
+                  chatInputUserLineageRef.current += 1;
+                  setChatInput(event.target.value);
+                }} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">
                   <button type="submit" disabled={!canSendChat}>Send</button>
                   <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>
