@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearProjectChatLaunchIntent,
+  clearProjectChatLaunchIntentIfMatches,
   bindProjectChatLaunchIntentChatId,
   consumeProjectChatLaunchIntent,
   createProjectChatLaunchIntent,
@@ -89,6 +90,16 @@ describe("projectChatLaunchIntent", () => {
     expect(store.read()).toBeNull();
     expect(localWrite).not.toHaveBeenCalled();
     expect(historyWrite).not.toHaveBeenCalled();
+  });
+
+  it("clears only a matching pending intent", () => {
+    const store = createProjectChatLaunchIntentStore();
+    createProjectChatLaunchIntent(baseInput, { store, nowEpochMs: 1_000 });
+
+    expect(clearProjectChatLaunchIntentIfMatches({ ...match, chatId: "chat-other" }, { store, nowEpochMs: 1_001 })).toBe(false);
+    expect(peekProjectChatLaunchIntent(match, { store, nowEpochMs: 1_001 })).not.toBeNull();
+    expect(clearProjectChatLaunchIntentIfMatches(match, { store, nowEpochMs: 1_001 })).toBe(true);
+    expect(peekProjectChatLaunchIntent(match, { store, nowEpochMs: 1_001 })).toBeNull();
   });
 
   it("rejects malformed values supplied by an injected store", () => {

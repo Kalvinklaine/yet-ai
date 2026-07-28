@@ -114,6 +114,17 @@ export function clearProjectChatLaunchIntent(store: ProjectChatLaunchIntentStore
   store.write(null);
 }
 
+export function clearProjectChatLaunchIntentIfMatches(
+  match: ProjectChatLaunchIntentMatch,
+  options: ProjectChatLaunchIntentOptions = {},
+): boolean {
+  const store = options.store ?? moduleStore;
+  const intent = peekProjectChatLaunchIntent(match, { ...options, store });
+  if (!intent) return false;
+  store.write(null);
+  return true;
+}
+
 export function getBrowserProjectChatLifecycleGeneration(): string {
   return browserLifecycleGeneration;
 }

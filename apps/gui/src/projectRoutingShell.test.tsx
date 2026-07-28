@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectRouterShell } from "./ProjectRouterShell";
 import { navigateProjectRoute } from "./services/projectRouting";
 import type { RuntimeSettings } from "./services/runtimeClient";
+import { consumeProjectChatLaunchIntent, createProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
 
 const appRenderCalls = vi.hoisted(() => [] as string[]);
 const appAuthorityCalls = vi.hoisted(() => [] as Array<{ hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings }>);
@@ -291,6 +292,7 @@ describe("ProjectRouterShell", () => {
       root.render(<ProjectRouterShell />);
     });
     await openHostedChat(container);
+    createProjectChatLaunchIntent({ projectId, chatId: "chat-new", source: "current_workspace_dashboard", selectedNoteIds: ["memory-one"], lifecycleGeneration: "ready-1" });
     const rendersBeforeMismatch = appRenderCalls.length;
 
     await sendWorkspaceBinding("ready-1", otherProjectId);
@@ -298,6 +300,7 @@ describe("ProjectRouterShell", () => {
     expect(appRenderCalls).toHaveLength(rendersBeforeMismatch);
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+    expect(consumeProjectChatLaunchIntent({ projectId, chatId: "chat-new", lifecycleGeneration: "ready-1" })).toBeNull();
   });
 
   it("authorizes only the explicitly selected project for a selection-required binding", async () => {
@@ -331,6 +334,7 @@ describe("ProjectRouterShell", () => {
     await sendHostReady("ready-1");
     await sendSelectionBinding("ready-1");
     act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start selected chat")?.click());
+    createProjectChatLaunchIntent({ projectId, chatId: "chat-selected", source: "current_workspace_dashboard", selectedNoteIds: ["memory-selected"], lifecycleGeneration: "ready-1" });
     const rendersBeforeReplacement = appRenderCalls.length;
 
     await sendSelectionBinding("ready-1", "root_unavailable");
@@ -338,6 +342,7 @@ describe("ProjectRouterShell", () => {
     expect(appRenderCalls).toHaveLength(rendersBeforeReplacement);
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+    expect(consumeProjectChatLaunchIntent({ projectId, chatId: "chat-selected", lifecycleGeneration: "ready-1" })).toBeNull();
   });
 
   it("rejects deferred explicit selection after a same-project binding replacement", async () => {

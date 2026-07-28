@@ -73,7 +73,7 @@ import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPat
 import type { AgentRunInput } from "./services/agentRunState";
 import { resolveHostReadyRuntimeSettings } from "./services/useLiveRuntimeSettings";
 import { selectControlledRunProjectMemory } from "./services/controlledRunProjectMemorySelection";
-import { bindProjectChatLaunchIntentChatId, clearProjectChatLaunchIntent, consumeProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration, peekProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
+import { bindProjectChatLaunchIntentChatId, clearProjectChatLaunchIntent, clearProjectChatLaunchIntentIfMatches, consumeProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration, peekProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -269,6 +269,48 @@ type ProjectMemoryState = {
   notes: ProjectMemoryNote[];
   error: RuntimeError | null;
 };
+
+export type LaunchMemoryBundleMerge = {
+  items: ExplicitContextBundleItem[];
+  addedCount: number;
+  duplicateCount: number;
+  capacityOmittedCount: number;
+  selectionOmittedCount: number;
+  status: string;
+};
+
+export function mergeLaunchMemoryBundleItems(current: ExplicitContextBundleItem[], candidates: ProjectMemoryBundleItem[], selectedCount: number): LaunchMemoryBundleMerge {
+  let items = current;
+  let addedCount = 0;
+  let duplicateCount = 0;
+  let capacityOmittedCount = 0;
+  for (const candidate of candidates) {
+    if (items.some((item) => item.key === candidate.key)) {
+      duplicateCount += 1;
+      continue;
+    }
+    const next = addExplicitContextBundleItem(items, candidate);
+    if (next === items) {
+      capacityOmittedCount += 1;
+      continue;
+    }
+    items = next;
+    addedCount += 1;
+  }
+  const selectionOmittedCount = Math.max(0, selectedCount - candidates.length);
+  const omissions = [
+    selectionOmittedCount > 0 ? `${selectionOmittedCount} unavailable or unsafe` : "",
+    duplicateCount > 0 ? `${duplicateCount} already attached` : "",
+    capacityOmittedCount > 0 ? `${capacityOmittedCount} did not fit controlled bundle limits` : "",
+  ].filter(Boolean);
+  const omissionStatus = omissions.length > 0 ? ` ${omissions.join(", ")} selected note${selectionOmittedCount + duplicateCount + capacityOmittedCount === 1 ? " was" : "s were"} omitted.` : "";
+  const status = addedCount > 0
+    ? `Attached ${addedCount} explicitly selected project memory note${addedCount === 1 ? "" : "s"} for review before Send.${omissionStatus}`
+    : omissions.length > 0
+      ? `No selected project memory was added.${omissionStatus} Nothing was attached.`
+      : "Selected project memory was unavailable or unsafe. Nothing was attached.";
+  return { items, addedCount, duplicateCount, capacityOmittedCount, selectionOmittedCount, status };
+}
 
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
@@ -2239,6 +2281,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       setChatHistoryRevision(revision);
       const routedChatPresent = routedChatId === undefined || summaries.some((summary) => summary.chatId === routedChatId);
       setMissingRoutedChatId(routedChatPresent ? null : routedChatId);
+      if (!routedChatPresent && projectId && routedChatId) {
+        clearProjectChatLaunchIntentIfMatches({ projectId, chatId: routedChatId, lifecycleGeneration: hostReadyGeneration ?? getBrowserProjectChatLifecycleGeneration() });
+      }
       const resolution = routedChatId
         ? { nextChatId: routedChatId, shouldResetView: chatIdRef.current !== routedChatId, reason: "current_present" as const }
         : resolveChatAfterList({ currentChatId: chatIdRef.current, summaries, defaultChatId: projectId ? null : "chat-001" });
@@ -2283,12 +2328,15 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     } else {
       if (routedChatId === targetChatId && result.error.status === 404) {
         setMissingRoutedChatId(targetChatId);
+        if (projectId) {
+          clearProjectChatLaunchIntentIfMatches({ projectId, chatId: targetChatId, lifecycleGeneration: hostReadyGeneration ?? getBrowserProjectChatLifecycleGeneration() });
+        }
       }
       setChatHistoryError(result.error);
       setChatHistoryRevision(revision);
     }
     setChatHistoryLoading(false);
-  }, [isCurrentRefresh, routedChatId]);
+  }, [hostReadyGeneration, isCurrentRefresh, projectId, routedChatId]);
 
   const createNewChat = useCallback(async () => {
     const targetSettings = settingsRef.current;
@@ -2854,7 +2902,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       }
       const selection = selectControlledRunProjectMemory({ selectedNoteIds: intent.selectedNoteIds, notes: result.data.notes, maxSelectedNotes: 3 });
       const selected = selection.attachments.filter((attachment) => attachment.status === "selected" && attachment.selectedBody !== undefined);
-      setExplicitContextBundleItems((current) => selected.reduce((items, attachment) => addExplicitContextBundleItem(items, projectMemoryToBundleItem({
+      const candidates = selected.map((attachment) => projectMemoryToBundleItem({
         kind: "project_memory",
         noteId: attachment.noteId,
         title: attachment.titleLabel,
@@ -2863,11 +2911,13 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         taskLabel: attachment.taskLabel,
         sessionLabel: attachment.sessionLabel,
         attachTraceLabel: `project-chat-launch:${intent.source}`,
-      })), current));
-      setIncludeExplicitContextBundle(true);
-      setExplicitContextBundleStatus(selected.length > 0
-        ? `Attached ${selected.length} explicitly selected project memory note${selected.length === 1 ? "" : "s"} for review before Send.${selection.attachedCount < selection.selectedCount ? " Some selected notes were safely omitted." : ""}`
-        : "Selected project memory was unavailable or unsafe. Nothing was attached.");
+      }));
+      setExplicitContextBundleItems((current) => {
+        const merged = mergeLaunchMemoryBundleItems(current, candidates, selection.selectedCount);
+        if (merged.addedCount > 0) setIncludeExplicitContextBundle(true);
+        setExplicitContextBundleStatus(merged.status);
+        return merged.items;
+      });
     });
   }, [activeChatSummary, chatId, hostReadyGeneration, navigate, projectHostAuthorityReady, projectId, projectScopeController, routedChatId, showChatPage]);
 
@@ -4208,6 +4258,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   <strong>Selected project memory attached for review</strong>
                   {attachedProjectMemoryItems.map((item) => <div className="stack" key={item.key}><span>{sanitizeDisplayText(item.title)}</span><pre>{item.text}</pre></div>)}
                   <span className="subtle">Unsent one-shot context. Review it here, then click Send explicitly or remove it from the explicit context controls.</span>
+                  {explicitContextBundleStatus && <span className="subtle">{sanitizeDisplayText(explicitContextBundleStatus)}</span>}
                 </section>}
                 <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setUserChatInputDraft(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">

@@ -24,6 +24,7 @@ export function ProjectRouterShell() {
   const [openedHostedRoute, setOpenedHostedRoute] = useState<OpenedHostedRoute | null>(null);
   const { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
   const hostedAuthorityRef = useRef({ hostReadyGeneration, workspaceBinding });
+  const previousHostedAuthorityRef = useRef<string | null>(null);
   hostedAuthorityRef.current = { hostReadyGeneration, workspaceBinding };
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
   const getHostedAuthorityToken = useCallback((selectedProjectId?: string): HostedAuthorityToken | null => {
@@ -61,6 +62,16 @@ export function ProjectRouterShell() {
     : null;
 
   useEffect(() => subscribeToProjectRoute(window, setRoute), []);
+  useEffect(() => {
+    const currentAuthority = hostReadyGeneration && workspaceBinding
+      ? `${hostReadyGeneration}\u0000${workspaceBindingFingerprint(workspaceBinding)}`
+      : null;
+    const previousAuthority = previousHostedAuthorityRef.current;
+    previousHostedAuthorityRef.current = currentAuthority;
+    if (previousAuthority !== null && previousAuthority !== currentAuthority) {
+      clearProjectChatLaunchIntent();
+    }
+  }, [hostReadyGeneration, workspaceBinding]);
   useEffect(() => {
     if (!hostedChatEntry || authorizedHostedRoute) return;
     setOpenedHostedRoute((current) => {

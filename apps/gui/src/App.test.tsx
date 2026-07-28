@@ -2,9 +2,9 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
+import { App, completedApplyRequestChatsLimit, completedIdeActionRequestChatsLimit, generateApplyRequestSessionNonce, mergeLaunchMemoryBundleItems, rememberCompletedApplyRequest, rememberCompletedIdeActionRequest } from "./App";
 import { buildVerificationFollowupPrompt } from "./services/verificationFollowupPrompt";
-import { validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
+import { projectMemoryToBundleItem, validateWorkspaceSnippetQuery } from "./services/activeEditorContext";
 import { getProviderAuthStatus } from "./services/providerAuthClient";
 import { clearProjectChatLaunchIntent, consumeProjectChatLaunchIntent, createProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration } from "./services/projectChatLaunchIntent";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
@@ -107,6 +107,28 @@ describe("codingTaskPrompt builder", () => {
     }, "followup");
     expect(followup).toContain("Verification follow-up prompt");
     expect(followup).toContain("Explain this verification result");
+  });
+});
+
+describe("launch memory bundle merge", () => {
+  const item = (id: string, text = `Safe memory ${id}`) => projectMemoryToBundleItem({ kind: "project_memory", noteId: id, title: `Note ${id}`, text, tags: [], attachTraceLabel: "project-chat-launch:project_home" });
+
+  it("reports only actual additions for partial room, duplicates, and selection omissions", () => {
+    const existing = [item("existing-1"), item("existing-2"), item("duplicate")];
+    const result = mergeLaunchMemoryBundleItems(existing, [item("duplicate"), item("added"), item("no-room")], 4);
+
+    expect(result.items.map((entry) => entry.kind === "project_memory" ? entry.noteId : entry.key)).toEqual(["existing-1", "existing-2", "duplicate", "added"]);
+    expect(result).toMatchObject({ addedCount: 1, duplicateCount: 1, capacityOmittedCount: 1, selectionOmittedCount: 1 });
+    expect(result.status).toBe("Attached 1 explicitly selected project memory note for review before Send. 1 unavailable or unsafe, 1 already attached, 1 did not fit controlled bundle limits selected notes were omitted.");
+  });
+
+  it("does not claim an attachment when an existing bundle is at capacity", () => {
+    const existing = [item("one"), item("two"), item("three"), item("four")];
+    const result = mergeLaunchMemoryBundleItems(existing, [item("five")], 1);
+
+    expect(result.items).toBe(existing);
+    expect(result.addedCount).toBe(0);
+    expect(result.status).toBe("No selected project memory was added. 1 did not fit controlled bundle limits selected note was omitted. Nothing was attached.");
   });
 });
 describe("hosted iframe shell layout", () => {
@@ -674,6 +696,9 @@ describe("project lifecycle scope", () => {
 
     expect(container?.textContent).toContain("Architecture choice");
     expect(container?.textContent).toContain("Prefer small modules with explicit boundaries.");
+    expect(container?.textContent).toContain("Next send: 1 explicit item");
+    expect(container?.textContent).toContain("Memory 1");
+    expect(container?.textContent).toContain("Attached 1 explicitly selected project memory note for review before Send.");
     expect(chatInput().value).toBe("");
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/commands") && init?.method === "POST")).toBe(false);
 
@@ -683,6 +708,30 @@ describe("project lifecycle scope", () => {
 
     expect(container?.textContent).not.toContain("Prefer small modules with explicit boundaries.");
     expect(clearProjectChatLaunchIntent()).toBeUndefined();
+  });
+
+  it("retains launch memory after rejected Send for explicit retry", async () => {
+    const note = projectMemoryNote({ id: "mem-launch-retry", title: "Retry memory", text: "Keep this reviewed memory after rejection." });
+    createProjectChatLaunchIntent({ projectId: projectA, chatId: "chat-memory-retry", source: "project_home", selectedNoteIds: [note.id], lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() });
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [chatSummary("chat-memory-retry", "Memory retry", 0)],
+      chatThreads: { "chat-memory-retry": chatThread("chat-memory-retry", "Memory retry", []) },
+      projectMemoryNotes: [note],
+      commandStatus: 500,
+      commandError: "rejected safely",
+    });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-memory-retry" });
+    await flushAsync();
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "Retry with reviewed memory."));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Keep this reviewed memory after rejection.");
+    expect(container?.textContent).toContain("Next send: 1 explicit item");
+    expect(container?.textContent).toContain("Memory 1");
+    expect(chatInput().value).toBe("Retry with reviewed memory.");
   });
 
   it("consumes an empty legacy launch intent without fetching memory or changing bundle status", async () => {
@@ -708,6 +757,13 @@ describe("project lifecycle scope", () => {
   });
 
   it("keeps a missing routed chat selected without hydrating the available fallback", async () => {
+    createProjectChatLaunchIntent({
+      projectId: projectA,
+      chatId: "chat-missing",
+      source: "project_home",
+      selectedNoteIds: ["mem-stale-route"],
+      lifecycleGeneration: getBrowserProjectChatLifecycleGeneration(),
+    });
     mockRuntimeResponses({
       ...readyRuntimeOptions(),
       chats: [chatSummary("chat-fallback", "Fallback chat", 1)],
@@ -724,6 +780,7 @@ describe("project lifecycle scope", () => {
     expect(container?.textContent).not.toContain("Fallback message must stay hidden");
     expect(container?.querySelector("[data-testid='chat-composer']")).toBeNull();
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes(`/p/${projectA}/v1/chats/chat-fallback`))).toBe(false);
+    expect(consumeProjectChatLaunchIntent({ projectId: projectA, chatId: "chat-missing", lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
   });
 
   it("ignores a deferred routed chat response after reroute and unmount", async () => {
