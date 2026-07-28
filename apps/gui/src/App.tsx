@@ -636,6 +636,11 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [controlledTaskExecutionState, setControlledTaskExecutionState] = useState<ControlledTaskExecutionState>(() => createInitialControlledTaskExecutionState());
   const [controlledRunHistory, setControlledRunHistory] = useState<ControlledRunHistoryItem[]>([]);
 
+  const setUserChatInputDraft = (draft: string | ((current: string) => string)) => {
+    chatInputUserLineageRef.current += 1;
+    setChatInput(draft);
+  };
+
   const settings = useMemo<ChatRuntimeSettings>(() => {
     const globalSettings: RuntimeSettings = { baseUrl, token, runtimeAccess };
     return projectId ? createProjectRuntimeSettings(globalSettings, projectId, projectScopeController.current()) : globalSettings;
@@ -3046,7 +3051,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
     const draft = result.draft;
     setControlledVerificationFollowupDraft(draft);
-    setChatInput(controlledVerificationFollowupPrompt(draft));
+    setUserChatInputDraft(controlledVerificationFollowupPrompt(draft));
     setControlledVerificationBundleNote(`${draft.followupProposal.title} created as a local draft. Review it, then click Send yourself if wanted.`);
     chatInputRef.current?.focus();
     appendTrace({ family: "controlledAgent.verificationFollowupDrafted", title: draft.followupProposal.title, status: "info", summary: "Sanitized verification follow-up prompt drafted locally after explicit click.", details: result.details });
@@ -3502,7 +3507,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       return;
     }
     setAttachedContext({ payload: currentAttachedContext, settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: chatIdRef.current });
-    setChatInput(action.buildPrompt(currentAttachedContext));
+    setUserChatInputDraft(action.buildPrompt(currentAttachedContext));
     setIncludeAttachedContext(true);
     chatInputRef.current?.focus();
   };
@@ -3513,7 +3518,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       return;
     }
     setAttachedContext({ payload: currentAttachedContext, settingsRevision: settingsRevisionRef.current, scopeCorrelation: createProjectScopeCorrelation(projectScopeController.current()), chatId: chatIdRef.current, excerpt: currentActiveFileExcerpt });
-    setChatInput(action.prompt);
+    setUserChatInputDraft(action.prompt);
     setIncludeAttachedContext(true);
     chatInputRef.current?.focus();
   };
@@ -3525,7 +3530,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const buildCodingTaskDraft = (mode: CodingTaskPromptMode) => buildCodingTaskPrompt({ mode, goal: codingTaskGoal, contextItems: explicitContextBundleItems, providerReadiness: chatReadinessLabel });
 
   const useCodingTaskDraftPrompt = (mode: CodingTaskPromptMode) => {
-    setChatInput(buildCodingTaskDraft(mode));
+    setUserChatInputDraft(buildCodingTaskDraft(mode));
     chatInputRef.current?.focus();
   };
 
@@ -3538,7 +3543,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     modelProposalDraftCounterRef.current += 1;
     setModelProposalDraft({ ...draft, draftId: `model-proposal-draft-${modelProposalDraftCounterRef.current}` });
     setSubmittedModelProposalPrompt(null);
-    setChatInput(draft.prompt);
+    setUserChatInputDraft(draft.prompt);
     chatInputRef.current?.focus();
   };
 
@@ -3581,7 +3586,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     if (!isVerificationOutputResult(result)) {
       return;
     }
-    setChatInput(buildVerificationFollowupPrompt(result, mode));
+    setUserChatInputDraft(buildVerificationFollowupPrompt(result, mode));
     chatInputRef.current?.focus();
     appendTrace({ family: "verification.followupPromptDrafted", title: mode === "fix" ? "Verification fix prompt drafted" : "Verification follow-up prompt drafted", status: "info", summary: `Drafted ${mode} prompt from verification result.`, details: { commandId: result.commandId, status: result.status, exitCode: result.exitCode } });
   };
@@ -3602,7 +3607,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       verificationRequestId: agentRunInput?.verificationRequest?.requestId,
       followupDraftId: draftId,
     });
-    setChatInput(draft.prompt);
+    setUserChatInputDraft(draft.prompt);
     if (mode === "fix") {
       setAgentRunVerificationFixDraft({ present: true, awaitingManualSend: true, metadata: draft.metadata, label: "fix draft waiting for manual Send" });
     }
@@ -3632,7 +3637,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       setAttachedVerificationKey(key);
       setIncludeExplicitContextBundle(true);
       setExplicitContextBundleStatus(`Added ${result.commandId} verification output to the one-shot bundle.`);
-      setChatInput((current) => current || `Use the attached verification_output from ${result.commandId} to explain the verification result and suggest the next safe step.`);
+      setUserChatInputDraft((current) => current || `Use the attached verification_output from ${result.commandId} to explain the verification result and suggest the next safe step.`);
       chatInputRef.current?.focus();
       appendTrace({ family: "context.verificationAttachment", title: "Verification output attached", status: "succeeded", summary: `Added ${result.commandId} verification output to the one-shot bundle.`, details: { commandId: result.commandId, status: result.status, exitCode: result.exitCode, truncated: result.truncated } });
       return next;
@@ -4130,10 +4135,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   {attachedVerificationKey && <span className="composer-chip">Verification attached</span>}
                   {modelProposalDraft && <span className="composer-chip">Model proposal draft</span>}
                 </div>
-                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => {
-                  chatInputUserLineageRef.current += 1;
-                  setChatInput(event.target.value);
-                }} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
+                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setUserChatInputDraft(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">
                   <button type="submit" disabled={!canSendChat}>Send</button>
                   <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>

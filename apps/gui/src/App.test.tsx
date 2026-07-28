@@ -525,6 +525,39 @@ describe("project lifecycle scope", () => {
     expect(chatInput().value).toBe("");
   });
 
+  it.each(["success", "failure"] as const)("preserves a newer project draft when the first-message command finishes with %s", async (outcome) => {
+    const command = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") {
+        return Promise.resolve(jsonResponse(chatThread("chat-first-command-race", "First command race", [])));
+      }
+      if (url.endsWith(`/p/${projectA}/v1/chats/chat-first-command-race/commands`) && init?.method === "POST") {
+        return command.promise;
+      }
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "First project message"));
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats/chat-first-command-race/commands`) && init?.method === "POST")).toHaveLength(1);
+    await act(async () => setTextareaValue(chatInput(), "Newer project draft"));
+    command.resolve(outcome === "success"
+      ? jsonResponse({ accepted: true, chatId: "chat-first-command-race", requestId: "request-first-race", type: "user_message" })
+      : jsonResponse({ error: "first command rejected" }, 500));
+    await flushAsync();
+
+    expect(chatInput().value).toBe("Newer project draft");
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("chat-first-command-race");
+  });
+
   it("guards double Send while the first project chat is being created", async () => {
     const create = deferred<Response>();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -9354,6 +9387,29 @@ describe("chat panel", () => {
     const commandCalls = fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST");
     expect(commandCalls).toHaveLength(1);
     expect(JSON.parse(String(commandCalls[0]?.[1]?.body))).toMatchObject({ payload: { content: "Message A" } });
+  });
+
+  it.each(["success", "failure"] as const)("preserves a button-drafted prompt when an in-flight command finishes with %s", async (outcome) => {
+    const command = deferred<Response>();
+    mockRuntimeResponses({ ...readyRuntimeOptions(), commandResponse: command.promise });
+    renderApp();
+
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "Message before button draft"));
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+    });
+    await act(async () => findButton("Draft Ask prompt").click());
+    const buttonDraft = chatInput().value;
+    expect(buttonDraft).toContain("Ask prompt");
+
+    command.resolve(outcome === "success"
+      ? jsonResponse({ accepted: true, chatId: "chat-001", requestId: "request-button-draft", type: "user_message" })
+      : jsonResponse({ error: "button draft command rejected" }, 500));
+    await flushAsync();
+
+    expect(chatInput().value).toBe(buttonDraft);
   });
 
   it("sends multiline coding action prompts unchanged without browser storage", async () => {
