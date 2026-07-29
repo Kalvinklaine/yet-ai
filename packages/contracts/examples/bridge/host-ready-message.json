@@ -5,8 +5,7 @@
   "payload": {
     "productId": "yet-ai",
     "displayName": "Yet AI",
-    "runtimeUrl": "http://127.0.0.1:8001",
-    "sessionToken": "example-local-session-token",
+    "runtimeProxyBaseUrl": "/panel/panel-example",
     "cloudRequired": false
   }
 }

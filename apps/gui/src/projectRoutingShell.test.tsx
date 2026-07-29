@@ -11,7 +11,7 @@ const appRenderCalls = vi.hoisted(() => [] as string[]);
 const appAuthorityCalls = vi.hoisted(() => [] as Array<{ hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings }>);
 const deferredHostedOpen = vi.hoisted(() => ({ run: null as null | (() => boolean) }));
 vi.mock("./App", () => ({
-  App: ({ route, hostedAuthorityKey, hostReadyGeneration, runtimeSettings }: { route: { kind: string; page?: string; chatId?: string }; hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings }) => {
+  App: ({ route, hostedAuthorityKey, hostReadyGeneration, runtimeSettings, onRuntimeSettingsChange }: { route: { kind: string; page?: string; chatId?: string }; hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void }) => {
     const [context, setContext] = React.useState("");
     const label = [route.kind, route.page, route.chatId].filter(Boolean).join(":");
     appRenderCalls.push(label);
@@ -28,6 +28,7 @@ vi.mock("./App", () => ({
     return <div>
       <div data-testid="app-route">{label}</div>
       <div data-testid="app-runtime-state">{authorized ? `runtime-ready:${hostReadyGeneration}` : "runtime-gated"}</div>
+      <button type="button" onClick={() => onRuntimeSettingsChange?.({ baseUrl: "http://127.0.0.1:9555", token: "manual-runtime-token", runtimeAccess: "direct" })}>Change runtime identity</button>
       {context && <div data-testid="app-context">{context}</div>}
     </div>;
   },
@@ -211,6 +212,60 @@ describe("ProjectRouterShell", () => {
     expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
   });
 
+  it("returns an open hosted chat to the dashboard when a no-delta ready advances generation", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = {
+      entryMode: "hosted_chat",
+      runtimeAccess: "same_origin_proxy",
+      runtimeBaseUrl: "/panel/panel-test",
+      runtimeProxyBaseUrl: "/panel/panel-test",
+    };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await sendHostReady("ready-1");
+    await sendWorkspaceBinding("ready-1");
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click());
+    createProjectChatLaunchIntent({ projectId, chatId: "chat-new", source: "current_workspace_dashboard", selectedNoteIds: ["memory-one"], lifecycleGeneration: "ready-1" });
+
+    await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
+      version: "2026-05-15",
+      type: "host.ready",
+      requestId: "ready-2",
+      payload: {},
+    } })));
+    await sendWorkspaceBinding("ready-1");
+
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+    expect(consumeProjectChatLaunchIntent({ projectId, chatId: "chat-new", lifecycleGeneration: "ready-1" })).toBeNull();
+    await sendWorkspaceBinding("ready-2");
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click());
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
+  });
+
+  it("invalidates an open hosted route and launch intent after manual runtime identity change", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await openHostedChat(container);
+    createProjectChatLaunchIntent({ projectId, chatId: "chat-new", source: "current_workspace_dashboard", selectedNoteIds: ["memory-one"], lifecycleGeneration: "ready-1" });
+
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Change runtime identity")?.click());
+
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+    expect(consumeProjectChatLaunchIntent({ projectId, chatId: "chat-new", lifecycleGeneration: "ready-1" })).toBeNull();
+  });
+
   it("remounts dashboard chat with current runtime authority and context without replaying host.ready", async () => {
     window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
     window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
@@ -293,7 +348,7 @@ describe("ProjectRouterShell", () => {
 
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
     expect(container.querySelector("[data-testid='workspace-dashboard']")).toBeNull();
-    expect(appRenderCalls.length).toBeGreaterThan(rendersBeforeRetry);
+    expect(appRenderCalls).toHaveLength(rendersBeforeRetry);
   });
 
   it("re-gates an open hosted project route when its correlated binding changes project", async () => {

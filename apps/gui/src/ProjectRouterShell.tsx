@@ -22,17 +22,17 @@ export function ProjectRouterShell() {
     return parseProjectRoute(window.location.pathname);
   });
   const [openedHostedRoute, setOpenedHostedRoute] = useState<OpenedHostedRoute | null>(null);
-  const { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
-  const hostedAuthorityRef = useRef({ hostReadyGeneration, workspaceBinding });
-  const previousHostedAuthorityRef = useRef<string | null>(null);
-  hostedAuthorityRef.current = { hostReadyGeneration, workspaceBinding };
+  const { settings, runtimeSettingsRevision, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
+  const hostedAuthorityRef = useRef({ runtimeSettingsRevision, hostReadyGeneration, workspaceBinding });
+  const previousHostedAuthorityRef = useRef(hostedAuthorityFingerprint(runtimeSettingsRevision, hostReadyGeneration, workspaceBinding));
+  hostedAuthorityRef.current = { runtimeSettingsRevision, hostReadyGeneration, workspaceBinding };
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
   const getHostedAuthorityToken = useCallback((selectedProjectId?: string): HostedAuthorityToken | null => {
-    const { hostReadyGeneration: currentGeneration, workspaceBinding: currentBinding } = hostedAuthorityRef.current;
+    const { runtimeSettingsRevision: currentRevision, hostReadyGeneration: currentGeneration, workspaceBinding: currentBinding } = hostedAuthorityRef.current;
     if (currentGeneration === null || !currentBinding) return null;
     const selectedId = selectedProjectId ? parseHostedProjectId(selectedProjectId) : null;
     if (selectedProjectId && !selectedId) return null;
-    return hostedAuthorityToken(currentGeneration, currentBinding, selectedId);
+    return hostedAuthorityToken(currentRevision, currentGeneration, currentBinding, selectedId);
   }, []);
   const openHostedRoute = useCallback((nextRoute: HostedRoute, originatingToken: HostedAuthorityToken, selectedProjectId?: string) => {
     const { workspaceBinding: currentBinding } = hostedAuthorityRef.current;
@@ -63,15 +63,13 @@ export function ProjectRouterShell() {
 
   useEffect(() => subscribeToProjectRoute(window, setRoute), []);
   useEffect(() => {
-    const currentAuthority = hostReadyGeneration && workspaceBinding
-      ? `${hostReadyGeneration}\u0000${workspaceBindingFingerprint(workspaceBinding)}`
-      : null;
+    const currentAuthority = hostedAuthorityFingerprint(runtimeSettingsRevision, hostReadyGeneration, workspaceBinding);
     const previousAuthority = previousHostedAuthorityRef.current;
     previousHostedAuthorityRef.current = currentAuthority;
-    if (previousAuthority !== null && previousAuthority !== currentAuthority) {
+    if (previousAuthority !== currentAuthority) {
       clearProjectChatLaunchIntent();
     }
-  }, [hostReadyGeneration, workspaceBinding]);
+  }, [runtimeSettingsRevision, hostReadyGeneration, workspaceBinding]);
   useEffect(() => {
     if (!hostedChatEntry || authorizedHostedRoute) return;
     setOpenedHostedRoute((current) => {
@@ -115,9 +113,13 @@ function workspaceBindingFingerprint(binding: WorkspaceBindingPayload): string {
     : `${binding.requestId}\u0000${binding.state}\u0000${binding.reason}`;
 }
 
-function hostedAuthorityToken(generation: string, binding: WorkspaceBindingPayload, selectedProjectId: string | null): HostedAuthorityToken {
+function hostedAuthorityFingerprint(runtimeSettingsRevision: number, generation: string | null, binding: WorkspaceBindingPayload | null): string {
+  return `${runtimeSettingsRevision}\u0000${generation ?? ""}\u0000${binding ? workspaceBindingFingerprint(binding) : ""}`;
+}
+
+function hostedAuthorityToken(runtimeSettingsRevision: number, generation: string, binding: WorkspaceBindingPayload, selectedProjectId: string | null): HostedAuthorityToken {
   const projectToken = binding.state === "auto_bound" ? binding.projectId : selectedProjectId ?? "";
-  return `${generation}\u0000${workspaceBindingFingerprint(binding)}\u0000${projectToken}` as HostedAuthorityToken;
+  return `${runtimeSettingsRevision}\u0000${generation}\u0000${workspaceBindingFingerprint(binding)}\u0000${projectToken}` as HostedAuthorityToken;
 }
 
 function parseHostedProjectId(projectId: string): string | null {

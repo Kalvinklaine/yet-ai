@@ -11,13 +11,15 @@ let root: ReactDOM.Root | undefined;
 
 type HookState = {
   settings: RuntimeSettings;
+  runtimeSettingsRevision: number;
+  updateSettings: (settings: RuntimeSettings) => void;
   workspaceBinding: WorkspaceBindingPayload | null;
   hostReadyGeneration: string | null;
 };
 
 function HookProbe({ onChange }: { onChange: (state: HookState) => void }) {
   const state = useLiveRuntimeSettings();
-  useEffect(() => { onChange(state); }, [onChange, state.settings, state.workspaceBinding, state.hostReadyGeneration]);
+  useEffect(() => { onChange(state); }, [onChange, state.settings, state.runtimeSettingsRevision, state.workspaceBinding, state.hostReadyGeneration]);
   return null;
 }
 
@@ -132,5 +134,48 @@ describe("useLiveRuntimeSettings accepted host.ready generation", () => {
     });
     await send(binding("ready-1"));
     expect(states[states.length - 1]?.workspaceBinding).toBeNull();
+  });
+
+  it("advances a new correlated generation without changing initial same-origin proxy settings", async () => {
+    window.__yetAiInitialRuntimeConfig = {
+      runtimeAccess: "same_origin_proxy",
+      runtimeBaseUrl: "/panel/panel-initial",
+      runtimeProxyBaseUrl: "/panel/panel-initial",
+    };
+    const states: HookState[] = [];
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(React.createElement(HookProbe, { onChange: (state) => states.push(state) }));
+    });
+
+    await send(ready("ready-initial", {}));
+    await send(binding("ready-initial"));
+
+    expect(states[states.length - 1]).toMatchObject({
+      settings: { baseUrl: "/panel/panel-initial", token: "", runtimeAccess: "same_origin_proxy" },
+      runtimeSettingsRevision: 0,
+      hostReadyGeneration: "ready-initial",
+      workspaceBinding: { requestId: "ready-initial", state: "auto_bound" },
+    });
+  });
+
+  it("increments runtime identity revision only when normalized settings change", async () => {
+    const states: HookState[] = [];
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(React.createElement(HookProbe, { onChange: (state) => states.push(state) }));
+    });
+
+    act(() => states[states.length - 1]!.updateSettings({ baseUrl: "http://127.0.0.1:8001", token: "", runtimeAccess: "direct" }));
+    expect(states[states.length - 1]?.runtimeSettingsRevision).toBe(0);
+    act(() => states[states.length - 1]!.updateSettings({ baseUrl: "http://127.0.0.1:9444", token: "manual-token", runtimeAccess: "direct" }));
+    expect(states[states.length - 1]).toMatchObject({
+      settings: { baseUrl: "http://127.0.0.1:9444", token: "manual-token", runtimeAccess: "direct" },
+      runtimeSettingsRevision: 1,
+    });
   });
 });

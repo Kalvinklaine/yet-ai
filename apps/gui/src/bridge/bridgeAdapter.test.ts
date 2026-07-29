@@ -920,7 +920,7 @@ describe("bridgeAdapter", () => {
     expect(messages).toEqual([hostReadyMessage, hostOpenedFromCommandMessage, hostContextSnapshotMessage, hostIdeActionProgressMessage]);
     expect(logs).toContain("Host runtime settings received");
     expect(logs).toContain("Host message host.contextSnapshot");
-    expect(logs.join("\n")).not.toContain(hostReadyMessage.payload.sessionToken);
+    expect(logs.join("\n")).not.toContain(JSON.stringify(hostReadyMessage.payload));
     expect(logs.join("\n")).not.toContain(hostContextSnapshotMessage.payload.selection.text);
     adapter.dispose();
   });

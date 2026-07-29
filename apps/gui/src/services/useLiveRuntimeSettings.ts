@@ -20,7 +20,8 @@ export function resolveHostReadyRuntimeSettings(current: RuntimeSettings, payloa
     if (!isSameOriginProxyBaseUrl(payload.runtimeProxyBaseUrl)) return null;
     return { baseUrl: payload.runtimeProxyBaseUrl, token: "", runtimeAccess: "same_origin_proxy" };
   }
-  if (!payload.runtimeUrl || !isLoopbackRuntimeUrl(payload.runtimeUrl) || current.runtimeAccess === "same_origin_proxy") return null;
+  if (payload.runtimeUrl === undefined) return current;
+  if (!isLoopbackRuntimeUrl(payload.runtimeUrl) || current.runtimeAccess === "same_origin_proxy") return null;
   return {
     baseUrl: payload.runtimeUrl,
     token: payload.sessionToken || (payload.runtimeUrl === current.baseUrl ? current.token : ""),
@@ -42,8 +43,9 @@ export function resolveWorkspaceBindingUpdate(
   return { requestId: currentRequestId, binding: message.payload as WorkspaceBindingPayload, changed: true };
 }
 
-export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter; workspaceBinding: WorkspaceBindingPayload | null; hostReadyGeneration: string | null } {
+export function useLiveRuntimeSettings(): { settings: RuntimeSettings; runtimeSettingsRevision: number; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter; workspaceBinding: WorkspaceBindingPayload | null; hostReadyGeneration: string | null } {
   const [settings, setSettings] = useState<RuntimeSettings>(readInitialRuntimeSettings);
+  const [runtimeSettingsRevision, setRuntimeSettingsRevision] = useState(0);
   const [workspaceBinding, setWorkspaceBinding] = useState<WorkspaceBindingPayload | null>(null);
   const [hostReadyGeneration, setHostReadyGeneration] = useState<string | null>(null);
   const settingsRef = useRef(settings);
@@ -51,8 +53,10 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
   const [bridgeAdapter] = useState(() => createBridgeAdapter(() => undefined));
   const updateSettings = useCallback((next: RuntimeSettings) => {
     const normalized = { baseUrl: next.baseUrl, token: next.token ?? "", runtimeAccess: next.runtimeAccess ?? "direct" };
+    if (sameRuntimeIdentity(settingsRef.current, normalized)) return;
     settingsRef.current = normalized;
     setSettings(normalized);
+    setRuntimeSettingsRevision((revision) => revision + 1);
   }, []);
 
   useEffect(() => {
@@ -65,8 +69,11 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
         hostReadyRequestId.current = update.requestId;
         if (update.changed) setWorkspaceBinding(null);
         setHostReadyGeneration(message.requestId);
-        settingsRef.current = resolved;
-        setSettings(resolved);
+        if (!sameRuntimeIdentity(settingsRef.current, resolved)) {
+          settingsRef.current = resolved;
+          setSettings(resolved);
+          setRuntimeSettingsRevision((revision) => revision + 1);
+        }
       } else if (message.type === "host.workspaceBinding") {
         const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
         if (update.changed) setWorkspaceBinding(update.binding);
@@ -78,5 +85,9 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; updateSet
     };
   }, [bridgeAdapter]);
 
-  return { settings, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration };
+  return { settings, runtimeSettingsRevision, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration };
+}
+
+function sameRuntimeIdentity(left: RuntimeSettings, right: RuntimeSettings): boolean {
+  return left.baseUrl === right.baseUrl && left.token === right.token && left.runtimeAccess === right.runtimeAccess;
 }
