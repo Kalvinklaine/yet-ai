@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { createGuiSmokeBootstrap } from "./lib/gui-smoke-bootstrap.mjs";
+import { createGuiSmokeBootstrap, waitForGuiSmokeChat } from "./lib/gui-smoke-bootstrap.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
@@ -15,7 +15,7 @@ const timeoutMs = 120_000;
 const token = `smoke-runtime-token-${randomUUID()}`;
 const fakeApiKey = `sk-smoke-secret-${randomUUID()}`;
 const providerId = `smoke-provider-${Date.now()}`;
-const chatId = `smoke-chat-${randomUUID()}`;
+let chatId;
 const modelId = "smoke-model";
 const providerName = "Smoke Mock Provider";
 const userMessageWithContext = "Say hello from GUI runtime smoke with attached context.";
@@ -182,7 +182,7 @@ try {
 
   await exerciseExplicitContextBundle(page);
 
-  await setChatId(page, chatId);
+  chatId = await waitForGuiSmokeChat(page);
   await deliverActiveContext(page);
   await expectVisibleText(page, "Active editor context", "active editor context card", 20_000);
   await expectVisibleText(page, activeContextPath, "active context file path", 20_000);
@@ -474,7 +474,7 @@ async function assertNoAutonomousBridgeActions(page) {
 }
 
 async function exerciseExplicitContextBundle(page) {
-  await setChatId(page, chatId);
+  await waitForGuiSmokeChat(page);
   await deliverActiveFileExcerpt(page, bundleContextOne);
   await expectVisibleText(page, "Active file excerpt", "first active-file excerpt card", 20_000);
   await expectVisibleText(page, bundleContextOne.path, "first active-file excerpt path", 20_000);
@@ -679,24 +679,6 @@ async function acknowledgeHiddenContextIfNeeded(page) {
 async function assertContextSentinelNotVisible(page, description) {
   const body = await page.locator("body").innerText();
   assert(!body.includes(activeContextSentinel) && !body.includes(bundleSentinelOne) && !body.includes(bundleSentinelTwo), `${description} leaked raw context sentinel`);
-}
-
-async function openAdvancedChatControls(page) {
-  await page.getByTestId("chat-advanced-controls").evaluate((element) => {
-    if (element instanceof HTMLDetailsElement) element.open = true;
-  });
-  await page.getByLabel("Chat id").waitFor({ state: "attached", timeout: 10_000 });
-}
-
-async function setChatId(page, value) {
-  await openAdvancedChatControls(page);
-  await page.getByLabel("Chat id").evaluate((element, nextValue) => {
-    if (!(element instanceof HTMLInputElement)) return;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    setter?.call(element, nextValue);
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-  }, value);
 }
 
 async function openDetailsBySummary(page, summaryText, visibleLocator) {

@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { createGuiSmokeBootstrap } from "./lib/gui-smoke-bootstrap.mjs";
+import { createGuiSmokeBootstrap, waitForGuiSmokeChat } from "./lib/gui-smoke-bootstrap.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const guiRoot = path.join(root, "apps", "gui");
@@ -14,7 +14,6 @@ const timeoutMs = 120_000;
 const token = `smoke-project-memory-token-${crypto.randomUUID()}`;
 const fakeApiKey = `sk-smoke-project-memory-${crypto.randomUUID()}`;
 const providerId = `smoke-project-memory-${Date.now()}`;
-const chatId = `smoke-memory-chat-${crypto.randomUUID()}`;
 const modelId = "smoke-project-memory-model";
 const noteTitle = `Memory smoke ${crypto.randomUUID().slice(0, 8)}`;
 const noteTag = "memory-smoke";
@@ -118,7 +117,7 @@ try {
     if (element instanceof HTMLDetailsElement) element.open = true;
   });
 
-  await setChatId(page, chatId);
+  await waitForGuiSmokeChat(page);
   await expectVisibleText(page, "Local project memory", "project memory panel", 20_000);
   await expectVisibleText(page, "No local memory notes are listed", "empty memory list", 20_000);
   await page.getByLabel("Memory title").fill(noteTitle);
@@ -371,19 +370,6 @@ async function expectAttachedText(page, text, description, timeout = 10_000) {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Timed out waiting for ${description}. ${messageOf(error)}\nVisible body excerpt: ${redactSecrets(body).slice(0, 6000)}`);
   }
-}
-
-async function setChatId(page, value) {
-  await page.getByTestId("chat-advanced-controls").evaluate((element) => {
-    if (element instanceof HTMLDetailsElement) element.open = true;
-  });
-  await page.getByLabel("Chat id").evaluate((element, nextValue) => {
-    if (!(element instanceof HTMLInputElement)) return;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    setter?.call(element, nextValue);
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-  }, value);
 }
 
 async function openDetailsBySummary(page, summaryText, visibleLocator) {

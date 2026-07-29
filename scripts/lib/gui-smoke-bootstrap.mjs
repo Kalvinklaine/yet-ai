@@ -129,6 +129,15 @@ export async function createGuiSmokeBootstrap({ distRoot, chromium, entry, viewp
   return { entry: normalizedEntry, page, requests, bridgePosts, criticalResponseFailures, waitForGuiReady, sendHostReady, assertPrivacy, assertHealthy, close };
 }
 
+export async function waitForGuiSmokeChat(page) {
+  await page.waitForFunction(() => !document.body.innerText.includes("Loading local runtime conversations…"), undefined, { timeout: 10_000 });
+  const badge = page.locator(".chat-id-badge");
+  await badge.waitFor({ state: "visible", timeout: 10_000 });
+  const chatId = (await badge.textContent())?.trim();
+  if (!chatId || chatId === "draft") throw new Error("GUI smoke requires a selected local chat before interaction.");
+  return chatId;
+}
+
 async function requireBuiltGui(distRoot) {
   const indexPath = path.join(distRoot, "index.html");
   const fileStat = await stat(indexPath);

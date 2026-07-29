@@ -6,14 +6,13 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { createGuiSmokeBootstrap } from "./lib/gui-smoke-bootstrap.mjs";
+import { createGuiSmokeBootstrap, waitForGuiSmokeChat } from "./lib/gui-smoke-bootstrap.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
 const engineBinary = path.join(root, "target", "debug", process.platform === "win32" ? "yet-lsp.exe" : "yet-lsp");
 const token = `smoke-local-runtime-token-${randomUUID()}`;
 const providerId = `smoke-ollama-local-${Date.now()}`;
-const chatId = `smoke-local-chat-${randomUUID()}`;
 const modelId = "smoke-llama-local";
 const providerName = "Smoke Ollama Local";
 const userMessage = "Say hello from local Ollama smoke.";
@@ -140,7 +139,7 @@ try {
   await expectVisibleText(page, `Sends go through ${modelId} (${providerId}) via the local runtime`, "local-provider chat readiness", 20_000);
   await expectVisibleText(page, "Send ready", "local-provider send-ready checkpoint", 20_000);
 
-  await setChatId(page, chatId);
+  await waitForGuiSmokeChat(page);
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessage);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await page.locator(".chat-bubble.user").filter({ hasText: userMessage }).waitFor({ state: "visible", timeout: 20_000 });
@@ -358,24 +357,6 @@ async function assertAssistantAnswerCount(page, text, expected, description) {
     text,
   );
   assert(count === expected, `Expected ${description} to appear exactly ${expected} time(s) in assistant bubbles, observed ${count}: ${text}`);
-}
-
-async function openAdvancedChatControls(page) {
-  await page.getByTestId("chat-advanced-controls").evaluate((element) => {
-    if (element instanceof HTMLDetailsElement) element.open = true;
-  });
-  await page.getByLabel("Chat id").waitFor({ state: "attached", timeout: 10_000 });
-}
-
-async function setChatId(page, value) {
-  await openAdvancedChatControls(page);
-  await page.getByLabel("Chat id").evaluate((element, nextValue) => {
-    if (!(element instanceof HTMLInputElement)) return;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-    setter?.call(element, nextValue);
-    element.dispatchEvent(new Event("input", { bubbles: true }));
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-  }, value);
 }
 
 async function openDetailsBySummary(page, summaryText, visibleLocator) {
