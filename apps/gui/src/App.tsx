@@ -22,7 +22,7 @@ import { conversationHistoryStatusLabel } from "./services/conversationHistory";
 import { type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, getAgentProgress, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, productIdentity, publishControlledHostProgress, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type ChatRuntimeSettings, type ChatSummary, type ControlledHostProgressInput, type ManualRunnerPlanProposal, type RuntimeError, type RuntimeSettings } from "./services/runtimeClient";
+import { createChat, getAgentProgress, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, productIdentity, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type ChatRuntimeSettings, type ChatSummary, type ManualRunnerPlanProposal, type RuntimeError, type RuntimeSettings } from "./services/runtimeClient";
 import { createProjectRuntimeSettings } from "./services/projectClient";
 import { buildProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
 import { ProjectScopeController, createProjectScopeCorrelation, type ProjectScopeCorrelation, type ProjectScopeResetters } from "./services/projectScope";
@@ -47,16 +47,16 @@ import { createCodingTaskSessionSnapshot, createLinkedMemoryAttachTraceLabel, cr
 import { createMemorySuggestionAttachTraceDetails, suggestTaskMemory, type TaskMemorySuggestion } from "./services/taskMemorySuggestions";
 import { createControlledHostCapabilityMatrixDisplay, evaluateHostCapabilityMetadata } from "./services/toolAuthorityPolicy";
 import { evaluateControlledAgentFileRead } from "./services/controlledAgentFileRead";
-import { buildControlledAgentFileReadRequest, correlateControlledAgentFileReadResult, type ControlledAgentFileReadRequestCorrelation } from "./services/controlledAgentFileReadRequest";
-import { buildControlledAgentEditRequest, correlateControlledAgentEditResult, type ControlledAgentEditRequestCorrelation } from "./services/controlledAgentEditRequest";
+import { buildControlledAgentFileReadRequest, correlateControlledAgentFileReadResult } from "./services/controlledAgentFileReadRequest";
+import { buildControlledAgentEditRequest, correlateControlledAgentEditResult } from "./services/controlledAgentEditRequest";
 import { buildControlledAgentCommandRunRequest, correlateControlledAgentCommandRunResult, type ControlledAgentCommandRunRequestCorrelation, type ControlledAgentCommandRunResultSummary } from "./services/controlledAgentCommandRunRequest";
-import { buildControlledAgentLexicalSearchRequest, correlateControlledAgentLexicalSearchResult, type ControlledAgentLexicalSearchCorrelation, type ControlledAgentLexicalSearchSummary } from "./services/controlledAgentLexicalSearch";
+import { buildControlledAgentLexicalSearchRequest, correlateControlledAgentLexicalSearchResult, type ControlledAgentLexicalSearchSummary } from "./services/controlledAgentLexicalSearch";
 import { createControlledAgentSearchSelection, type ControlledAgentSearchSelectionResult } from "./services/controlledAgentSearchSelection";
 import { evaluateControlledAgentCommandRun } from "./services/controlledAgentCommandRunner";
 import { evaluateControlledAgentTaskHarness } from "./services/controlledAgentTaskHarness";
 import { evaluateControlledAgentPatchPlanPreview } from "./services/controlledAgentPatchPlanPreview";
 import { evaluateControlledAgentMultifilePatchPlan } from "./services/controlledAgentMultifilePatchPlan";
-import { buildControlledAgentMultifileApplyRequest, correlateControlledAgentMultifileApplyResult, type ControlledAgentMultifileApplyCorrelation, type ControlledAgentMultifileApplySummary } from "./services/controlledAgentMultifileApplyRequest";
+import { buildControlledAgentMultifileApplyRequest, correlateControlledAgentMultifileApplyResult, type ControlledAgentMultifileApplySummary } from "./services/controlledAgentMultifileApplyRequest";
 import { buildControlledAgentVerificationBundleRequest, correlateControlledAgentVerificationBundleResult, evaluateControlledAgentVerificationBundle, type ControlledAgentVerificationBundleEvaluation, type ControlledAgentVerificationBundleRequestCorrelation, type ControlledAgentVerificationBundleRequestResult } from "./services/controlledAgentVerificationBundle";
 import { buildControlledAgentVerificationFollowup, type ControlledAgentVerificationFollowupAction, type ControlledAgentVerificationFollowupDraft } from "./services/controlledAgentVerificationFollowup";
 import { buildControlledAgentProgressReport } from "./services/controlledAgentProgressReport";
@@ -72,10 +72,11 @@ import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPat
 import type { AgentRunInput } from "./services/agentRunState";
 import { resolveHostReadyRuntimeSettings } from "./services/useLiveRuntimeSettings";
 import { clearProjectChatLaunchIntent, clearProjectChatLaunchIntentIfMatches, getBrowserProjectChatLifecycleGeneration } from "./services/projectChatLaunchIntent";
-import { classifyControlledCapabilityProvenance, isLiveControlledCapability, type ControlledCapabilitySurface } from "./services/controlledCapabilityProvenance";
+import { classifyControlledCapabilityProvenance } from "./services/controlledCapabilityProvenance";
 import { useRuntimeController, type ProviderTestState, type RuntimeConnectionSource } from "./services/useRuntimeController";
 import { useChatController, type ChatControllerResetters } from "./services/useChatController";
 import { mergeLaunchMemoryBundleItems, useProjectLaunchController } from "./services/useProjectLaunchController";
+import { useControlledExecutionController } from "./services/useControlledExecutionController";
 
 export { mergeLaunchMemoryBundleItems } from "./services/useProjectLaunchController";
 
@@ -495,29 +496,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const pendingIdeActionRequestIdRef = useRef<string | null>(null);
   const pendingIdeActionChatIdRef = useRef<string | null>(null);
   const pendingIdeActionHostReadyGenerationRef = useRef<string | null>(null);
-  const controlledFileReadCorrelationRef = useRef<ControlledAgentFileReadRequestCorrelation | null>(null);
-  const controlledFileReadCompletedRequestIdRef = useRef<string | null>(null);
-  const controlledEditCorrelationRef = useRef<ControlledAgentEditRequestCorrelation | null>(null);
-  const controlledEditCompletedRequestIdRef = useRef<string | null>(null);
-  const controlledCommandRunCorrelationRef = useRef<ControlledAgentCommandRunRequestCorrelation | null>(null);
-  const controlledCommandRunCompletedRequestIdRef = useRef<string | null>(null);
-  const controlledLexicalSearchCorrelationRef = useRef<ControlledAgentLexicalSearchCorrelation | null>(null);
-  const controlledMultifileApplyCorrelationRef = useRef<ControlledAgentMultifileApplyCorrelation | null>(null);
-  const controlledMultifileApplyCompletedRequestIdRef = useRef<string | null>(null);
-  const controlledVerificationBundleCorrelationRef = useRef<ControlledAgentVerificationBundleRequestCorrelation | null>(null);
-  const controlledVerificationBundleCompletedRequestIdRef = useRef<string | null>(null);
   const providerSetupCardRef = useRef<HTMLElement | null>(null);
   const providerApiKeyInputRef = useRef<HTMLInputElement | null>(null);
   const providerSetupHighlightTimerRef = useRef<number | null>(null);
-  const oneStepFileReadRequestIdRef = useRef<string | null>(null);
-  const oneStepEditRequestIdRef = useRef<string | null>(null);
-  const oneStepCommandRunRequestIdRef = useRef<string | null>(null);
-  const oneStepVerificationBundleRequestIdRef = useRef<string | null>(null);
-  const oneStepFileReadRequestRef = useRef<ReturnType<typeof buildControlledAgentFileReadRequest> | null>(null);
-  const oneStepEditRequestRef = useRef<ReturnType<typeof buildControlledAgentEditRequest> | null>(null);
-  const oneStepCommandRunRequestRef = useRef<ReturnType<typeof buildControlledAgentCommandRunRequest> | null>(null);
-  const oneStepVerificationBundleRequestRef = useRef<ControlledAgentVerificationBundleRequestResult | null>(null);
-  const oneStepLoopRunCounterRef = useRef(0);
   const completedIdeActionRequestChatsRef = useRef<Map<string, string>>(new Map());
   const completedApplyRequestChatsRef = useRef<Map<string, string>>(new Map());
   const ideActionCounterRef = useRef(0);
@@ -1030,10 +1011,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     userConfirmed: true,
     requestSeed: "s96-one-step-verification-bundle",
   }), [bridgeHost, controlledAgentVerificationBundleMetadata]);
-  oneStepFileReadRequestRef.current = oneStepControlledAgentFileReadRequest;
-  oneStepEditRequestRef.current = oneStepControlledAgentEditRequest;
-  oneStepCommandRunRequestRef.current = oneStepControlledAgentCommandRunRequest;
-  oneStepVerificationBundleRequestRef.current = oneStepControlledAgentVerificationBundleRequest;
   const showWhatWillBeSentPanel = chatInput.trim().length > 0 || contextBudgetSummary.sources.some((source) => source.itemCount > 0 || source.charCount > 0) || contextBudgetSummary.omittedItemCount > 0 || contextBudgetSummary.excludedItemCount > 0 || contextBudgetSummary.warnings.length > 0;
   const [controlledAgentRunState, setControlledAgentRunState] = useState<ControlledAgentRunState>(() => initializeControlledAgentRunState(undefined));
   const showControlledAgentRunPanel = controlledWorkspaceReadinessMetadata !== undefined || effectiveControlledAgentFileReadMetadata !== undefined || effectiveControlledAgentCommandRunnerMetadata !== undefined || controlledAgentEditExecutorMetadata !== undefined || controlledAgentRuntimeSessionMetadata !== undefined || controlledAgentTwoStepRunMetadata !== undefined;
@@ -1061,28 +1038,30 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     hostCapabilities: controlledHostCapabilities,
     localState: { run_state: true, recovery: true },
   }), [activeCaps, bridgeHost, controlledHostCapabilities]);
-  const controlledCapabilityProvenanceRef = useRef(controlledCapabilityProvenance);
-  controlledCapabilityProvenanceRef.current = controlledCapabilityProvenance;
-  const bridgeHostRef = useRef(bridgeHost);
-  bridgeHostRef.current = bridgeHost;
-  const publishControlledProgress = useCallback((surface: ControlledCapabilitySurface, input: ControlledHostProgressInput) => {
-    const currentHost = bridgeHostRef.current;
-    if (!projectId || !isLiveControlledCapability(controlledCapabilityProvenanceRef.current[surface], surface, currentHost)) {
-      return;
-    }
-    const targetSettings = settingsRef.current;
-    const targetRevision = settingsRevisionRef.current;
-    const targetChatId = chatIdRef.current;
-    const scopeCorrelation = createProjectScopeCorrelation(projectScopeController.current());
-    if (!("projectScope" in targetSettings)) {
-      return;
-    }
-    void publishControlledHostProgress(targetSettings, input).then(() => {
-      if (settingsRevisionRef.current !== targetRevision || chatIdRef.current !== targetChatId || !projectScopeController.accepts(scopeCorrelation)) {
-        return;
-      }
-    });
-  }, [projectId, projectScopeController]);
+  const {
+    controlledFileReadCorrelationRef, controlledFileReadCompletedRequestIdRef,
+    controlledEditCorrelationRef, controlledEditCompletedRequestIdRef,
+    controlledCommandRunCorrelationRef, controlledCommandRunCompletedRequestIdRef,
+    controlledLexicalSearchCorrelationRef,
+    controlledMultifileApplyCorrelationRef, controlledMultifileApplyCompletedRequestIdRef,
+    controlledVerificationBundleCorrelationRef, controlledVerificationBundleCompletedRequestIdRef,
+    oneStepFileReadRequestIdRef, oneStepEditRequestIdRef, oneStepCommandRunRequestIdRef, oneStepVerificationBundleRequestIdRef,
+    oneStepFileReadRequestRef, oneStepEditRequestRef, oneStepCommandRunRequestRef, oneStepVerificationBundleRequestRef,
+    oneStepLoopRunCounterRef, clearControlledCorrelations, publishControlledProgress,
+  } = useControlledExecutionController({
+    projectId,
+    host: bridgeHost,
+    scopeKey: `${projectId ?? "legacy"}:${chatId ?? "draft"}:${settingsRevision}:${hostReadyGeneration ?? "browser"}:${bridgeHost}`,
+    capabilityProvenance: controlledCapabilityProvenance,
+    settingsRef,
+    settingsRevisionRef,
+    chatIdRef,
+    projectScopeController,
+  });
+  oneStepFileReadRequestRef.current = oneStepControlledAgentFileReadRequest;
+  oneStepEditRequestRef.current = oneStepControlledAgentEditRequest;
+  oneStepCommandRunRequestRef.current = oneStepControlledAgentCommandRunRequest;
+  oneStepVerificationBundleRequestRef.current = oneStepControlledAgentVerificationBundleRequest;
 
   useEffect(() => {
     if (controlledAgentRunState.phase === "idle" && oneStepLoopState.phase === "idle") {
