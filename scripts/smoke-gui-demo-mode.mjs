@@ -60,6 +60,9 @@ try {
   await page.getByRole("navigation", { name: `${projectName} navigation` }).getByRole("link", { name: "Chat", exact: true }).click();
   await page.waitForURL(new RegExp(`/p/${projectId}/chat$`));
   await page.getByText("Demo Mode ready", { exact: false }).first().waitFor({ state: "visible" });
+  const transcript = page.getByLabel("Chat messages", { exact: true });
+  const userBubbles = transcript.locator(".chat-bubble.user");
+  const assistantBubbles = transcript.locator(".chat-bubble.assistant");
 
   for (let index = 0; index < prompts.length; index += 1) {
     const prompt = prompts[index];
@@ -70,13 +73,17 @@ try {
     });
     await page.getByRole("button", { name: "Send", exact: true }).click();
     assert((await commandResponse).ok(), `Manual Send ${index + 1} was not accepted.`);
-    await page.getByText(prompt, { exact: true }).waitFor({ state: "visible" });
-    await waitForAssistantCount(page, index + 1);
+    await userBubbles.filter({ hasText: prompt }).waitFor({ state: "visible" });
+    await waitForAssistantCount(page, assistantBubbles, index + 1);
   }
 
-  const assistantBubbles = await page.locator(".chat-bubble.assistant").allTextContents();
-  assert(assistantBubbles.length === 2, `Expected exactly two canned assistant responses, observed ${assistantBubbles.length}.`);
-  assert(assistantBubbles.every((text) => text.includes(assistantAnswer)), "A Demo Mode response did not contain the canned local answer.");
+  await page.locator(".chat-lifecycle-state").filter({ hasText: "Demo Mode ready — local canned responses, no provider calls. Ready to send." }).waitFor({ state: "visible" });
+  const userBubbleTexts = await userBubbles.allTextContents();
+  const assistantBubbleTexts = await assistantBubbles.allTextContents();
+  assert(userBubbleTexts.length === 2, `Expected exactly two user transcript bubbles, observed ${userBubbleTexts.length}.`);
+  assert(prompts.every((prompt) => userBubbleTexts.some((text) => text.includes(prompt))), "A manual prompt was missing from the user transcript bubbles.");
+  assert(assistantBubbleTexts.length === 2, `Expected exactly two canned assistant responses, observed ${assistantBubbleTexts.length}.`);
+  assert(assistantBubbleTexts.every((text) => text.includes(assistantAnswer)), "A Demo Mode response did not contain the canned local answer.");
   assert(chatCommandCount === 2, `Expected exactly two manual chat commands, observed ${chatCommandCount}.`);
   assert(providerHits === 0, `Demo Mode unexpectedly made ${providerHits} provider call(s).`);
   assert(runtimeRequests.some((item) => item.path.startsWith(`/p/${projectId}/v1/`)), "No project-scoped runtime request was observed.");
@@ -234,8 +241,9 @@ function pushEvent(targetChatId, type, payload) {
 }
 function writeSse(response, event) { response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`); }
 
-async function waitForAssistantCount(page, count) {
-  await page.waitForFunction((expected) => document.querySelectorAll(".chat-bubble.assistant").length === expected, count, { timeout: 20_000 });
+async function waitForAssistantCount(page, assistantBubbles, count) {
+  await page.waitForFunction(({ selector, expected }) => document.querySelectorAll(selector).length === expected, { selector: ".chat-scroll-region[aria-label='Chat messages'] .chat-bubble.assistant", expected: count }, { timeout: 20_000 });
+  assert(await assistantBubbles.count() === count, `Expected ${count} canned assistant response(s), observed ${await assistantBubbles.count()}.`);
 }
 async function saveVisualEvidence(page) {
   await mkdir(evidenceRoot, { recursive: true });
