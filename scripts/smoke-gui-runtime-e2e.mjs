@@ -67,6 +67,7 @@ const secretMarkers = [
   "provider secret",
 ];
 const failures = [];
+const runtimeRequests = [];
 let engine;
 let smoke;
 let mockProvider;
@@ -135,6 +136,9 @@ try {
     if (!isLoopbackUrl(url)) {
       failures.push(`Non-loopback request attempted: ${redactUrl(url)}`);
     }
+    if (url.startsWith(`${runtimeBaseUrl}/`)) {
+      runtimeRequests.push({ method: request.method(), url: redactUrl(url) });
+    }
   });
   page.on("requestfailed", (request) => {
     if (isJsOrCssAssetRequest(request.url(), request.resourceType())) {
@@ -148,7 +152,8 @@ try {
     }
   });
 
-  const guiReady = await smoke.waitForGuiReady();
+  await smoke.waitForGuiReady();
+  assert(runtimeRequests.length === 0, "runtime request was sent before host.ready");
   await smoke.sendHostReady({
     requestId: "routed-smoke-ready-1",
     runtimeUrl: runtimeBaseUrl,
@@ -156,6 +161,7 @@ try {
     workspaceBinding: { state: "auto_bound", projectId: "prj_abcdefghijklmnopqrstuA", displayName: "Runtime smoke workspace" },
   });
   await page.getByRole("button", { name: "Legacy data", exact: true }).click();
+  await page.locator("[data-testid='task-agent-tools-drawer']").waitFor({ state: "attached", timeout: 20_000 });
   await dispatchHostMessage(page, {
     version: "2026-05-15",
     type: "host.ready",
@@ -704,9 +710,11 @@ async function waitForProviderHits(expected) {
 }
 
 async function exerciseHistoryReload(page, runtimeBaseUrl) {
+  const runtimeRequestCountBeforeReload = runtimeRequests.length;
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  const guiReady = await smoke.waitForGuiReady();
+  await smoke.waitForGuiReady();
+  assert(runtimeRequests.length === runtimeRequestCountBeforeReload, "runtime request was sent after reload before host.ready");
   await smoke.sendHostReady({
     requestId: "routed-smoke-ready-1",
     runtimeUrl: runtimeBaseUrl,
@@ -714,6 +722,7 @@ async function exerciseHistoryReload(page, runtimeBaseUrl) {
     workspaceBinding: { state: "auto_bound", projectId: "prj_abcdefghijklmnopqrstuA", displayName: "Runtime smoke workspace" },
   });
   await page.getByRole("button", { name: "Legacy data", exact: true }).click();
+  await page.locator("[data-testid='task-agent-tools-drawer']").waitFor({ state: "attached", timeout: 20_000 });
   await dispatchHostMessage(page, {
     version: "2026-05-15",
     type: "host.ready",
