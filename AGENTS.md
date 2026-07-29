@@ -4,6 +4,8 @@ Yet AI is a local-first AI coding assistant and IDE agent plugin product for dev
 
 ## Core rules for future agents
 
+Before editing, follow the canonical execution path in `docs/architecture/040-agent-execution-and-architecture-discipline.md`: use its required-reading matrix, preserve subsystem ownership, trace the task to explicit acceptance criteria and non-goals, and select the required verification tier. Documentation cannot prove that it was understood; enforcement comes from explicit card context, validators, diff review, tests, and code review.
+
 - Do not perform broad product renames unless a task explicitly asks for one.
 - Do not copy unapproved third-party code or assets into the product.
 - Keep product-sensitive values centralized in `product/identity.json` where practical: names, IDs, package names, binary names, storage dirs, marketplace metadata, URLs, and publishers.
@@ -42,6 +44,7 @@ Read these before architecture or scaffold work:
 - `docs/architecture/003-target-architecture.md` — target boundaries, contracts, and phased roadmap.
 - `docs/architecture/004-implementation-strategy.md` — implementation strategy and selective reuse gates.
 - `docs/architecture/005-publication-hygiene.md` — public repository hygiene and first-publication checklist.
+- `docs/architecture/040-agent-execution-and-architecture-discipline.md` — canonical pre-edit reading, ownership, traceability, evidence vocabulary, verification tiers, and review gates.
 - `product/identity.json` — current source of truth for temporary product identity values.
 
 ## Working style

@@ -2,6 +2,8 @@
 
 ## Ownership and boundary
 
+Before editing this subsystem, follow `../../../docs/architecture/040-agent-execution-and-architecture-discipline.md` and its JetBrains required-reading row. The task must preserve thin-host ownership, name acceptance criteria and non-goals, and run the required focused verification tier; documentation alone is not implementation evidence.
+
 `apps/plugins/jetbrains` owns the minimal JetBrains plugin host for Yet AI. Its responsibilities are plugin metadata, local runtime connection settings, JCEF tool window hosting, and a narrow JetBrains-to-GUI bridge.
 
 The plugin stays thin. Chat runtime, provider configuration, tool policy, storage, indexing, and model/provider adapters belong to the engine. UI state and design belong to the GUI.

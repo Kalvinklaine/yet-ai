@@ -2,6 +2,8 @@
 
 ## Ownership and boundary
 
+Before editing this subsystem, follow `../../docs/architecture/040-agent-execution-and-architecture-discipline.md` and its Engine required-reading row. The task must preserve engine ownership, name acceptance criteria and non-goals, and run the required focused verification tier; documentation alone is not implementation evidence.
+
 `apps/engine` owns the local Yet AI runtime. Its current responsibilities are authenticated loopback HTTP APIs, SSE chat streaming, local provider/model registry, OpenAI-compatible direct streaming, storage resolution, and authentication boundaries.
 
 The engine resolves product, binary, and storage names from `product/identity.json`. It is the local-first BYOK runtime, not a required cloud backend. Core workflows must not require a Yet AI account, managed model gateway, product credit balance, or cloud workspace.

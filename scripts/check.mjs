@@ -4,6 +4,7 @@ const validators = [
   ["scripts/validate-product-identity.mjs"],
   ["scripts/validate-public-hygiene.mjs"],
   ["scripts/validate-docs-index.mjs"],
+  ["scripts/check-agent-architecture-contract.mjs"],
   ["scripts/check-agent-readiness-docs.mjs"],
   ["scripts/audit-controlled-autonomy-wording.mjs"],
   ["scripts/validate-contracts.mjs"],

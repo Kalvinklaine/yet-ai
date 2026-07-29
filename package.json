@@ -3,6 +3,7 @@
   "type": "module",
   "scripts": {
     "check": "node scripts/check.mjs",
+    "check:agent-architecture-contract": "node scripts/check-agent-architecture-contract.mjs",
     "check:controlled-agent-authority-registry": "node scripts/check-controlled-agent-authority-registry.mjs",
     "check:controlled-agent-storage-privacy": "node scripts/check-controlled-agent-storage-privacy.mjs",
     "check:controlled-agent-workflow-transcript-contract": "node scripts/check-controlled-agent-workflow-transcript-contract.mjs",
