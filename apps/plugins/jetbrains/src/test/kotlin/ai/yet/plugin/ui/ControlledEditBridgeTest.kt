@@ -148,31 +148,49 @@ class ControlledEditBridgeTest {
     }
 
     @Test
-    fun wrapperMentionsControlledEditValidationAndResultDelivery() {
+    fun wrapperGuardsControlledEditValidationAndResultDeliverySemantics() {
         val html = renderHtml(
             ai.yet.plugin.runtime.RuntimeConnectionResult(ai.yet.plugin.runtime.RuntimeSettings.safeFallback(), "ok", null),
             "return '';",
             null,
         )
 
-        assertTrue(html.contains("const maxControlledAgentEditRequestBytes = 65536;"))
-        assertTrue(html.contains("const isGuiControlledAgentEditRequest = (message) => {"))
-        assertTrue(html.contains("message.type !== \"gui.controlledAgentEditRequest\""))
-        assertTrue(html.contains("message.type === \"host.controlledAgentEditResult\""))
-        assertTrue(html.contains("isControlledAgentEditResultPayload(message.payload)"))
-        assertTrue(html.contains("payload.result.status === payload.state"))
-        assertTrue(html.contains("payload.requestIdMintedBy !== \"gui\" || payload.source !== \"gui\""))
-        assertTrue(html.contains("const isPreReadyTerminalBlockedControlledAgentEditResult = (message) => {"))
-        assertTrue(html.contains("result.appliedEditCount === 0"))
-        assertTrue(html.contains("[\"edit_disabled\", \"policy_denied\"].includes(result.blockedReason)"))
-        assertTrue(html.contains("flags.boundedReplacementEditAllowed === false"))
-        assertTrue(html.contains("if (message.type === \"host.controlledAgentEditResult\" && !frameReady) return isPreReadyTerminalBlockedControlledAgentEditResult(message);"))
-        assertTrue(html.contains("if (!frameReady && !isPreReadyTerminalBlockedControlledAgentEditResult(message)) return;"))
-        assertTrue(html.contains("const isRecoverableGuiControlledAgentEditEnvelope = (message) => {"))
-        assertTrue(html.contains("} else if (isRecoverableGuiControlledAgentEditEnvelope(event.data)) {"))
-        assertTrue(html.contains("window.postIntellijMessage(event.data);"))
-        assertTrue(html.contains("Yet AI rejected invalid controlled edit request after GUI bridge readiness"))
+        assertSemanticFragments(
+            html,
+            "event.source !== currentFrameWindow",
+            "event.source !== frame?.contentWindow",
+            "event.origin !== frameTargetOrigin",
+            "message.version !== bridgeVersion",
+            "message.payload.frameNonce === currentFrameNonce",
+            "hostReadyAcceptedForCurrentFrame",
+            "acceptedHostReadyRequestId === currentReadyRequestId()",
+            "return false",
+            "maxControlledAgentEditRequestBytes = 65536",
+            "message.type !== \"gui.controlledAgentEditRequest\"",
+            "payload.requestIdMintedBy !== \"gui\"",
+            "payload.source !== \"gui\"",
+            "message.type === \"host.controlledAgentEditResult\"",
+            "isControlledAgentEditResultPayload(message.payload)",
+            "payload.result.status === payload.state",
+            "isPreReadyTerminalBlockedControlledAgentEditResult(message)",
+            "result.appliedEditCount === 0",
+            "[\"edit_disabled\", \"policy_denied\"].includes(result.blockedReason)",
+            "flags.boundedReplacementEditAllowed === false",
+            "result.privatePathExposed === false",
+            "result.rawBodyIncluded === false",
+            "result.rawDiffIncluded === false",
+            "isRecoverableGuiControlledAgentEditEnvelope(event.data)",
+            "window.postIntellijMessage(event.data)",
+            "Yet AI rejected invalid controlled edit request after GUI bridge readiness",
+        )
         assertFalse(html.contains("Yet AI rejected controlled edit request before GUI bridge readiness"))
+    }
+}
+
+private fun assertSemanticFragments(value: String, vararg fragments: String) {
+    val compactValue = value.replace(Regex("\\s+"), "")
+    fragments.forEach { fragment ->
+        assertTrue(compactValue.contains(fragment.replace(Regex("\\s+"), "")), "Missing wrapper semantic fragment: $fragment")
     }
 }
 
