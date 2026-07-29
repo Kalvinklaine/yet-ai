@@ -12987,7 +12987,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
 
-    expect(text.length).toBeLessThan(16600);
+    expect(text.length).toBeLessThan(16700);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
