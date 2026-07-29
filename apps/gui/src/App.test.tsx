@@ -8,7 +8,7 @@ import { projectMemoryToBundleItem, validateWorkspaceSnippetQuery } from "./serv
 import { getProviderAuthStatus } from "./services/providerAuthClient";
 import { clearProjectChatLaunchIntent, consumeProjectChatLaunchIntent, createProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration } from "./services/projectChatLaunchIntent";
 import type { ProviderAuthResponse, ProviderAuthStatus } from "./services/providerAuthClient";
-import { GUI_BRIDGE_VERSION } from "./bridge/bridgeAdapter";
+import { GUI_BRIDGE_VERSION, type ControlledHostCapabilitiesPayload } from "./bridge/bridgeAdapter";
 import worktreeReadiness from "../../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json";
 import fileReadSuccess from "../../../packages/contracts/examples/engine/controlled-agent-file-read-success.json";
 import fileReadBlocked from "../../../packages/contracts/examples/engine/controlled-agent-file-read-blocked.json";
@@ -393,6 +393,28 @@ describe("project lifecycle scope", () => {
     expect(findButton("Send").disabled).toBe(false);
     expect(container?.textContent).not.toContain(runtimeToken);
     expect(browserStorageDump()).not.toContain(runtimeToken);
+  });
+
+  it("adopts seeded controlled capability metadata without a second host.ready", async () => {
+    const postMessage = vi.fn();
+    window.acquireVsCodeApi = () => ({ postMessage });
+    mockRuntimeResponses({ runtimeFailure: true });
+    const controlledCapabilities = controlledHostCapabilitiesFixture();
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    act(() => root?.render(<App
+      route={{ kind: "settings" }}
+      runtimeSettings={{ baseUrl: "http://127.0.0.1:8765", token: "SeededMemoryValue123", runtimeAccess: "direct" }}
+      hostReadyGeneration="ready-seeded-capabilities"
+      acceptedHostReadySeed={{ generation: "ready-seeded-capabilities", runtimeSettingsRevision: 1, workspaceBindingRequestId: "ready-seeded-capabilities", controlledCapabilities }}
+    />));
+    await dispatchRuntimeStatus(runtimeStatusPayload({ lifecycle: "connected", diagnosis: "runtime connected", nextAction: "Use explicit controls when ready." }));
+    await flushAsync();
+
+    expect(container?.textContent).toContain("Controlled capabilities v2: VS Code host · Controlled dev-preview path ready · allowed to execute: false.");
+    expect(container?.textContent).not.toContain("SeededMemoryValue123");
+    expect(browserStorageDump()).not.toContain("SeededMemoryValue123");
   });
 
   it("accepts only current-generation context from shell-authorized mount without ready replay", async () => {
@@ -13634,7 +13656,7 @@ describe("edit proposal preview", () => {
   });
 });
 
-function controlledHostCapabilitiesFixture() {
+function controlledHostCapabilitiesFixture(): ControlledHostCapabilitiesPayload {
   return {
     protocolVersion: "controlled_host_capabilities_v2",
     hostSurface: "vscode",

@@ -5,17 +5,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectRouterShell } from "./ProjectRouterShell";
 import { navigateProjectRoute } from "./services/projectRouting";
 import type { RuntimeSettings } from "./services/runtimeClient";
+import type { AcceptedHostReadySeed } from "./services/useLiveRuntimeSettings";
 import { consumeProjectChatLaunchIntent, createProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
 
 const appRenderCalls = vi.hoisted(() => [] as string[]);
-const appAuthorityCalls = vi.hoisted(() => [] as Array<{ hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings }>);
+const appAuthorityCalls = vi.hoisted(() => [] as Array<{ hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings; acceptedHostReadySeed?: AcceptedHostReadySeed | null }>);
 const deferredHostedOpen = vi.hoisted(() => ({ run: null as null | (() => boolean) }));
 vi.mock("./App", () => ({
-  App: ({ route, hostedAuthorityKey, hostReadyGeneration, runtimeSettings, onRuntimeSettingsChange }: { route: { kind: string; page?: string; chatId?: string }; hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void }) => {
+  App: ({ route, hostedAuthorityKey, hostReadyGeneration, runtimeSettings, onRuntimeSettingsChange, acceptedHostReadySeed }: { route: { kind: string; page?: string; chatId?: string }; hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; acceptedHostReadySeed?: AcceptedHostReadySeed | null }) => {
     const [context, setContext] = React.useState("");
     const label = [route.kind, route.page, route.chatId].filter(Boolean).join(":");
     appRenderCalls.push(label);
-    appAuthorityCalls.push({ hostedAuthorityKey, hostReadyGeneration, runtimeSettings });
+    appAuthorityCalls.push({ hostedAuthorityKey, hostReadyGeneration, runtimeSettings, acceptedHostReadySeed });
     React.useEffect(() => {
       const receiveContext = (event: MessageEvent) => {
         if (event.data?.type !== "host.contextSnapshot" || event.data?.requestId !== hostReadyGeneration) return;
@@ -60,12 +61,12 @@ let root: ReactDOM.Root | undefined;
 const projectId = "prj_abcdefghijklmnopqrstuA";
 const otherProjectId = "prj_bcdefghijklmnopqrstuvQ";
 
-async function sendHostReady(requestId: string, runtimeProxyBaseUrl = "/panel/panel-test") {
+async function sendHostReady(requestId: string, runtimeProxyBaseUrl = "/panel/panel-test", controlledCapabilities?: object) {
   await act(async () => window.dispatchEvent(new MessageEvent("message", { data: {
     version: "2026-05-15",
     type: "host.ready",
     requestId,
-    payload: { runtimeProxyBaseUrl },
+    payload: { runtimeProxyBaseUrl, ...(controlledCapabilities ? { controlledCapabilities } : {}) },
   } })));
 }
 
@@ -327,6 +328,38 @@ describe("ProjectRouterShell", () => {
     expect(container.querySelector("[data-testid='app-context']")?.textContent).toBe("current remount context");
     expect(hostReadyDispatches).toBe(1);
     window.removeEventListener("message", countHostReady);
+  });
+
+  it("passes one-shot accepted capability metadata into the lazy hosted App without exposing its token", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    const capabilities = {
+      protocolVersion: "controlled_host_capabilities_v2",
+      hostSurface: "vscode",
+      authority: "metadata_only",
+      capabilities: { controlledStart: "supported", controlledRead: "supported", controlledEdit: "supported", controlledVerification: "supported", controlledRepair: "unsupported" },
+      correlationRequirements: ["request_id"], authorityFlags: { metadataOnly: true, controlledRead: false, controlledEdit: false, controlledVerification: false, controlledStart: false, repair: false, shell: false, git: false, packageInstall: false, network: false, provider: false, tool: false, hiddenSearch: false, indexing: false, autoApply: false, autoRun: false, autoFix: false },
+      limits: { maxReadBytes: 1, maxReadLines: 1, maxEditFiles: 1, maxEditOperations: 1, maxPatchBytes: 1, maxVerificationOutputBytes: 1, maxVerificationOutputLines: 1, maxRepairAttempts: 0 },
+      reasonCodes: ["bounded"], safeLabels: { host: "VS Code", support: "Ready" },
+    };
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    await sendHostReady("ready-capability", "/panel/panel-test", capabilities);
+    await sendWorkspaceBinding("ready-capability");
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click());
+
+    expect(appAuthorityCalls[appAuthorityCalls.length - 1]?.acceptedHostReadySeed).toEqual({
+      generation: "ready-capability",
+      runtimeSettingsRevision: 1,
+      workspaceBindingRequestId: "ready-capability",
+      controlledCapabilities: capabilities,
+    });
+    expect(JSON.stringify(appAuthorityCalls)).not.toContain("sessionToken");
   });
 
   it("rejects a deferred open from an older generation even when the project is unchanged", async () => {

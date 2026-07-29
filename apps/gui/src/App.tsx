@@ -70,7 +70,7 @@ import { addControlledRunContextItem, buildControlledRunContextReport, createCon
 import { appendControlledRunHistoryItem, createControlledRunHistoryItem, type ControlledRunHistoryHostLabel, type ControlledRunHistoryItem, type ControlledRunHistoryPhaseLabel, type ControlledRunHistoryResultLabel } from "./services/controlledRunHistory";
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
-import { resolveHostReadyRuntimeSettings } from "./services/useLiveRuntimeSettings";
+import { resolveHostReadyRuntimeSettings, type AcceptedHostReadySeed } from "./services/useLiveRuntimeSettings";
 import { clearProjectChatLaunchIntent, clearProjectChatLaunchIntentIfMatches, getBrowserProjectChatLifecycleGeneration } from "./services/projectChatLaunchIntent";
 import { classifyControlledCapabilityProvenance } from "./services/controlledCapabilityProvenance";
 import { useRuntimeController, type ProviderTestState, type RuntimeConnectionSource } from "./services/useRuntimeController";
@@ -384,7 +384,7 @@ export function generateApplyRequestSessionNonce(): string {
   return `s${hex}`;
 }
 
-export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter, hostedAuthorityKey, hostReadyGeneration }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; navigate?: ProjectNavigation; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter; hostedAuthorityKey?: string; hostReadyGeneration?: string | null }) {
+export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onRuntimeSettingsChange, bridgeAdapter, hostedAuthorityKey, hostReadyGeneration, acceptedHostReadySeed }: { route?: Exclude<AppRoute, { kind: "not_found" | "projects" }>; navigate?: ProjectNavigation; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; bridgeAdapter?: BridgeAdapter; hostedAuthorityKey?: string; hostReadyGeneration?: string | null; acceptedHostReadySeed?: AcceptedHostReadySeed | null }) {
   const projectId = route.kind === "project" ? route.projectId : undefined;
   const seededProjectHostAuthority = projectId && hostedAuthorityKey && hostReadyGeneration?.trim() && runtimeSettings
     ? { projectId, hostedAuthorityKey, hostReadyGeneration }
@@ -417,7 +417,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [codingSessionTrace, setCodingSessionTrace] = useState<CodingSessionTraceEntry[]>([]);
   const [bridgeLog, setBridgeLog] = useState<string[]>([]);
   const [bridgeHost, setBridgeHost] = useState<BridgeHost>(() => detectInitialBridgeHost());
-  const [controlledHostCapabilities, setControlledHostCapabilities] = useState<HostReadyPayload["controlledCapabilities"] | undefined>(undefined);
+  const seededControlledHostCapabilities = acceptedHostReadySeed && acceptedHostReadySeed.generation === hostReadyGeneration ? acceptedHostReadySeed.controlledCapabilities : undefined;
+  const [controlledHostCapabilities, setControlledHostCapabilities] = useState<HostReadyPayload["controlledCapabilities"] | undefined>(seededControlledHostCapabilities);
   const [attachedContext, setAttachedContext] = useState<AttachedContextState | null>(null);
   const [includeAttachedContext, setIncludeAttachedContext] = useState(false);
   const [attachedContextAcknowledged, setAttachedContextAcknowledged] = useState(false);
@@ -1375,6 +1376,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     clearIdeActionState();
     setCompactConversationsOpen(false);
   }, [clearIdeActionState, hostReadyGeneration, hostedAuthorityKey, projectId]);
+
+  useEffect(() => {
+    setControlledHostCapabilities(acceptedHostReadySeed && acceptedHostReadySeed.generation === hostReadyGeneration ? acceptedHostReadySeed.controlledCapabilities : undefined);
+  }, [acceptedHostReadySeed, hostReadyGeneration]);
 
   useEffect(() => () => projectScopeController.dispose(), [projectScopeController]);
 

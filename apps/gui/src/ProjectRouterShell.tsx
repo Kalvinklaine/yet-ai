@@ -23,7 +23,7 @@ export function ProjectRouterShell() {
     return parseProjectRoute(window.location.pathname);
   });
   const [openedHostedRoute, setOpenedHostedRoute] = useState<OpenedHostedRoute | null>(null);
-  const { settings, runtimeSettingsRevision, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration } = useLiveRuntimeSettings();
+  const { settings, runtimeSettingsRevision, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration, acceptedHostReadySeed } = useLiveRuntimeSettings();
   const hostedAuthorityRef = useRef({ runtimeSettingsRevision, hostReadyGeneration, workspaceBinding });
   const previousHostedAuthorityRef = useRef(hostedAuthorityFingerprint(runtimeSettingsRevision, hostReadyGeneration, workspaceBinding));
   hostedAuthorityRef.current = { runtimeSettingsRevision, hostReadyGeneration, workspaceBinding };
@@ -82,7 +82,7 @@ export function ProjectRouterShell() {
 
   if (hostedChatEntry) {
     if (authorizedHostedRoute) {
-      return <LazyApp><App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostedAuthorityKey={openedHostedRoute?.authorityToken} hostReadyGeneration={hostReadyGeneration} /></LazyApp>;
+      return <LazyApp><App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostedAuthorityKey={openedHostedRoute?.authorityToken} hostReadyGeneration={hostReadyGeneration} acceptedHostReadySeed={acceptedHostReadySeed} /></LazyApp>;
     }
     return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} hostReadyGeneration={hostReadyGeneration} getAuthorityToken={getHostedAuthorityToken} onOpen={openHostedRoute} />;
   }

@@ -2,8 +2,8 @@
 import React, { act, useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
-import type { WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
-import { resolveHostReadyRuntimeSettings, resolveWorkspaceBindingUpdate, useLiveRuntimeSettings } from "./useLiveRuntimeSettings";
+import type { ControlledHostCapabilitiesPayload, WorkspaceBindingPayload } from "../bridge/bridgeAdapter";
+import { resolveHostReadyRuntimeSettings, resolveWorkspaceBindingUpdate, useLiveRuntimeSettings, type AcceptedHostReadySeed } from "./useLiveRuntimeSettings";
 import type { RuntimeSettings } from "./runtimeClient";
 
 const direct = { baseUrl: "http://127.0.0.1:8001", token: "old-token", runtimeAccess: "direct" as const };
@@ -15,11 +15,12 @@ type HookState = {
   updateSettings: (settings: RuntimeSettings) => void;
   workspaceBinding: WorkspaceBindingPayload | null;
   hostReadyGeneration: string | null;
+  acceptedHostReadySeed: AcceptedHostReadySeed | null;
 };
 
 function HookProbe({ onChange }: { onChange: (state: HookState) => void }) {
   const state = useLiveRuntimeSettings();
-  useEffect(() => { onChange(state); }, [onChange, state.settings, state.runtimeSettingsRevision, state.workspaceBinding, state.hostReadyGeneration]);
+  useEffect(() => { onChange(state); }, [onChange, state.settings, state.runtimeSettingsRevision, state.workspaceBinding, state.hostReadyGeneration, state.acceptedHostReadySeed]);
   return null;
 }
 
@@ -89,6 +90,36 @@ describe("useLiveRuntimeSettings workspace binding correlation", () => {
 });
 
 describe("useLiveRuntimeSettings accepted host.ready generation", () => {
+  it("exposes only correlated capability metadata after binding and invalidates it on authority changes", async () => {
+    const states: HookState[] = [];
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(React.createElement(HookProbe, { onChange: (state) => states.push(state) }));
+    });
+    const controlledCapabilities = capabilityMetadata();
+
+    await send(ready("ready-seed", { runtimeUrl: "http://127.0.0.1:9123", sessionToken: "MemoryOnlyValue123", controlledCapabilities }));
+    expect(states[states.length - 1]?.acceptedHostReadySeed).toBeNull();
+    await send(binding("ready-seed"));
+
+    expect(states[states.length - 1]?.acceptedHostReadySeed).toEqual({
+      generation: "ready-seed",
+      runtimeSettingsRevision: 1,
+      workspaceBindingRequestId: "ready-seed",
+      controlledCapabilities,
+    });
+    expect(JSON.stringify(states[states.length - 1]?.acceptedHostReadySeed)).not.toContain("MemoryOnlyValue123");
+
+    act(() => states[states.length - 1]!.updateSettings({ baseUrl: "http://127.0.0.1:9444", token: "manual-secret", runtimeAccess: "direct" }));
+    expect(states[states.length - 1]?.acceptedHostReadySeed).toBeNull();
+    await send(ready("ready-next", { runtimeUrl: "http://127.0.0.1:9555", controlledCapabilities }));
+    expect(states[states.length - 1]?.acceptedHostReadySeed).toBeNull();
+    await send(binding("ready-seed"));
+    expect(states[states.length - 1]?.acceptedHostReadySeed).toBeNull();
+  });
+
   it("keeps established trusted state through missing-correlation and rejected ready messages", async () => {
     const states: HookState[] = [];
     const container = document.createElement("div");
@@ -179,3 +210,17 @@ describe("useLiveRuntimeSettings accepted host.ready generation", () => {
     });
   });
 });
+
+function capabilityMetadata(): ControlledHostCapabilitiesPayload {
+  return {
+    protocolVersion: "controlled_host_capabilities_v2",
+    hostSurface: "vscode",
+    authority: "metadata_only",
+    capabilities: { controlledStart: "supported", controlledRead: "supported", controlledEdit: "supported", controlledVerification: "supported", controlledRepair: "unsupported" },
+    correlationRequirements: ["request_id"],
+    authorityFlags: { metadataOnly: true, controlledRead: false, controlledEdit: false, controlledVerification: false, controlledStart: false, repair: false, shell: false, git: false, packageInstall: false, network: false, provider: false, tool: false, hiddenSearch: false, indexing: false, autoApply: false, autoRun: false, autoFix: false },
+    limits: { maxReadBytes: 1, maxReadLines: 1, maxEditFiles: 1, maxEditOperations: 1, maxPatchBytes: 1, maxVerificationOutputBytes: 1, maxVerificationOutputLines: 1, maxRepairAttempts: 0 },
+    reasonCodes: ["bounded"],
+    safeLabels: { host: "VS Code", support: "Ready" },
+  };
+}

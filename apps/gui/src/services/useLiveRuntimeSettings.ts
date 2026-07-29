@@ -4,6 +4,13 @@ import { isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, type RuntimeSettings } 
 
 const defaultSettings: RuntimeSettings = { baseUrl: "http://127.0.0.1:8001", token: "", runtimeAccess: "direct" };
 
+export type AcceptedHostReadySeed = {
+  generation: string;
+  runtimeSettingsRevision: number;
+  workspaceBindingRequestId: string;
+  controlledCapabilities: HostReadyPayload["controlledCapabilities"];
+};
+
 export function readInitialRuntimeSettings(): RuntimeSettings {
   if (typeof window === "undefined") return defaultSettings;
   const configured = window.__yetAiInitialRuntimeConfig;
@@ -43,12 +50,15 @@ export function resolveWorkspaceBindingUpdate(
   return { requestId: currentRequestId, binding: message.payload as WorkspaceBindingPayload, changed: true };
 }
 
-export function useLiveRuntimeSettings(): { settings: RuntimeSettings; runtimeSettingsRevision: number; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter; workspaceBinding: WorkspaceBindingPayload | null; hostReadyGeneration: string | null } {
+export function useLiveRuntimeSettings(): { settings: RuntimeSettings; runtimeSettingsRevision: number; updateSettings: (settings: RuntimeSettings) => void; bridgeAdapter: BridgeAdapter; workspaceBinding: WorkspaceBindingPayload | null; hostReadyGeneration: string | null; acceptedHostReadySeed: AcceptedHostReadySeed | null } {
   const [settings, setSettings] = useState<RuntimeSettings>(readInitialRuntimeSettings);
   const [runtimeSettingsRevision, setRuntimeSettingsRevision] = useState(0);
   const [workspaceBinding, setWorkspaceBinding] = useState<WorkspaceBindingPayload | null>(null);
   const [hostReadyGeneration, setHostReadyGeneration] = useState<string | null>(null);
+  const [acceptedHostReadySeed, setAcceptedHostReadySeed] = useState<AcceptedHostReadySeed | null>(null);
   const settingsRef = useRef(settings);
+  const runtimeSettingsRevisionRef = useRef(0);
+  const workspaceBindingRef = useRef<WorkspaceBindingPayload | null>(null);
   const hostReadyRequestId = useRef<string | null>(null);
   const [bridgeAdapter] = useState(() => createBridgeAdapter(() => undefined));
   const updateSettings = useCallback((next: RuntimeSettings) => {
@@ -56,7 +66,9 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; runtimeSe
     if (sameRuntimeIdentity(settingsRef.current, normalized)) return;
     settingsRef.current = normalized;
     setSettings(normalized);
-    setRuntimeSettingsRevision((revision) => revision + 1);
+    runtimeSettingsRevisionRef.current += 1;
+    setRuntimeSettingsRevision(runtimeSettingsRevisionRef.current);
+    setAcceptedHostReadySeed(null);
   }, []);
 
   useEffect(() => {
@@ -65,18 +77,48 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; runtimeSe
         const payload = message.payload as HostReadyPayload | undefined;
         const resolved = resolveHostReadyRuntimeSettings(settingsRef.current, payload);
         if (!resolved || typeof message.requestId !== "string" || message.requestId.length === 0) return;
+        const generation = message.requestId;
         const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
         hostReadyRequestId.current = update.requestId;
-        if (update.changed) setWorkspaceBinding(null);
-        setHostReadyGeneration(message.requestId);
+        if (update.changed) {
+          workspaceBindingRef.current = null;
+          setWorkspaceBinding(null);
+        }
+        setHostReadyGeneration(generation);
         if (!sameRuntimeIdentity(settingsRef.current, resolved)) {
           settingsRef.current = resolved;
           setSettings(resolved);
-          setRuntimeSettingsRevision((revision) => revision + 1);
+          runtimeSettingsRevisionRef.current += 1;
+          setRuntimeSettingsRevision(runtimeSettingsRevisionRef.current);
         }
+        setAcceptedHostReadySeed((current) => {
+          const next = {
+            generation,
+            runtimeSettingsRevision: runtimeSettingsRevisionRef.current,
+            workspaceBindingRequestId: update.changed ? "" : workspaceBindingRef.current?.requestId ?? "",
+            controlledCapabilities: payload?.controlledCapabilities,
+          };
+          return current
+            && current.generation === next.generation
+            && current.runtimeSettingsRevision === next.runtimeSettingsRevision
+            && current.workspaceBindingRequestId === next.workspaceBindingRequestId
+            && current.controlledCapabilities === next.controlledCapabilities
+            ? current
+            : next;
+        });
       } else if (message.type === "host.workspaceBinding") {
         const update = resolveWorkspaceBindingUpdate(hostReadyRequestId.current, message);
-        if (update.changed) setWorkspaceBinding(update.binding);
+        if (update.changed && update.binding) {
+          const nextBinding = update.binding;
+          const previousBinding = workspaceBindingRef.current;
+          workspaceBindingRef.current = nextBinding;
+          setWorkspaceBinding(nextBinding);
+          setAcceptedHostReadySeed((current) => {
+            if (!current || current.generation !== message.requestId || current.runtimeSettingsRevision !== runtimeSettingsRevisionRef.current) return null;
+            if (previousBinding && !sameWorkspaceBinding(previousBinding, nextBinding)) return null;
+            return { ...current, workspaceBindingRequestId: nextBinding.requestId };
+          });
+        }
       }
     });
     return () => {
@@ -85,9 +127,23 @@ export function useLiveRuntimeSettings(): { settings: RuntimeSettings; runtimeSe
     };
   }, [bridgeAdapter]);
 
-  return { settings, runtimeSettingsRevision, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration };
+  const currentAcceptedHostReadySeed = acceptedHostReadySeed
+    && acceptedHostReadySeed.generation === hostReadyGeneration
+    && acceptedHostReadySeed.runtimeSettingsRevision === runtimeSettingsRevision
+    && workspaceBinding?.requestId === acceptedHostReadySeed.workspaceBindingRequestId
+    ? acceptedHostReadySeed
+    : null;
+
+  return { settings, runtimeSettingsRevision, updateSettings, bridgeAdapter, workspaceBinding, hostReadyGeneration, acceptedHostReadySeed: currentAcceptedHostReadySeed };
 }
 
 function sameRuntimeIdentity(left: RuntimeSettings, right: RuntimeSettings): boolean {
   return left.baseUrl === right.baseUrl && left.token === right.token && left.runtimeAccess === right.runtimeAccess;
+}
+
+function sameWorkspaceBinding(left: WorkspaceBindingPayload, right: WorkspaceBindingPayload): boolean {
+  if (left.requestId !== right.requestId || left.state !== right.state) return false;
+  return left.state === "auto_bound" && right.state === "auto_bound"
+    ? left.projectId === right.projectId && left.displayName === right.displayName
+    : left.state === "selection_required" && right.state === "selection_required" && left.reason === right.reason;
 }
