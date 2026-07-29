@@ -362,6 +362,89 @@ describe("ProjectRouterShell", () => {
     expect(JSON.stringify(appAuthorityCalls)).not.toContain("sessionToken");
   });
 
+  it("passes one-shot accepted readiness into a lazy browser project App without widening authority", async () => {
+    window.history.replaceState(null, "", `/p/${projectId}/chat/chat-browser`);
+    const container = document.createElement("div");
+    document.body.append(container);
+    let hostReadyDispatches = 0;
+    const countHostReady = (event: MessageEvent) => {
+      if (event.data?.type === "host.ready") hostReadyDispatches += 1;
+    };
+    window.addEventListener("message", countHostReady);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    await sendHostReady("ready-browser-project", "/panel/panel-browser");
+    await sendWorkspaceBinding("ready-browser-project");
+    await act(async () => undefined);
+
+    expect(hostReadyDispatches).toBe(1);
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-browser");
+    expect(container.querySelector("[data-testid='app-runtime-state']")?.textContent).toBe("runtime-gated");
+    expect(appAuthorityCalls[appAuthorityCalls.length - 1]).toMatchObject({
+      hostedAuthorityKey: undefined,
+      hostReadyGeneration: "ready-browser-project",
+      acceptedHostReadySeed: {
+        generation: "ready-browser-project",
+        runtimeSettingsRevision: 1,
+        workspaceBindingRequestId: "ready-browser-project",
+        controlledCapabilities: undefined,
+      },
+    });
+    expect(JSON.stringify(appAuthorityCalls)).not.toContain("sessionToken");
+    window.removeEventListener("message", countHostReady);
+  });
+
+  it("passes one-shot accepted readiness into the lazy hosted legacy App", async () => {
+    window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    await sendHostReady("ready-legacy", "/panel/panel-test");
+    await sendWorkspaceBinding("ready-legacy");
+    await act(async () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Legacy data")?.click());
+
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("legacy");
+    expect(appAuthorityCalls[appAuthorityCalls.length - 1]).toMatchObject({
+      hostReadyGeneration: "ready-legacy",
+      acceptedHostReadySeed: {
+        generation: "ready-legacy",
+        runtimeSettingsRevision: 1,
+        workspaceBindingRequestId: "ready-legacy",
+        controlledCapabilities: undefined,
+      },
+    });
+  });
+
+  it("invalidates readiness passed to a lazy non-hosted App when the generation changes", async () => {
+    window.history.replaceState(null, "", "/settings");
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await sendHostReady("ready-settings", "/panel/panel-settings");
+    await sendWorkspaceBinding("ready-settings");
+    await act(async () => undefined);
+    expect(appAuthorityCalls[appAuthorityCalls.length - 1]?.acceptedHostReadySeed?.generation).toBe("ready-settings");
+
+    await sendHostReady("ready-settings-next", "/panel/panel-settings-next");
+
+    expect(appAuthorityCalls[appAuthorityCalls.length - 1]).toMatchObject({
+      hostedAuthorityKey: undefined,
+      hostReadyGeneration: "ready-settings-next",
+      acceptedHostReadySeed: null,
+    });
+  });
+
   it("rejects a deferred open from an older generation even when the project is unchanged", async () => {
     window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
     window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };

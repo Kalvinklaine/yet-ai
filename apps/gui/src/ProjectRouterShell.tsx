@@ -93,10 +93,10 @@ export function ProjectRouterShell() {
     return <ProjectHub settings={settings} navigate={navigate} />;
   }
   if (route.kind === "project") {
-    return <ProjectShell route={route} settings={settings} navigate={navigate}>{route.page === "home" ? null : <LazyApp><App route={route} navigate={navigate} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} /></LazyApp>}</ProjectShell>;
+    return <ProjectShell route={route} settings={settings} navigate={navigate}>{route.page === "home" ? null : <LazyApp><App route={route} navigate={navigate} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostReadyGeneration={hostReadyGeneration} acceptedHostReadySeed={acceptedHostReadySeed} /></LazyApp>}</ProjectShell>;
   }
   if (route.kind === "legacy") return <LegacyData settings={settings} navigate={navigate} />;
-  return <LazyApp><App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} /></LazyApp>;
+  return <LazyApp><App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostReadyGeneration={hostReadyGeneration} acceptedHostReadySeed={acceptedHostReadySeed} /></LazyApp>;
 }
 
 function LazyApp({ children }: { children: ReactNode }) {
