@@ -284,6 +284,17 @@ export type AgentProgressListResponse = {
   snapshots: AgentProgressSnapshot[];
 };
 
+export type ControlledHostProgressKind = "read" | "search" | "edit" | "multifile" | "command" | "verification";
+export type ControlledHostProgressTransition = "requested" | "running" | "succeeded" | "failed";
+
+export type ControlledHostProgressInput = {
+  correlationId: string;
+  kind: ControlledHostProgressKind;
+  transition: ControlledHostProgressTransition;
+  itemCount?: number;
+  labelId?: "repository-check" | "gui-app-tests" | "engine-chat-tests" | "verification-bundle";
+};
+
 export const productIdentity = {
   productId: "yet-ai",
   displayName: "Yet AI",
@@ -459,6 +470,42 @@ export function getAgentProgress(settings: ChatRuntimeSettings, signal?: AbortSi
   return runtimeFetch<AgentProgressListResponse>(settings, chatApiPath(settings, "/agent-progress"), { signal });
 }
 
+export async function publishControlledHostProgress(settings: ChatRuntimeSettings, input: ControlledHostProgressInput): Promise<RuntimeResult<AgentProgressListResponse>> {
+  if (!isScopedRuntimeSettings(settings) || !isControlledHostProgressInput(input)) {
+    return { ok: false, error: { status: "configuration", message: "Controlled host progress requires valid project-scoped lifecycle metadata." } };
+  }
+  const phase = controlledHostProgressPhase(input.kind, input.transition);
+  const status: AgentProgressStatus = input.transition === "requested"
+    ? "pending"
+    : input.transition === "running"
+      ? "healthy_running"
+      : input.transition === "succeeded"
+        ? "done"
+        : "failed";
+  const timestamp = new Date().toISOString();
+  const correlation = await opaqueControlledHostCorrelation(input.correlationId);
+  const runId = `controlled-${input.kind}-${correlation}`;
+  const event = {
+    protocolVersion: "2026-05-29",
+    eventId: `${runId}-${input.transition}`,
+    runId,
+    cardId: `controlled-${input.kind}`,
+    timestamp,
+    phase,
+    status,
+    message: controlledHostProgressMessage(input.kind, input.transition, input.itemCount),
+    tool: {
+      kind: controlledHostProgressToolKind(input.kind),
+      label: input.labelId ?? `controlled-${input.kind}`,
+      ...(input.transition === "requested" ? { startedAt: timestamp } : {}),
+    },
+  };
+  return runtimeFetch<AgentProgressListResponse>(settings, chatApiPath(settings, "/agent-progress/events"), {
+    method: "POST",
+    body: JSON.stringify(event),
+  });
+}
+
 export function sendUserMessage(
   settings: ChatRuntimeSettings,
   chatId: string,
@@ -515,6 +562,36 @@ function isScopedRuntimeSettings(settings: ChatRuntimeSettings): settings is Sco
   }
   const scope = settings.projectScope;
   return typeof scope === "object" && scope !== null && "abortSignal" in scope && scope.abortSignal instanceof AbortSignal;
+}
+
+function isControlledHostProgressInput(input: ControlledHostProgressInput): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(input.correlationId)
+    && (input.itemCount === undefined || Number.isSafeInteger(input.itemCount) && input.itemCount >= 0 && input.itemCount <= 100);
+}
+
+function controlledHostProgressPhase(kind: ControlledHostProgressKind, transition: ControlledHostProgressTransition): AgentProgressPhase {
+  if (transition === "succeeded") return "done";
+  if (transition === "failed") return "failed";
+  if (kind === "read" || kind === "search") return "reading_context";
+  if (kind === "edit" || kind === "multifile") return "editing";
+  return kind === "verification" ? "verifying" : "running_command";
+}
+
+function controlledHostProgressToolKind(kind: ControlledHostProgressKind): AgentProgressToolKind {
+  if (kind === "read" || kind === "search") return "read";
+  if (kind === "edit" || kind === "multifile") return "edit";
+  return kind === "verification" ? "validation" : "command";
+}
+
+function controlledHostProgressMessage(kind: ControlledHostProgressKind, transition: ControlledHostProgressTransition, itemCount?: number): string {
+  const label = kind === "multifile" ? "multi-file edit" : kind === "verification" ? "verification bundle" : kind;
+  const suffix = itemCount === undefined ? "" : ` (${itemCount} item${itemCount === 1 ? "" : "s"})`;
+  return `Controlled ${label} ${transition}${suffix}.`;
+}
+
+async function opaqueControlledHostCorrelation(value: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest).slice(0, 24), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export function isPanelScopedProxyBaseUrl(baseUrl: string): boolean {

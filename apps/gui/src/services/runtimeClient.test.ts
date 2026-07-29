@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createChat, deleteChat, getChat, listChats, authHeaders, chatApiPath, isPanelScopedProxyBaseUrl, isSameOriginProxyBaseUrl, isTrustedLocalPageOrigin, isTrustedSameOriginProxyBaseUrl, productIdentityWarning, runtimeFetch, sendAbort, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
+import { createChat, deleteChat, getChat, listChats, authHeaders, chatApiPath, isPanelScopedProxyBaseUrl, isSameOriginProxyBaseUrl, isTrustedLocalPageOrigin, isTrustedSameOriginProxyBaseUrl, productIdentityWarning, publishControlledHostProgress, runtimeFetch, sendAbort, sendUserMessage, validateRuntimeBaseUrl } from "./runtimeClient";
 import { createProjectRuntimeSettings } from "./projectClient";
 
 const fetchMock = vi.fn();
@@ -11,6 +11,30 @@ afterEach(() => {
 });
 
 describe("runtimeClient", () => {
+  it("publishes only bounded project-scoped controlled host lifecycle metadata", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ cloudRequired: false, providerAccess: "direct", snapshots: [] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const settings = createProjectRuntimeSettings({ baseUrl: "http://127.0.0.1:8001", token: "runtime-value" }, "prj_AAAAAAAAAAAAAAAAAAAAAA", { generation: 1, abortSignal: new AbortController().signal });
+
+    await publishControlledHostProgress(settings, { correlationId: "gui-private-request", kind: "read", transition: "succeeded", itemCount: 1 });
+
+    expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:8001/p/prj_AAAAAAAAAAAAAAAAAAAAAA/v1/agent-progress/events");
+    const body = String(fetchMock.mock.calls[0][1].body);
+    expect(JSON.parse(body)).toMatchObject({ phase: "done", status: "done", message: "Controlled read succeeded (1 item).", tool: { kind: "read", label: "controlled-read" } });
+    for (const forbidden of ["gui-private-request", "workspaceRelativePath", "body", "diff", "replacement", "command", "output", "provider", "bridge", "runtime-value"]) {
+      expect(body.toLowerCase()).not.toContain(forbidden.toLowerCase());
+    }
+  });
+
+  it("rejects unscoped and invalid controlled host progress without a write", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    const unscoped = await publishControlledHostProgress({ baseUrl: "http://127.0.0.1:8001", token: "" }, { correlationId: "request-1", kind: "read", transition: "requested" });
+    const invalid = await publishControlledHostProgress(createProjectRuntimeSettings({ baseUrl: "http://127.0.0.1:8001", token: "" }, "prj_AAAAAAAAAAAAAAAAAAAAAA", { generation: 1, abortSignal: new AbortController().signal }), { correlationId: "raw/path", kind: "edit", transition: "requested" });
+
+    expect(unscoped.ok).toBe(false);
+    expect(invalid.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
   it("sends authorization only for direct loopback runtime URLs", () => {
     const loopbackHeaders = new Headers(authHeaders({ baseUrl: "http://127.0.0.1:8001", token: " secret ", runtimeAccess: "direct" }));
     expect(loopbackHeaders.get("Authorization")).toBe("Bearer secret");

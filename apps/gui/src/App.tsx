@@ -22,7 +22,7 @@ import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackCh
 import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatRuntimeSettings, type ChatSummary, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, publishControlledHostProgress, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatRuntimeSettings, type ChatSummary, type ControlledHostProgressInput, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { createProjectRuntimeSettings } from "./services/projectClient";
 import { buildProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
 import { ProjectScopeController, createProjectScopeCorrelation, type ProjectScopeCorrelation, type ProjectScopeResetters } from "./services/projectScope";
@@ -74,7 +74,7 @@ import type { AgentRunInput } from "./services/agentRunState";
 import { resolveHostReadyRuntimeSettings } from "./services/useLiveRuntimeSettings";
 import { selectControlledRunProjectMemory } from "./services/controlledRunProjectMemorySelection";
 import { bindProjectChatLaunchIntentChatId, clearProjectChatLaunchIntent, clearProjectChatLaunchIntentIfMatches, consumeProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration, peekProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
-import { classifyControlledCapabilityProvenance } from "./services/controlledCapabilityProvenance";
+import { classifyControlledCapabilityProvenance, isLiveControlledCapability, type ControlledCapabilitySurface } from "./services/controlledCapabilityProvenance";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -1110,6 +1110,28 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     hostCapabilities: controlledHostCapabilities,
     localState: { run_state: true, recovery: true },
   }), [activeCaps, bridgeHost, controlledHostCapabilities]);
+  const controlledCapabilityProvenanceRef = useRef(controlledCapabilityProvenance);
+  controlledCapabilityProvenanceRef.current = controlledCapabilityProvenance;
+  const bridgeHostRef = useRef(bridgeHost);
+  bridgeHostRef.current = bridgeHost;
+  const publishControlledProgress = useCallback((surface: ControlledCapabilitySurface, input: ControlledHostProgressInput) => {
+    const currentHost = bridgeHostRef.current;
+    if (!projectId || !isLiveControlledCapability(controlledCapabilityProvenanceRef.current[surface], surface, currentHost)) {
+      return;
+    }
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    const targetChatId = chatIdRef.current;
+    const scopeCorrelation = createProjectScopeCorrelation(projectScopeController.current());
+    if (!("projectScope" in targetSettings)) {
+      return;
+    }
+    void publishControlledHostProgress(targetSettings, input).then(() => {
+      if (settingsRevisionRef.current !== targetRevision || chatIdRef.current !== targetChatId || !projectScopeController.accepts(scopeCorrelation)) {
+        return;
+      }
+    });
+  }, [projectId, projectScopeController]);
 
   useEffect(() => {
     if (controlledAgentRunState.phase === "idle" && oneStepLoopState.phase === "idle") {
@@ -1621,6 +1643,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           setControlledLexicalSearchResultId(current.requestId);
           setSelectedControlledSearchResultIds([]);
           appendTrace({ family: "controlledAgent.fileReadResult", title: "Controlled lexical search result accepted", status: "succeeded", summary: "Sanitized lexical search result metadata accepted for explicit user selection.", requestId: current.requestId, details: correlation.details });
+          publishControlledProgress("controlled_search", { correlationId: current.requestId, kind: "search", transition: correlation.lexicalSearch.status === "failed" || correlation.lexicalSearch.status === "blocked" ? "failed" : "succeeded", itemCount: correlation.lexicalSearch.resultCount });
         }
       } else if (message.type === "host.controlledAgentVerificationBundleResult") {
         const requestId = message.requestId ?? "unknown";
@@ -1652,6 +1675,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           setControlledVerificationFollowupDraft(null);
           setControlledVerificationBundleNote(`Verification bundle result accepted: ${acceptedBundle.status ?? "accepted"}.`);
           appendTrace({ family: "controlledAgent.verificationBundleResult", title: "Controlled verification bundle result received", status: acceptedBundle.status === "succeeded" ? "succeeded" : acceptedBundle.status === "running" ? "in_progress" : "failed", summary: "Sanitized sequence-aware verification bundle metadata accepted.", requestId, details: correlation.details });
+          publishControlledProgress("controlled_verification_bundle", { correlationId: requestId, kind: "verification", transition: acceptedBundle.status === "succeeded" ? "succeeded" : acceptedBundle.status === "running" ? "running" : "failed", itemCount: acceptedBundle.commands.length, labelId: "verification-bundle" });
           if (oneStepPendingBundle) {
             setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: verificationBundleToOneStepMetadata(current, acceptedBundle) }));
             setControlledTaskExecutionState((currentState) => {
@@ -1700,6 +1724,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           setControlledMultifileApplyResult(correlation.summary);
           setControlledMultifileApplyNote(`Multi-file apply result accepted: ${correlation.summary.state}.`);
           appendTrace({ family: correlation.summary.state === "applied" ? "controlledAgent.editResult" : "controlledAgent.editBlocked", title: "Controlled multi-file apply result received", status: correlation.summary.state === "applied" ? "succeeded" : "failed", summary: correlation.summary.message, requestId, details: correlation.details });
+          publishControlledProgress("controlled_multifile", { correlationId: requestId, kind: "multifile", transition: correlation.summary.state === "applied" ? "succeeded" : "failed", itemCount: correlation.summary.appliedFileCount });
           return;
         }
         if (correlation.state === "duplicate") {
@@ -1736,6 +1761,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           setControlledFileReadResultMetadata(message.payload);
           setControlledFileReadNote(`Controlled read result accepted: ${correlation.fileRead.state}.`);
           appendTrace({ family: correlation.fileRead.state === "blocked" ? "controlledAgent.fileReadBlocked" : "controlledAgent.fileReadResult", title: "Controlled file read result received", status: correlation.fileRead.state === "blocked" ? "failed" : "succeeded", summary: correlation.fileRead.summary, requestId, details: correlation.details });
+          publishControlledProgress("controlled_read", { correlationId: requestId, kind: "read", transition: correlation.fileRead.state === "blocked" ? "failed" : "succeeded", itemCount: 1 });
           if (oneStepPendingRead) {
             setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(reduceControlledOneStepAgentLoopState(currentLoop, { type: "read", metadata: message.payload }), { type: "model_step", metadata: { state: "completed", stepCount: 1, sanitizedOnly: true, modelProposalAllowed: true, providerPayloadStored: false, providerResponseStored: false, summary: "Sanitized one-step proposal metadata recorded." } }));
             postOneStepEditRequest();
@@ -1781,6 +1807,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           setControlledEditResultMetadata(message.payload);
           setControlledEditNote(`Controlled edit result accepted: ${correlation.edit.state}.`);
           appendTrace({ family: correlation.edit.state === "applied" ? "controlledAgent.editResult" : "controlledAgent.editBlocked", title: "Controlled edit result received", status: correlation.edit.state === "applied" ? "succeeded" : "failed", summary: correlation.edit.summary, requestId, details: correlation.details });
+          publishControlledProgress("controlled_edit", { correlationId: requestId, kind: "edit", transition: correlation.edit.state === "applied" ? "succeeded" : "failed", itemCount: 1 });
           if (oneStepPendingEdit) {
             setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "edit", metadata: controlledEditResultToOneStepMetadata(message.payload) }));
             if (correlation.edit.state === "applied") {
@@ -1831,6 +1858,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
               setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: commandRunMetadata }));
             }
             appendTrace({ family: "controlledAgent.commandRunning", title: "Controlled Agent Run verification running", status: "in_progress", summary: commandRun.message, requestId, details: correlation.details });
+            publishControlledProgress("controlled_verification_run", { correlationId: requestId, kind: "command", transition: "running", labelId: current.commandId });
             return;
           }
           controlledCommandRunCompletedRequestIdRef.current = requestId;
@@ -1852,6 +1880,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           const reportInput = { ...(agentRunInputRef.current ?? {}), verificationResult, verificationProgress: undefined, rollback: undefined };
           const report = createAgentRunReport(reportInput);
           appendTrace({ family: verificationResult.status === "succeeded" ? "agentRun.completed" : "agentRun.verificationResult", title: report.title, status: report.status === "succeeded" ? "succeeded" : "failed", summary: report.summary, requestId, details: createAgentRunTraceDetails(reportInput) });
+          publishControlledProgress("controlled_verification_run", { correlationId: requestId, kind: "command", transition: verificationResult.status, labelId: current.commandId });
           if (oneStepPendingCommand) {
             setOneStepLoopState((currentLoop) => reduceControlledOneStepAgentLoopState(currentLoop, { type: "verification", metadata: commandRunMetadata }));
           }
@@ -2033,7 +2062,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       unsubscribe();
       if (!bridgeAdapter) adapter.dispose();
     };
-  }, [appendTrace, applyHostReady, bridgeAdapter, projectId, projectScopeController, stopPendingControlledCommandRunState]);
+  }, [appendTrace, applyHostReady, bridgeAdapter, projectId, projectScopeController, publishControlledProgress, stopPendingControlledCommandRunState]);
 
   const appendChatError = useCallback((message: string, code?: string) => {
     setChatView((current) => applyChatViewEvent(current, {
@@ -3180,9 +3209,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setAgentRunVerificationResult(null);
     setAgentRunVerificationFixDraft(null);
     bridgeAdapterRef.current?.post(controlledAgentCommandRunRequest.bridgeRequest);
+    publishControlledProgress("controlled_verification_run", { correlationId: controlledAgentCommandRunRequest.bridgeRequest.requestId, kind: "command", transition: "requested", labelId: commandId });
     addTimeline(`Controlled Agent Run verification requested ${controlledAgentCommandRunRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.commandPlanned", title: "Controlled Agent Run verification requested", status: "pending", summary: "User clicked explicit controlled Agent Run verification.", requestId: controlledAgentCommandRunRequest.bridgeRequest.requestId, details: controlledAgentCommandRunRequest.details });
-  }, [addTimeline, agentRunInput, appendTrace, bridgeHost, controlledAgentCommandRunRequest, pendingControlledCommandRunRequestId]);
+  }, [addTimeline, agentRunInput, appendTrace, bridgeHost, controlledAgentCommandRunRequest, pendingControlledCommandRunRequestId, publishControlledProgress]);
 
   const requestControlledLexicalSearch = useCallback(() => {
     if (controlledAgentLexicalSearchRequest.state !== "ready" || !controlledAgentLexicalSearchRequest.bridgeRequest || !controlledAgentLexicalSearchRequest.correlation || controlledLexicalSearchCorrelationRef.current) {
@@ -3193,9 +3223,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setControlledLexicalSearchResultId(undefined);
     setSelectedControlledSearchResultIds([]);
     bridgeAdapterRef.current?.post(controlledAgentLexicalSearchRequest.bridgeRequest);
+    publishControlledProgress("controlled_search", { correlationId: controlledAgentLexicalSearchRequest.bridgeRequest.requestId, kind: "search", transition: "requested" });
     addTimeline(`Controlled lexical search requested ${controlledAgentLexicalSearchRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.fileReadPlanned", title: "Controlled lexical search requested", status: "pending", summary: "User clicked explicit controlled lexical search; sanitized snippet metadata only is expected.", requestId: controlledAgentLexicalSearchRequest.bridgeRequest.requestId, details: controlledAgentLexicalSearchRequest.details });
-  }, [addTimeline, appendTrace, controlledAgentLexicalSearchRequest]);
+  }, [addTimeline, appendTrace, controlledAgentLexicalSearchRequest, publishControlledProgress]);
 
   const requestControlledVerificationBundle = useCallback(() => {
     setControlledVerificationBundleRequest(controlledAgentVerificationBundleRequest);
@@ -3212,9 +3243,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setControlledVerificationFollowupDraft(null);
     setControlledVerificationBundleNote("Verification bundle request posted after explicit user click.");
     bridgeAdapterRef.current?.post(controlledAgentVerificationBundleRequest.bridgeRequest);
+    publishControlledProgress("controlled_verification_bundle", { correlationId: controlledAgentVerificationBundleRequest.bridgeRequest.requestId, kind: "verification", transition: "requested", itemCount: controlledAgentVerificationBundleRequest.correlation.commandIds.length, labelId: "verification-bundle" });
     addTimeline(`Controlled verification bundle requested ${controlledAgentVerificationBundleRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.verificationBundleRequested", title: "Controlled verification bundle requested", status: "pending", summary: "User clicked explicit controlled verification bundle run.", requestId: controlledAgentVerificationBundleRequest.bridgeRequest.requestId, details: controlledAgentVerificationBundleRequest.details });
-  }, [addTimeline, appendTrace, controlledAgentVerificationBundleRequest, pendingControlledVerificationBundleRequestId]);
+  }, [addTimeline, appendTrace, controlledAgentVerificationBundleRequest, pendingControlledVerificationBundleRequestId, publishControlledProgress]);
 
   const draftControlledVerificationFollowup = useCallback((userSelectedNextAction: ControlledAgentVerificationFollowupAction) => {
     const result = buildControlledAgentVerificationFollowup({
@@ -3253,9 +3285,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setControlledMultifileApplyResult(undefined);
     setControlledMultifileApplyNote("Multi-file apply request posted after explicit user click.");
     bridgeAdapterRef.current?.post(controlledAgentMultifileApplyRequest.bridgeRequest);
+    publishControlledProgress("controlled_multifile", { correlationId: controlledAgentMultifileApplyRequest.bridgeRequest.requestId, kind: "multifile", transition: "requested", itemCount: controlledAgentMultifileApplyRequest.correlation.expectedFileCount });
     addTimeline(`Controlled multi-file apply requested ${controlledAgentMultifileApplyRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.editPending", title: "Controlled multi-file apply requested", status: "pending", summary: "User clicked explicit VS Code-only bounded multi-file apply.", requestId: controlledAgentMultifileApplyRequest.bridgeRequest.requestId, details: controlledAgentMultifileApplyRequest.details });
-  }, [addTimeline, appendTrace, controlledAgentMultifileApplyRequest, pendingControlledMultifileApplyRequestId]);
+  }, [addTimeline, appendTrace, controlledAgentMultifileApplyRequest, pendingControlledMultifileApplyRequestId, publishControlledProgress]);
 
   const updateControlledSearchSelection = useCallback((resultId: string, selected: boolean) => {
     setSelectedControlledSearchResultIds((current) => {
@@ -3278,9 +3311,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setControlledEditResultMetadata(null);
     setControlledEditNote("One-step controlled edit request posted after explicit Start.");
     bridgeAdapterRef.current?.post(request.bridgeRequest);
+    publishControlledProgress("controlled_edit", { correlationId: request.bridgeRequest.requestId, kind: "edit", transition: "requested", itemCount: 1 });
     addTimeline(`S86 one-step controlled edit requested ${request.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.editPending", title: "S86 one-step controlled edit requested", status: "pending", summary: "One-step run posted one bounded controlled edit request.", requestId: request.bridgeRequest.requestId, details: request.details });
-  }, [addTimeline, appendTrace, pendingControlledEditRequestId]);
+  }, [addTimeline, appendTrace, pendingControlledEditRequestId, publishControlledProgress]);
 
   const postOneStepVerificationBundleRequest = useCallback(() => {
     const request = oneStepVerificationBundleRequestRef.current;
@@ -3309,9 +3343,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       return reduceControlledTaskExecution(applying, { type: "verifying", runId: current.lineage.runId, proposalId, verificationBundleId: correlation.bundleId });
     });
     bridgeAdapterRef.current?.post(request.bridgeRequest);
+    publishControlledProgress("controlled_verification_bundle", { correlationId: request.bridgeRequest.requestId, kind: "verification", transition: "requested", itemCount: correlation.commandIds.length, labelId: "verification-bundle" });
     addTimeline(`S96 one-step controlled verification bundle requested `);
     appendTrace({ family: "controlledAgent.verificationBundleRequested", title: "S96 one-step controlled verification bundle requested", status: "pending", summary: "Started VS Code one-step run posted an allowlisted verification bundle request with run and bundle lineage.", requestId: request.bridgeRequest.requestId, details: request.details });
-  }, [addTimeline, appendTrace, pendingControlledVerificationBundleRequestId]);
+  }, [addTimeline, appendTrace, pendingControlledVerificationBundleRequestId, publishControlledProgress]);
 
   const startOneStepAgentRun = useCallback(() => {
     const readRequest = oneStepFileReadRequestRef.current;
@@ -3358,10 +3393,11 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setControlledFileReadResultMetadata(null);
     if (readRequest.bridgeRequest) {
       bridgeAdapterRef.current?.post(readRequest.bridgeRequest);
+      publishControlledProgress("controlled_read", { correlationId: readRequest.bridgeRequest.requestId, kind: "read", transition: "requested", itemCount: 1 });
       addTimeline(`S96 one-step controlled read requested `);
       appendTrace({ family: "controlledAgent.fileReadPlanned", title: "S96 one-step controlled read requested", status: "pending", summary: "Started VS Code run posted one bounded controlled read request before edit and allowlisted verification bundle.", requestId: readRequest.bridgeRequest.requestId, details: readRequest.details });
     }
-  }, [addTimeline, appendTrace, bridgeHost, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle]);
+  }, [addTimeline, appendTrace, bridgeHost, currentActiveFileExcerpt, explicitContextBundleItems, includeAttachedContext, includeExplicitContextBundle, publishControlledProgress]);
 
   const stopOneStepAgentRun = useCallback(() => {
     controlledFileReadCorrelationRef.current = null;
@@ -3395,9 +3431,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setControlledFileReadResultMetadata(null);
     setControlledFileReadNote("Controlled read request posted after explicit user click.");
     bridgeAdapterRef.current?.post(controlledAgentFileReadRequest.bridgeRequest);
+    publishControlledProgress("controlled_read", { correlationId: controlledAgentFileReadRequest.bridgeRequest.requestId, kind: "read", transition: "requested", itemCount: 1 });
     addTimeline(`Controlled read requested ${controlledAgentFileReadRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.fileReadPlanned", title: "Controlled file read requested", status: "pending", summary: "User clicked explicit controlled read request.", requestId: controlledAgentFileReadRequest.bridgeRequest.requestId, details: controlledAgentFileReadRequest.details });
-  }, [addTimeline, appendTrace, controlledAgentFileReadRequest, pendingControlledFileReadRequestId]);
+  }, [addTimeline, appendTrace, controlledAgentFileReadRequest, pendingControlledFileReadRequestId, publishControlledProgress]);
 
   const submitControlledEdit = useCallback(() => {
     if (controlledAgentPatchPlanPreview && (controlledAgentPatchPlanPreview.state !== "ready" || !controlledPatchPlanConfirmed)) {
@@ -3414,9 +3451,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setControlledEditResultMetadata(null);
     setControlledEditNote("Controlled edit request posted after explicit user click.");
     bridgeAdapterRef.current?.post(controlledAgentEditRequest.bridgeRequest);
+    publishControlledProgress("controlled_edit", { correlationId: controlledAgentEditRequest.bridgeRequest.requestId, kind: "edit", transition: "requested", itemCount: 1 });
     addTimeline(`Controlled edit requested ${controlledAgentEditRequest.bridgeRequest.requestId}`);
     appendTrace({ family: "controlledAgent.editPending", title: "Controlled edit requested", status: "pending", summary: "User clicked explicit controlled edit request.", requestId: controlledAgentEditRequest.bridgeRequest.requestId, details: controlledAgentEditRequest.details });
-  }, [addTimeline, appendTrace, controlledAgentEditRequest, controlledAgentPatchPlanPreview, controlledPatchPlanConfirmed, pendingControlledEditRequestId]);
+  }, [addTimeline, appendTrace, controlledAgentEditRequest, controlledAgentPatchPlanPreview, controlledPatchPlanConfirmed, pendingControlledEditRequestId, publishControlledProgress]);
 
   const requestIdeAction = useCallback((payload: IdeActionRequestPayload, requestIdPrefix = "gui-ide-action") => {
     if ((bridgeHost !== "vscode" && bridgeHost !== "jetbrains") || (projectId && !hasCurrentProjectHostAuthority()) || pendingIdeActionRequestIdRef.current) {
