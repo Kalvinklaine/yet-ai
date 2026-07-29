@@ -2,7 +2,7 @@
 
 ## Ownership and boundary
 
-Before editing this subsystem, follow `../../docs/architecture/040-agent-execution-and-architecture-discipline.md` and its Engine required-reading row. The task must preserve engine ownership, name acceptance criteria and non-goals, and run the required focused verification tier; documentation alone is not implementation evidence.
+Before editing this subsystem, follow `../../docs/architecture/040-agent-execution-and-architecture-discipline.md` and its Engine required-reading row. Before product or capability work, read `../../docs/architecture/041-current-capability-truth.md` and verify live-engine claims against the named code and test evidence. The task must preserve engine ownership, name acceptance criteria and non-goals, and run the required focused verification tier; documentation alone is not implementation evidence.
 
 `apps/engine` owns the local Yet AI runtime. Its current responsibilities are authenticated loopback HTTP APIs, SSE chat streaming, local provider/model registry, OpenAI-compatible direct streaming, storage resolution, and authentication boundaries.
 

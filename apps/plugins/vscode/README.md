@@ -2,7 +2,7 @@
 
 ## Ownership and boundary
 
-Before editing this subsystem, follow `../../../docs/architecture/040-agent-execution-and-architecture-discipline.md` and its VS Code required-reading row. The task must preserve thin-host ownership, name acceptance criteria and non-goals, and run the required focused verification tier; documentation alone is not implementation evidence.
+Before editing this subsystem, follow `../../../docs/architecture/040-agent-execution-and-architecture-discipline.md` and its VS Code required-reading row. Before product or capability work, read `../../../docs/architecture/041-current-capability-truth.md` and verify host-executor claims against live VS Code code and tests rather than fixtures. The task must preserve thin-host ownership, name acceptance criteria and non-goals, and run the required focused verification tier; documentation alone is not implementation evidence.
 
 `apps/plugins/vscode` owns the minimal VS Code extension host for Yet AI. Its responsibilities are extension metadata, local runtime connection settings, webview hosting, and a narrow VS Code `postMessage` bridge.
 
