@@ -180,7 +180,7 @@ describe("CurrentWorkspaceDashboard", () => {
     act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Cozy Project")?.click());
     await flush();
 
-    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Resume Latest")?.click());
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Open Latest")?.click());
     expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" }, authorityToken, projectId);
 
     act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
@@ -216,7 +216,7 @@ describe("CurrentWorkspaceDashboard", () => {
     await renderDashboard(binding("auto_bound"));
     await flush();
 
-    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Resume Latest")?.click());
+    act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Open Latest")?.click());
     expect(consumeProjectChatLaunchIntent({ projectId, chatId: "chat-latest", lifecycleGeneration: "standalone" })).toBeNull();
     act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.click());
     await flush();
@@ -327,7 +327,7 @@ describe("CurrentWorkspaceDashboard", () => {
     await renderDashboard(binding("auto_bound"), onOpen);
     await flush();
 
-    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Resume Latest");
+    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Open Latest");
     act(() => resume?.click());
 
     expect(container?.textContent).toContain("The workspace changed. Try again.");
@@ -362,7 +362,7 @@ describe("CurrentWorkspaceDashboard", () => {
     const onOpen = await renderDashboard(binding("auto_bound"));
     await flush();
 
-    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Resume Latest");
+    const resume = Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.getAttribute("aria-label") === "Open Latest");
     act(() => resume?.click());
 
     expect(onOpen).toHaveBeenCalledWith({ kind: "project", projectId, page: "chat", chatId: "chat-latest" }, authorityToken, undefined);

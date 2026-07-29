@@ -180,13 +180,13 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
       <span className="subtle">S91 dev-preview: VS Code is the supported explicit-control path. Browser is preview-only and unsupported for privileged controlled actions. JetBrains stays partial/fail-closed where controlled gaps remain. Sanitized reports only.</span>
       <section className={`readiness-card ${progressAvailability.failClosed ? "warn" : "ready"} stack`} role="status" aria-label="Controlled progress publication state">
         <div className="row">
-          <strong>Controlled progress publication</strong>
+          <strong>Controlled run progress metadata</strong>
           <span className={progressAvailability.failClosed ? "badge warn" : "badge"}>{progressAvailability.label}</span>
           <span className="badge">display only</span>
           <span className="badge">grants authority: false</span>
         </div>
         <span>{progressAvailability.summary}</span>
-        <span className="subtle">This state does not retry publication, start or resume a run, execute tools, or grant runtime or host authority.</span>
+        <span className="subtle">This local-derived report state is separate from activity published to the project progress endpoint. It does not retry publication, start or continue a run, execute tools, or grant runtime or host authority.</span>
       </section>
       {progressReport && <section className="readiness-card warn stack" aria-label="Controlled progress report metadata">
         <div className="row">

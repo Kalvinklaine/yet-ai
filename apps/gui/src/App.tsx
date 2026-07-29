@@ -4477,7 +4477,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         <div className="row">
           <button type="button" onClick={() => void refreshAgentProgress()} disabled={agentProgress.state === "loading"}>{agentProgress.state === "loading" ? "Loading agent progress…" : "Refresh agent progress"}</button>
         </div>
-        <p className="subtle">Read-only local observability only. This panel does not start agents, run tools, merge git, edit files, execute shell, call providers, or mutate the workspace.</p>
+        <p className="subtle">Read-only activity. Normal chat does not create progress entries. Explicit developer publishing or bounded, explicitly requested VS Code host actions may add entries; they do not represent background autonomy. This panel only refreshes display and never starts or continues work.</p>
         <AgentProgressPanel progress={agentProgress} />
         </details>
       </section>}
@@ -6494,7 +6494,7 @@ function CodingActionsPanel({ canUseContext, context, onAction }: { canUseContex
 
 function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
   if (progress.state === "not_checked") {
-    return <AgentProgressStatusCard tone="idle" title="Agent progress not checked" detail="Refresh to read the local runtime agent-progress source. No agents are started from this panel." />;
+    return <AgentProgressStatusCard tone="idle" title="Agent progress not checked" detail="Refresh to read sanitized activity from the local runtime endpoint. Refresh does not start or continue work." />;
   }
   if (progress.state === "loading") {
     return <AgentProgressStatusCard tone="loading" title="Loading agent progress" detail="Reading the local runtime progress endpoint…" />;
@@ -6505,13 +6505,13 @@ function AgentProgressPanel({ progress }: { progress: AgentProgressState }) {
   const normalized = normalizeAgentProgressResponse(progress.response);
   const snapshots = normalized.snapshots;
   if (snapshots.length === 0) {
-    return <AgentProgressStatusCard tone="empty" title="No local agent runs" detail="The local progress source is reachable but currently has no runs to display." generatedAt={normalized.generatedAt} />;
+    return <AgentProgressStatusCard tone="empty" title="No recorded activity" detail="The local progress endpoint is reachable, but no developer-published or bounded host-action entries are available." generatedAt={normalized.generatedAt} />;
   }
   const visibleSnapshots = snapshots.slice(0, agentProgressSnapshotDisplayLimit);
   const hiddenSnapshotCount = Math.max(0, snapshots.length - visibleSnapshots.length);
   return (
     <div className="agent-progress-list">
-      <AgentProgressStatusCard tone="ready" title="Populated local progress" detail={`${snapshots.length} local agent run${snapshots.length === 1 ? "" : "s"} returned by the read-only runtime endpoint.`} generatedAt={normalized.generatedAt} />
+      <AgentProgressStatusCard tone="ready" title="Recorded local activity" detail={`${snapshots.length} sanitized activity entr${snapshots.length === 1 ? "y" : "ies"} returned by the read-only runtime endpoint.`} generatedAt={normalized.generatedAt} />
       {visibleSnapshots.map((snapshot) => <AgentProgressSnapshotCard key={`${snapshot.cardId}:${snapshot.runId}`} snapshot={snapshot} />)}
       {hiddenSnapshotCount > 0 && <div className="agent-progress-empty" role="status">{hiddenSnapshotCount} more agent run{hiddenSnapshotCount === 1 ? "" : "s"} hidden.</div>}
     </div>

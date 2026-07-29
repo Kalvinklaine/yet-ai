@@ -31,6 +31,7 @@ describe("ProjectCommandCenter", () => {
     expect(container.querySelectorAll("[role='status']")).toHaveLength(2);
     expect(container.querySelector("[role='alert']")?.textContent).toBe("Memory is unavailable.");
     expect(container.textContent).toContain("No recent conversations.");
+    expect(container.textContent).toContain("No recorded activity is available.");
     expect(button("Start new chat").disabled).toBe(true);
     expect(button("Start new chat").getAttribute("aria-describedby")).toBe("project-command-center-start-reason");
   });
@@ -44,7 +45,7 @@ describe("ProjectCommandCenter", () => {
     render(readyModel(), { onStart, onResume, onMemorySelectionChange, onNavigateActiveWork });
 
     act(() => button("Start new chat").click());
-    act(() => button("Resume recent design chat").click());
+    act(() => button("Open recent design chat").click());
     act(() => checkbox("Select Architecture note").click());
     act(() => button("Open S142 in Agent").click());
 
@@ -55,7 +56,7 @@ describe("ProjectCommandCenter", () => {
     expect(localWrite).not.toHaveBeenCalled();
   });
 
-  it("distinguishes active and blocked work and opens each only after an explicit click", () => {
+  it("labels recorded activity sources and limitations and opens each only after an explicit click", () => {
     const onNavigateActiveWork = vi.fn();
     render({
       ...readyModel(),
@@ -65,6 +66,9 @@ describe("ProjectCommandCenter", () => {
       ] },
     }, { onNavigateActiveWork });
 
+    expect(container.textContent).toContain("Recorded activity");
+    expect(container.textContent).toContain("explicit developer progress or bounded VS Code host actions");
+    expect(container.textContent).toContain("They do not show background autonomy or start or continue work.");
     expect(container.textContent).toContain("In progress");
     expect(container.textContent).toContain("Needs attention");
     expect(onNavigateActiveWork).not.toHaveBeenCalled();
@@ -103,7 +107,7 @@ describe("ProjectCommandCenter", () => {
     expect(button("Starting…").disabled).toBe(true);
     expect(container.querySelector("#project-command-center-recent-conversations")?.textContent).toBe("Recent conversations");
     expect(container.querySelector("[aria-labelledby='project-command-center-recent-conversations']")).not.toBeNull();
-    expect(button(`Resume ${longLabel}`)).not.toBeNull();
+    expect(button(`Open ${longLabel}`)).not.toBeNull();
     expect(container.textContent).toContain(longLabel);
   });
 });

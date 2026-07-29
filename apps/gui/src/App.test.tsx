@@ -4421,7 +4421,7 @@ describe("runtime debug redaction", () => {
 });
 
 describe("agent progress panel", () => {
-  it("empty list renders no agent runs", async () => {
+  it("empty list explains that no developer or bounded host activity is available", async () => {
     mockRuntimeResponses({ agentProgress: agentProgressResponse() });
     renderApp();
 
@@ -4432,8 +4432,9 @@ describe("agent progress panel", () => {
     });
 
     expect(container?.textContent).toContain("Agent progress");
-    expect(container?.textContent).toContain("No local agent runs");
-    expect(container?.textContent).toContain("The local progress source is reachable but currently has no runs to display.");
+    expect(container?.textContent).toContain("No recorded activity");
+    expect(container?.textContent).toContain("no developer-published or bounded host-action entries are available");
+    expect(container?.textContent).toContain("Normal chat does not create progress entries");
     expect(container?.textContent).toContain("Generated at: 2026-05-29T15:00:00Z");
   });
 
@@ -4457,8 +4458,10 @@ describe("agent progress panel", () => {
     });
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Populated local progress");
-    expect(text).toContain("1 local agent run returned by the read-only runtime endpoint.");
+    expect(text).toContain("Recorded local activity");
+    expect(text).toContain("1 sanitized activity entry returned by the read-only runtime endpoint.");
+    expect(text).toContain("bounded, explicitly requested VS Code host actions");
+    expect(text).toContain("they do not represent background autonomy");
     expect(text).toContain("Generated at: 2026-05-29T15:00:00Z");
     expect(text).toContain("Read-only local observability; refresh only re-reads local progress.");
     expect(text).toContain("Running local endpoint verification");
@@ -4607,7 +4610,7 @@ describe("agent progress panel", () => {
     });
 
     const text = container?.textContent ?? "";
-    expect(text).toContain("Populated local progress");
+    expect(text).toContain("Recorded local activity");
     expect(text).toContain("unknown-card-1 / unknown-run-1");
     expect(text).toContain("Phase: started");
     expect(text).toContain("Status: running");
@@ -4943,7 +4946,7 @@ describe("agent progress panel", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain("Agent progress not checked");
-    expect(container?.textContent).toContain("Refresh to read the local runtime agent-progress source.");
+    expect(container?.textContent).toContain("Refresh to read sanitized activity from the local runtime endpoint.");
     expect(container?.textContent).not.toContain("T-OLD");
     expect(container?.textContent).not.toContain("stale progress secret");
   });

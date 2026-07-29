@@ -39,7 +39,7 @@ describe("projectCommandCenterData", () => {
     expect(JSON.stringify(result)).not.toContain("NOTE BODY");
   });
 
-  it("excludes done progress and classifies active versus blocked work", () => {
+  it("shapes non-terminal recorded progress without carrying execution payloads", () => {
     const result = shapeActiveWork([
       progress("run-done", "done", "2026-07-28T10:00:00Z"),
       progress("run-active", "running", "2026-07-28T11:00:00Z"),

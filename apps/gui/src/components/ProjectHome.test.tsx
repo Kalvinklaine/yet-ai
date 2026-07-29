@@ -50,7 +50,7 @@ describe("ProjectHome", () => {
     const container = document.createElement("div"); document.body.append(container);
     act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectHome project={project} model={model} navigate={navigate} />); });
     const button = (label: string) => Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === label)!;
-    act(() => button("Resume Recent design").click());
+    act(() => button("Open Recent design").click());
     act(() => button("Open S143 in Agent").click());
     act(() => button("Open S144 in Agent").click());
     const memory = container.querySelector("a[href$='/memory']") as HTMLAnchorElement;
@@ -70,7 +70,7 @@ describe("ProjectHome", () => {
     act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectHome project={project} model={model} navigate={navigate} />); });
     expect(consumeProjectChatLaunchIntent({ projectId: project.projectId, chatId: "chat-recent", lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
     act(() => container.querySelector("input[type='checkbox']")?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-    act(() => Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === "Resume Recent design")?.click());
+    act(() => Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === "Open Recent design")?.click());
     const intent = consumeProjectChatLaunchIntent({ projectId: project.projectId, chatId: "chat-recent", lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() });
     expect(intent?.selectedNoteIds).toEqual(["note-1"]);
     expect(navigate).toHaveBeenCalledWith({ kind: "project", projectId: project.projectId, page: "chat", chatId: "chat-recent" });
@@ -83,7 +83,7 @@ describe("ProjectHome", () => {
 
     act(() => Array.from(container.querySelectorAll("button")).find((item) => item.textContent === "Start new chat")?.click());
     expect(consumeProjectChatLaunchIntent({ projectId: project.projectId, lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
-    act(() => Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === "Resume Recent design")?.click());
+    act(() => Array.from(container.querySelectorAll("button")).find((item) => item.getAttribute("aria-label") === "Open Recent design")?.click());
     expect(consumeProjectChatLaunchIntent({ projectId: project.projectId, chatId: "chat-recent", lifecycleGeneration: getBrowserProjectChatLifecycleGeneration() })).toBeNull();
   });
 });

@@ -50,13 +50,17 @@ export function ProjectCommandCenter({
 
       <div className="project-command-center-grid">
         <CommandCenterSection title="Readiness" section={model.readiness} emptyLabel="No readiness details are available." renderItem={(item) => <ReadinessRow item={item} />} />
-        <CommandCenterSection title="Recent conversations" section={model.conversations} emptyLabel="No recent conversations." renderItem={(item) => <article><strong>{item.title}</strong><span>{item.updatedLabel}</span><button type="button" onClick={() => onResume(item.chatId)} aria-label={`Resume ${item.title}`}>Resume</button></article>} />
+        <CommandCenterSection title="Recent conversations" section={model.conversations} emptyLabel="No recent conversations." renderItem={(item) => <article><strong>{item.title}</strong><span>{item.updatedLabel}</span><button type="button" onClick={() => onResume(item.chatId)} aria-label={`Open ${item.title}`}>Open chat</button></article>} />
         <CommandCenterSection title="Memory" section={model.memory} emptyLabel="No memory notes." renderItem={(item) => {
           const checked = selected.has(item.noteId);
           const limitReached = selectedIds.length >= projectCommandCenterLimits.memorySelections && !checked;
           return <article><label className="project-command-center-memory-option"><input type="checkbox" checked={checked} disabled={limitReached} onChange={() => toggleMemory(item.noteId)} /><span>Select {item.title}</span></label><p>{item.summary}</p>{item.tags.length > 0 && <span aria-label="Memory tags">{item.tags.join(" · ")}</span>}</article>;
         }} />
-        <CommandCenterSection title="Active work" section={model.activeWork} emptyLabel="No active work." renderItem={(item) => <article><strong>{item.cardLabel}</strong><span>{item.status === "blocked" ? "Needs attention" : "In progress"} · {item.updatedLabel}</span><button type="button" onClick={() => onNavigateActiveWork(item.runId)} aria-label={`Open ${item.cardLabel} in Agent`}>Open in Agent</button></article>} />
+        <section className="project-command-center-section" aria-labelledby="project-command-center-recorded-activity">
+          <h2 id="project-command-center-recorded-activity">Recorded activity</h2>
+          <p className="subtle">Sanitized entries come from explicit developer progress or bounded VS Code host actions. They do not show background autonomy or start or continue work.</p>
+          <CommandCenterSectionContent section={model.activeWork} loadingLabel="Loading recorded activity…" emptyLabel="No recorded activity is available." renderItem={(item) => <article><strong>{item.cardLabel}</strong><span>{item.status === "blocked" ? "Needs attention" : "In progress"} · {item.updatedLabel}</span><button type="button" onClick={() => onNavigateActiveWork(item.runId)} aria-label={`Open ${item.cardLabel} in Agent`}>Open in Agent</button></article>} />
+        </section>
       </div>
     </section>
   );
@@ -64,7 +68,11 @@ export function ProjectCommandCenter({
 
 function CommandCenterSection<T>({ title, section, emptyLabel, renderItem }: { title: string; section: CommandCenterSection<T>; emptyLabel: string; renderItem: (item: T) => React.ReactNode }) {
   const headingId = `project-command-center-${title.toLowerCase().replace(/ /g, "-")}`;
-  return <section className="project-command-center-section" aria-labelledby={headingId}><h2 id={headingId}>{title}</h2>{section.status === "loading" ? <p role="status">Loading {title.toLowerCase()}…</p> : section.status === "error" ? <p role="alert">{section.message}</p> : section.status === "empty" ? <p>{emptyLabel}</p> : <div className="stack">{section.items.map((item, index) => <div key={itemKey(item, index)}>{renderItem(item)}</div>)}</div>}</section>;
+  return <section className="project-command-center-section" aria-labelledby={headingId}><h2 id={headingId}>{title}</h2><CommandCenterSectionContent section={section} loadingLabel={`Loading ${title.toLowerCase()}…`} emptyLabel={emptyLabel} renderItem={renderItem} /></section>;
+}
+
+function CommandCenterSectionContent<T>({ section, loadingLabel, emptyLabel, renderItem }: { section: CommandCenterSection<T>; loadingLabel: string; emptyLabel: string; renderItem: (item: T) => React.ReactNode }) {
+  return section.status === "loading" ? <p role="status">{loadingLabel}</p> : section.status === "error" ? <p role="alert">{section.message}</p> : section.status === "empty" ? <p>{emptyLabel}</p> : <div className="stack">{section.items.map((item, index) => <div key={itemKey(item, index)}>{renderItem(item)}</div>)}</div>;
 }
 
 function ReadinessRow({ item }: { item: ProjectReadinessItem }) {
