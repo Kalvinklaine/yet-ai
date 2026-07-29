@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::fmt::{self, Write};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -137,6 +138,7 @@ const CHAT_CONTEXT_SELECTION_TEXT_MAX_CHARS: usize = 8_000;
 const CHAT_CONTEXT_TOTAL_MAX_CHARS: usize = 12_000;
 const CHAT_CONTEXT_BUNDLE_MAX_ITEMS: usize = 4;
 const CHAT_CONTEXT_BUNDLE_SELECTION_TEXT_MAX_CHARS: usize = 16_000;
+const CHAT_PROVIDER_PROMPT_MAX_CHARS: usize = 20_000;
 const CHAT_CONTEXT_DISPLAY_PATH_MAX_CHARS: usize = 256;
 const CHAT_CONTEXT_WORKSPACE_PATH_MAX_CHARS: usize = 512;
 const CHAT_CONTEXT_LANGUAGE_MAX_CHARS: usize = 64;
@@ -708,8 +710,8 @@ fn runtime_key(scope: &str, chat_id: &str) -> String {
 }
 
 impl ChatContext {
-    pub fn from_value(value: serde_json::Value) -> Option<Self> {
-        if value.get("kind")?.as_str()? == "explicit_context_bundle" {
+    pub fn from_value(value: serde_json::Value, content: &str) -> Option<Self> {
+        let context = if value.get("kind")?.as_str()? == "explicit_context_bundle" {
             let bundle: ChatExplicitContextBundle = serde_json::from_value(value).ok()?;
             bundle
                 .is_valid()
@@ -717,7 +719,8 @@ impl ChatContext {
         } else {
             let context: ChatActiveEditorContext = serde_json::from_value(value).ok()?;
             context.is_valid().then_some(Self::ActiveEditor(context))
-        }
+        }?;
+        provider_prompt_fits_budget(content, &context).then_some(context)
     }
 
     fn first_active_item(&self) -> Option<&ChatActiveEditorContext> {
@@ -1058,77 +1061,141 @@ fn assemble_provider_prompt(content: &str, context: Option<&ChatContext>) -> Str
     let Some(context) = context else {
         return content.to_string();
     };
-    let mut lines = Vec::new();
+    let mut prompt = String::new();
+    render_provider_prompt(&mut prompt, content, context)
+        .expect("writing a provider prompt to String cannot fail");
+    prompt
+}
+
+fn provider_prompt_fits_budget(content: &str, context: &ChatContext) -> bool {
+    let mut counter = BoundedCharCounter::new(CHAT_PROVIDER_PROMPT_MAX_CHARS);
+    render_provider_prompt(&mut counter, content, context).is_ok()
+}
+
+fn render_provider_prompt(
+    output: &mut impl Write,
+    content: &str,
+    context: &ChatContext,
+) -> fmt::Result {
+    let mut lines = PromptLines::new(output);
     match context {
         ChatContext::ActiveEditor(item) => {
-            push_active_editor_prompt_lines(&mut lines, item, None);
+            push_active_editor_prompt_lines(&mut lines, item, None)?;
         }
         ChatContext::ExplicitContextBundle(bundle) => {
-            lines.push("IDE context bundle".to_string());
+            lines.line("IDE context bundle")?;
             for (index, item) in bundle.items.iter().enumerate() {
-                push_bundle_item_prompt_lines(&mut lines, item, index + 1);
+                push_bundle_item_prompt_lines(&mut lines, item, index + 1)?;
             }
         }
     }
-    lines.push(String::new());
-    lines.push("User request".to_string());
-    lines.push(content.to_string());
-    lines.join("\n")
+    lines.line("")?;
+    lines.line("User request")?;
+    lines.line(content)
 }
 
-fn push_bundle_item_prompt_lines(
-    lines: &mut Vec<String>,
-    item: &ChatContextBundleItem,
-    item_index: usize,
-) {
-    match item {
-        ChatContextBundleItem::ActiveEditor(context) => {
-            push_active_editor_prompt_lines(lines, context, Some(item_index));
+struct PromptLines<'a, W> {
+    output: &'a mut W,
+    first: bool,
+}
+
+impl<'a, W: Write> PromptLines<'a, W> {
+    fn new(output: &'a mut W) -> Self {
+        Self {
+            output,
+            first: true,
         }
-        ChatContextBundleItem::VerificationOutput(context) => {
-            push_verification_output_prompt_lines(lines, context, item_index);
+    }
+
+    fn line(&mut self, value: &str) -> fmt::Result {
+        self.line_args(format_args!("{value}"))
+    }
+
+    fn line_args(&mut self, value: fmt::Arguments<'_>) -> fmt::Result {
+        if !self.first {
+            self.output.write_char('\n')?;
         }
-        ChatContextBundleItem::ProjectMemory(context) => {
-            push_project_memory_prompt_lines(lines, context, item_index);
+        self.first = false;
+        self.output.write_fmt(value)
+    }
+}
+
+struct BoundedCharCounter {
+    chars: usize,
+    max_chars: usize,
+}
+
+impl BoundedCharCounter {
+    fn new(max_chars: usize) -> Self {
+        Self {
+            chars: 0,
+            max_chars,
         }
     }
 }
 
-fn push_project_memory_prompt_lines(
-    lines: &mut Vec<String>,
+impl Write for BoundedCharCounter {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        self.chars += value.chars().count();
+        (self.chars <= self.max_chars)
+            .then_some(())
+            .ok_or(fmt::Error)
+    }
+}
+
+fn push_bundle_item_prompt_lines<W: Write>(
+    lines: &mut PromptLines<'_, W>,
+    item: &ChatContextBundleItem,
+    item_index: usize,
+) -> fmt::Result {
+    match item {
+        ChatContextBundleItem::ActiveEditor(context) => {
+            push_active_editor_prompt_lines(lines, context, Some(item_index))
+        }
+        ChatContextBundleItem::VerificationOutput(context) => {
+            push_verification_output_prompt_lines(lines, context, item_index)
+        }
+        ChatContextBundleItem::ProjectMemory(context) => {
+            push_project_memory_prompt_lines(lines, context, item_index)
+        }
+    }
+}
+
+fn push_project_memory_prompt_lines<W: Write>(
+    lines: &mut PromptLines<'_, W>,
     context: &ChatProjectMemoryContext,
     item_index: usize,
-) {
-    lines.push(format!(
+) -> fmt::Result {
+    lines.line_args(format_args!(
         "Item {item_index}: project memory noteId={} title={} tags={}",
         context.note_id,
         context.title,
         context.tags.join(",")
-    ));
-    lines.push("Memory note:".to_string());
-    lines.push(context.text.clone());
+    ))?;
+    lines.line("Memory note:")?;
+    lines.line(&context.text)
 }
 
-fn push_verification_output_prompt_lines(
-    lines: &mut Vec<String>,
+fn push_verification_output_prompt_lines<W: Write>(
+    lines: &mut PromptLines<'_, W>,
     context: &ChatVerificationOutputContext,
     item_index: usize,
-) {
-    lines.push(format!(
+) -> fmt::Result {
+    lines.line_args(format_args!(
         "Item {item_index}: verification output commandId={} status={} exitCode={} truncated={}",
         context.command_id, context.status, context.exit_code, context.truncated
-    ));
-    lines.push("Output tail:".to_string());
-    lines.push(context.output_tail.clone());
+    ))?;
+    lines.line("Output tail:")?;
+    lines.line(&context.output_tail)
 }
 
-fn push_active_editor_prompt_lines(
-    lines: &mut Vec<String>,
+fn push_active_editor_prompt_lines<W: Write>(
+    lines: &mut PromptLines<'_, W>,
     context: &ChatActiveEditorContext,
     item_index: Option<usize>,
-) {
+) -> fmt::Result {
     if let Some(item_index) = item_index {
-        lines.push(format!(
+        lines.line_args(format_args!(
             "Item {item_index}: source={} path={} language={} range={}",
             context.source,
             context
@@ -1149,33 +1216,34 @@ fn push_active_editor_prompt_lines(
                 .as_ref()
                 .map(selection_range)
                 .unwrap_or_default()
-        ));
+        ))?;
     } else {
-        lines.push("IDE context".to_string());
-        lines.push(format!("Source: {}", context.source));
+        lines.line("IDE context")?;
+        lines.line_args(format_args!("Source: {}", context.source))?;
     }
     if let Some(file) = &context.file {
         if item_index.is_none() {
             if let Some(value) = &file.display_path {
-                lines.push(format!("File: {value}"));
+                lines.line_args(format_args!("File: {value}"))?;
             }
             if let Some(value) = &file.workspace_relative_path {
-                lines.push(format!("Workspace-relative path: {value}"));
+                lines.line_args(format_args!("Workspace-relative path: {value}"))?;
             }
             if let Some(value) = &file.language_id {
-                lines.push(format!("Language: {value}"));
+                lines.line_args(format_args!("Language: {value}"))?;
             }
         }
     }
     if let Some(selection) = &context.selection {
         if item_index.is_none() && has_selection_range(selection) {
-            lines.push(format!("Range: {}", selection_range(selection)));
+            lines.line_args(format_args!("Range: {}", selection_range(selection)))?;
         }
         if let Some(value) = &selection.text {
-            lines.push("Selection:".to_string());
-            lines.push(value.clone());
+            lines.line("Selection:")?;
+            lines.line(value)?;
         }
     }
+    Ok(())
 }
 
 fn has_selection_range(selection: &ChatContextSelection) -> bool {
@@ -2569,10 +2637,11 @@ fn ollama_chat_url(base_url: &str) -> Result<String, ChatError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        chat_completions_url, classify_provider_error, demo_response, select_chat_provider,
-        sequence_subscription_event, ChatActiveEditorContext, ChatContext, ChatContextFile,
-        ChatContextSelection, ChatError, ChatEvent, OpenAiSseParser, ProviderInvalidRequestReason,
-        SubscriptionEvent, PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
+        assemble_provider_prompt, chat_completions_url, classify_provider_error, demo_response,
+        select_chat_provider, sequence_subscription_event, ChatActiveEditorContext, ChatContext,
+        ChatContextFile, ChatContextSelection, ChatError, ChatEvent, OpenAiSseParser,
+        ProviderInvalidRequestReason, SubscriptionEvent, CHAT_PROVIDER_PROMPT_MAX_CHARS,
+        PROVIDER_STREAM_EVENT_DATA_LIMIT, PROVIDER_STREAM_LINE_BUFFER_LIMIT,
     };
 
     static TEST_DIR_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -4070,6 +4139,141 @@ mod tests {
             selection: None,
         });
         assert!(matches!(&context, ChatContext::ActiveEditor(context) if context.is_valid()));
+    }
+
+    #[test]
+    fn chat_context_budget_matches_exact_provider_prompt_for_boundary_table() {
+        let cases = [
+            (
+                "editor",
+                serde_json::json!({
+                    "kind": "active_editor",
+                    "source": "vscode",
+                    "file": {
+                        "displayPath": "src/main.ts",
+                        "workspaceRelativePath": "src/main.ts",
+                        "languageId": "typescript"
+                    },
+                    "selection": {
+                        "startLine": 10,
+                        "startCharacter": 2,
+                        "endLine": 12,
+                        "endCharacter": 8,
+                        "text": "function greet()"
+                    }
+                }),
+            ),
+            (
+                "verification",
+                serde_json::json!({
+                    "kind": "explicit_context_bundle",
+                    "items": [{
+                        "kind": "verification_output",
+                        "commandId": "engine-chat-tests",
+                        "exitCode": 101,
+                        "status": "failed",
+                        "outputTail": "test chat budget failed",
+                        "truncated": true
+                    }]
+                }),
+            ),
+            (
+                "memory",
+                serde_json::json!({
+                    "kind": "explicit_context_bundle",
+                    "items": [{
+                        "kind": "project_memory",
+                        "noteId": "note_1",
+                        "title": "Prompt budget",
+                        "text": "Keep exact prompt accounting shared.",
+                        "tags": ["local", "budget"]
+                    }]
+                }),
+            ),
+            (
+                "mixed four-item bundle",
+                serde_json::json!({
+                    "kind": "explicit_context_bundle",
+                    "items": [
+                        {
+                            "kind": "active_editor",
+                            "source": "vscode",
+                            "file": { "workspaceRelativePath": "src/a.ts", "languageId": "typescript" },
+                            "selection": { "startLine": 1, "endLine": 2, "text": "const a = 1;" }
+                        },
+                        {
+                            "kind": "active_editor",
+                            "source": "jetbrains",
+                            "file": { "workspaceRelativePath": "src/b.rs", "languageId": "rust" },
+                            "selection": { "startLine": 3, "endLine": 4, "text": "let b = 2;" }
+                        },
+                        {
+                            "kind": "verification_output",
+                            "commandId": "repository-check",
+                            "exitCode": 0,
+                            "status": "succeeded",
+                            "outputTail": "Repository validation passed.",
+                            "truncated": false
+                        },
+                        {
+                            "kind": "project_memory",
+                            "noteId": "note_2",
+                            "title": "Local contract",
+                            "text": "Use selected context once.",
+                            "tags": ["local"]
+                        }
+                    ]
+                }),
+            ),
+        ];
+
+        for (label, value) in cases {
+            let base = ChatContext::from_value(value.clone(), "u").unwrap();
+            let base_chars = assemble_provider_prompt("u", Some(&base)).chars().count();
+            let accepted_content = "u".repeat(CHAT_PROVIDER_PROMPT_MAX_CHARS - base_chars);
+            let accepted = ChatContext::from_value(value.clone(), &accepted_content)
+                .unwrap_or_else(|| panic!("{label}: one-character-under prompt was rejected"));
+            assert_eq!(
+                assemble_provider_prompt(&accepted_content, Some(&accepted))
+                    .chars()
+                    .count(),
+                CHAT_PROVIDER_PROMPT_MAX_CHARS - 1,
+                "{label}"
+            );
+
+            let exact_content = format!("{accepted_content}u");
+            assert!(ChatContext::from_value(value.clone(), &exact_content).is_some());
+
+            let rejected_content = format!("{exact_content}u");
+            assert!(
+                ChatContext::from_value(value, &rejected_content).is_none(),
+                "{label}: one-character-over prompt was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn chat_context_budget_counts_formatting_and_user_request_overhead() {
+        let value = serde_json::json!({
+            "kind": "explicit_context_bundle",
+            "items": [{
+                "kind": "verification_output",
+                "commandId": "repository-check",
+                "exitCode": 0,
+                "status": "succeeded",
+                "outputTail": "v".repeat(4_000),
+                "truncated": false
+            }]
+        });
+        let context = ChatContext::from_value(value.clone(), "u").unwrap();
+        let overhead = assemble_provider_prompt("u", Some(&context))
+            .chars()
+            .count()
+            - 4_001;
+        assert!(overhead > 0);
+
+        let content_without_formatting_budget = "u".repeat(CHAT_PROVIDER_PROMPT_MAX_CHARS - 4_000);
+        assert!(ChatContext::from_value(value, &content_without_formatting_budget).is_none());
     }
 
     #[test]

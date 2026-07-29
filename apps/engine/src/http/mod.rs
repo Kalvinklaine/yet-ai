@@ -1366,7 +1366,7 @@ fn user_message_payload(
         return None;
     }
     let context = match object.get("context") {
-        Some(value) => Some(ChatContext::from_value(value.clone())?),
+        Some(value) => Some(ChatContext::from_value(value.clone(), content)?),
         None => None,
     };
     Some((content, context))
