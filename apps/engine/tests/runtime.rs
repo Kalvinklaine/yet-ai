@@ -491,8 +491,9 @@ async fn demo_mode_api_models_and_chat_stream_local_history() {
         .filter_map(|event| event["payload"]["delta"]["content"].as_str())
         .collect::<String>();
     assert!(stream_content.contains("Hello from Yet AI Demo Mode"));
-    assert!(stream_content.contains("path=src/lib.ts"));
+    assert!(stream_content.contains("fileAttached=true"));
     assert!(stream_content.contains("language=typescript"));
+    assert!(!stream_content.contains("src/lib.ts"));
     assert!(!stream_content.contains("secret selected source"));
 
     let assistant_message_added_index = events
@@ -524,6 +525,85 @@ async fn demo_mode_api_models_and_chat_stream_local_history() {
                 .as_str()
                 .unwrap()
                 .contains("no provider call was made")));
+}
+
+#[tokio::test]
+async fn demo_mode_safe_edit_omits_raw_context_from_stream_and_history() {
+    let app = test_app();
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/demo-mode",
+            Body::from(json!({ "enabled": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let selected_sentinel = "DEMO_SELECTED_AND_REPLACEMENT_SENTINEL";
+    let path_sentinel = "private-workspace/DEMO_PATH_SENTINEL.ts";
+    let command = json!({
+        "requestId": "demo-safe-edit-privacy",
+        "type": "user_message",
+        "payload": {
+            "content": "Coding action: propose_safe_edit\n\nPropose a safe edit for the selected code.",
+            "context": {
+                "kind": "active_editor",
+                "source": "vscode",
+                "file": {
+                    "displayPath": path_sentinel,
+                    "workspaceRelativePath": path_sentinel,
+                    "languageId": "typescript"
+                },
+                "selection": {
+                    "startLine": 4,
+                    "startCharacter": 2,
+                    "endLine": 4,
+                    "endCharacter": 40,
+                    "text": selected_sentinel
+                }
+            }
+        }
+    });
+    let (status, accepted) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/chats/demo-safe-edit-privacy/commands",
+            Body::from(command.to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(accepted["accepted"], true);
+
+    let text = sse_text_from_with_timeout(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=demo-safe-edit-privacy",
+        std::time::Duration::from_secs(3),
+    )
+    .await;
+    assert!(text.contains("Demo Mode edit review"));
+    assert!(text.contains("No executable edit proposal was created"));
+    assert!(!text.contains(selected_sentinel));
+    assert!(!text.contains(path_sentinel));
+    assert!(!text.contains("gui.applyWorkspaceEditRequest"));
+    assert!(!text.contains("replacementText"));
+
+    let thread = wait_for_chat_messages(app, "demo-safe-edit-privacy", 2).await;
+    let assistant = thread["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "assistant")
+        .expect("persisted Demo assistant message");
+    let history = assistant.to_string();
+    assert!(history.contains("Demo Mode edit review"));
+    assert!(!history.contains(selected_sentinel));
+    assert!(!history.contains(path_sentinel));
+    assert!(!history.contains("gui.applyWorkspaceEditRequest"));
+    assert!(!history.contains("replacementText"));
 }
 
 #[tokio::test]

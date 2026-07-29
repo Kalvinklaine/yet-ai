@@ -1748,13 +1748,7 @@ fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
         response.push_str("\n\nAttached context metadata received (raw selected text omitted):");
         response.push_str(&format!(" source={}", context.source));
         if let Some(file) = &context.file {
-            if let Some(path) = file
-                .workspace_relative_path
-                .as_ref()
-                .or(file.display_path.as_ref())
-            {
-                response.push_str(&format!(", path={path}"));
-            }
+            response.push_str(", fileAttached=true");
             if let Some(language) = &file.language_id {
                 response.push_str(&format!(", language={language}"));
             }
@@ -1780,106 +1774,12 @@ fn demo_response(content: &str, context: Option<&ChatContext>) -> String {
 }
 
 fn demo_edit_proposal_response(context: Option<&ChatContext>) -> String {
-    let valid_workspace_relative_path = context
-        .and_then(ChatContext::first_active_item)
-        .and_then(|context| context.file.as_ref())
-        .and_then(|file| file.workspace_relative_path.as_deref())
-        .filter(|path| demo_safe_workspace_relative_path(path));
-    let workspace_relative_path = valid_workspace_relative_path.unwrap_or("src/example.ts");
-    let selection = valid_workspace_relative_path
-        .and(context)
-        .and_then(ChatContext::first_active_item)
-        .and_then(|context| context.selection.as_ref());
-    let has_selected_text = selection
-        .and_then(|selection| selection.text.as_deref())
-        .is_some_and(|text| !text.is_empty());
-    let replacement_text = selection
-        .and_then(|selection| selection.text.as_deref())
-        .filter(|text| !text.is_empty())
-        .unwrap_or("");
-    let range = selection
-        .and_then(|selection| {
-            let start_line = selection.start_line?;
-            let start_character = selection.start_character?;
-            let end_line = if has_selected_text {
-                selection.end_line?
-            } else {
-                start_line
-            };
-            let end_character = if has_selected_text {
-                selection.end_character?
-            } else {
-                start_character
-            };
-            Some(json!({
-                "start": {
-                    "line": start_line,
-                    "character": start_character,
-                },
-                "end": {
-                    "line": end_line,
-                    "character": end_character,
-                }
-            }))
-        })
-        .unwrap_or_else(|| {
-            json!({
-                "start": { "line": 0, "character": 0 },
-                "end": { "line": 0, "character": 0 }
-            })
-        });
-
-    serde_json::to_string_pretty(&json!({
-        "type": "gui.applyWorkspaceEditRequest",
-        "version": "2026-05-15",
-        "payload": {
-            "requiresUserConfirmation": true,
-            "summary": "Demo Mode safe edit no-op preview. No provider call was made; this is a local canned response, not model quality. This proposal preserves the current selection only when the same context includes a valid workspace-relative path; otherwise it uses an empty zero-length preview fallback.",
-            "cloudRequired": false,
-            "edits": [{
-                "workspaceRelativePath": workspace_relative_path,
-                "textReplacements": [{
-                    "range": range,
-                    "replacementText": replacement_text
-                }]
-            }]
-        }
-    }))
-    .unwrap_or_else(|_| "Yet AI Demo Mode could not render the edit proposal JSON.".to_string())
-}
-
-fn demo_safe_workspace_relative_path(value: &str) -> bool {
-    valid_context_path(value, CHAT_CONTEXT_WORKSPACE_PATH_MAX_CHARS)
-        && !value.contains('%')
-        && !value.contains('?')
-        && !value.contains('#')
-        && value
-            .split('/')
-            .all(|part| !demo_secret_like_path_segment(part))
-}
-
-fn demo_secret_like_path_segment(value: &str) -> bool {
-    let lower = value.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "auth"
-            | "authorization"
-            | "bearer"
-            | "cookie"
-            | "credential"
-            | "credentials"
-            | "password"
-            | "secret"
-            | "token"
-            | "access_token"
-            | "api_key"
-    ) || lower.starts_with("sk-")
-        || lower.contains(".secret")
-        || lower.contains("_secret")
-        || lower.contains("-secret")
-        || lower.contains(".token")
-        || lower.contains("_token")
-        || lower.contains("-token")
+    let active_context = context.and_then(ChatContext::first_active_item);
+    let file_attached = active_context.and_then(|item| item.file.as_ref()).is_some();
+    let selection_chars = active_context.map_or(0, ChatActiveEditorContext::selection_text_chars);
+    format!(
+        "Demo Mode edit review: no provider call was made, and this is a local canned response, not model quality. No executable edit proposal was created. Attached context metadata: fileAttached={file_attached}, selectedCharacterCount={selection_chars}. Raw selected text, replacement text, and file paths are omitted. Configure a BYOK provider to request a reviewable edit proposal."
+    )
 }
 
 async fn openai_compatible_stream(
@@ -4809,49 +4709,31 @@ mod tests {
     }
 
     #[test]
-    fn demo_safe_edit_returns_gui_apply_workspace_edit_envelope() {
+    fn demo_safe_edit_returns_non_authoritative_metadata_only_guidance() {
         let prompts = representative_gui_coding_action_prompts();
         let response = demo_response(&prompts[4], None);
-        let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
-
-        assert_eq!(parsed["type"], "gui.applyWorkspaceEditRequest");
-        assert_eq!(parsed["version"], "2026-05-15");
-        assert_eq!(parsed["payload"]["requiresUserConfirmation"], true);
-        assert_eq!(parsed["payload"]["cloudRequired"], false);
-        let summary = parsed["payload"]["summary"].as_str().unwrap();
-        assert!(summary.contains("Demo Mode"));
-        assert!(summary.contains("no-op preview"));
-        assert!(summary.contains("zero-length preview"));
-        assert!(summary.contains("No provider call was made"));
-        assert!(summary.contains("local canned response"));
-        assert!(summary.contains("not model quality"));
-        assert_eq!(
-            parsed["payload"]["edits"][0]["workspaceRelativePath"],
-            "src/example.ts"
-        );
-        assert_eq!(
-            parsed["payload"]["edits"][0]["textReplacements"][0]["range"],
-            serde_json::json!({
-                "start": { "line": 0, "character": 0 },
-                "end": { "line": 0, "character": 0 }
-            })
-        );
-        assert_eq!(
-            parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
-            ""
-        );
+        assert!(response.contains("Demo Mode edit review"));
+        assert!(response.contains("no provider call was made"));
+        assert!(response.contains("local canned response"));
+        assert!(response.contains("not model quality"));
+        assert!(response.contains("No executable edit proposal was created"));
+        assert!(response.contains("fileAttached=false"));
+        assert!(response.contains("selectedCharacterCount=0"));
+        assert!(!response.contains("gui.applyWorkspaceEditRequest"));
+        assert!(serde_json::from_str::<serde_json::Value>(&response).is_err());
     }
 
     #[test]
-    fn demo_safe_edit_with_valid_workspace_path_preserves_selected_text_as_no_op_replacement() {
+    fn demo_safe_edit_omits_selected_text_and_workspace_path() {
         let prompts = representative_gui_coding_action_prompts();
-        let selected_text = "export function greet(name: string) {\n  return `Hello, ${name}`;\n}";
+        let selected_text = "DEMO_SELECTED_TEXT_SENTINEL";
+        let workspace_path = "src/DEMO_PRIVATE_PATH_SENTINEL.ts";
         let context = ChatContext::ActiveEditor(ChatActiveEditorContext {
             kind: "active_editor".to_string(),
             source: "vscode".to_string(),
             file: Some(ChatContextFile {
-                display_path: Some("src/demo.ts".to_string()),
-                workspace_relative_path: Some("src/demo.ts".to_string()),
+                display_path: Some(workspace_path.to_string()),
+                workspace_relative_path: Some(workspace_path.to_string()),
                 language_id: Some("typescript".to_string()),
             }),
             selection: Some(ChatContextSelection {
@@ -4863,70 +4745,34 @@ mod tests {
             }),
         });
         let response = demo_response(&prompts[4], Some(&context));
-        let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
 
-        assert_eq!(
-            parsed["payload"]["edits"][0]["workspaceRelativePath"],
-            "src/demo.ts"
-        );
-        assert_eq!(
-            parsed["payload"]["edits"][0]["textReplacements"][0]["range"],
-            serde_json::json!({
-                "start": { "line": 1, "character": 0 },
-                "end": { "line": 3, "character": 1 }
-            })
-        );
-        assert_eq!(
-            parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
-            selected_text
-        );
-        assert_ne!(
-            parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
-            "// Demo Mode placeholder edit; review and replace with your intended change."
-        );
+        assert!(response.contains("fileAttached=true"));
+        assert!(response.contains(&format!(
+            "selectedCharacterCount={}",
+            selected_text.chars().count()
+        )));
+        assert!(!response.contains(selected_text));
+        assert!(!response.contains(workspace_path));
+        assert!(!response.contains("replacementText"));
     }
 
     #[test]
-    fn demo_safe_edit_without_valid_workspace_path_uses_empty_zero_length_fallback() {
-        let prompts = representative_gui_coding_action_prompts();
-        let selected_text = "destructive unrelated selected text must not be carried to fallback";
-        for workspace_relative_path in [None, Some("src/token.txt".to_string())] {
-            let context = ChatContext::ActiveEditor(ChatActiveEditorContext {
-                kind: "active_editor".to_string(),
-                source: "vscode".to_string(),
-                file: Some(ChatContextFile {
-                    display_path: Some("src/demo.ts".to_string()),
-                    workspace_relative_path,
-                    language_id: Some("typescript".to_string()),
-                }),
-                selection: Some(ChatContextSelection {
-                    start_line: Some(5),
-                    start_character: Some(6),
-                    end_line: Some(7),
-                    end_character: Some(8),
-                    text: Some(selected_text.to_string()),
-                }),
-            });
-            let response = demo_response(&prompts[4], Some(&context));
-            let parsed: serde_json::Value = serde_json::from_str(&response).unwrap();
+    fn demo_canned_response_omits_workspace_path_metadata() {
+        let context = ChatContext::ActiveEditor(ChatActiveEditorContext {
+            kind: "active_editor".to_string(),
+            source: "vscode".to_string(),
+            file: Some(ChatContextFile {
+                display_path: Some("src/DEMO_PATH_SENTINEL.ts".to_string()),
+                workspace_relative_path: Some("src/DEMO_PATH_SENTINEL.ts".to_string()),
+                language_id: Some("typescript".to_string()),
+            }),
+            selection: None,
+        });
+        let response = demo_response("hello demo", Some(&context));
 
-            assert_eq!(
-                parsed["payload"]["edits"][0]["workspaceRelativePath"],
-                "src/example.ts"
-            );
-            assert_eq!(
-                parsed["payload"]["edits"][0]["textReplacements"][0]["range"],
-                serde_json::json!({
-                    "start": { "line": 0, "character": 0 },
-                    "end": { "line": 0, "character": 0 }
-                })
-            );
-            assert_eq!(
-                parsed["payload"]["edits"][0]["textReplacements"][0]["replacementText"],
-                ""
-            );
-            assert!(!response.contains(selected_text));
-        }
+        assert!(response.contains("fileAttached=true"));
+        assert!(response.contains("language=typescript"));
+        assert!(!response.contains("DEMO_PATH_SENTINEL"));
     }
 
     #[test]
