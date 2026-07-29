@@ -165,9 +165,10 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
 
   const refreshChats = useCallback(async (targetSettings: ChatRuntimeSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = ++chatHistoryAttemptRef.current;
+    const scopeCorrelation = createProjectScopeCorrelation(projectScopeController.current());
     setChatHistoryLoading(true); setChatHistoryError(null);
     const result = await listChats(targetSettings);
-    if (!mountedRef.current || settingsRevisionRef.current !== revision || chatHistoryAttemptRef.current !== attempt) return;
+    if (!mountedRef.current || settingsRevisionRef.current !== revision || chatHistoryAttemptRef.current !== attempt || !projectScopeController.accepts(scopeCorrelation)) return;
     if (result.ok) {
       const summaries = result.data.chats ?? [];
       setChatSummaries(summaries); setChatHistoryRevision(revision);
@@ -191,9 +192,10 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
 
   const loadChatThread = useCallback(async (targetChatId: string, targetSettings: ChatRuntimeSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = ++chatHistoryAttemptRef.current;
+    const scopeCorrelation = createProjectScopeCorrelation(projectScopeController.current());
     setChatHistoryLoading(true); setChatHistoryError(null);
     const result = await getChat(targetSettings, targetChatId);
-    if (!mountedRef.current || settingsRevisionRef.current !== revision || chatHistoryAttemptRef.current !== attempt || chatIdRef.current !== targetChatId) return;
+    if (!mountedRef.current || settingsRevisionRef.current !== revision || chatHistoryAttemptRef.current !== attempt || chatIdRef.current !== targetChatId || !projectScopeController.accepts(scopeCorrelation)) return;
     if (result.ok) {
       setMissingRoutedChatId((current) => current === targetChatId ? null : current);
       setChatView((current) => hydrateChatViewFromThread(current, result.data));
@@ -206,14 +208,14 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
   }, [onMissingRoutedChat, routedChatId, settingsRef, settingsRevisionRef]);
 
   const createNewChat = useCallback(async () => {
-    const targetSettings = settingsRef.current; const revision = settingsRevisionRef.current; const attempt = ++chatHistoryAttemptRef.current;
+    const targetSettings = settingsRef.current; const revision = settingsRevisionRef.current; const attempt = ++chatHistoryAttemptRef.current; const scopeCorrelation = createProjectScopeCorrelation(projectScopeController.current());
     abortActiveStream("SSE stopped and abort requested before creating a new chat");
     setChatHistoryLoading(true); setChatHistoryError(null); setChatError(null); setChatInput("");
     const result = await createChat(targetSettings);
-    if (!mountedRef.current || settingsRevisionRef.current !== revision || chatHistoryAttemptRef.current !== attempt) return;
+    if (!mountedRef.current || settingsRevisionRef.current !== revision || chatHistoryAttemptRef.current !== attempt || !projectScopeController.accepts(scopeCorrelation)) return;
     if (result.ok && result.data.chatId.trim()) {
       setChatSummaries((current) => upsertChatSummary(current, result.data)); setChatHistoryRevision(revision); setCompactConversationsOpen(false);
-      setChatId(result.data.chatId); navigateToChat?.(result.data.chatId); setConversationNotice(`Created and selected ${sanitizeDisplayText(result.data.title || result.data.chatId)}.`);
+      setChatId(result.data.chatId); setMissingRoutedChatId(null); navigateToChat?.(result.data.chatId); setConversationNotice(`Created and selected ${sanitizeDisplayText(result.data.title || result.data.chatId)}.`);
       setChatView(hydrateChatViewFromThread(resetChatViewState(result.data.chatId), result.data)); resettersRef.current.resetConversation("create", result.data.chatId);
     } else if (!result.ok) { setChatHistoryError(result.error); setChatHistoryRevision(revision); }
     setChatHistoryLoading(false);
@@ -222,7 +224,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
   const selectChat = useCallback((nextChatId: string) => {
     setCompactConversationsOpen(false); if (nextChatId === chatIdRef.current) return;
     abortActiveStream("SSE stopped and abort requested before switching chats"); setChatInput(""); resettersRef.current.resetConversation("select", nextChatId);
-    setChatId(nextChatId); navigateToChat?.(nextChatId);
+    setChatId(nextChatId); setMissingRoutedChatId(null); navigateToChat?.(nextChatId);
     const summary = chatSummaries.find((item) => item.chatId === nextChatId); setConversationNotice(`Switched to ${sanitizeDisplayText(summary?.title || nextChatId)}.`);
     setChatView(resetChatViewState(nextChatId)); void loadChatThread(nextChatId);
   }, [abortActiveStream, chatSummaries, loadChatThread, navigateToChat, resettersRef, setChatId, setChatInput]);
