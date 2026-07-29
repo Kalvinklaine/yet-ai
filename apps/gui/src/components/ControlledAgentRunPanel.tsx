@@ -11,7 +11,7 @@ import type { ControlledAgentTwoStepRunState } from "../services/controlledAgent
 import { evaluateControlledAgentRecoveryMatrix, type ControlledAgentRecoveryEvaluation, type ControlledAgentRecoveryVisibleState } from "../services/controlledAgentRecoveryMatrix";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
-import type { ControlledCapabilityProvenanceMap } from "../services/controlledCapabilityProvenance";
+import { controlledCapabilityPresentation, type ControlledCapabilityProvenanceMap } from "../services/controlledCapabilityProvenance";
 
 export type ControlledAgentRunPanelProps = {
   state: ControlledAgentRunState;
@@ -80,18 +80,22 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
     ],
   });
   const recoveryGuidance = buildRecoveryGuidance(host, state);
+  const runProvenance = controlledCapabilityPresentation(provenance?.controlled_run_state, "controlled_run_state", host);
+  const recoveryProvenance = controlledCapabilityPresentation(provenance?.controlled_recovery, "controlled_recovery", host);
 
   return (
-    <section className={`readiness-card ${state.stopped ? "warn" : "ready"} controlled-agent-run-panel stack`} aria-label="Controlled agent run skeleton" data-testid="controlled-agent-run-panel">
+    <section className="readiness-card warn controlled-agent-run-panel stack" aria-label="Controlled agent run skeleton" data-testid="controlled-agent-run-panel">
       <div className="row">
         <strong>S91 controlled agent dev-preview</strong>
         <span className="badge warn">dev-preview, not production autonomy</span>
         <span className="badge">VS Code supported path</span>
         <span className="badge">sanitized metadata only</span>
-        <span className={state.stopped ? "badge warn" : "badge ok"}>{phaseLabel}</span>
+        <span className="badge warn">{phaseLabel}</span>
+        <span className="badge warn">{runProvenance.label}</span>
       </div>
       <span>{sanitizeDisplayText(state.summary)}</span>
-      {twoStepRunState && <section className={`readiness-card ${twoStepRunState.phase === "failed" || twoStepRunState.phase === "stopped" ? "warn" : "ready"} stack`} role="status" aria-label="Controlled two-step run state">
+      <span>Run state {runProvenance.label} · recovery {recoveryProvenance.label}. Local and fixture evidence remains display-only.</span>
+      {twoStepRunState && <section className="readiness-card warn stack" role="status" aria-label="Controlled two-step run state">
         <div className="row">
           <strong>S119 two-step run state</strong>
           <span className={twoStepRunState.phase === "failed" || twoStepRunState.phase === "stopped" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(twoStepRunState.phase.replace(/_/g, " "))}</span>
@@ -112,7 +116,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
           <span className="badge">classification only</span>
           <span className="badge">grants authority: false</span>
         </div>
-        {Object.values(provenance).map((item) => <span key={item.surface}><strong>{sanitizeDisplayText(item.surface.replace(/_/g, " "))}</strong>: {item.status} · {item.readiness} · execution support {item.executionSupport} · {sanitizeDisplayText(item.evidenceLabel)} · {sanitizeDisplayText(item.safeReason)}</span>)}
+        <span>{Object.values(provenance).map((item) => `${item.surface.replace(/_/g, " ")}: ${item.status}/${item.readiness}`).join(" · ")}</span>
         <span className="subtle">Visibility, provenance, and host support are evidence only. Existing explicit confirmation, policy, correlation, and executor checks remain authoritative.</span>
       </section>}
       {capabilityMatrix && (
@@ -134,7 +138,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
           <span className="badge">registry status</span>
           <span className="badge">display-only evidence</span>
           <span className="badge">not a permission grant</span>
-          <span className={authorityRegistrySummary.decision === "metadata_only" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(authorityRegistrySummary.decision.replace(/_/g, " "))}</span>
+          <span className="badge warn">fixture demo · {sanitizeDisplayText(authorityRegistrySummary.decision.replace(/_/g, " "))}</span>
         </div>
         <span>{sanitizeDisplayText(authorityRegistrySummary.summary)}</span>
         <span>Categories: {authorityCategoryEntries.length} total · metadata evidence {authorityAllowedCategoryCount} · fail-closed or blocked {authorityBlockedCategoryCount}</span>
@@ -142,10 +146,10 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         <span>Authority booleans: execute {String(authorityRegistrySummary.allowedToExecute)} · read {String(authorityRegistrySummary.canReadFiles)} · search {String(authorityRegistrySummary.canSearchWorkspace)} · apply {String(authorityRegistrySummary.canApplyEdits)} · verification {String(authorityRegistrySummary.canRunVerification)} · provider tools {String(authorityRegistrySummary.canCallProviderTools)} · shell {String(authorityRegistrySummary.canRunShell)} · git {String(authorityRegistrySummary.canUseGit)} · network {String(authorityRegistrySummary.canUseNetwork)}</span>
         <span className="subtle">Registry status is sanitized evidence for future S110-S124 contracts only. It posts no bridge request, starts no search, reads no files, applies no edits, runs no verification, calls no provider, writes no storage, and grants no authority.</span>
       </section>
-      <section className={`readiness-card ${devPreviewStatus.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled agent dev-preview status">
+      <section className="readiness-card warn stack" role="status" aria-label="Controlled agent dev-preview status">
         <div className="row">
           <strong>Dev-preview readiness</strong>
-          <span className={devPreviewStatus.state === "ready" ? "badge ok" : "badge warn"}>{devPreviewStatus.state}</span>
+          <span className="badge warn">{devPreviewStatus.state}</span>
           <span className="badge">explicit Start/Stop</span>
           <span className="badge">one repair attempt max</span>
         </div>
@@ -153,10 +157,10 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         <span>Host: {devPreviewStatus.host} · Bounded read/edit: {devPreviewStatus.capabilities.boundedRead && devPreviewStatus.capabilities.boundedEdit ? "ready" : "blocked"} · Allowlisted verification: {devPreviewStatus.capabilities.allowlistedVerification ? "ready" : "blocked"} · One bounded repair: {devPreviewStatus.capabilities.boundedRepair ? "ready" : "blocked"} · Sanitized report: ready</span>
         <span>Limitations: {devPreviewStatus.limitations.join(" · ")}</span>
       </section>
-      <section className={`readiness-card ${devPreviewReport.status === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled dev-preview report">
+      <section className="readiness-card warn stack" role="status" aria-label="Controlled dev-preview report">
         <div className="row">
           <strong>Controlled dev-preview report</strong>
-          <span className={devPreviewReport.status === "completed" ? "badge ok" : "badge warn"}>{devPreviewReport.statusLabel}</span>
+          <span className="badge warn">{devPreviewReport.statusLabel}</span>
           <span className="badge">metadata only</span>
           <span className="badge">display only</span>
         </div>
@@ -171,7 +175,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         <span className="subtle">Safety boundaries: {devPreviewReport.safetyBoundaryLabels.join(" · ")}</span>
       </section>
       <span className="subtle">S91 dev-preview: VS Code is the supported explicit-control path. Browser is preview-only and unsupported for privileged controlled actions. JetBrains stays partial/fail-closed where controlled gaps remain. Sanitized reports only.</span>
-      {progressReport && <section className={`readiness-card ${progressReport.status === "blocked" || progressReport.status === "failed" || progressReport.status === "stopped" ? "warn" : "ready"} stack`} aria-label="Controlled progress report metadata">
+      {progressReport && <section className="readiness-card warn stack" aria-label="Controlled progress report metadata">
         <div className="row">
           <strong>Progress report</strong>
           <span className="badge">S79 metadata</span>
@@ -195,7 +199,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         </div>
         {progressDiagnostics.length > 0 && <div className="readiness-card warn" role="status" aria-label="Controlled progress report diagnostics"><strong>Progress diagnostics</strong>{progressDiagnostics.map((diagnostic, index) => <span key={`${index}:${diagnostic}`}>{sanitizeDisplayText(diagnostic)}</span>)}</div>}
       </section>}
-      {mvpReport && <section className={`readiness-card ${mvpReport.status === "blocked" || mvpReport.status === "failed" || mvpReport.status === "stopped" ? "warn" : "ready"} stack`} aria-label="Controlled local agent MVP metadata">
+      {mvpReport && <section className="readiness-card warn stack" aria-label="Controlled local agent MVP metadata">
         <div className="row">
           <strong>Controlled local agent MVP</strong>
           <span className="badge warn">dev preview</span>
@@ -205,12 +209,12 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         </div>
         <span>{sanitizeDisplayText(mvpReport.label)}</span>
         <span className="subtle">MVP metadata is aggregated from existing sanitized readiness, bounded read, edit, verification, progress, and final-report labels only. This panel still cannot start agents, post bridge/runtime commands, read hidden files, apply edits, run verification, call providers, use shell, or use git.</span>
-        <section className={`readiness-card ${mvpReport.runtimeSession.present && mvpReport.runtimeSession.status !== "blocked" ? "ready" : "warn"} stack`} aria-label="Controlled runtime session metadata">
+        <section className="readiness-card warn stack" aria-label="Controlled runtime session metadata">
           <div className="row">
             <strong>Controlled runtime session metadata</strong>
             <span className="badge">S82 evidence</span>
             <span className="badge">read only</span>
-            <span className={mvpReport.runtimeSession.present ? "badge ok" : "badge warn"}>{mvpReport.runtimeSession.present ? sanitizeDisplayText(mvpReport.runtimeSession.status.replace(/_/g, " ")) : "pending"}</span>
+            <span className="badge warn">{mvpReport.runtimeSession.present ? sanitizeDisplayText(mvpReport.runtimeSession.status.replace(/_/g, " ")) : "pending"}</span>
           </div>
           <span>{sanitizeDisplayText(mvpReport.runtimeSession.label)}</span>
           <span className="subtle">Runtime session evidence is sanitized metadata only. No Start Agent button, runtime call, bridge message, browser storage, provider call, filesystem access, shell command, git action, or tool execution is created here.</span>

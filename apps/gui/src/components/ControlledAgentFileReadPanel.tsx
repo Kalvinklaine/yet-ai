@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { evaluateControlledAgentFileRead, type ControlledAgentFileReadSummary } from "../services/controlledAgentFileRead";
 import type { ControlledAgentFileReadRequestResult } from "../services/controlledAgentFileReadRequest";
 import { sanitizeDisplayText } from "../services/redaction";
+import { controlledCapabilityPresentation, type ControlledCapabilityProvenance } from "../services/controlledCapabilityProvenance";
 
 export type ControlledAgentFileReadPanelProps = {
   metadata?: unknown;
@@ -11,9 +12,10 @@ export type ControlledAgentFileReadPanelProps = {
   note?: string | null;
   onRequest?: () => void;
   onClearPending?: () => void;
+  provenance?: ControlledCapabilityProvenance;
 };
 
-export function ControlledAgentFileReadPanel({ metadata, evaluatedRead, request, pendingRequestId, note, onRequest, onClearPending }: ControlledAgentFileReadPanelProps) {
+export function ControlledAgentFileReadPanel({ metadata, evaluatedRead, request, pendingRequestId, note, onRequest, onClearPending, provenance }: ControlledAgentFileReadPanelProps) {
   const [open, setOpen] = useState(false);
   const evaluatedMetadata = useMemo(() => evaluateControlledAgentFileRead(metadata), [metadata]);
   const read = evaluatedRead ?? evaluatedMetadata;
@@ -21,8 +23,9 @@ export function ControlledAgentFileReadPanel({ metadata, evaluatedRead, request,
   const diagnostics = read.diagnostics.slice(0, 6);
   const requestDiagnostics = request?.diagnostics.slice(0, 4) ?? [];
   const stateLabel = read.state.replace(/_/g, " ");
-  const tone = read.state === "success" || read.state === "truncated" ? "ready" : "warn";
-  const canRequest = request?.state === "ready" && !pendingRequestId && onRequest;
+  const provenanceView = controlledCapabilityPresentation(provenance, "controlled_read");
+  const tone = provenanceView.liveReady && (read.state === "success" || read.state === "truncated") ? "ready" : "warn";
+  const canRequest = provenanceView.liveReady && request?.state === "ready" && !pendingRequestId && onRequest;
 
   return (
     <section className={`readiness-card ${tone} controlled-agent-file-read-panel stack`} aria-label="Controlled file read evidence" data-testid="controlled-agent-file-read-panel">
@@ -31,11 +34,13 @@ export function ControlledAgentFileReadPanel({ metadata, evaluatedRead, request,
           <h2>Controlled file read evidence</h2>
           <span className="badge warn">S74 bounded read</span>
           <span className="badge">metadata only</span>
-          <span className={read.allowedToRead ? "badge ok" : "badge warn"}>{sanitizeDisplayText(stateLabel)}</span>
+          <span className={provenanceView.liveReady && read.allowedToRead ? "badge ok" : "badge warn"}>{sanitizeDisplayText(stateLabel)}</span>
+          <span className={provenanceView.liveReady ? "badge ok" : "badge warn"}>{provenanceView.label}</span>
         </summary>
         {open && (
           <div className="stack">
             <span>{sanitizeDisplayText(read.summary)}</span>
+            <span>{sanitizeDisplayText(provenanceView.copy)}</span>
             <strong>Bounded controlled workspace read evidence.</strong>
             <span className="subtle">Preview-only metadata: this panel cannot read files, search, attach context, run commands, call providers, apply edits, write files, use git, or write browser storage.</span>
             <span className="subtle">Raw file bodies are intentionally omitted from this S74 display. Only sanitized path labels, counts, status, truncation, and content hash evidence are shown.</span>
@@ -70,10 +75,10 @@ export function ControlledAgentFileReadPanel({ metadata, evaluatedRead, request,
                 {diagnostics.map((diagnostic) => <span key={`${diagnostic.code}:${diagnostic.message}`}>{sanitizeDisplayText(diagnostic.code)}: {sanitizeDisplayText(diagnostic.message)}</span>)}
               </div>
             )}
-            <div className={`readiness-card ${request?.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled file read request status">
+            <div className={`readiness-card ${provenanceView.liveReady && request?.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled file read request status">
               <div className="row">
                 <strong>Explicit controlled read request</strong>
-                <span className={request?.state === "ready" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(request?.state ?? "blocked")}</span>
+                <span className={provenanceView.liveReady && request?.state === "ready" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(request?.state ?? "blocked")}</span>
                 {pendingRequestId && <span className="badge warn">pending</span>}
               </div>
               <span className="subtle">Posts only after this button is clicked. No page-load, capability-refresh, runtime-session, search, command, provider, storage, or hidden background read is started here.</span>

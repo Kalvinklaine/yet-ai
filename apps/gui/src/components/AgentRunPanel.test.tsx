@@ -18,6 +18,8 @@ import succeededVerificationBundle from "../../../../packages/contracts/examples
 import { buildControlledAgentVerificationBundleRequest, evaluateControlledAgentVerificationBundle } from "../services/controlledAgentVerificationBundle";
 import { evaluateControlledAgentTaskHarness } from "../services/controlledAgentTaskHarness";
 import taskHarnessHappyFixture from "../../../../packages/contracts/examples/engine/controlled-agent-task-harness-vscode-happy-path.json";
+import { classifyControlledCapabilityProvenance } from "../services/controlledCapabilityProvenance";
+import type { ControlledHostCapabilitiesPayload } from "../bridge/bridgeAdapter";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -1835,6 +1837,19 @@ type PanelTestProps = {
   controlledRunHistory?: any;
   controlledTwoStepRunState?: any;
   controlledTaskHarness?: any;
+  capabilityProvenance?: any;
+};
+
+const liveHostCapabilities: ControlledHostCapabilitiesPayload = {
+  protocolVersion: "controlled_host_capabilities_v2",
+  hostSurface: "vscode",
+  authority: "metadata_only",
+  capabilities: { controlledStart: "supported", controlledRead: "supported", controlledEdit: "supported", controlledVerification: "supported", controlledRepair: "preview_only" },
+  correlationRequirements: [],
+  authorityFlags: { metadataOnly: true, controlledRead: false, controlledEdit: false, controlledVerification: false },
+  limits: { maxReadBytes: 1, maxReadLines: 1, maxEditFiles: 1, maxEditOperations: 1, maxPatchBytes: 1, maxVerificationOutputBytes: 1, maxVerificationOutputLines: 1, maxRepairAttempts: 1 },
+  reasonCodes: [],
+  safeLabels: { host: "VS Code", support: "bounded executor" },
 };
 
 
@@ -1906,6 +1921,7 @@ function renderPanel(input: unknown, props: PanelTestProps = {}) {
         onControlledSearchResultSelectionChange={props.onControlledSearchResultSelectionChange}
         controlledTwoStepRunState={props.controlledTwoStepRunState}
         controlledTaskHarness={props.controlledTaskHarness}
+        capabilityProvenance={props.capabilityProvenance ?? (props.host === "vscode" ? classifyControlledCapabilityProvenance({ host: "vscode", hostCapabilities: liveHostCapabilities }) : undefined)}
       />,
     );
   });

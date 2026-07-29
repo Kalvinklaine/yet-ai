@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import successFixture from "../../../../packages/contracts/examples/engine/controlled-agent-file-read-success.json";
 import blockedFixture from "../../../../packages/contracts/examples/engine/controlled-agent-file-read-blocked.json";
 import { ControlledAgentFileReadPanel } from "./ControlledAgentFileReadPanel";
+import { classifyControlledCapabilityProvenance } from "../services/controlledCapabilityProvenance";
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
@@ -66,14 +67,21 @@ describe("ControlledAgentFileReadPanel", () => {
     expect(text).not.toContain("raw file body");
     expect(container?.querySelectorAll("button")).toHaveLength(0);
   });
+
+  it("keeps a ready request display-only for fixture provenance", () => {
+    renderPanel(successFixture, classifyControlledCapabilityProvenance({ host: "vscode", caps: { controlledAgentFileRead: successFixture } as never }).controlled_read, { state: "ready", bridgeRequest: {} as never, correlation: {} as never, diagnostics: [], details: {}, authority: {} as never });
+    expect(container?.textContent).toContain("fixture demo");
+    expect(container?.querySelector("button")).toBeNull();
+    expect(container?.querySelector("[data-testid='controlled-agent-file-read-panel']")?.className).toContain("warn");
+  });
 });
 
-function renderPanel(metadata: unknown) {
+function renderPanel(metadata: unknown, provenance?: Parameters<typeof ControlledAgentFileReadPanel>[0]["provenance"], request?: Parameters<typeof ControlledAgentFileReadPanel>[0]["request"]) {
   container = document.createElement("div");
   document.body.append(container);
   act(() => {
     root = createRoot(container as HTMLDivElement);
-    root.render(<ControlledAgentFileReadPanel metadata={metadata} />);
+    root.render(<ControlledAgentFileReadPanel metadata={metadata} provenance={provenance} request={request} onRequest={() => undefined} />);
   });
 }
 

@@ -41,6 +41,31 @@ export type ControlledCapabilityProvenanceInput = {
   localState?: Partial<Record<"run_state" | "recovery", boolean>>;
 };
 
+export function isLiveControlledCapability(provenance: ControlledCapabilityProvenance | undefined, surface: ControlledCapabilitySurface, host?: BridgeHost | "unknown"): boolean {
+  return provenance?.surface === surface
+    && provenance.status === "live_host"
+    && provenance.readiness === "ready"
+    && provenance.executionSupport === "available"
+    && (host === undefined || provenance.host === host);
+}
+
+export function controlledCapabilityPresentation(provenance: ControlledCapabilityProvenance | undefined, surface: ControlledCapabilitySurface, host?: BridgeHost | "unknown"): { liveReady: boolean; label: string; copy: string } {
+  const liveReady = isLiveControlledCapability(provenance, surface, host);
+  if (liveReady) {
+    return { liveReady, label: "live host", copy: provenance?.safeReason ?? "Live host evidence is available; existing user and request gates still apply." };
+  }
+  if (!provenance || provenance.surface !== surface || host !== undefined && provenance.host !== host) {
+    return { liveReady: false, label: "unsupported", copy: "No matching live host provenance is available. This surface stays fail-closed." };
+  }
+  if (provenance.status === "fixture_demo") {
+    return { liveReady: false, label: "fixture demo", copy: `${provenance.evidenceLabel}. Display evidence only; no live action is enabled.` };
+  }
+  if (provenance.status === "local_derived") {
+    return { liveReady: false, label: "local derived", copy: `${provenance.evidenceLabel}. Local GUI state does not prove a live executor.` };
+  }
+  return { liveReady: false, label: "unsupported", copy: provenance.safeReason };
+}
+
 const surfaces: ControlledCapabilitySurface[] = [
   "workspace_readiness",
   "controlled_read",

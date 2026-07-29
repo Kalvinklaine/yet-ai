@@ -12984,7 +12984,7 @@ describe("edit proposal preview", () => {
     expect(text).not.toContain("/Users/private/me");
     expect(text).not.toContain("credentials/private-token.txt");
 
-    expect(text.length).toBeLessThan(16200);
+    expect(text.length).toBeLessThan(16600);
   });
 
   it("ignores stale host apply result while a different apply request is pending in the same chat", async () => {
@@ -13927,7 +13927,7 @@ function renderApp(options: { autoHostReady?: boolean } = {}) {
       data: {
         version: bridgeVersion,
         type: "host.ready",
-        payload: { runtimeUrl: "http://127.0.0.1:8001" },
+        payload: { runtimeUrl: "http://127.0.0.1:8001", controlledCapabilities: controlledHostCapabilitiesFixture() },
       },
     }));
   });

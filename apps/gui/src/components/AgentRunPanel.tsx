@@ -27,6 +27,7 @@ import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuth
 import { sanitizeDisplayText } from "../services/redaction";
 import { buildControlledAgentTaskPresetGuidance, controlledAgentTaskPresets, type ControlledAgentTaskPresetGuidance, type ControlledAgentTaskPresetId } from "../services/controlledAgentTaskPresets";
 import type { ControlledAgentTaskHarnessSummary } from "../services/controlledAgentTaskHarness";
+import { controlledCapabilityPresentation, type ControlledCapabilityProvenanceMap } from "../services/controlledCapabilityProvenance";
 
 export type AgentRunPanelProps = {
   input: unknown;
@@ -86,9 +87,10 @@ export type AgentRunPanelProps = {
   onControlledSearchResultSelectionChange?: (resultId: string, selected: boolean) => void;
   controlledTwoStepRunState?: ControlledAgentTwoStepRunState;
   controlledTaskHarness?: ControlledAgentTaskHarnessSummary;
+  capabilityProvenance?: ControlledCapabilityProvenanceMap;
 };
 
-export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, controlledTaskExecutionState, controlledTaskExecutionSummary, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, controlledVerificationFollowupDraft, onRequestControlledVerificationBundle, onDraftControlledVerificationFollowup, onDraftControlledVerificationFix, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState, controlledTaskHarness }: AgentRunPanelProps) {
+export function AgentRunPanel({ input, host, pendingApply, pendingVerification, onApplyReviewedPatch, onRunAllowlistedVerification, onReviewRollback, onDraftVerificationFollowup, onDraftVerificationFix, proposalHistory, verificationFixDraft, oneStepLoopState, controlledTaskExecutionState, controlledTaskExecutionSummary, oneStepReadRequest, oneStepEditRequest, oneStepCommandRunRequest, repairLoop, repairDraftReady = false, pendingRepairEdit = false, pendingRepairVerification = false, onConfirmRepairAttempt, onStartOneStepRun, onStopOneStepRun, controlledHostCapabilityMatrix, controlledRunContextBundle, controlledRunContextReport, includeControlledRunContext = true, onIncludeControlledRunContextChange, controlledRunHistory = [], controlledLexicalSearch, controlledMultifilePatchPlan, controlledMultifileApplyRequest, controlledMultifileApplyResult, controlledMultifileApplyNote, pendingControlledMultifileApply = false, controlledMultifileApplyConfirmed = false, onConfirmControlledMultifileApply, onRequestControlledMultifileApply, onClearControlledMultifileApply, controlledVerificationBundle, controlledVerificationBundleRequest, controlledVerificationBundleNote, pendingControlledVerificationBundle = false, controlledVerificationFollowupDraft, onRequestControlledVerificationBundle, onDraftControlledVerificationFollowup, onDraftControlledVerificationFix, controlledSearchResultId, selectedControlledSearchResultIds = [], controlledSearchSelection, controlledSearchRequestState, pendingControlledSearch = false, onRequestControlledSearch, onControlledSearchResultSelectionChange, controlledTwoStepRunState, controlledTaskHarness, capabilityProvenance }: AgentRunPanelProps) {
   const view = evaluateAgentRunState(input);
   const metadata = isAgentRunInput(input) ? input : undefined;
   const guidedFix = deriveGuidedFixLoopStatus({
@@ -105,6 +107,13 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const details = view.details;
   const supported = host === "vscode" || host === "jetbrains";
   const verificationSupported = host === "vscode";
+  const editProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_edit, "controlled_edit", host);
+  const readProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_read, "controlled_read", host);
+  const searchProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_search, "controlled_search", host);
+  const patchPlanProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_patch_plan, "controlled_patch_plan", host);
+  const multifileProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_multifile, "controlled_multifile", host);
+  const verificationProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_verification_run, "controlled_verification_run", host);
+  const verificationBundleProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_verification_bundle, "controlled_verification_bundle", host);
   const applyRiskSummary = buildAgentRunApplyRiskSummary({
     proposal: metadata?.proposal ? agentRunProposalToApplyRiskPayload(metadata.proposal, details) : undefined,
     agentRun: input,
@@ -116,8 +125,8 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const showCheckpointDecision = metadata && checkpointDecision.status !== "unavailable";
   const showApplyRiskSummary = Boolean(metadata && !metadata.applyResult && (!pendingApply || metadata.applyRequest?.requested === true) && (hasProposal(details) || view.nextUserAction === "confirm_apply" || view.nextUserAction === "wait_for_apply" || view.state === "prerequisites_blocked" || view.state === "blocked"));
   const verificationCommandId = verificationCommandIdFromDetails(details.verificationCommandId);
-  const canApply = supported && !pendingApply && view.nextUserAction === "confirm_apply";
-  const canVerify = verificationSupported && !pendingVerification && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
+  const canApply = supported && (host === "jetbrains" || editProvenance.liveReady) && !pendingApply && view.nextUserAction === "confirm_apply";
+  const canVerify = verificationSupported && verificationProvenance.liveReady && !pendingVerification && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
   const showS85VerificationRequired = supported && !verificationSupported && view.nextUserAction === "confirm_verification" && verificationCommandId !== null;
   const canReviewRollback = view.rollbackAvailable || view.nextUserAction === "review_rollback";
   const canDraftFollowup = view.state === "verified";
@@ -147,7 +156,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const controlledTaskHasWorkspaceLineage = controlledTaskExecutionSummary?.lineage.hasWorkspaceReadinessId ?? (controlledTaskLineage?.workspaceReadinessId !== undefined);
   const controlledTaskHasRuntimeLineage = controlledTaskExecutionSummary?.lineage.hasRuntimeSessionId ?? (controlledTaskLineage?.runtimeSessionId !== undefined);
   const oneStepActive = Boolean(controlledTaskExecutionState && !["idle", "completed", "blocked", "stopped"].includes(controlledTaskExecutionState.phase));
-  const canStartOneStep = host === "vscode" && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
+  const canStartOneStep = host === "vscode" && readProvenance.liveReady && editProvenance.liveReady && verificationBundleProvenance.liveReady && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
   const canStopOneStep = Boolean(onStopOneStepRun) && oneStepActive;
   const showLegacyRepairLoop = !controlledTaskExecutionState && Boolean(repairLoop && repairLoop.state !== "disabled");
   const repairEligibleState = repairLoop?.state === "eligible" || repairLoop?.state === "proposal_ready";
@@ -203,12 +212,12 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const controlledSearchSelectedSafeCount = selectedControlledSearchResultIds.filter((id) => controlledSearchSafeIds.has(id)).length;
   const controlledSearchUnsafeOmittedCount = Math.max(0, (controlledLexicalSearch?.resultCount ?? 0) - controlledSearchSafeItems.length) + controlledSearchSelectionUnsafeCount(controlledSearchSelection);
   const showControlledSearchSelection = controlledLexicalSearch !== undefined || controlledSearchSelection !== undefined || controlledSearchRequestState !== undefined;
-  const canRequestControlledSearch = host === "vscode" && controlledSearchRequestState === "ready" && !pendingControlledSearch && Boolean(onRequestControlledSearch);
+  const canRequestControlledSearch = host === "vscode" && searchProvenance.liveReady && controlledSearchRequestState === "ready" && !pendingControlledSearch && Boolean(onRequestControlledSearch);
   const showControlledMultifileApply = controlledMultifilePatchPlan !== undefined || controlledMultifileApplyResult !== undefined;
-  const canConfirmControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "blocked" && !controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onConfirmControlledMultifileApply);
-  const canRequestControlledMultifileApply = host === "vscode" && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "ready" && controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onRequestControlledMultifileApply);
+  const canConfirmControlledMultifileApply = host === "vscode" && multifileProvenance.liveReady && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "blocked" && !controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onConfirmControlledMultifileApply);
+  const canRequestControlledMultifileApply = host === "vscode" && multifileProvenance.liveReady && controlledMultifilePatchPlan?.state === "ready" && controlledMultifileApplyRequest?.state === "ready" && controlledMultifileApplyConfirmed && !pendingControlledMultifileApply && Boolean(onRequestControlledMultifileApply);
   const showControlledVerificationBundle = controlledVerificationBundle !== undefined || controlledVerificationBundleRequest !== undefined;
-  const canRequestControlledVerificationBundle = host === "vscode" && controlledVerificationBundle?.state === "accepted" && controlledVerificationBundle.status === "planned" && controlledVerificationBundleRequest?.state === "ready" && !pendingControlledVerificationBundle && Boolean(onRequestControlledVerificationBundle);
+  const canRequestControlledVerificationBundle = host === "vscode" && verificationBundleProvenance.liveReady && controlledVerificationBundle?.state === "accepted" && controlledVerificationBundle.status === "planned" && controlledVerificationBundleRequest?.state === "ready" && !pendingControlledVerificationBundle && Boolean(onRequestControlledVerificationBundle);
   const canDraftControlledVerificationFollowup = host === "vscode" && controlledVerificationBundle?.state === "accepted" && isTerminalControlledVerificationStatus(controlledVerificationBundle.status) && Boolean(onDraftControlledVerificationFollowup);
   const canDraftControlledVerificationFix = host === "vscode" && controlledVerificationBundle?.state === "accepted" && controlledVerificationBundle.status !== "succeeded" && isTerminalControlledVerificationStatus(controlledVerificationBundle.status) && Boolean(onDraftControlledVerificationFix);
   const controlledVerificationUnsafeOmitted = controlledVerificationBundle?.commands.filter((command) => command.outputTail === undefined && (command.outputByteCount !== undefined || command.outputLineCount !== undefined || command.truncated)).length ?? 0;
@@ -227,6 +236,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         <strong>Agent Run · dev-preview, not autonomy</strong>
         <span className={`badge ${host === "vscode" ? "ok" : "warn"}`}>{host === "vscode" ? "VS Code explicit controls" : host === "jetbrains" ? "JetBrains partial/fail-closed" : "browser preview only"}</span>
         <span className={`badge ${view.stopped ? "warn" : view.enabled ? "ok" : ""}`}>{agentRunStateLabel(view.state, details)}</span>
+        <span className="badge warn">provenance gated</span>
       </div>
       <span>{sanitizeDisplayText(view.summary)}</span>
       <strong>{readinessExplanation(view.state, details)}</strong>
@@ -390,10 +400,11 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
           </label>
         ))}
       </div>}
-      {controlledMultifilePatchPlan && <div className={`readiness-card ${controlledMultifilePatchPlan.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled multi-file patch dry-run review">
+      {controlledMultifilePatchPlan && <div className={`readiness-card ${patchPlanProvenance.liveReady && controlledMultifilePatchPlan.state === "ready" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled multi-file patch dry-run review">
         <div className="row">
           <strong>Multi-file patch dry-run review</strong>
           <span className={controlledMultifilePatchPlan.state === "ready" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(controlledMultifilePatchPlan.state)}</span>
+          <span className="badge warn">{patchPlanProvenance.label}</span>
           <span className="badge">review only</span>
           <span className="badge">metadata only</span>
           <span className="badge">no multi-file apply</span>

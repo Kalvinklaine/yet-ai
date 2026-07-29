@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ControlledHostCapabilitiesPayload } from "../bridge/bridgeAdapter";
-import { classifyControlledCapabilityProvenance, type ControlledCapabilitySurface } from "./controlledCapabilityProvenance";
+import { classifyControlledCapabilityProvenance, controlledCapabilityPresentation, type ControlledCapabilitySurface } from "./controlledCapabilityProvenance";
 
 const vscodeHostCapabilities: ControlledHostCapabilitiesPayload = {
   protocolVersion: "controlled_host_capabilities_v2",
@@ -68,5 +68,20 @@ describe("classifyControlledCapabilityProvenance", () => {
     expect(mismatched.controlled_read.readiness).toBe("display_only");
     expect(mismatched.controlled_read.executionSupport).toBe("unavailable");
     expect(mismatched.controlled_read.grantsExecutionAuthority).toBe(false);
+  });
+
+  it.each([
+    { status: "fixture_demo" as const, readiness: "display_only" as const, executionSupport: "unavailable" as const, label: "fixture demo" },
+    { status: "local_derived" as const, readiness: "display_only" as const, executionSupport: "unavailable" as const, label: "local derived" },
+    { status: "unsupported" as const, readiness: "unsupported" as const, executionSupport: "unavailable" as const, label: "unsupported" },
+  ])("never presents $status evidence as live ready", ({ status, readiness, executionSupport, label }) => {
+    const view = controlledCapabilityPresentation({ surface: "controlled_read", status, host: "vscode", readiness, visible: true, executionSupport, grantsExecutionAuthority: false, evidenceLabel: "Test evidence", safeReason: "Test reason" }, "controlled_read", "vscode");
+    expect(view).toMatchObject({ liveReady: false, label });
+  });
+
+  it("rejects host mismatch and accepts matching live host evidence", () => {
+    const live = classifyControlledCapabilityProvenance({ host: "vscode", hostCapabilities: vscodeHostCapabilities }).controlled_read;
+    expect(controlledCapabilityPresentation(live, "controlled_read", "jetbrains").liveReady).toBe(false);
+    expect(controlledCapabilityPresentation(live, "controlled_read", "vscode")).toMatchObject({ liveReady: true, label: "live host" });
   });
 });

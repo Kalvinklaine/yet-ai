@@ -1,30 +1,35 @@
 import { useMemo, useState } from "react";
 import { evaluateControlledAgentWorkspaceReadiness, type ControlledAgentWorkspaceReadinessSummary } from "../services/controlledAgentWorkspaceReadiness";
 import { sanitizeDisplayText } from "../services/redaction";
+import { controlledCapabilityPresentation, type ControlledCapabilityProvenance } from "../services/controlledCapabilityProvenance";
 
 export type ControlledAgentWorkspaceReadinessPanelProps = {
   metadata?: unknown;
+  provenance?: ControlledCapabilityProvenance;
 };
 
-export function ControlledAgentWorkspaceReadinessPanel({ metadata }: ControlledAgentWorkspaceReadinessPanelProps) {
+export function ControlledAgentWorkspaceReadinessPanel({ metadata, provenance }: ControlledAgentWorkspaceReadinessPanelProps) {
   const [open, setOpen] = useState(false);
   const readiness = useMemo(() => evaluateControlledAgentWorkspaceReadiness(metadata), [metadata]);
   const detailEntries = Object.entries(readiness.details).slice(0, 12);
   const diagnostics = readiness.diagnostics.slice(0, 6);
   const stateLabel = readiness.state.replace(/_/g, " ");
+  const provenanceView = controlledCapabilityPresentation(provenance, "workspace_readiness");
 
   return (
-    <section className={`readiness-card ${readiness.state === "ready_for_future_controlled_mode" ? "ready" : "warn"} controlled-agent-workspace-readiness-panel stack`} aria-label="Controlled workspace readiness" data-testid="controlled-agent-workspace-readiness-panel">
+    <section className="readiness-card warn controlled-agent-workspace-readiness-panel stack" aria-label="Controlled workspace readiness" data-testid="controlled-agent-workspace-readiness-panel">
       <details className="debug-details" data-testid="controlled-agent-workspace-readiness-details" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>
           <h2>Controlled workspace readiness</h2>
           <span className="badge warn">S73 future gated</span>
           <span className="badge">metadata only</span>
-          <span className={readiness.state === "ready_for_future_controlled_mode" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(stateLabel)}</span>
+          <span className="badge warn">{sanitizeDisplayText(stateLabel)}</span>
+          <span className="badge warn">{provenanceView.label}</span>
         </summary>
         {open && (
           <div className="stack">
           <span>{sanitizeDisplayText(readiness.summary)}</span>
+          <span>{sanitizeDisplayText(provenanceView.copy)}</span>
           <strong>Cannot start an agent.</strong>
           <span className="subtle">Experimental preview only: this panel cannot create worktrees, read files, apply edits, run commands, call providers or tools, verify, search, attach context, or roll back.</span>
           <span className="subtle">Browser preview remains unsupported for future controlled mode. Open an IDE host later when controlled workspace authority exists; this S73 panel still grants none.</span>
