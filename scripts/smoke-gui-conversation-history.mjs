@@ -1,83 +1,92 @@
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { createGuiSmokeBootstrap } from "./lib/gui-smoke-bootstrap.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
-const indexPath = path.join(distRoot, "index.html");
+const projectId = "prj_abcdefghijklmnopqrstuA";
+const projectName = "Conversation history workspace";
+const readyGeneration = "conversation-history-ready-1";
 const runtimeToken = `history-runtime-token-${randomUUID()}`;
 const providerSecret = `sk-history-provider-${randomUUID()}`;
 const deletedSentinel = `deleted-history-sentinel-${randomUUID()}`;
 const failures = [];
+const runtimeRequests = [];
 
-let guiServer;
 let runtimeServer;
-let browser;
+let smoke;
 
 const chats = new Map([
   ["chat-alpha", thread("chat-alpha", "Alpha local thread", [message("chat-alpha", "alpha-user", "user", `Alpha deleted ${deletedSentinel}`)])],
   ["chat-beta", thread("chat-beta", "Beta local thread", [message("chat-beta", "beta-user", "user", "Beta persisted prompt"), message("chat-beta", "beta-assistant", "assistant", "Beta persisted answer")])],
 ]);
 
-await requireBuiltGui();
-const { chromium } = await requireChromium();
+const chromium = await requireChromium();
 
 try {
-  guiServer = await startStaticServer(distRoot);
   runtimeServer = await startRuntimeServer();
-  browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-  page.on("pageerror", (error) => failures.push(`Page JavaScript error: ${error.message}`));
-  page.on("request", (request) => {
-    if (!request.url().startsWith("http://127.0.0.1:")) {
-      failures.push(`Non-loopback request attempted: ${request.url()}`);
-    }
+  smoke = await createGuiSmokeBootstrap({
+    distRoot,
+    chromium,
+    entry: { mode: "hosted", route: "/vscode/hosted-chat", entryMode: "hosted_chat" },
+    viewport: { width: 1440, height: 1000 },
+    privacyMarkers: [runtimeToken],
+  });
+  const page = smoke.page;
+  await smoke.waitForGuiReady();
+  assert(smoke.entry.host === "vscode", `expected hosted VS Code entry, observed ${smoke.entry.host}`);
+  await page.waitForTimeout(250);
+  assert(runtimeRequests.length === 0, `runtime requests were sent before host.ready: ${describeRequests(runtimeRequests)}`);
+  await smoke.sendHostReady({
+    requestId: readyGeneration,
+    runtimeUrl: `http://127.0.0.1:${runtimeServer.port}`,
+    sessionToken: runtimeToken,
+    workspaceBinding: { state: "auto_bound", projectId, displayName: projectName },
   });
 
-  await page.goto(`http://127.0.0.1:${guiServer.port}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
-  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
-  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
-  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
-  await refreshButton.click();
+  await expectVisibleText(page, "Hosted workspace", "current-workspace dashboard");
+  await expectVisibleText(page, projectName, "safe workspace binding");
+  await expectVisibleText(page, "Alpha local thread", "dashboard alpha conversation");
+  await expectVisibleText(page, "Beta local thread", "dashboard beta conversation");
+  await page.getByRole("button", { name: "Open Beta local thread", exact: true }).click();
 
-  await expectVisibleText(page, "Alpha local thread", "initial alpha chat");
-  await expectVisibleText(page, "Beta local thread", "initial beta chat");
   await expectVisibleText(page, "2 local runtime conversations returned.", "initial conversation count");
   await expectConversationRow(page, {
     title: "Alpha local thread",
     updatedAt: "2026-05-29T07:16:30Z",
     messageCountLabel: "1 persisted message",
-    positionLabel: "Conversation 1 of 2",
+    positionLabel: "Conversation 2 of 2",
+    active: false,
   });
   await expectConversationRow(page, {
     title: "Beta local thread",
     updatedAt: "2026-05-29T07:16:30Z",
     messageCountLabel: "2 persisted messages",
-    positionLabel: "Conversation 2 of 2",
+    positionLabel: "Conversation 1 of 2",
+    active: true,
   });
-
-  await page.getByRole("button", { name: /^Open conversation: Beta local thread$/ }).click();
   await expectVisibleText(page, "Beta persisted prompt", "selected beta thread prompt");
   await expectVisibleText(page, "Beta persisted answer", "selected beta thread answer");
 
-  await page.getByRole("button", { name: "New chat" }).click();
+  await page.getByRole("button", { name: "New chat", exact: true }).click();
   await expectVisibleText(page, "Created smoke thread", "created chat title");
-  await expectVisibleText(page, providerSecret, "created chat visible runtime message");
+  const createdRow = page.locator(".conversation-item").filter({ has: page.locator(".conversation-title", { hasText: "Created smoke thread" }) }).first();
+  await createdRow.waitFor({ state: "visible", timeout: 10_000 });
+  const createdSelect = createdRow.locator("button.conversation-select");
+  if (await createdSelect.isEnabled()) await createdSelect.click();
+  const createdDelete = createdRow.locator("button.conversation-delete");
+  await createdDelete.waitFor({ state: "visible", timeout: 10_000 });
+  page.once("dialog", (dialog) => dialog.accept());
+  await createdDelete.click();
+  await expectVisibleText(page, "Beta local thread", "truthful retained selection after deleting created chat");
+  await expectVisibleText(page, "Deleted Created smoke thread.", "truthful delete notice");
+  await page.waitForFunction(() => !Array.from(document.querySelectorAll(".conversation-title")).some((element) => element.textContent?.trim() === "Created smoke thread"), undefined, { timeout: 5000 }).catch(() => undefined);
+  assert(await page.locator(".conversation-title", { hasText: "Created smoke thread" }).count() === 0, "deleted chat stayed in the conversation list");
 
-  await page.getByRole("button", { name: /^Delete conversation: Created smoke thread \(current\)$/ }).click();
-  await expectVisibleText(page, "Beta local thread", "fallback chat after delete");
-  await page.waitForFunction(() => !document.body.innerText.includes("Created smoke thread"), undefined, { timeout: 5000 }).catch(() => undefined);
-  const bodyAfterDelete = await page.locator("body").innerText();
-  assert(!bodyAfterDelete.includes("Created smoke thread"), "deleted current chat title stayed visible after fallback");
-
-  const browserState = await page.evaluate(() => JSON.stringify({
+  const browserStorage = await page.evaluate(() => JSON.stringify({
     localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => {
       const key = localStorage.key(index) ?? "";
       return [key, localStorage.getItem(key)];
@@ -88,153 +97,87 @@ try {
     })),
   }));
   for (const marker of [runtimeToken, providerSecret, deletedSentinel, "Created smoke thread"]) {
-    assert(!browserState.includes(marker), `browser storage leaked ${marker}`);
+    assert(!browserStorage.includes(marker), `browser storage leaked ${marker}`);
   }
 
-  if (failures.length > 0) {
-    throw new Error(`GUI conversation-history smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
-  }
+  const unauthorized = runtimeRequests.filter((request) => request.authorization !== `Bearer ${runtimeToken}` || request.caller !== "gui_runtime_client");
+  assert(unauthorized.length === 0, `runtime requests lacked trusted headers: ${describeRequests(unauthorized)}`);
+  assert(runtimeRequests.some((request) => request.method === "GET" && request.path === `/p/${projectId}/v1/chats`), "project-scoped chat list was not requested");
+  assert(runtimeRequests.some((request) => request.method === "POST" && request.path === `/p/${projectId}/v1/chats`), "project-scoped chat create was not requested");
+  assert(runtimeRequests.some((request) => request.method === "DELETE" && request.path === `/p/${projectId}/v1/chats/chat-created`), "project-scoped chat delete was not requested");
+  smoke.assertHealthy();
+  if (failures.length > 0) throw new Error(`GUI conversation-history smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
+
   console.log("GUI conversation-history smoke passed.");
-  console.log("Verified built GUI local runtime list/select/create/delete fallback and no browser history/token/provider-secret storage leaks.");
+  console.log("Verified canonical hosted current-workspace routing, project-scoped list/select/create/delete fallback, and no browser-storage history/token/provider-secret leaks.");
 } finally {
-  await browser?.close().catch(() => undefined);
-  await guiServer?.close().catch(() => undefined);
+  await smoke?.close().catch(() => undefined);
   await runtimeServer?.close().catch(() => undefined);
-}
-
-async function requireBuiltGui() {
-  try {
-    const fileStat = await stat(indexPath);
-    if (!fileStat.isFile()) {
-      throw new Error("not a file");
-    }
-    const html = await readFile(indexPath, "utf8");
-    if (!html.includes("/assets/") && !html.includes("./assets/")) {
-      throw new Error("built GUI index.html does not reference Vite assets");
-    }
-  } catch (error) {
-    console.error("GUI conversation-history smoke failed: built GUI is missing or invalid.");
-    console.error("Run `cd apps/gui && npm run build` before `npm run smoke:gui-conversation-history`.");
-    console.error(`Reason: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
 }
 
 async function requireChromium() {
   try {
-    return await import("playwright");
-  } catch (error) {
-    console.error("GUI conversation-history smoke failed: Playwright is not installed or cannot be loaded.");
-    console.error("Run `npm install` from the repository root, then run `npx playwright install chromium` if Chromium is not installed yet.");
-    console.error(`Load error: ${error instanceof Error ? error.message : String(error)}`);
+    const playwright = await import("playwright");
+    const browserCheck = await playwright.chromium.launch({ headless: true });
+    await browserCheck.close();
+    return playwright.chromium;
+  } catch {
+    console.error("GUI conversation-history smoke prerequisite missing: install Playwright browsers with `npx playwright install chromium`.");
     process.exit(1);
   }
-}
-
-async function openDetailsBySummary(page, summaryText, visibleLocator) {
-  if (await visibleLocator.isVisible().catch(() => false)) return;
-  const summary = page.locator("summary", { hasText: summaryText }).first();
-  await summary.click({ timeout: 5000 }).catch(async () => {
-    await page.locator("details", { hasText: summaryText }).first().evaluate((element) => {
-      if (element instanceof HTMLDetailsElement) element.open = true;
-    });
-  });
-  await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
-}
-
-async function startStaticServer(staticRoot) {
-  const server = http.createServer(async (request, response) => {
-    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-    const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    const requestedPath = path.normalize(path.join(staticRoot, pathname));
-    if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
-      response.writeHead(403).end("Forbidden");
-      return;
-    }
-    try {
-      const fileStat = await stat(requestedPath);
-      if (!fileStat.isFile()) {
-        response.writeHead(404).end("Not found");
-        return;
-      }
-      response.writeHead(200, { "content-type": contentType(requestedPath) });
-      createReadStream(requestedPath).pipe(response);
-    } catch {
-      response.writeHead(404).end("Not found");
-    }
-  });
-  return listen(server);
 }
 
 async function startRuntimeServer() {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (request.method === "OPTIONS") {
-      response.writeHead(204, corsHeaders());
-      response.end();
-      return;
+    if (request.method === "OPTIONS") return empty(response, 204);
+    if (url.pathname.includes("/v1/")) {
+      runtimeRequests.push({ method: request.method, path: url.pathname, authorization: request.headers.authorization ?? null, caller: request.headers["x-yet-ai-caller"] ?? null });
     }
-    if (request.method === "GET" && url.pathname === "/v1/ping") {
-      json(response, 200, { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: new Date().toISOString() });
-      return;
+    const scopedMatch = /^\/p\/([^/]+)\/v1(?:\/|$)/.exec(url.pathname);
+    if (scopedMatch && scopedMatch[1] !== projectId) {
+      failures.push(`unexpected project id requested: ${scopedMatch[1]}`);
+      return json(response, 404, { error: "project not found" });
     }
-    if (request.method === "GET" && url.pathname === "/v1/caps") {
-      json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } });
-      return;
+
+    if (request.method === "GET" && url.pathname === "/v1/ping") return json(response, 200, { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: now() });
+    if (request.method === "GET" && url.pathname === "/v1/caps") return json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } });
+    if (request.method === "GET" && url.pathname === "/v1/models") return json(response, 200, { models: [demoModel()] });
+    if (request.method === "GET" && url.pathname === "/v1/providers") return json(response, 200, { providers: [demoProvider()], cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && url.pathname === "/v1/demo-mode") return json(response, 200, { enabled: true, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Local canned responses." });
+    if (request.method === "GET" && url.pathname === "/v1/provider-auth/openai/status") return json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "No account login." });
+    if (request.method === "GET" && url.pathname === `/v1/projects/${projectId}`) return json(response, 200, projectSummary());
+    if (url.pathname.startsWith("/v1/projects/") && request.method === "GET") {
+      failures.push(`unexpected project summary path requested: ${url.pathname}`);
+      return json(response, 404, { error: "project not found" });
     }
-    if ((request.method === "GET" || request.method === "POST") && url.pathname === "/v1/demo-mode") {
-      json(response, 200, demoModeDisabledResponse());
-      return;
-    }
-    if (request.method === "GET" && url.pathname === "/v1/models") {
-      json(response, 200, { models: [] });
-      return;
-    }
-    if (request.method === "GET" && url.pathname === "/v1/providers") {
-      json(response, 200, { providers: [], cloudRequired: false, providerAccess: "direct" });
-      return;
-    }
-    if (request.method === "GET" && url.pathname === "/v1/provider-auth/openai/status") {
-      json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "No account login in local smoke." });
-      return;
-    }
-    if (request.method === "GET" && url.pathname === "/v1/chats") {
-      json(response, 200, { chats: Array.from(chats.values()).map(toSummary) });
-      return;
-    }
-    if (request.method === "POST" && url.pathname === "/v1/chats") {
+
+    const chatsPath = `/p/${projectId}/v1/chats`;
+    if (request.method === "GET" && url.pathname === chatsPath) return json(response, 200, { chats: Array.from(chats.values()).map(toSummary) });
+    if (request.method === "POST" && url.pathname === chatsPath) {
       const created = thread("chat-created", "Created smoke thread", [message("chat-created", "created-user", "user", providerSecret)]);
       chats.set(created.chatId, created);
-      json(response, 200, created);
-      return;
+      return json(response, 201, created);
     }
-    const chatMatch = /^\/v1\/chats\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "GET" && url.pathname === `/p/${projectId}/v1/project-memory`) return json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && url.pathname === `/p/${projectId}/v1/agent-progress`) return json(response, 200, { snapshots: [], cloudRequired: false, providerAccess: "direct" });
+    const chatMatch = new RegExp(`^/p/${projectId}/v1/chats/([^/]+)$`).exec(url.pathname);
     if (chatMatch && request.method === "GET") {
       const chatId = decodeURIComponent(chatMatch[1]);
-      json(response, chats.has(chatId) ? 200 : 404, chats.get(chatId) ?? { error: "chat not found" });
-      return;
+      return json(response, chats.has(chatId) ? 200 : 404, chats.get(chatId) ?? { error: "chat not found" });
     }
     if (chatMatch && request.method === "DELETE") {
       const chatId = decodeURIComponent(chatMatch[1]);
       chats.delete(chatId);
-      json(response, 200, { deleted: true, chatId });
-      return;
+      return json(response, 200, { deleted: true, chatId });
     }
-    response.writeHead(404, { "content-type": "application/json" });
-    response.end(JSON.stringify({ error: "not found" }));
-  });
-  return listen(server);
-}
 
-async function listen(server) {
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
+    failures.push(`unexpected runtime request: ${request.method} ${url.pathname}`);
+    return json(response, 404, { error: "not found" });
   });
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
   const address = server.address();
-  if (!address || typeof address === "string") {
-    throw new Error("Server did not bind to a TCP port.");
-  }
+  if (!address || typeof address === "string") throw new Error("Runtime server did not bind.");
   return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
@@ -243,87 +186,38 @@ async function expectVisibleText(page, text, label, timeout = 20_000) {
   assert(visible, `Missing visible ${label}: ${text}`);
 }
 
-async function expectConversationRow(page, { title, updatedAt, messageCountLabel, positionLabel }) {
-  const openButton = page.getByRole("button", { name: new RegExp(`^Open conversation: ${escapeRegExp(title)}$`) });
-  await openButton.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
-  assert(await openButton.count() === 1, `Expected exactly one accessible open-conversation button for ${title}`);
-
-  const row = page.locator(".conversation-item", { has: openButton }).first();
+async function expectConversationRow(page, { title, updatedAt, messageCountLabel, positionLabel, active }) {
+  const row = page.locator(".conversation-item").filter({ has: page.locator(".conversation-title", { hasText: title }) }).first();
   await row.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
-  assert(await row.count() === 1, `Missing readable conversation row for ${title}`);
-
   const rowParts = await row.evaluate((element) => {
     const text = (selector) => element.querySelector(selector)?.textContent?.trim() ?? "";
-    return {
-      label: element.getAttribute("aria-label") ?? "",
-      titleLine: text(".conversation-title-line"),
-      title: text(".conversation-title"),
-      metaLine: text(".conversation-meta-line"),
-      updated: text(".conversation-updated"),
-      messageCount: text(".conversation-message-count"),
-      position: text(".conversation-position"),
-    };
+    const select = element.querySelector("button.conversation-select");
+    return { label: element.getAttribute("aria-label") ?? "", selectLabel: select?.getAttribute("aria-label") ?? "", title: text(".conversation-title"), updated: text(".conversation-updated"), messageCount: text(".conversation-message-count"), position: text(".conversation-position") };
   }).catch(() => undefined);
-
-  assert(rowParts?.label === `${title} conversation row`, `Conversation row aria-label is not readable for ${title}`);
+  const currentCopy = active ? ", current conversation" : "";
+  const selectPrefix = active ? "Current conversation" : "Open conversation";
+  assert(rowParts?.label === `${positionLabel}: ${title}${currentCopy}. Updated ${updatedAt}. ${messageCountLabel}.`, `Conversation row aria-label is not readable for ${title}`);
+  assert(rowParts?.selectLabel === `${selectPrefix}: ${title}. ${positionLabel}. ${messageCountLabel}.`, `Conversation selector aria-label is not readable for ${title}`);
   assert(rowParts?.title === title, `Conversation row title is not structured/readable for ${title}`);
-  assert(rowParts?.titleLine.includes(title), `Conversation row title line is missing ${title}`);
   assert(rowParts?.updated === `Updated ${updatedAt}`, `Conversation row updated label is not structured/readable for ${title}`);
   assert(rowParts?.messageCount === messageCountLabel, `Conversation row message-count label is not structured/readable for ${title}`);
   assert(rowParts?.position === positionLabel, `Conversation row position label is not structured/readable for ${title}`);
-  assert(rowParts?.metaLine.includes(`Updated ${updatedAt}`), `Conversation row meta line is missing updated text for ${title}`);
-  assert(rowParts?.metaLine.includes(messageCountLabel), `Conversation row meta line is missing message count for ${title}`);
-  assert(rowParts?.metaLine.includes(positionLabel), `Conversation row meta line is missing position for ${title}`);
-
-  const deleteButton = page.getByRole("button", { name: new RegExp(`^Delete conversation: ${escapeRegExp(title)}(?: \\(current\\))?$`) });
-  await deleteButton.waitFor({ state: "visible", timeout: 10_000 }).catch(() => undefined);
-  assert(await deleteButton.count() === 1, `Expected one clear delete-conversation label for ${title}`);
+  const deleteLabel = `Delete conversation: ${title} (${active ? "current; " : ""}confirmation required)`;
+  assert(await row.locator("button.conversation-delete").getAttribute("aria-label") === deleteLabel, `Expected one clear delete-conversation label for ${title}`);
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function projectSummary() {
+  return { projectId, displayName: projectName, status: "available", revision: "1", createdAt: now(), lastOpenedAt: now(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
-
-function thread(chatId, title, messages) {
-  return { chatId, title, createdAt: "2026-05-29T07:16:30Z", updatedAt: "2026-05-29T07:16:30Z", messages };
-}
-
-function message(chatId, id, role, content) {
-  return { chatId, id, role, content, createdAt: "2026-05-29T07:16:30Z", status: "complete" };
-}
-
-function toSummary(item) {
-  return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length };
-}
-
-function demoModeDisabledResponse() {
-  return { enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality. Configure a BYOK provider for real answers." };
-}
-
-function corsHeaders(extra = {}) {
-  return {
-    "access-control-allow-origin": "*",
-    "access-control-allow-headers": "authorization, content-type",
-    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
-    ...extra,
-  };
-}
-
-function json(response, status, payload) {
-  response.writeHead(status, corsHeaders({ "content-type": "application/json" }));
-  response.end(JSON.stringify(payload));
-}
-
-function contentType(filePath) {
-  if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
-  if (filePath.endsWith(".js")) return "text/javascript; charset=utf-8";
-  if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
-  if (filePath.endsWith(".svg")) return "image/svg+xml";
-  return "application/octet-stream";
-}
-
-function assert(condition, message) {
-  if (!condition) {
-    failures.push(message);
-  }
-}
+function demoModel() { return { id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } }; }
+function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel()], capabilities: { chat: true, completion: false, embeddings: false } }; }
+function escapeRegExp(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+function thread(chatId, title, messages) { return { chatId, title, createdAt: now(), updatedAt: now(), messages }; }
+function message(chatId, id, role, content) { return { chatId, id, role, content, createdAt: now(), status: "complete" }; }
+function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
+function now() { return "2026-05-29T07:16:30Z"; }
+function empty(response, status) { response.writeHead(status, corsHeaders()); response.end(); }
+function json(response, status, payload) { response.writeHead(status, corsHeaders({ "content-type": "application/json" })); response.end(JSON.stringify(payload)); }
+function corsHeaders(extra = {}) { return { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type, x-yet-ai-caller", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", ...extra }; }
+function describeRequests(requests) { return JSON.stringify(requests.map((request) => ({ method: request.method, path: request.path, authorized: request.authorization === `Bearer ${runtimeToken}`, caller: request.caller }))); }
+function assert(condition, message) { if (!condition) failures.push(String(message).replaceAll(runtimeToken, "[redacted-runtime-token]").replaceAll(providerSecret, "[redacted-provider-secret]")); }
