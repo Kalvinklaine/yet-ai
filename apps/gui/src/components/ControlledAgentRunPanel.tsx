@@ -8,10 +8,12 @@ import type { ControlledLocalAgentMvpReport } from "../services/controlledLocalA
 import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
 import { evaluateControlledAgentAuthorityRegistry } from "../services/controlledAgentAuthorityRegistry";
 import type { ControlledAgentTwoStepRunState } from "../services/controlledAgentTwoStepRun";
-import { evaluateControlledAgentRecoveryMatrix, type ControlledAgentRecoveryEvaluation, type ControlledAgentRecoveryVisibleState } from "../services/controlledAgentRecoveryMatrix";
+import type { ControlledAgentRecoveryVisibleState } from "../services/controlledAgentRecoveryMatrix";
+import { buildControlledRecoveryPresentation, controlledRecoveryBaseStates } from "../services/controlledRecoveryPresentation";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
 import { controlledCapabilityPresentation, type ControlledCapabilityProvenanceMap } from "../services/controlledCapabilityProvenance";
+import { ControlledRecoveryCard } from "./ControlledRecoveryCard";
 
 export type ControlledAgentRunPanelProps = {
   state: ControlledAgentRunState;
@@ -79,9 +81,9 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
       { kind: state.phase === "stopped" ? "stop" : "status", status: state.phase, summary: state.summary },
     ],
   });
-  const recoveryGuidance = buildRecoveryGuidance(host, state);
   const runProvenance = controlledCapabilityPresentation(provenance?.controlled_run_state, "controlled_run_state", host);
   const recoveryProvenance = controlledCapabilityPresentation(provenance?.controlled_recovery, "controlled_recovery", host);
+  const recoveryPresentation = buildControlledRecoveryPresentation({ host, visibleStates: recoveryStates(host, state), provenanceLabel: recoveryProvenance.label });
 
   return (
     <section className="readiness-card warn controlled-agent-run-panel stack" aria-label="Controlled agent run skeleton" data-testid="controlled-agent-run-panel">
@@ -108,7 +110,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         {twoStepRunState.stop && <span>Blocked safely: {sanitizeDisplayText(twoStepRunState.stop.reason.replace(/_/g, " "))}</span>}
         <span className="subtle">This is sanitized GUI evidence only. It does not start planning, acquire hidden context, post bridge requests, apply edits, run verification, draft repair, write storage, or call providers/tools.</span>
       </section>}
-      <ControlledRecoveryGuidanceCard guidance={recoveryGuidance} />
+      <ControlledRecoveryCard title="S120 recovery guidance" presentation={recoveryPresentation} />
       {provenance && <section className="readiness-card warn stack" role="status" aria-label="Controlled capability provenance">
         <div className="row">
           <strong>Controlled capability provenance</strong>
@@ -282,43 +284,13 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
   );
 }
 
-function buildRecoveryGuidance(host: BridgeHost | "unknown", state: ControlledAgentRunState): ControlledAgentRecoveryEvaluation[] {
-  const states = new Set<ControlledAgentRecoveryVisibleState>(["stale_duplicate_result", "host_disconnect_runtime_restart", "provider_timeout", "edit_hash_mismatch", "verification_bundle_failure", "checkpoint_rollback_review"]);
+function recoveryStates(host: BridgeHost | "unknown", state: ControlledAgentRunState): ControlledAgentRecoveryVisibleState[] {
+  const states = new Set<ControlledAgentRecoveryVisibleState>(controlledRecoveryBaseStates());
   if (state.phase === "stopped" || state.stopped) states.add("stop_completed");
   if (state.phase === "failed") states.add("verification_bundle_failure");
   if (state.counters.repairAttempts >= state.limits.maxRepairAttempts && state.limits.maxRepairAttempts > 0) states.add("repair_followup_exhausted");
   if (host !== "vscode") states.add("unsupported_host");
-  return [...states].map((userVisibleState) => evaluateControlledAgentRecoveryMatrix({
-    userVisibleState,
-    host,
-    terminal: userVisibleState === "stop_completed" || userVisibleState === "repair_followup_exhausted" || userVisibleState === "unsupported_host",
-    attemptBudget: recoveryAttemptBudget(userVisibleState),
-    privacy: { sanitizedOnly: true, rawOutputStored: false, privatePathStored: false, secretStored: false },
-    policyFlags: { hiddenRetryAllowed: false, automaticRollbackAllowed: false, hiddenRepairAllowed: false, staleResultAccepted: false, rawOutputPersistenceAllowed: false, privatePathPersistenceAllowed: false, secretPersistenceAllowed: false, unboundedRepairAllowed: false, unsupportedHostClaimsSupport: false },
-  }));
-}
-
-function recoveryAttemptBudget(userVisibleState: ControlledAgentRecoveryVisibleState) {
-  const retryable = userVisibleState === "host_disconnect_runtime_restart" || userVisibleState === "provider_timeout" || userVisibleState === "verification_bundle_failure";
-  return { maxAttempts: retryable ? 1 : 0, attemptsUsed: 0, moreAttemptsAllowed: retryable, requiresUserConfirmation: true };
-}
-
-function ControlledRecoveryGuidanceCard({ guidance }: { guidance: ControlledAgentRecoveryEvaluation[] }) {
-  return (
-    <section className="readiness-card warn stack" role="status" aria-label="Controlled run recovery guidance">
-      <div className="row">
-        <strong>S120 recovery guidance</strong>
-        <span className="badge">display only</span>
-        <span className="badge">manual recovery</span>
-        <span className="badge">fail-closed</span>
-      </div>
-      <span>Stop, stale result, disconnect, provider timeout, edit mismatch, verification failure, repair exhaustion, rollback review, and unsupported-host guidance stays visible.</span>
-      <span className="subtle">No automatic retry, rollback, repair, apply, verification, provider call, hidden read, storage write, command, git, tool, network, or workspace mutation is available from this guidance.</span>
-      {guidance.map((item) => (
-        <span key={item.userVisibleState ?? item.guidance}><strong>{sanitizeDisplayText((item.userVisibleState ?? "blocked").replace(/_/g, " "))}</strong>: {sanitizeDisplayText(item.guidance)}</span>
-      ))}
-    </section>
-  );
+  return [...states];
 }
 
 function currentStepLabel(state: ControlledAgentRunState): string {

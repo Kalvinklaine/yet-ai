@@ -20,7 +20,8 @@ import type { ControlledAgentVerificationBundleEvaluation, ControlledAgentVerifi
 import type { ControlledAgentVerificationFollowupDraft } from "../services/controlledAgentVerificationFollowup";
 import type { ControlledAgentTwoStepRunState } from "../services/controlledAgentTwoStepRun";
 import { controlledAgentSearchSelectionResultId, type ControlledAgentSearchSelectionResult } from "../services/controlledAgentSearchSelection";
-import { evaluateControlledAgentRecoveryMatrix, type ControlledAgentRecoveryEvaluation, type ControlledAgentRecoveryVisibleState } from "../services/controlledAgentRecoveryMatrix";
+import type { ControlledAgentRecoveryVisibleState } from "../services/controlledAgentRecoveryMatrix";
+import { buildControlledRecoveryPresentation, controlledRecoveryBaseStates } from "../services/controlledRecoveryPresentation";
 import { deriveGuidedFixLoopStatus, type GuidedFixLoopDraftState } from "../services/guidedFixLoop";
 import type { ProposalHistory } from "../services/proposalHistory";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
@@ -28,6 +29,7 @@ import { sanitizeDisplayText } from "../services/redaction";
 import { buildControlledAgentTaskPresetGuidance, controlledAgentTaskPresets, type ControlledAgentTaskPresetGuidance, type ControlledAgentTaskPresetId } from "../services/controlledAgentTaskPresets";
 import type { ControlledAgentTaskHarnessSummary } from "../services/controlledAgentTaskHarness";
 import { controlledCapabilityPresentation, type ControlledCapabilityProvenanceMap } from "../services/controlledCapabilityProvenance";
+import { ControlledRecoveryCard } from "./ControlledRecoveryCard";
 
 export type AgentRunPanelProps = {
   input: unknown;
@@ -227,7 +229,11 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
     setSelectedTaskPresetId(presetId);
     setTaskPresetGuidance(buildControlledAgentTaskPresetGuidance(presetId, { goal: textDetail(details.goalTitle) || textDetail(details.goalSummary) || "Review a local coding task before sending.", selectedSearchResultCount: controlledSearchSelectedSafeCount }));
   };
-  const recoveryGuidance = buildControlledRecoveryGuidance(host, oneStepLoopState?.phase, repairLoop?.state, view.state);
+  const recoveryPresentation = buildControlledRecoveryPresentation({
+    host,
+    visibleStates: controlledRecoveryStates(host, oneStepLoopState?.phase, repairLoop?.state, view.state),
+    provenanceLabel: controlledCapabilityPresentation(capabilityProvenance?.controlled_recovery, "controlled_recovery", host).label,
+  });
   const showRecoveryGuidance = !controlledTaskExecutionState && (showOneStepLoop || showLegacyRepairLoop || view.state === "verification_failed");
 
   return (
@@ -240,7 +246,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
       </div>
       <span>{sanitizeDisplayText(view.summary)}</span>
       <strong>{readinessExplanation(view.state, details)}</strong>
-      {showRecoveryGuidance && <ControlledRecoveryGuidanceCard title="Controlled recovery guidance" guidance={recoveryGuidance} />}
+      {showRecoveryGuidance && <ControlledRecoveryCard title="Controlled recovery guidance" presentation={recoveryPresentation} />}
       {controlledHostCapabilityMatrix && (
         <div className="readiness-card warn stack" role="status" aria-label="Agent Run host capability matrix">
           <div className="row">
@@ -825,49 +831,13 @@ function controlledReportEvidenceSummary(phase: ControlledOneStepAgentLoopState[
   return "Controlled dev-preview prerequisites are blocked or unavailable.";
 }
 
-function buildControlledRecoveryGuidance(host: BridgeHost, oneStepPhase: ControlledOneStepAgentLoopState["phase"] | undefined, repairState: ControlledAgentRepairLoopEvaluation["state"] | undefined, agentRunState: string): ControlledAgentRecoveryEvaluation[] {
-  const states = new Set<ControlledAgentRecoveryVisibleState>(["stale_duplicate_result", "host_disconnect_runtime_restart", "provider_timeout", "edit_hash_mismatch", "verification_bundle_failure", "checkpoint_rollback_review"]);
+function controlledRecoveryStates(host: BridgeHost, oneStepPhase: ControlledOneStepAgentLoopState["phase"] | undefined, repairState: ControlledAgentRepairLoopEvaluation["state"] | undefined, agentRunState: string): ControlledAgentRecoveryVisibleState[] {
+  const states = new Set<ControlledAgentRecoveryVisibleState>(controlledRecoveryBaseStates());
   if (oneStepPhase === "stopped") states.add("stop_completed");
   if (oneStepPhase === "failed" || agentRunState === "verification_failed") states.add("verification_bundle_failure");
   if (repairState === "exhausted") states.add("repair_followup_exhausted");
   if (host !== "vscode") states.add("unsupported_host");
-  return [...states].map((userVisibleState) => evaluateControlledAgentRecoveryMatrix({
-    userVisibleState,
-    host,
-    terminal: userVisibleState === "stop_completed" || userVisibleState === "repair_followup_exhausted" || userVisibleState === "unsupported_host",
-    attemptBudget: recoveryAttemptBudget(userVisibleState),
-    privacy: { sanitizedOnly: true, rawOutputStored: false, privatePathStored: false, secretStored: false },
-    policyFlags: { hiddenRetryAllowed: false, automaticRollbackAllowed: false, hiddenRepairAllowed: false, staleResultAccepted: false, rawOutputPersistenceAllowed: false, privatePathPersistenceAllowed: false, secretPersistenceAllowed: false, unboundedRepairAllowed: false, unsupportedHostClaimsSupport: false },
-  }));
-}
-
-function recoveryAttemptBudget(userVisibleState: ControlledAgentRecoveryVisibleState) {
-  const retryable = userVisibleState === "host_disconnect_runtime_restart" || userVisibleState === "provider_timeout" || userVisibleState === "verification_bundle_failure";
-  return { maxAttempts: retryable ? 1 : 0, attemptsUsed: 0, moreAttemptsAllowed: retryable, requiresUserConfirmation: true };
-}
-
-function ControlledRecoveryGuidanceCard({ title, guidance }: { title: string; guidance: ControlledAgentRecoveryEvaluation[] }) {
-  return (
-    <section className="readiness-card warn stack" role="status" aria-label={title}>
-      <div className="row">
-        <strong>{title}</strong>
-        <span className="badge">display only</span>
-        <span className="badge">manual recovery</span>
-        <span className="badge">no auto retry/rollback/repair</span>
-      </div>
-      <span>Visible, bounded, sanitized, manual recovery guidance. Browser remains unsupported; JetBrains remains partial/fail-closed.</span>
-      <div className="agent-progress-grid" aria-label={`${title} authority`}>
-        <span>Execution allowed: false</span>
-        <span>Workspace mutation: false</span>
-        <span>Provider calls: false</span>
-        <span>Commands/tools/git/network: false</span>
-        <span>Raw output/private paths/secrets persisted: false</span>
-      </div>
-      {guidance.map((item) => (
-        <span key={item.userVisibleState ?? item.guidance}><strong>{sanitizeDisplayText((item.userVisibleState ?? "blocked").replace(/_/g, " "))}</strong>: {sanitizeDisplayText(item.guidance)}</span>
-      ))}
-    </section>
-  );
+  return [...states];
 }
 
 function checkpointDecisionSummaryCopy(decision: AgentRunCheckpointDecisionSummary): string {

@@ -63,6 +63,8 @@ describe("ControlledAgentRunPanel", () => {
     expect(text).toContain("verification bundle failure");
     expect(text).toContain("checkpoint rollback review");
     expect(text).toContain("unsupported host");
+    expect(text).toContain("Retry budget: 0/1 used · one manual retry available · user confirmation required");
+    expect(text).toContain("unsupported");
     expect(text).toContain("No automatic retry, rollback, repair, apply, verification, provider call, hidden read");
     expect(buttonTexts()).toContain("Start controlled dev-preview");
     expect(buttonTexts()).toContain("Stop controlled run");

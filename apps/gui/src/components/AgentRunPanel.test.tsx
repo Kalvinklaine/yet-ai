@@ -914,6 +914,8 @@ describe("AgentRunPanel", () => {
     expect(panelText()).toContain("verification bundle failure");
     expect(panelText()).toContain("checkpoint rollback review");
     expect(panelText()).toContain("no auto retry/rollback/repair");
+    expect(panelText()).toContain("Retry budget: 0/1 used · one manual retry available · user confirmation required");
+    expect(panelText()).toContain("unsupported");
     expect(panelText()).toContain("Execution allowed: false");
     expect(panelText()).toContain("Raw output/private paths/secrets persisted: false");
     expect(panelText()).toContain("stop completed");
@@ -926,7 +928,7 @@ describe("AgentRunPanel", () => {
     });
 
     expect(panelText()).toContain("repair followup exhausted");
-    expect(panelText()).toContain("The repair budget is exhausted. Stop repair guidance and wait for a new user-started run.");expect(panelText()).toContain("The repair budget is exhausted. Stop repair guidance and wait for a new user-started run.");
+    expect(panelText()).toContain("The repair budget is exhausted. Stop repair guidance and wait for a new user-started run.");
     expect(optionalButton("Confirm one repair attempt")?.disabled).toBe(true);
   });
 
