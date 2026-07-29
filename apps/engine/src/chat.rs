@@ -485,6 +485,21 @@ impl ChatRuntime {
         }
         match result {
             Ok(assistant_content) => {
+                if assistant_content.is_empty() {
+                    if self
+                        .claim_stream_terminal_ownership(&runtime_key, stream_id)
+                        .await
+                    {
+                        self.push_persisted_terminal_event(
+                            &runtime_key,
+                            &chat_id,
+                            "stream_finished",
+                            json!({ "finishReason": "stop" }),
+                        )
+                        .await;
+                    }
+                    return;
+                }
                 self.persist_terminal_history_and_event(
                     &history_root,
                     &runtime_key,
@@ -2496,17 +2511,34 @@ impl OpenAiSseParser {
         let value: serde_json::Value =
             serde_json::from_str(data).map_err(|_| ChatError::MalformedStream)?;
         if value.get("error").is_some() {
-            Err(classify_provider_stream_error(&value))
-        } else if let Some(content) = value["choices"][0]["delta"]["content"].as_str() {
-            if !content.is_empty() {
-                self.deltas.push(content.to_string());
-            }
-            Ok(())
-        } else if value["choices"][0]["finish_reason"].is_string() {
-            Ok(())
-        } else {
-            Err(ChatError::MalformedStream)
+            return Err(classify_provider_stream_error(&value));
         }
+        let choice = value
+            .get("choices")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(serde_json::Value::as_object)
+            .ok_or(ChatError::MalformedStream)?;
+        if let Some(delta) = choice.get("delta") {
+            let delta = delta.as_object().ok_or(ChatError::MalformedStream)?;
+            if let Some(content) = delta.get("content") {
+                if !content.is_null() {
+                    let content = content.as_str().ok_or(ChatError::MalformedStream)?;
+                    if !content.is_empty() {
+                        self.deltas.push(content.to_string());
+                    }
+                }
+            }
+            if delta.get("role").is_some_and(|role| !role.is_string()) {
+                return Err(ChatError::MalformedStream);
+            }
+            return Ok(());
+        }
+        choice
+            .get("finish_reason")
+            .filter(|reason| reason.is_string())
+            .map(|_| ())
+            .ok_or(ChatError::MalformedStream)
     }
 }
 
@@ -4396,6 +4428,29 @@ mod tests {
     }
 
     #[test]
+    fn openai_sse_parser_accepts_role_and_empty_deltas_before_content_and_finish() {
+        let mut parser = OpenAiSseParser::default();
+        parser
+            .push("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n")
+            .unwrap();
+        parser
+            .push("data: {\"choices\":[{\"delta\":{},\"finish_reason\":null}]}\n\n")
+            .unwrap();
+        parser
+            .push("data: {\"choices\":[{\"delta\":{\"content\":null},\"finish_reason\":null}]}\n\n")
+            .unwrap();
+        parser
+            .push("data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n")
+            .unwrap();
+        parser
+            .push("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n")
+            .unwrap();
+        parser.push("data: [DONE]\n\n").unwrap();
+
+        assert_eq!(parser.finish().unwrap(), vec!["hello"]);
+    }
+
+    #[test]
     fn openai_sse_parser_handles_multiline_data() {
         let mut parser = OpenAiSseParser::default();
         parser.push("data: {\"choices\":[{\"delta\":{\n").unwrap();
@@ -4407,6 +4462,20 @@ mod tests {
     fn openai_sse_parser_rejects_malformed_frames() {
         let mut parser = OpenAiSseParser::default();
         assert!(parser.push("data: { not-json }\n\n").is_err());
+
+        for frame in [
+            "data: {}\n\n",
+            "data: {\"choices\":[]}\n\n",
+            "data: {\"choices\":[{\"delta\":\"invalid\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"role\":1}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":1}}]}\n\n",
+        ] {
+            let mut parser = OpenAiSseParser::default();
+            assert!(
+                parser.push(frame).is_err(),
+                "accepted malformed frame: {frame}"
+            );
+        }
     }
 
     #[test]

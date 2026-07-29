@@ -12621,6 +12621,97 @@ async fn openai_compatible_streaming_maps_chunks_to_sse_events() {
 }
 
 #[tokio::test]
+async fn openai_compatible_streaming_ignores_valid_no_content_deltas() {
+    let api_key = "sk-no-content-delta-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"hello once\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message(app.clone(), "chat-no-content-deltas").await;
+    let text = sse_text_from(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-no-content-deltas",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    let deltas = events
+        .iter()
+        .filter(|event| event["type"] == "stream_delta")
+        .collect::<Vec<_>>();
+    assert_eq!(deltas.len(), 1);
+    assert_eq!(deltas[0]["payload"]["delta"]["content"], "hello once");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["type"] == "stream_finished")
+            .count(),
+        1
+    );
+    assert!(!events.iter().any(|event| event["type"] == "error"));
+
+    let thread = wait_for_chat_messages(app, "chat-no-content-deltas", 2).await;
+    let assistant_messages = thread["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "assistant")
+        .collect::<Vec<_>>();
+    assert_eq!(assistant_messages.len(), 1);
+    assert_eq!(assistant_messages[0]["content"], "hello once");
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-no-content-delta-secret-abcd",
+        "valid no-content deltas",
+    )
+    .await;
+    assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
+async fn openai_compatible_empty_delta_stream_does_not_add_empty_assistant_message() {
+    let api_key = "sk-empty-delta-stream-secret-abcd";
+    let (base_url, auth_receiver) = start_mock_provider(
+        StatusCode::OK,
+        "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":null}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+    )
+    .await;
+    let app = test_app();
+    configure_openai_provider(app.clone(), base_url, api_key).await;
+
+    send_user_message(app.clone(), "chat-empty-delta-stream").await;
+    let text = sse_text_from(
+        app.clone(),
+        "/v1/chats/subscribe?chat_id=chat-empty-delta-stream",
+    )
+    .await;
+    let events = sse_json_events(&text);
+    assert!(!events.iter().any(|event| event["type"] == "stream_delta"));
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event["type"] == "stream_finished")
+            .count(),
+        1
+    );
+    assert!(!events.iter().any(|event| event["type"] == "error"));
+
+    let thread = wait_for_chat_messages(app, "chat-empty-delta-stream", 1).await;
+    assert_eq!(thread["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(thread["messages"][0]["role"], "user");
+    assert_first_auth_and_no_immediate_extra_auth(
+        auth_receiver,
+        "Bearer sk-empty-delta-stream-secret-abcd",
+        "empty delta stream",
+    )
+    .await;
+    assert!(!text.contains(api_key));
+}
+
+#[tokio::test]
 async fn chat_sse_live_subscriber_exposes_sequence_gap_after_broadcast_lag() {
     let api_key = "sk-lag-secret-abcd";
     let mut stream_body = String::new();
