@@ -9,8 +9,18 @@ const assistant = agentRunBuiltGuiAssistantMessage();
 const thread = agentRunBuiltGuiChatThread([assistant]);
 const events = agentRunBuiltGuiSseEvents();
 const applyResult = agentRunBuiltGuiApplyResult("gui-agent-run-apply-smoke-1");
-const verificationProgress = agentRunBuiltGuiVerificationProgress("gui-agent-run-verification-smoke-1");
-const verificationResult = agentRunBuiltGuiVerificationResult("gui-agent-run-verification-smoke-1");
+const verificationRequest = {
+  requestId: "gui-agent-run-verification-smoke-1",
+  payload: {
+    runId: "agent-run-fixture-run",
+    controlledWorkspaceId: "agent-run-fixture-workspace",
+    runtimeSessionId: "agent-run-fixture-session",
+    workspaceReadinessId: "agent-run-fixture-readiness",
+    commandId: fixture.commandId,
+  },
+};
+const verificationProgress = agentRunBuiltGuiVerificationProgress(verificationRequest);
+const verificationResult = agentRunBuiltGuiVerificationResult(verificationRequest);
 
 assert.equal(provider.id, fixture.providerId);
 assert.equal(provider.enabled, true);
@@ -22,6 +32,8 @@ assert.deepEqual(caps.providers, [provider]);
 assert.equal(caps.agentRunReadiness.checkpoint.checkpointVerified, true);
 assert.equal(caps.agentRunReadiness.sandbox.checkpoint.verified, true);
 assert.equal(caps.agentRunReadiness.policy.allowlistedCommandId, fixture.commandId);
+assert.equal(caps.controlledAgentRuntimeSession.session.state, "ready_to_start");
+assert.equal(caps.controlledAgentWorkspaceReadiness.isolation.status, "ready");
 assert.equal(readiness.verificationCommandId, fixture.commandId);
 assert.equal(readiness.proposal.touchedFiles.length, 1);
 assert.equal(readiness.proposal.touchedFiles[0], "src/agentRunFixture.ts");
@@ -48,16 +60,16 @@ assert.equal(applyResult.type, "host.applyWorkspaceEditResult");
 assert.equal(applyResult.payload.status, "applied");
 assert.equal(applyResult.payload.cloudRequired, false);
 assert.deepEqual(applyResult.payload.affectedFiles, ["src/agentRunFixture.ts"]);
-assert.equal(verificationProgress.type, "host.ideActionProgress");
-assert.equal(verificationProgress.payload.action, "runVerificationCommand");
+assert.equal(verificationProgress.type, "host.controlledAgentCommandRunResult");
+assert.equal(verificationProgress.payload.status, "running");
 assert.equal(verificationProgress.payload.commandId, fixture.commandId);
-assert.equal(verificationResult.type, "host.ideActionResult");
-assert.equal(verificationResult.payload.action, "runVerificationCommand");
+assert.equal(verificationResult.type, "host.controlledAgentCommandRunResult");
 assert.equal(verificationResult.payload.commandId, fixture.commandId);
 assert.equal(verificationResult.payload.status, "succeeded");
 assert.equal(verificationResult.payload.cloudRequired, false);
+assert.equal(verificationResult.payload.freeformCommandAllowed, false);
 
 assertAgentRunBuiltGuiFixtureSafe({ fixture, provider, caps, readiness, assistant, thread, events, applyResult, verificationProgress, verificationResult }, "Agent Run built-GUI fixture smoke");
 
 console.log("Agent Run built-GUI fixture smoke passed.");
-console.log("Verified reusable mock-only S48 fixture data for runtime/provider readiness, explicit context, strict safe-edit assistant response, checkpoint metadata, bridge apply/progress/result, sanitized evidence, no non-loopback provider URL, no secrets, and no private paths.");
+console.log("Verified reusable mock-only Agent Run fixture data for runtime/provider readiness, explicit context, strict safe-edit assistant response, checkpoint metadata, bridge apply, S85 controlled command-run progress/result, sanitized evidence, no non-loopback provider URL, no secrets, and no private paths.");

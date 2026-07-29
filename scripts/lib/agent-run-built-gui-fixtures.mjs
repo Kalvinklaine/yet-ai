@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+const controlledRuntimeSessionFixture = JSON.parse(readFileSync(new URL("../../packages/contracts/examples/engine/controlled-agent-runtime-session-ready-vscode-worktree.json", import.meta.url), "utf8"));
+const controlledWorkspaceReadinessFixture = JSON.parse(readFileSync(new URL("../../packages/contracts/examples/engine/controlled-agent-workspace-readiness-worktree.json", import.meta.url), "utf8"));
 
 export const agentRunBuiltGuiFixture = Object.freeze({
   bridgeVersion: "2026-05-15",
@@ -92,6 +96,8 @@ export function agentRunBuiltGuiCapsResponse(overrides = {}) {
     providers: [provider],
     ide: { bridge: true, lsp: false, host: "vscode" },
     agentRunReadiness: agentRunBuiltGuiReadinessMetadata(),
+    controlledAgentRuntimeSession: structuredClone(controlledRuntimeSessionFixture),
+    controlledAgentWorkspaceReadiness: structuredClone(controlledWorkspaceReadinessFixture),
     ...overrides,
   };
 }
@@ -227,48 +233,83 @@ export function agentRunBuiltGuiApplyResult(requestId = agentRunBuiltGuiFixture.
   };
 }
 
-export function agentRunBuiltGuiVerificationProgress(requestId = agentRunBuiltGuiFixture.requestIds.verification, overrides = {}) {
+export function agentRunBuiltGuiVerificationProgress(request, overrides = {}) {
+  return agentRunBuiltGuiControlledCommandRunResult(request, { status: "running", durationMs: 12, truncated: false, message: "Allowlisted repository fixture check is running.", ...overrides });
+}
+
+export function agentRunBuiltGuiVerificationResult(request, overrides = {}) {
+  return agentRunBuiltGuiControlledCommandRunResult(request, overrides);
+}
+
+function agentRunBuiltGuiControlledCommandRunResult(request, overrides = {}) {
   const fixture = agentRunBuiltGuiFixture;
+  const requestId = request?.requestId ?? fixture.requestIds.verification;
+  const requestPayload = request?.payload ?? {};
+  const status = overrides.status ?? "succeeded";
+  const outputTail = overrides.outputTail ?? fixture.verificationOutputTail;
+  const terminal = status !== "running" && status !== "blocked";
+  const payload = {
+    status,
+    requestId,
+    requestIdMintedBy: "gui",
+    runId: requestPayload.runId ?? "agent-run-fixture-run",
+    controlledWorkspaceId: requestPayload.controlledWorkspaceId ?? "agent-run-fixture-workspace",
+    runtimeSessionId: requestPayload.runtimeSessionId ?? "agent-run-fixture-session",
+    workspaceReadinessId: requestPayload.workspaceReadinessId ?? "agent-run-fixture-readiness",
+    userConfirmed: true,
+    authority: "allowlisted_command_id",
+    cloudRequired: false,
+    executionAllowed: false,
+    freeformCommandAllowed: false,
+    commandId: requestPayload.commandId ?? fixture.commandId,
+    policyFlags: requestPayload.policyFlags ?? controlledCommandRunPolicyFlags(),
+    durationMs: overrides.durationMs ?? 42,
+    ...(terminal ? {
+      exitCode: overrides.exitCode ?? (status === "succeeded" ? 0 : 1),
+      outputTail,
+      outputByteCount: Buffer.byteLength(outputTail),
+      outputLineCount: outputTail.split("\n").length,
+      resultHash: sha256(outputTail),
+      truncated: overrides.truncated ?? false,
+    } : { truncated: false }),
+    message: overrides.message ?? (status === "succeeded" ? "Mock verification completed." : "Mock verification did not pass."),
+  };
   return {
     version: fixture.bridgeVersion,
-    type: "host.ideActionProgress",
+    type: "host.controlledAgentCommandRunResult",
     requestId,
-    payload: {
-      phase: "running",
-      status: "inProgress",
-      summary: "Allowlisted repository fixture check is running.",
-      cloudRequired: false,
-      action: "runVerificationCommand",
-      commandId: fixture.commandId,
-      ...overrides,
-    },
+    payload,
   };
 }
 
-export function agentRunBuiltGuiVerificationResult(requestId = agentRunBuiltGuiFixture.requestIds.verification, overrides = {}) {
-  const fixture = agentRunBuiltGuiFixture;
+function controlledCommandRunPolicyFlags() {
   return {
-    version: fixture.bridgeVersion,
-    type: "host.ideActionResult",
-    requestId,
-    payload: {
-      status: "succeeded",
-      message: "Mock verification completed.",
-      cloudRequired: false,
-      action: "runVerificationCommand",
-      commandId: fixture.commandId,
-      exitCode: 0,
-      durationMs: 42,
-      outputTail: fixture.verificationOutputTail,
-      truncated: false,
-      ...overrides,
-    },
+    allowlistedCommandIdOnly: true,
+    freeformCommandAllowed: false,
+    argsAllowed: false,
+    cwdAllowed: false,
+    envAllowed: false,
+    shellAllowed: false,
+    gitAllowed: false,
+    networkAllowed: false,
+    providerAllowed: false,
+    toolAllowed: false,
+    packageInstallAllowed: false,
+    fileReadAllowed: false,
+    fileWriteAllowed: false,
+    hiddenSearchAllowed: false,
+    indexingAllowed: false,
+    autoStartAllowed: false,
+    autoApplyAllowed: false,
+    autoRunAllowed: false,
+    autoVerifyAllowed: false,
+    autoFixAllowed: false,
   };
 }
 
 export function assertAgentRunBuiltGuiFixtureSafe(value, label = "Agent Run built-GUI fixture evidence") {
   const text = JSON.stringify(value);
-  assert(text.length < 12000, `${label} is bounded`);
+  assert(text.length < 40000, `${label} is bounded`);
   for (const marker of agentRunBuiltGuiRawMarkers) {
     assert.equal(text.includes(marker), false, `${label} leaked ${marker}`);
   }

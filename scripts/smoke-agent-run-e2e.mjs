@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
-import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { agentRunBuiltGuiApplyResult, agentRunBuiltGuiAssistantMessage, agentRunBuiltGuiCapsResponse, agentRunBuiltGuiChatThread, agentRunBuiltGuiFixture, agentRunBuiltGuiProviderSummary, agentRunBuiltGuiVerificationProgress, agentRunBuiltGuiVerificationResult, assertAgentRunBuiltGuiFixtureSafe } from "./lib/agent-run-built-gui-fixtures.mjs";
+import { createGuiSmokeBootstrap } from "./lib/gui-smoke-bootstrap.mjs";
 import { npmRunInvocation } from "./lib/npm-spawn.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -14,6 +13,9 @@ const guiRoot = path.join(root, "apps", "gui");
 const distRoot = path.join(guiRoot, "dist");
 const indexPath = path.join(distRoot, "index.html");
 const runtimeOrigin = "http://127.0.0.1:8001";
+const hostedReadyGeneration = "agent-run-hosted-ready-1";
+const hostedProjectId = "prj_abcdefghijklmnopqrstuA";
+const hostedSessionToken = "agent-run-hosted-session-token";
 const fixture = agentRunBuiltGuiFixture;
 const activeChatId = "chat-001";
 const submittedRequestId = "agent-run-e2e-request-1";
@@ -40,8 +42,7 @@ const rawMarkers = [
 ];
 const failures = [];
 const runtimeRequests = [];
-let browser;
-let server;
+const smokePages = new Map();
 let lastCommandBody;
 let commandCount = 0;
 let sentPrompt = "";
@@ -71,25 +72,22 @@ await requireBuiltGui();
 const { chromium } = await requireChromium();
 
 try {
-  server = await startStaticServer(distRoot);
-  const guiBaseUrl = `http://127.0.0.1:${server.port}`;
-  browser = await chromium.launch({ headless: true });
   resetScenario();
-  const page = await createSmokePage(guiBaseUrl);
+  const page = await createSmokePage(chromium);
   await expectVisibleText(page, "Coding task session", "coding task session", 20_000);
-  await expectVisibleText(page, `Ready to send using ${fixture.modelId} through the local runtime.`, "mock model readiness", 20_000);
-  await expectVisibleText(page, "Experimental Agent Run · one-step manual shell", "Agent Run panel", 20_000);
+  await expectVisibleText(page, `Sends go through ${fixture.modelId} (${fixture.providerId}) via the local runtime`, "mock model readiness", 20_000);
+  await expectVisibleText(page, "Agent Run · dev-preview, not autonomy", "Agent Run panel", 20_000);
   await expectVisibleText(page, "Checkpoint status: missing", "initial missing checkpoint status", 20_000);
   await assertTracePanelCollapsed(page);
   await openTracePanel(page);
   await assertTraceEntries(page, ["Coding session trace", "Runtime refresh started", "Runtime refresh connected"], "initial trace");
 
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "before explicit apply");
-  await assertNoIdeAction(page, "runVerificationCommand", "before explicit verification");
+  await assertNoControlledVerification(page, "before explicit verification");
   assert.equal(commandCount, 0, "chat command was sent before explicit Send");
 
   await dispatchHostMessage(page, agentRunBuiltGuiApplyResult("assistant-supplied-apply-id", { message: "Uncorrelated apply result should be ignored." }));
-  await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult("assistant-supplied-verification-id", { outputTail: "Uncorrelated verification result should be ignored." }));
+  await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult({ requestId: "assistant-supplied-verification-id" }, { outputTail: "Uncorrelated verification result should be ignored." }));
   await page.waitForTimeout(150);
   await assertNoVisibleText(page, "Uncorrelated apply result should be ignored.", "uncorrelated apply result");
   await assertNoVisibleText(page, "Uncorrelated verification result should be ignored.", "uncorrelated verification result");
@@ -123,7 +121,7 @@ try {
   });
   await expectVisibleText(page, "Result excerpt: src/agentRunFixture.ts", "mock active editor excerpt", 20_000);
   await page.getByRole("button", { name: "Add to multi-file context bundle" }).click();
-  await expectVisibleText(page, "active file excerpt · src/agentRunFixture.ts", "fixture excerpt in context summary", 20_000);
+  await expectVisibleText(page, "1. src/agentRunFixture.ts", "fixture excerpt in controlled context summary", 20_000);
   await assertTraceEntries(page, ["IDE action requested", "IDE action result received"], "active excerpt trace");
   assert.equal(commandCount, 0, "attaching explicit context auto-sent chat");
   await page.getByRole("button", { name: "Draft Safe edit/proposal prompt" }).click();
@@ -144,34 +142,37 @@ try {
   assert.equal(lastCommandBody.payload.content, sentPrompt, "send command did not wait for explicit prompt filled before Send");
   await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "bundle clear after send", 20_000);
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after proposal before apply click");
-  await assertNoIdeAction(page, "runVerificationCommand", "after proposal before verification click");
+  await assertNoControlledVerification(page, "after proposal before verification click");
 
-  await page.getByRole("button", { name: "Apply reviewed patch" }).click();
+  await page.getByRole("button", { name: "Manually apply reviewed patch" }).click();
   const applyRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.applyWorkspaceEditRequest");
   assert.equal(applyRequest.payload?.requiresUserConfirmation, true, "apply request did not require user confirmation");
   assert.equal(applyRequest.payload?.cloudRequired, false, "apply request was not cloudRequired false");
   await dispatchHostMessage(page, agentRunBuiltGuiApplyResult(applyRequest.requestId));
-  await expectVisibleText(page, "Manual state: Ready for manual verification", "Agent Run ready for verification", 20_000);
+  await expectVisibleText(page, "Manual state: Ready for controlled verification", "Agent Run ready for verification", 20_000);
   await expectVisibleText(page, "Apply status: applied", "Agent Run apply result", 20_000);
   await assertTraceEntries(page, ["Agent Run apply requested", "Agent Run apply result received"], "Agent Run apply lifecycle trace");
-  await assertNoIdeAction(page, "runVerificationCommand", "after apply before verification click");
+  await assertNoControlledVerification(page, "after apply before verification click");
 
-  await page.getByRole("button", { name: "Run allowlisted verification" }).click();
-  const verificationRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand");
-  assert.deepEqual(verificationRequest.payload, { action: "runVerificationCommand", commandId: fixture.commandId }, "verification request must contain commandId only");
-  await dispatchHostMessage(page, agentRunBuiltGuiVerificationProgress(verificationRequest.requestId));
+  await page.getByRole("button", { name: "Manually run allowlisted verification" }).click();
+  const verificationRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.controlledAgentCommandRunRequest");
+  assert.equal(verificationRequest.payload?.commandId, fixture.commandId, "controlled verification request used the wrong command id");
+  assert.equal(verificationRequest.payload?.requestIdMintedBy, "gui", "controlled verification request was not GUI-minted");
+  assert.equal(verificationRequest.payload?.userConfirmed, true, "controlled verification request was not user-confirmed");
+  for (const forbidden of ["command", "args", "cwd", "env", "shell"]) assert.equal(forbidden in verificationRequest.payload, false, `controlled verification request exposed ${forbidden}`);
+  await dispatchHostMessage(page, agentRunBuiltGuiVerificationProgress(verificationRequest));
   await expectVisibleText(page, "Verification status/result: Verification running", "Agent Run verification progress", 20_000);
-  await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult(verificationRequest.requestId));
-  await expectVisibleText(page, "Manual state: Verified", "Agent Run verified status", 20_000);
+  await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult(verificationRequest));
+  await expectVisibleText(page, "Manual state: Ready for follow-up", "Agent Run verified status", 20_000);
   await expectVisibleText(page, "Verification status/result: Verified · exit 0 · sanitized result available", "Agent Run verification result", 20_000);
-  await expectVisibleText(page, "Agent Run completed after user-confirmed verification", "final Agent Run report title", 20_000);
   await assertNoVisibleText(page, "Agent Run has a user-reviewable rollback option", "successful final report should not be rollback report");
-  await assertTraceEntries(page, ["Agent Run verification requested", "Agent Run verification progress received", "Agent Run completed after user-confirmed verification"], "Agent Run verification trace");
+  await assertTraceEntries(page, ["Controlled Agent Run verification requested", "Controlled Agent Run verification running", "Agent Run completed after user-confirmed verification"], "Agent Run verification trace");
 
   await assertNoForbiddenBridgeActions(page);
   const messages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
   assert.equal(messages.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length, 1, "expected exactly one explicit apply request");
-  assert.equal(messages.filter((message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand").length, 1, "expected exactly one explicit verification request");
+  assert.equal(messages.filter((message) => message?.type === "gui.controlledAgentCommandRunRequest").length, 1, "expected exactly one explicit controlled verification request");
+  assert.equal(messages.filter((message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand").length, 0, "legacy verification request was emitted");
 
   const pageState = await page.evaluate(() => ({
     body: document.body.innerText,
@@ -191,11 +192,11 @@ try {
   assertNoRawMarkers(sanitizeDomForEvidence(pageState.body), "DOM sanitized final report evidence");
   assertAgentRunBuiltGuiFixtureSafe({ lastCommandBody, messages: sanitizeBridgeMessagesForEvidence(messages), runtimeRequests }, "Agent Run built-GUI E2E evidence");
 
-  await page.close();
-  await runMalformedProposalScenario(guiBaseUrl);
-  await runMissingCheckpointScenario(guiBaseUrl);
-  await runFailedVerificationScenario(guiBaseUrl);
-  await runStaleResponseScenario(guiBaseUrl);
+  await closeSmokePage(page);
+  await runMalformedProposalScenario(chromium);
+  await runMissingCheckpointScenario(chromium);
+  await runFailedVerificationScenario(chromium);
+  await runStaleResponseScenario(chromium);
 
   if (failures.length > 0) {
     throw new Error(`Agent Run built-GUI E2E smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
@@ -207,22 +208,20 @@ try {
   console.error(redactSecrets(messageOf(error)));
   process.exit(1);
 } finally {
-  await browser?.close().catch(() => undefined);
-  if (server) {
-    await server.close().catch(() => undefined);
-  }
+  await Promise.all([...smokePages.values()].map((smoke) => smoke.close().catch(() => undefined)));
 }
 
-async function createSmokePage(guiBaseUrl) {
-  const page = await browser.newPage();
-  await page.addInitScript(() => {
-    window.__yetAiVsCodeMessages = [];
-    window.acquireVsCodeApi = () => ({
-      postMessage(message) {
-        window.__yetAiVsCodeMessages.push(message);
-      },
-    });
+async function createSmokePage(chromium) {
+  const smoke = await createGuiSmokeBootstrap({
+    distRoot,
+    chromium,
+    entry: { mode: "hosted", route: "/vscode/hosted-chat", entryMode: "hosted_chat" },
+    privacyMarkers: [hostedSessionToken, "sk-agent-run-built-gui-secret", "PRIVATE_TEMP_PATH"],
+    criticalRequest: (url) => url.pathname.endsWith(".js") || url.pathname.endsWith(".css"),
   });
+  const page = smoke.page;
+  smokePages.set(page, smoke);
+  await page.evaluate(() => { window.__yetAiVsCodeMessages = window.__yetAiSmokeBridgePosts; });
   page.on("console", (message) => {
     const text = message.text();
     assertNoRawMarkers(text, "browser console");
@@ -233,21 +232,6 @@ async function createSmokePage(guiBaseUrl) {
   page.on("pageerror", (error) => {
     assertNoRawMarkers(error.message, "page error");
     failures.push(`Page JavaScript error: ${redactSecrets(error.message)}`);
-  });
-  page.on("request", (request) => {
-    if (!isAllowedNetworkUrl(request.url(), guiBaseUrl)) {
-      failures.push(`Unexpected network request: ${request.method()} ${redactUrl(request.url())}`);
-    }
-  });
-  page.on("requestfailed", (request) => {
-    if (isStaticServerAsset(request.url(), guiBaseUrl) && isJsOrCssAssetRequest(request.url(), request.resourceType())) {
-      failures.push(`Failed JS/CSS asset request: ${request.method()} ${redactUrl(request.url())} (${request.failure()?.errorText ?? "unknown failure"})`);
-    }
-  });
-  page.on("response", (response) => {
-    if (isStaticServerAsset(response.url(), guiBaseUrl) && response.status() >= 400) {
-      failures.push(`Broken local asset response: ${response.status()} ${redactUrl(response.url())}`);
-    }
   });
   await page.route("**/*", async (route) => {
     const request = route.request();
@@ -263,24 +247,48 @@ async function createSmokePage(guiBaseUrl) {
       await route.fulfill(response);
       return;
     }
-    if (isStaticServerAsset(url, guiBaseUrl)) {
+    if (!isRuntimeOriginUrl(url)) {
       await route.continue();
       return;
     }
     failures.push(`Unexpected network request blocked: ${request.method()} ${redactUrl(url)}`);
     await route.abort("blockedbyclient");
   });
-  await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await waitForGuiMessage(page, "gui.ready");
+  await smoke.waitForGuiReady();
+  await page.waitForTimeout(150);
+  assert.equal(runtimeRequests.length, 0, "runtime request was sent before host.ready");
+  await smoke.sendHostReady({
+    requestId: hostedReadyGeneration,
+    runtimeUrl: runtimeOrigin,
+    sessionToken: hostedSessionToken,
+    workspaceBinding: { state: "auto_bound", projectId: hostedProjectId, displayName: "Agent Run smoke workspace" },
+  });
+  await page.getByRole("button", { name: "Legacy data", exact: true }).click();
+  await dispatchHostMessage(page, {
+    version: fixture.bridgeVersion,
+    type: "host.ready",
+    requestId: hostedReadyGeneration,
+    payload: { runtimeUrl: runtimeOrigin, sessionToken: hostedSessionToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
+  });
+  await page.evaluate(() => {
+    for (const details of document.querySelectorAll("details")) details.open = details.dataset.testid !== "coding-session-trace-details";
+  });
   return page;
 }
 
-async function prepareModelProposalPage(guiBaseUrl, scenarioOverrides = {}) {
+async function closeSmokePage(page) {
+  const smoke = smokePages.get(page);
+  smokePages.delete(page);
+  await smoke?.assertPrivacy();
+  smoke?.assertHealthy();
+  await smoke?.close();
+}
+
+async function prepareModelProposalPage(chromium, scenarioOverrides = {}) {
   resetScenario(scenarioOverrides);
-  const page = await createSmokePage(guiBaseUrl);
+  const page = await createSmokePage(chromium);
   await expectVisibleText(page, "Coding task session", "coding task session", 20_000);
-  await expectVisibleText(page, `Ready to send using ${fixture.modelId} through the local runtime.`, "mock model readiness", 20_000);
+  await expectVisibleText(page, `Sends go through ${fixture.modelId} (${fixture.providerId}) via the local runtime`, "mock model readiness", 20_000);
   await page.getByLabel("Task goal (local React state only)").fill(fixture.goal);
   await page.getByRole("button", { name: "Draft one-step safe-edit prompt" }).click();
   const prompt = await firstTextareaValueContaining(page, "One-step safe-edit model proposal request", "one-step model proposal prompt");
@@ -289,11 +297,11 @@ async function prepareModelProposalPage(guiBaseUrl, scenarioOverrides = {}) {
   return { page, prompt };
 }
 
-async function prepareLegacyProposalPage(guiBaseUrl) {
+async function prepareLegacyProposalPage(chromium) {
   resetScenario();
-  const page = await createSmokePage(guiBaseUrl);
+  const page = await createSmokePage(chromium);
   await expectVisibleText(page, "Coding task session", "coding task session", 20_000);
-  await expectVisibleText(page, `Ready to send using ${fixture.modelId} through the local runtime.`, "mock model readiness", 20_000);
+  await expectVisibleText(page, `Sends go through ${fixture.modelId} (${fixture.providerId}) via the local runtime`, "mock model readiness", 20_000);
   await page.getByLabel("Task goal (local React state only)").fill(fixture.goal);
   await page.getByRole("button", { name: "Attach active file excerpt" }).click();
   const excerptRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "getActiveFileExcerpt");
@@ -328,59 +336,59 @@ async function prepareLegacyProposalPage(guiBaseUrl) {
   return { page, prompt };
 }
 
-async function runMalformedProposalScenario(guiBaseUrl) {
-  const { page } = await prepareModelProposalPage(guiBaseUrl, {
+async function runMalformedProposalScenario(chromium) {
+  const { page } = await prepareModelProposalPage(chromium, {
     assistantMessage: agentRunBuiltGuiAssistantMessage({ id: "assistantAgentRunMalformedProposal", content: "{ \"summary\": \"Broken proposal\", \"edits\": [" }),
   });
   await expectVisibleText(page, "Edit proposal detected but rejected", "malformed proposal rejection", 20_000);
   await expectVisibleText(page, "The edit proposal JSON is not valid.", "malformed proposal diagnostic", 20_000);
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after malformed proposal rejection");
-  await assertNoIdeAction(page, "runVerificationCommand", "after malformed proposal rejection");
-  await page.close();
+  await assertNoControlledVerification(page, "after malformed proposal rejection");
+  await closeSmokePage(page);
 }
 
-async function runMissingCheckpointScenario(guiBaseUrl) {
+async function runMissingCheckpointScenario(chromium) {
   const readiness = agentRunBuiltGuiCapsResponse();
   delete readiness.agentRunReadiness.checkpoint;
   delete readiness.agentRunReadiness.sandbox.checkpoint;
   readiness.agentRunReadiness.sandbox.modeStatus = "blocked";
-  const { page } = await prepareModelProposalPage(guiBaseUrl, { capsResponse: readiness });
+  const { page } = await prepareModelProposalPage(chromium, { capsResponse: readiness });
   await expectVisibleText(page, "Manual state: Checkpoint required", "missing checkpoint blocked status", 20_000);
   await expectVisibleText(page, "Proposal status: detected but checkpoint metadata is missing", "missing checkpoint proposal status", 20_000);
   await expectVisibleText(page, "Checkpoint status: missing", "missing checkpoint status", 20_000);
-  await assertButtonDisabled(page, "Apply reviewed patch", "missing checkpoint apply button");
+  await assertButtonDisabled(page, "Manually apply reviewed patch", "missing checkpoint apply button");
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "with missing checkpoint prerequisites");
-  await assertNoIdeAction(page, "runVerificationCommand", "with missing checkpoint prerequisites");
-  await page.close();
+  await assertNoControlledVerification(page, "with missing checkpoint prerequisites");
+  await closeSmokePage(page);
 }
 
-async function runFailedVerificationScenario(guiBaseUrl) {
-  const { page } = await prepareLegacyProposalPage(guiBaseUrl);
+async function runFailedVerificationScenario(chromium) {
+  const { page } = await prepareLegacyProposalPage(chromium);
   await expectVisibleText(page, "Manual state: Ready for manual apply", "failed verification scenario ready for apply", 20_000);
-  await page.getByRole("button", { name: "Apply reviewed patch" }).click();
+  await page.getByRole("button", { name: "Manually apply reviewed patch" }).click();
   const applyRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.applyWorkspaceEditRequest");
   await dispatchHostMessage(page, agentRunBuiltGuiApplyResult(applyRequest.requestId));
-  await expectVisibleText(page, "Manual state: Ready for manual verification", "failed verification scenario ready for verification", 20_000);
-  await page.getByRole("button", { name: "Run allowlisted verification" }).click();
-  const verificationRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand");
-  await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult(verificationRequest.requestId, { status: "failed", exitCode: 1, outputTail: "Repository fixture check failed." }));
+  await expectVisibleText(page, "Manual state: Ready for controlled verification", "failed verification scenario ready for verification", 20_000);
+  await page.getByRole("button", { name: "Manually run allowlisted verification" }).click();
+  const verificationRequest = await waitForBridgeMessage(page, (message) => message?.type === "gui.controlledAgentCommandRunRequest");
+  await dispatchHostMessage(page, agentRunBuiltGuiVerificationResult(verificationRequest, { status: "failed", exitCode: 1, outputTail: "Repository fixture check failed." }));
   await expectVisibleText(page, "Manual state: Verification failed", "failed verification status", 20_000);
   await expectVisibleText(page, "Verification status/result: Verification failed · exit 1 · sanitized result available", "failed verification result", 20_000);
   await expectVisibleText(page, "Repository fixture check failed.", "failed verification sanitized output", 20_000);
-  await assertButtonDisabled(page, "Run allowlisted verification", "failed verification run button");
+  await assertButtonDisabled(page, "Manually run allowlisted verification", "failed verification run button");
   const messages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
-  assert.equal(messages.filter((message) => message?.type === "gui.ideActionRequest" && message?.payload?.action === "runVerificationCommand").length, 1, "failed verification scenario emitted more than one verification request");
-  await page.close();
+  assert.equal(messages.filter((message) => message?.type === "gui.controlledAgentCommandRunRequest").length, 1, "failed verification scenario emitted more than one controlled verification request");
+  await closeSmokePage(page);
 }
 
-async function runStaleResponseScenario(guiBaseUrl) {
-  const { page } = await prepareModelProposalPage(guiBaseUrl, { sseChatId: "chat-stale-after-change" });
+async function runStaleResponseScenario(chromium) {
+  const { page } = await prepareModelProposalPage(chromium, { sseChatId: "chat-stale-after-change" });
   await page.waitForTimeout(300);
   await assertNoVisibleText(page, "Proposed a safe edit.", "stale response safe edit proposal");
   await assertNoVisibleText(page, "Manual state: Ready for manual apply", "stale response Agent Run readiness");
   await assertNoRequestsOfType(page, "gui.applyWorkspaceEditRequest", "after stale response");
-  await assertNoIdeAction(page, "runVerificationCommand", "after stale response");
-  await page.close();
+  await assertNoControlledVerification(page, "after stale response");
+  await closeSmokePage(page);
 }
 
 async function buildGui() {
@@ -421,40 +429,45 @@ async function requireChromium() {
 
 async function mockRuntimeResponse(value, method, body) {
   const url = new URL(value);
-  if (method === "GET" && url.pathname === "/v1/ping") {
+  if (method === "GET" && url.pathname === `/v1/projects/${hostedProjectId}`) {
+    return json({ project: { projectId: hostedProjectId, displayName: "Agent Run smoke workspace", state: "available", archived: false } });
+  }
+  const projectPrefix = `/p/${hostedProjectId}`;
+  const runtimePath = url.pathname.startsWith(projectPrefix) ? url.pathname.slice(projectPrefix.length) : url.pathname;
+  if (method === "GET" && runtimePath === "/v1/ping") {
     return json({ productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: fixture.checkpoint.checkedAt });
   }
-  if (method === "GET" && url.pathname === "/v1/caps") {
+  if (method === "GET" && runtimePath === "/v1/caps") {
     return json(currentScenario.capsResponse);
   }
-  if (method === "GET" && url.pathname === "/v1/models") {
+  if (method === "GET" && runtimePath === "/v1/models") {
     return json({ models: [agentRunBuiltGuiProviderSummary().models[0]] });
   }
-  if (method === "GET" && url.pathname === "/v1/demo-mode") {
+  if (method === "GET" && runtimePath === "/v1/demo-mode") {
     return json({ enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode is disabled for this Agent Run fixture." });
   }
-  if (method === "GET" && url.pathname === "/v1/providers") {
+  if (method === "GET" && runtimePath === "/v1/providers") {
     return json({ providers: [agentRunBuiltGuiProviderSummary()], cloudRequired: false, providerAccess: "direct" });
   }
-  if (method === "GET" && url.pathname === "/v1/provider-auth/openai/status") {
+  if (method === "GET" && runtimePath === "/v1/provider-auth/openai/status") {
     return json({ provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "OpenAI account login is not available for this local mock." });
   }
-  if (method === "GET" && url.pathname === "/v1/chats") {
+  if (method === "GET" && runtimePath === "/v1/chats") {
     return json({ chats: [] });
   }
-  if (method === "GET" && url.pathname === `/v1/chats/${activeChatId}`) {
+  if (method === "GET" && runtimePath === `/v1/chats/${activeChatId}`) {
     return json(chatThread([]));
   }
-  if (method === "POST" && url.pathname === "/v1/project-memory") {
+  if (method === "POST" && runtimePath === "/v1/project-memory") {
     return json({ id: "agent-run-memory-unused", title: "unused", text: "unused", tags: [], source: "manual", createdAt: fixture.checkpoint.checkedAt, updatedAt: fixture.checkpoint.checkedAt });
   }
-  if (method === "GET" && url.pathname === "/v1/project-memory") {
+  if (method === "GET" && runtimePath === "/v1/project-memory") {
     return json({ notes: [], cloudRequired: false, providerAccess: "direct" });
   }
-  if (method === "POST" && url.pathname === "/v1/project-memory/search") {
+  if (method === "POST" && runtimePath === "/v1/project-memory/search") {
     return json({ queryLabel: "agent-run", matches: [], cloudRequired: false, providerAccess: "direct" });
   }
-  if (method === "POST" && url.pathname === `/v1/chats/${activeChatId}/commands`) {
+  if (method === "POST" && runtimePath === `/v1/chats/${activeChatId}/commands`) {
     const parsed = JSON.parse(body);
     if (parsed.type === "abort") {
       abortCount += 1;
@@ -464,13 +477,13 @@ async function mockRuntimeResponse(value, method, body) {
     }
     return json({ accepted: true, chatId: activeChatId, requestId: submittedRequestId, type: parsed.type });
   }
-  if (method === "GET" && url.pathname === "/v1/chats/subscribe" && url.searchParams.get("chat_id") === activeChatId) {
+  if (method === "GET" && runtimePath === "/v1/chats/subscribe" && url.searchParams.get("chat_id") === activeChatId) {
     return sse(sseEvents());
   }
-  if (method === "POST" && url.pathname === "/v1/chats") {
+  if (method === "POST" && runtimePath === "/v1/chats") {
     return json(chatThread([]));
   }
-  if (method === "GET" && url.pathname === "/v1/agent-progress") {
+  if (method === "GET" && runtimePath === "/v1/agent-progress") {
     return json({ cloudRequired: false, providerAccess: "direct", generatedAt: fixture.checkpoint.checkedAt, snapshots: [] });
   }
   return undefined;
@@ -540,11 +553,13 @@ async function assertTracePanelCollapsed(page) {
 }
 
 async function openTracePanel(page) {
+  await page.getByRole("tab", { name: /^Debug \/ Trace/ }).click();
   const details = page.getByTestId("coding-session-trace-details");
   if (!(await details.evaluate((node) => node.open))) {
-    await details.locator("summary").click();
+    await details.evaluate((node) => { node.open = true; });
   }
   await expectVisibleText(page, "Read-only sanitized in-memory trace; no actions, execution, persistence, or auto-run.", "trace read-only disclaimer", 20_000);
+  await page.getByRole("tab", { name: "Chat", exact: true }).click();
 }
 
 async function assertTraceEntries(page, expectedTexts, description) {
@@ -587,10 +602,15 @@ async function assertNoIdeAction(page, action, label) {
   assert.equal(count, 0, `unexpected ${action} ${label}`);
 }
 
+async function assertNoControlledVerification(page, label) {
+  await assertNoRequestsOfType(page, "gui.controlledAgentCommandRunRequest", label);
+  await assertNoIdeAction(page, "runVerificationCommand", `${label} through the legacy contract`);
+}
+
 async function assertNoForbiddenBridgeActions(page) {
   const messages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
   const ideActions = messages.filter((message) => message?.type === "gui.ideActionRequest").map((message) => message.payload?.action);
-  const allowed = new Set(["getActiveFileExcerpt", "runVerificationCommand"]);
+  const allowed = new Set(["getActiveFileExcerpt"]);
   const forbiddenIdeActions = ideActions.filter((action) => !allowed.has(action));
   assert.deepEqual(forbiddenIdeActions, [], `unexpected IDE action request(s): ${forbiddenIdeActions.join(",")}`);
   assert.equal(runtimeRequests.some((request) => /git|shell|tool|exec|command-runner/i.test(request.url)), false, "runtime shell/git/tool-like endpoint was requested");
@@ -601,80 +621,12 @@ async function assertButtonDisabled(page, name, description) {
   assert.equal(disabled, true, `${description} was not disabled`);
 }
 
-async function startStaticServer(staticRoot) {
-  const server = http.createServer(async (request, response) => {
-    let pathname;
-    try {
-      const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-      pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    } catch {
-      response.writeHead(400).end("Bad request");
-      return;
-    }
-    const requestedPath = path.normalize(path.join(staticRoot, pathname));
-    if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
-      response.writeHead(403).end("Forbidden");
-      return;
-    }
-    try {
-      const fileStat = await stat(requestedPath);
-      if (!fileStat.isFile()) {
-        response.writeHead(404).end("Not found");
-        return;
-      }
-      response.writeHead(200, { "content-type": contentType(requestedPath) });
-      createReadStream(requestedPath).pipe(response);
-    } catch {
-      response.writeHead(404).end("Not found");
-    }
-  });
-  await listen(server, "127.0.0.1", 0);
-  const address = server.address();
-  return { port: address.port, close: () => closeServer(server) };
-}
-
-function listen(server, host, port) {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-}
-
-function closeServer(server) {
-  return new Promise((resolve, reject) => {
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
-}
-
-function contentType(filePath) {
-  if (filePath.endsWith(".html")) return "text/html; charset=utf-8";
-  if (filePath.endsWith(".js")) return "text/javascript; charset=utf-8";
-  if (filePath.endsWith(".css")) return "text/css; charset=utf-8";
-  if (filePath.endsWith(".svg")) return "image/svg+xml";
-  return "application/octet-stream";
-}
-
-function isAllowedNetworkUrl(value, guiBaseUrl) {
-  return isStaticServerAsset(value, guiBaseUrl) || isRuntimeOriginUrl(value);
-}
-
 function isRuntimeOriginUrl(value) {
   try {
     return new URL(value).origin === runtimeOrigin;
   } catch {
     return false;
   }
-}
-
-function isStaticServerAsset(url, guiBaseUrl) {
-  return url.startsWith(`${guiBaseUrl}/`);
-}
-
-function isJsOrCssAssetRequest(url, resourceType) {
-  return resourceType === "script" || resourceType === "stylesheet" || new URL(url).pathname.endsWith(".js") || new URL(url).pathname.endsWith(".css");
 }
 
 function isExpectedFetchConsoleError(text) {
