@@ -92,6 +92,7 @@ try {
     workspaceBinding: { state: "auto_bound", projectId: "prj_abcdefghijklmnopqrstuA", displayName: "Project memory smoke workspace" },
   });
   await page.getByRole("button", { name: "Legacy data", exact: true }).click();
+  await page.locator("[data-testid='task-agent-tools-drawer']").waitFor({ state: "attached", timeout: 20_000 });
   await dispatchHostMessage(page, {
     version: "2026-05-15",
     type: "host.ready",
