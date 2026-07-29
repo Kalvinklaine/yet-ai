@@ -208,7 +208,7 @@ async fn atomic_write_demo_mode(path: &Path, bytes: &[u8]) -> Result<(), DemoMod
         crate::storage::AtomicPrivateWriteOptions {
             max_bytes: DEMO_MODE_FILE_MAX_BYTES,
             mode: crate::storage::AtomicPrivateWriteMode::Replace,
-            sync_parent: true,
+            parent_sync: crate::storage::AtomicPrivateParentSync::BestEffortUnsupported,
         },
     )
     .await

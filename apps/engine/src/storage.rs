@@ -17,7 +17,14 @@ pub(crate) enum AtomicPrivateWriteMode {
 pub(crate) struct AtomicPrivateWriteOptions {
     pub max_bytes: usize,
     pub mode: AtomicPrivateWriteMode,
-    pub sync_parent: bool,
+    pub parent_sync: AtomicPrivateParentSync,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AtomicPrivateParentSync {
+    None,
+    Strict,
+    BestEffortUnsupported,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +37,15 @@ pub(crate) async fn atomic_write_private_file(
     path: &Path,
     bytes: &[u8],
     options: AtomicPrivateWriteOptions,
+) -> std::io::Result<AtomicPrivateWriteOutcome> {
+    atomic_write_private_file_before_commit(path, bytes, options, || Ok(())).await
+}
+
+async fn atomic_write_private_file_before_commit(
+    path: &Path,
+    bytes: &[u8],
+    options: AtomicPrivateWriteOptions,
+    before_commit: impl FnOnce() -> std::io::Result<()>,
 ) -> std::io::Result<AtomicPrivateWriteOutcome> {
     if bytes.len() > options.max_bytes || path.parent().is_none() || path.file_name().is_none() {
         return Err(std::io::Error::new(
@@ -49,6 +65,8 @@ pub(crate) async fn atomic_write_private_file(
         file.write_all(bytes).await?;
         file.sync_all().await?;
         set_private_file_permissions(file).await?;
+        before_commit()?;
+        reject_private_destination_symlink(path).await?;
         let outcome = match options.mode {
             AtomicPrivateWriteMode::Replace => {
                 replace_file(&temp_path, path).await?;
@@ -63,8 +81,8 @@ pub(crate) async fn atomic_write_private_file(
                 Err(error) => return Err(error),
             },
         };
-        if options.sync_parent && outcome == AtomicPrivateWriteOutcome::Written {
-            sync_private_parent_directory(path).await?;
+        if outcome == AtomicPrivateWriteOutcome::Written {
+            sync_private_parent_directory(path, options.parent_sync).await?;
         }
         Ok(outcome)
     }
@@ -74,6 +92,18 @@ pub(crate) async fn atomic_write_private_file(
         (Ok(outcome), Ok(())) => Ok(outcome),
         (Err(error), Ok(())) => Err(error),
         (_, Err(error)) => Err(error),
+    }
+}
+
+async fn reject_private_destination_symlink(path: &Path) -> std::io::Result<()> {
+    match tokio::fs::symlink_metadata(path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "private file destination is a symlink",
+        )),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -153,7 +183,13 @@ async fn set_private_file_permissions(file: tokio::fs::File) -> std::io::Result<
 }
 
 #[cfg(unix)]
-async fn sync_private_parent_directory(path: &Path) -> std::io::Result<()> {
+async fn sync_private_parent_directory(
+    path: &Path,
+    policy: AtomicPrivateParentSync,
+) -> std::io::Result<()> {
+    if policy == AtomicPrivateParentSync::None {
+        return Ok(());
+    }
     use std::os::unix::fs::OpenOptionsExt;
 
     let parent = path.parent().ok_or_else(|| {
@@ -170,7 +206,7 @@ async fn sync_private_parent_directory(path: &Path) -> std::io::Result<()> {
             .open(parent)?;
         match directory.sync_all() {
             Ok(()) => Ok(()),
-            Err(error) if unsupported_directory_sync_error(&error) => Ok(()),
+            Err(error) if ignore_parent_sync_error(policy, &error) => Ok(()),
             Err(error) => Err(error),
         }
     })
@@ -188,8 +224,17 @@ fn unsupported_directory_sync_error(error: &std::io::Error) -> bool {
     ) || error.raw_os_error() == Some(libc::EINVAL)
 }
 
+#[cfg(unix)]
+fn ignore_parent_sync_error(policy: AtomicPrivateParentSync, error: &std::io::Error) -> bool {
+    policy == AtomicPrivateParentSync::BestEffortUnsupported
+        && unsupported_directory_sync_error(error)
+}
+
 #[cfg(not(unix))]
-async fn sync_private_parent_directory(_path: &Path) -> std::io::Result<()> {
+async fn sync_private_parent_directory(
+    _path: &Path,
+    _policy: AtomicPrivateParentSync,
+) -> std::io::Result<()> {
     Ok(())
 }
 
@@ -482,15 +527,16 @@ mod tests {
     use crate::identity::ProductIdentity;
 
     use super::{
-        atomic_write_private_file, resolve_storage_paths, AtomicPrivateWriteMode,
-        AtomicPrivateWriteOptions, AtomicPrivateWriteOutcome,
+        atomic_write_private_file, atomic_write_private_file_before_commit, resolve_storage_paths,
+        AtomicPrivateParentSync, AtomicPrivateWriteMode, AtomicPrivateWriteOptions,
+        AtomicPrivateWriteOutcome,
     };
 
     fn write_options(mode: AtomicPrivateWriteMode) -> AtomicPrivateWriteOptions {
         AtomicPrivateWriteOptions {
             max_bytes: 16,
             mode,
-            sync_parent: true,
+            parent_sync: AtomicPrivateParentSync::BestEffortUnsupported,
         }
     }
 
@@ -529,6 +575,117 @@ mod tests {
         );
         assert_eq!(std::fs::read(&path).unwrap(), br#"{"value":1}"#);
         assert!(temp_files(temp.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn atomic_private_writer_concurrent_create_new_has_one_winner() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state.json");
+        let first = atomic_write_private_file(
+            &path,
+            b"first",
+            write_options(AtomicPrivateWriteMode::CreateNew),
+        );
+        let second = atomic_write_private_file(
+            &path,
+            b"second",
+            write_options(AtomicPrivateWriteMode::CreateNew),
+        );
+        let (first, second) = tokio::join!(first, second);
+        let outcomes = [first.unwrap(), second.unwrap()];
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == AtomicPrivateWriteOutcome::Written)
+                .count(),
+            1
+        );
+        assert!(matches!(
+            std::fs::read(&path).unwrap().as_slice(),
+            b"first" | b"second"
+        ));
+        assert!(temp_files(temp.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn atomic_private_writer_concurrent_replace_leaves_complete_payload() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state.json");
+        let first = atomic_write_private_file(
+            &path,
+            b"first",
+            write_options(AtomicPrivateWriteMode::Replace),
+        );
+        let second = atomic_write_private_file(
+            &path,
+            b"second",
+            write_options(AtomicPrivateWriteMode::Replace),
+        );
+        let (first, second) = tokio::join!(first, second);
+        assert_eq!(first.unwrap(), AtomicPrivateWriteOutcome::Written);
+        assert_eq!(second.unwrap(), AtomicPrivateWriteOutcome::Written);
+        assert!(matches!(
+            std::fs::read(&path).unwrap().as_slice(),
+            b"first" | b"second"
+        ));
+        assert!(temp_files(temp.path()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_private_writer_rejects_rename_time_destination_symlink_injection() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state.json");
+        let target = outside.path().join("outside.json");
+        std::fs::write(&target, "outside").unwrap();
+        let injected_path = path.clone();
+        let injected_target = target.clone();
+        assert!(atomic_write_private_file_before_commit(
+            &path,
+            b"private",
+            write_options(AtomicPrivateWriteMode::Replace),
+            move || std::os::unix::fs::symlink(injected_target, injected_path),
+        )
+        .await
+        .is_err());
+
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "outside");
+        assert!(std::fs::symlink_metadata(path)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(temp_files(temp.path()).is_empty());
+    }
+
+    #[test]
+    fn atomic_private_parent_sync_policies_are_distinct() {
+        assert_ne!(
+            AtomicPrivateParentSync::None,
+            AtomicPrivateParentSync::Strict
+        );
+        assert_ne!(
+            AtomicPrivateParentSync::Strict,
+            AtomicPrivateParentSync::BestEffortUnsupported
+        );
+        let unsupported = std::io::Error::new(std::io::ErrorKind::Unsupported, "unsupported");
+        let other = std::io::Error::new(std::io::ErrorKind::Other, "failed");
+        assert!(super::ignore_parent_sync_error(
+            AtomicPrivateParentSync::BestEffortUnsupported,
+            &unsupported
+        ));
+        assert!(!super::ignore_parent_sync_error(
+            AtomicPrivateParentSync::Strict,
+            &unsupported
+        ));
+        assert!(!super::ignore_parent_sync_error(
+            AtomicPrivateParentSync::None,
+            &unsupported
+        ));
+        assert!(!super::ignore_parent_sync_error(
+            AtomicPrivateParentSync::BestEffortUnsupported,
+            &other
+        ));
     }
 
     #[tokio::test]

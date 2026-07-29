@@ -418,7 +418,7 @@ async fn atomic_write_chat_history(path: &Path, bytes: &[u8]) -> Result<(), Chat
         crate::storage::AtomicPrivateWriteOptions {
             max_bytes: CHAT_HISTORY_FILE_MAX_BYTES as usize,
             mode: crate::storage::AtomicPrivateWriteMode::Replace,
-            sync_parent: true,
+            parent_sync: crate::storage::AtomicPrivateParentSync::BestEffortUnsupported,
         },
     )
     .await

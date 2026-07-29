@@ -697,7 +697,7 @@ async fn write_secret_record(path: &Path, record: &SecretRecord) -> Result<(), S
         crate::storage::AtomicPrivateWriteOptions {
             max_bytes: 1024 * 1024,
             mode: crate::storage::AtomicPrivateWriteMode::Replace,
-            sync_parent: true,
+            parent_sync: crate::storage::AtomicPrivateParentSync::BestEffortUnsupported,
         },
     )
     .await
@@ -719,7 +719,7 @@ async fn write_secret_record_if_absent(
         crate::storage::AtomicPrivateWriteOptions {
             max_bytes: 1024 * 1024,
             mode: crate::storage::AtomicPrivateWriteMode::CreateNew,
-            sync_parent: true,
+            parent_sync: crate::storage::AtomicPrivateParentSync::BestEffortUnsupported,
         },
     )
     .await

@@ -10,7 +10,6 @@ use http::StatusCode;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
 
 use crate::logging::{log_event, EngineLogLevel};
 use crate::provider_auth_callback;
@@ -58,7 +57,6 @@ const CODEX_ALLOWED_SCOPES: [&str; 4] = ["openid", "profile", "email", "offline_
 const CODEX_MODELS_CLIENT_VERSION: &str = "999.999.999";
 const CODEX_REFRESH_SCOPE: &str = "openid profile email";
 static MOCK_COUNTER: AtomicU64 = AtomicU64::new(1);
-static PROVIDER_AUTH_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static CODEX_EXCHANGE_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 static CODEX_REFRESH_LOCKS: LazyLock<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
@@ -2823,7 +2821,18 @@ where
     ensure_provider_auth_directory(&path).await?;
     reject_provider_auth_file_symlink(&path).await?;
     let bytes = serde_json::to_vec_pretty(state).map_err(|_| ProviderAuthError::Storage)?;
-    atomic_write_provider_auth_state(&path, &bytes).await
+    crate::storage::atomic_write_private_file(
+        &path,
+        &bytes,
+        crate::storage::AtomicPrivateWriteOptions {
+            max_bytes: 1024 * 1024,
+            mode: crate::storage::AtomicPrivateWriteMode::Replace,
+            parent_sync: crate::storage::AtomicPrivateParentSync::BestEffortUnsupported,
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|_| ProviderAuthError::Storage)
 }
 
 fn provider_auth_state_path(
@@ -2942,67 +2951,6 @@ async fn reject_provider_auth_file_symlink(path: &Path) -> Result<(), ProviderAu
     }
 }
 
-async fn atomic_write_provider_auth_state(
-    path: &Path,
-    bytes: &[u8],
-) -> Result<(), ProviderAuthError> {
-    let temp_path = temp_provider_auth_path(path);
-    let mut options = tokio::fs::OpenOptions::new();
-    options.create_new(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-    let result = async {
-        let mut file = options
-            .open(&temp_path)
-            .await
-            .map_err(|_| ProviderAuthError::Storage)?;
-        file.write_all(bytes)
-            .await
-            .map_err(|_| ProviderAuthError::Storage)?;
-        file.sync_all()
-            .await
-            .map_err(|_| ProviderAuthError::Storage)?;
-        set_private_permissions_for_open_file(file).await?;
-        reject_provider_auth_file_symlink(path).await?;
-        tokio::fs::rename(&temp_path, path)
-            .await
-            .map_err(|_| ProviderAuthError::Storage)?;
-        set_private_permissions(path).await?;
-        sync_parent_directory(path).await
-    }
-    .await;
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            cleanup_provider_auth_temp_file(&temp_path).await?;
-            Err(error)
-        }
-    }
-}
-
-fn temp_provider_auth_path(path: &Path) -> PathBuf {
-    let counter = PROVIDER_AUTH_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("state.json");
-    path.with_file_name(format!(
-        ".{file_name}.tmp.{}.{}",
-        std::process::id(),
-        counter
-    ))
-}
-
-async fn cleanup_provider_auth_temp_file(path: &Path) -> Result<(), ProviderAuthError> {
-    match tokio::fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(ProviderAuthError::Storage),
-    }
-}
-
 #[cfg(unix)]
 async fn read_provider_auth_file(path: &Path) -> Result<Option<Vec<u8>>, ProviderAuthError> {
     let path = path.to_path_buf();
@@ -3053,47 +3001,6 @@ fn open_directory_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
 }
 
 #[cfg(unix)]
-async fn set_private_permissions_for_open_file(
-    file: tokio::fs::File,
-) -> Result<(), ProviderAuthError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let file = file.into_std().await;
-    tokio::task::spawn_blocking(move || {
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| ProviderAuthError::Storage)
-    })
-    .await
-    .map_err(|_| ProviderAuthError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions_for_open_file(
-    file: tokio::fs::File,
-) -> Result<(), ProviderAuthError> {
-    drop(file);
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn set_private_permissions(path: &Path) -> Result<(), ProviderAuthError> {
-    use std::os::unix::fs::PermissionsExt;
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let file = open_file_no_follow(&path).map_err(|_| ProviderAuthError::Storage)?;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| ProviderAuthError::Storage)
-    })
-    .await
-    .map_err(|_| ProviderAuthError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions(_path: &Path) -> Result<(), ProviderAuthError> {
-    Ok(())
-}
-
-#[cfg(unix)]
 async fn set_private_directory_permissions(path: &Path) -> Result<(), ProviderAuthError> {
     use std::os::unix::fs::PermissionsExt;
     let path = path.to_path_buf();
@@ -3109,38 +3016,6 @@ async fn set_private_directory_permissions(path: &Path) -> Result<(), ProviderAu
 
 #[cfg(not(unix))]
 async fn set_private_directory_permissions(_path: &Path) -> Result<(), ProviderAuthError> {
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn sync_parent_directory(path: &Path) -> Result<(), ProviderAuthError> {
-    let dir = path
-        .parent()
-        .ok_or(ProviderAuthError::Storage)?
-        .to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        match open_directory_no_follow(&dir).and_then(|directory| directory.sync_all()) {
-            Ok(()) => Ok(()),
-            Err(error) if is_unsupported_directory_sync_error(&error) => Ok(()),
-            Err(_) => Err(ProviderAuthError::Storage),
-        }
-    })
-    .await
-    .map_err(|_| ProviderAuthError::Storage)?
-}
-
-#[cfg(unix)]
-fn is_unsupported_directory_sync_error(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::PermissionDenied
-            | std::io::ErrorKind::Unsupported
-            | std::io::ErrorKind::InvalidInput
-    ) || error.raw_os_error() == Some(22)
-}
-
-#[cfg(not(unix))]
-async fn sync_parent_directory(_path: &Path) -> Result<(), ProviderAuthError> {
     Ok(())
 }
 

@@ -1281,7 +1281,7 @@ async fn write_provider_test_state(
         crate::storage::AtomicPrivateWriteOptions {
             max_bytes: PROVIDER_TEST_STATE_FILE_MAX_BYTES,
             mode: crate::storage::AtomicPrivateWriteMode::Replace,
-            sync_parent: true,
+            parent_sync: crate::storage::AtomicPrivateParentSync::None,
         },
     )
     .await
@@ -1588,7 +1588,7 @@ async fn write_temp_then(
             } else {
                 crate::storage::AtomicPrivateWriteMode::Replace
             },
-            sync_parent: true,
+            parent_sync: crate::storage::AtomicPrivateParentSync::None,
         },
     )
     .await

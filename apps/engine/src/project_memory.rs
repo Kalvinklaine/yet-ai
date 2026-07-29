@@ -534,7 +534,7 @@ async fn atomic_write_project_memory(path: &Path, bytes: &[u8]) -> Result<(), Pr
         crate::storage::AtomicPrivateWriteOptions {
             max_bytes: STORE_FILE_MAX_BYTES as usize,
             mode: crate::storage::AtomicPrivateWriteMode::Replace,
-            sync_parent: true,
+            parent_sync: crate::storage::AtomicPrivateParentSync::Strict,
         },
     )
     .await
