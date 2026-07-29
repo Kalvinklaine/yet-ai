@@ -11,6 +11,7 @@ import type { ControlledAgentTwoStepRunState } from "../services/controlledAgent
 import { evaluateControlledAgentRecoveryMatrix, type ControlledAgentRecoveryEvaluation, type ControlledAgentRecoveryVisibleState } from "../services/controlledAgentRecoveryMatrix";
 import type { ControlledHostCapabilityMatrixDisplay } from "../services/toolAuthorityPolicy";
 import { sanitizeDisplayText } from "../services/redaction";
+import type { ControlledCapabilityProvenanceMap } from "../services/controlledCapabilityProvenance";
 
 export type ControlledAgentRunPanelProps = {
   state: ControlledAgentRunState;
@@ -18,11 +19,12 @@ export type ControlledAgentRunPanelProps = {
   mvpReport?: ControlledLocalAgentMvpReport;
   host?: BridgeHost | "unknown";
   capabilityMatrix?: ControlledHostCapabilityMatrixDisplay;
+  provenance?: ControlledCapabilityProvenanceMap;
   twoStepRunState?: ControlledAgentTwoStepRunState;
   onStop: () => void;
 };
 
-export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host = "unknown", capabilityMatrix, twoStepRunState, onStop }: ControlledAgentRunPanelProps) {
+export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host = "unknown", capabilityMatrix, provenance, twoStepRunState, onStop }: ControlledAgentRunPanelProps) {
   const phaseLabel = sanitizeDisplayText(state.phase.replace(/_/g, " "));
   const stopReason = state.stop?.reason ? sanitizeDisplayText(state.stop.reason.replace(/_/g, " ")) : "none";
   const currentStep = currentStepLabel(state);
@@ -103,6 +105,16 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         <span className="subtle">This is sanitized GUI evidence only. It does not start planning, acquire hidden context, post bridge requests, apply edits, run verification, draft repair, write storage, or call providers/tools.</span>
       </section>}
       <ControlledRecoveryGuidanceCard guidance={recoveryGuidance} />
+      {provenance && <section className="readiness-card warn stack" role="status" aria-label="Controlled capability provenance">
+        <div className="row">
+          <strong>Controlled capability provenance</strong>
+          <span className="badge">ADR 041</span>
+          <span className="badge">classification only</span>
+          <span className="badge">grants authority: false</span>
+        </div>
+        {Object.values(provenance).map((item) => <span key={item.surface}><strong>{sanitizeDisplayText(item.surface.replace(/_/g, " "))}</strong>: {item.status} · {item.readiness} · execution support {item.executionSupport} · {sanitizeDisplayText(item.evidenceLabel)} · {sanitizeDisplayText(item.safeReason)}</span>)}
+        <span className="subtle">Visibility, provenance, and host support are evidence only. Existing explicit confirmation, policy, correlation, and executor checks remain authoritative.</span>
+      </section>}
       {capabilityMatrix && (
         <section className="readiness-card warn stack" role="status" aria-label="Controlled run host capability matrix">
           <div className="row">
