@@ -1,520 +1,258 @@
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { createGuiSmokeBootstrap } from "./lib/gui-smoke-bootstrap.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
-const indexPath = path.join(distRoot, "index.html");
 const evidenceRoot = path.join(root, "dist", "visual-smoke", "gui-demo-mode");
-const runtimeToken = `demo-runtime-token-${randomUUID()}`;
+const projectId = "prj_abcdefghijklmnopqrstuA";
+const projectName = "Disposable Demo Project";
+const projectRootMarker = `/private/demo-smoke-${randomUUID()}`;
 const providerSecret = `sk-demo-provider-${randomUUID()}`;
-const failures = [];
-let guiServer;
+const chatId = "demo-project-chat";
+const assistantAnswer = "Yet AI Demo Mode canned response — no provider call was made.";
+const prompts = ["First manual Demo Mode project prompt.", "Second manual Demo Mode project prompt."];
+const chats = new Map();
+const subscribers = new Map();
+const eventSequences = new Map();
+const runtimeRequests = [];
 let runtimeServer;
-let browser;
+let smoke;
+let registered = false;
 let demoEnabled = false;
 let providerHits = 0;
 let chatCommandCount = 0;
-let secondResponseHadActiveSse = false;
-const runtimeApiRequests = [];
-const chats = new Map([["chat-001", thread("chat-001", "Demo smoke chat", [])]]);
-const chatEvents = new Map();
-const chatEventSeq = new Map();
-const chatActiveStreams = new Map();
-const chatTerminalReplayRetention = new Map();
-const subscribers = new Map();
-
-await requireBuiltGui();
-const { chromium } = await requireChromium();
 
 try {
-  guiServer = await startStaticServer(distRoot);
+  const { chromium } = await import("playwright");
   runtimeServer = await startRuntimeServer();
-  browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
-  page.on("pageerror", (error) => recordFailure(`Page JavaScript error: ${error.message}`));
-  page.on("console", (message) => {
-    if (message.text().startsWith("Failed to load resource:")) return;
-    if (message.type() === "error") recordFailure(`Console error: ${message.text()}`);
+  smoke = await createGuiSmokeBootstrap({
+    distRoot,
+    chromium,
+    entry: { mode: "browser", route: "/projects" },
+    viewport: { width: 1280, height: 900 },
+    privacyMarkers: [providerSecret, projectRootMarker],
+    criticalRequest: (url) => url.pathname.endsWith(".js") || url.pathname.endsWith(".css") || url.pathname.startsWith(`/p/${projectId}/v1/`),
+    launchOptions: { args: ["--disable-web-security"] },
   });
-  page.on("requestfailed", (request) => {
-    const failureText = request.failure()?.errorText ?? "unknown error";
-    const requestUrl = request.url();
-    if (requestUrl.startsWith("http://127.0.0.1:") && failureText === "net::ERR_ABORTED") return;
-    if (requestUrl.startsWith("http://127.0.0.1:8001/v1/") && failureText === "net::ERR_CONNECTION_REFUSED") return;
-    recordFailure(`Request failed: ${requestUrl} ${failureText}`);
-  });
-  page.on("request", (request) => {
-    const url = request.url();
-    if (!url.startsWith("http://127.0.0.1:")) {
-      recordFailure(`Non-loopback request attempted: ${url}`);
-    }
-  });
+  const page = smoke.page;
 
-  await page.goto(`http://127.0.0.1:${guiServer.port}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
-  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
-  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
-  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
-  await refreshButton.click();
+  await page.getByRole("heading", { name: "Projects", exact: true }).waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "Add your first project", exact: true }).click();
+  await page.getByRole("dialog", { name: "Add local project" }).waitFor({ state: "visible" });
+  await page.getByLabel("Project display name").fill(projectName);
+  await page.getByRole("button", { name: "Add project", exact: true }).click();
+  await page.waitForURL(new RegExp(`/p/${projectId}/?$`));
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.waitForURL(/\/settings$/);
+  await page.getByRole("tab", { name: /^Setup/ }).click();
+  const demoToggle = page.locator("button").filter({ hasText: "Try Demo Mode" }).first();
+  await demoToggle.waitFor({ state: "attached" });
+  await demoToggle.evaluate((button) => button.click());
+  await page.getByRole("tab", { name: /^Chat/ }).click();
+  await page.locator(".chat-lifecycle-state").filter({ hasText: "Demo Mode ready — local canned responses" }).waitFor({ state: "visible" });
+  await page.goBack();
+  await page.waitForURL(new RegExp(`/p/${projectId}/?$`));
+  await page.getByRole("navigation", { name: `${projectName} navigation` }).getByRole("link", { name: "Chat", exact: true }).click();
+  await page.waitForURL(new RegExp(`/p/${projectId}/chat$`));
+  await page.getByText("Demo Mode ready", { exact: false }).first().waitFor({ state: "visible" });
 
-  await expectVisibleText(page, "Runtime connected", "runtime connected");
-  await expectVisibleText(page, "Try Demo Mode", "demo-mode offer");
-  await page.getByRole("button", { name: "Try Demo Mode" }).first().click();
-  await expectVisibleText(page, "Demo Mode is active in the local runtime", "demo enabled status");
-  await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "demo readiness");
-  await assertChatWorkbenchLayout(page, "initial wide layout");
-  await page.setViewportSize({ width: 760, height: 900 });
-  await assertChatWorkbenchLayout(page, "compact layout");
-  await page.getByRole("button", { name: "Chats", exact: true }).click();
-  const drawerOpen = await page.locator(".conversations-drawer.open").isVisible().catch(() => false);
-  assert(drawerOpen, "compact Chats toggle did not open the conversations drawer");
-  await page.getByRole("button", { name: "Close", exact: true }).click();
-
-  const firstPrompt = "Terminal message_added first prompt smoke.";
-  const assistantAnswer = "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
-  const explainAnswer = "Demo Mode Coding Actions explanation: selected code returns a greeting; no provider call was made.";
-  const editProposalSummary = "Demo Mode safe edit no-op preview. No provider call was made; this is a local canned response, not model quality. Selected text is preserved exactly for this browser demo because the context includes a valid workspace-relative path.";
-  const secondPrompt = "Terminal message_added second prompt smoke.";
-  const codingActionsContext = {
-    kind: "active_editor",
-    source: "browser",
-    file: { displayPath: "src/demo.ts", workspaceRelativePath: "src/demo.ts", languageId: "typescript" },
-    selection: { startLine: 1, startCharacter: 0, endLine: 3, endCharacter: 1, text: "export function greet(name: string) {\n  return `Hello, ${name}`;\n}" },
-  };
-  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(firstPrompt);
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expectVisibleText(page, firstPrompt, "visible first user prompt");
-  await expectVisibleText(page, assistantAnswer, "first terminal message_added assistant response");
-  await assertAssistantBubbleSequence(page, [assistantAnswer], "assistant response sequence after first send");
-
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  await openDetailsBySummary(page, "Local runtime connection", page.getByRole("textbox", { name: "Session token", exact: true }));
-  await page.getByRole("textbox", { name: "Session token", exact: true }).fill(runtimeToken);
-  await page.getByLabel("Runtime base URL").fill(`http://127.0.0.1:${runtimeServer.port}`);
-  const refreshButtonAfterReload = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", refreshButtonAfterReload);
-  await refreshButtonAfterReload.click();
-  await expectVisibleText(page, "Runtime connected", "runtime connected after browser refresh");
-  await expectVisibleText(page, "Demo Mode ready", "demo enabled status after browser refresh");
-  await expectVisibleText(page, firstPrompt, "visible first user prompt after browser refresh");
-  await expectVisibleText(page, assistantAnswer, "first assistant response after browser refresh");
-  await assertAssistantBubbleSequence(page, [assistantAnswer], "assistant response sequence after browser refresh");
-
-  await injectActiveEditorContext(page, codingActionsContext);
-  await assertChatWorkbenchLayout(page, "compact layout before coding actions");
-  await expectVisibleText(page, "Coding Actions", "coding actions panel");
-  await expectVisibleText(page, "attached context ready", "coding actions attached context ready");
-  await page.getByRole("button", { name: "Explain selection", exact: true }).click();
-  await expectComposerValue(page, "Explain the selected code", "explain selection prompt");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expectVisibleText(page, explainAnswer, "coding actions explain demo answer");
-  await expectVisibleText(page, "no provider call was made", "coding actions explain no-provider copy");
-  await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer], "assistant response sequence after coding explain");
-
-  await injectActiveEditorContext(page, codingActionsContext);
-  await assertChatWorkbenchLayout(page, "compact layout before safe edit");
-  await expectVisibleText(page, "Coding Actions", "coding actions panel before safe edit");
-  await page.getByRole("button", { name: "Safe edit", exact: true }).click();
-  await expectComposerValue(page, "Propose a safe edit", "propose safe edit prompt");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expectVisibleText(page, "Proposed a safe edit. Review the proposal card below. It will not apply automatically.", "compact safe edit proposal copy");
-  await expectVisibleText(page, "Propose safe edit", "safe edit proposal card");
-  await expectVisibleText(page, editProposalSummary, "safe edit proposal summary");
-  await expectVisibleText(page, codingActionsContext.selection.text, "safe edit no-op replacement preserves selected text");
-  await expectVisibleText(page, "Preview only in this host. Browser cannot apply proposed edits", "browser preview-only safe edit copy");
-  await assertNoVisibleText(page, "Apply in VS Code after review", "VS Code apply button in browser Demo Mode smoke");
-  await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer, "Proposed a safe edit"], "assistant response sequence after coding safe edit");
-
-  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(secondPrompt);
-  await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expectVisibleText(page, secondPrompt, "visible second user prompt");
-  await expectVisibleText(page, assistantAnswer, "identical terminal message_added assistant responses after second send");
-  await assertAssistantBubbleSequence(page, [assistantAnswer, explainAnswer, "Earlier safe edit proposal", assistantAnswer], "assistant response sequence after second send");
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await expectVisibleText(page, "Conversations", "conversation list heading");
-  await expectVisibleText(page, "Demo smoke chat", "readable active conversation title");
-  await expectVisibleText(page, "current", "active conversation marker");
-  await expectVisibleText(page, "8 visible messages", "active conversation readable visible message count after sends");
-  await expectVisibleText(page, "no provider call was made", "demo no-provider copy");
-  await expectVisibleText(page, "Demo Mode ready — local canned responses, no provider calls. Ready to send.", "post-response demo ready status");
-  const postResponseBody = await page.evaluate(() => document.body.innerText);
-  assert(!postResponseBody.includes("Message sent; waiting for response stream."), "post-response body still shows stale command-accepted waiting copy");
-  assert(!postResponseBody.includes("Ready when the local runtime and provider model are ready"), "post-response body still shows stale provider-ready waiting copy");
-  assert(!postResponseBody.includes("Waiting for engine"), "post-response body still shows stale engine waiting copy");
-
-  await page.getByRole("button", { name: "Disable Demo Mode" }).first().click();
-  await expectVisibleText(page, "Try Demo Mode", "demo disabled offer");
-
-  const pageState = await page.evaluate(() => JSON.stringify({
-    body: document.body.innerText,
-    localStorage: Object.fromEntries(Array.from({ length: localStorage.length }, (_, index) => {
-      const key = localStorage.key(index) ?? "";
-      return [key, localStorage.getItem(key)];
-    })),
-    sessionStorage: Object.fromEntries(Array.from({ length: sessionStorage.length }, (_, index) => {
-      const key = sessionStorage.key(index) ?? "";
-      return [key, sessionStorage.getItem(key)];
-    })),
-  }));
-  for (const marker of [runtimeToken, providerSecret]) {
-    assert(!pageState.includes(marker), `browser state leaked ${marker}`);
-  }
-  assert(providerHits === 0, `demo smoke unexpectedly hit provider ${providerHits} time(s)`);
-  assert(chatCommandCount === 4, `demo smoke expected exactly four chat sends including Coding Actions, observed ${chatCommandCount}`);
-  assert(secondResponseHadActiveSse, "demo smoke expected the second response to be delivered while a browser SSE subscriber was active");
-  assert(runtimeApiRequests.length > 0, "expected runtime API requests to be observed");
-  assert(runtimeApiRequests.every((item) => item.authorized), "runtime API route missing Authorization: Bearer session token");
-
-  const evidence = await saveVisualEvidence(page);
-
-  if (failures.length > 0) {
-    throw new Error(`GUI Demo Mode smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
-  }
-  console.log("GUI Demo Mode smoke passed.");
-  console.log("Verified built GUI toggles local runtime Demo Mode, sends canned chat over local command/SSE/history, exercises Coding Actions with selected code via real Explain selection/Propose safe edit clicks and real Send clicks, renders preview-only safe edit proposals, avoids duplicate assistant bubbles, uses only loopback, and makes no provider calls or browser-storage secret writes.");
-  console.log(`Saved sanitized visual evidence under ${path.relative(root, evidence.dir)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}).`);
-} finally {
-  await browser?.close().catch(() => undefined);
-  await guiServer?.close().catch(() => undefined);
-  await runtimeServer?.close().catch(() => undefined);
-}
-
-async function requireBuiltGui() {
-  try {
-    const fileStat = await stat(indexPath);
-    if (!fileStat.isFile()) throw new Error("not a file");
-    const html = await readFile(indexPath, "utf8");
-    if (!html.includes("/assets/") && !html.includes("./assets/")) throw new Error("built GUI index.html does not reference Vite assets");
-  } catch (error) {
-    console.error("GUI Demo Mode smoke failed: built GUI is missing or invalid.");
-    console.error("Run `cd apps/gui && npm run build` before `npm run smoke:gui-demo-mode`.");
-    console.error(`Reason: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
-}
-
-async function requireChromium() {
-  try {
-    return await import("playwright");
-  } catch (error) {
-    console.error("GUI Demo Mode smoke failed: Playwright is not installed or cannot be loaded.");
-    console.error("Run `npm install` from the repository root, then run `npx playwright install chromium` if needed.");
-    console.error(`Load error: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  }
-}
-
-async function saveVisualEvidence(page) {
-  await mkdir(evidenceRoot, { recursive: true });
-  const screenshotPath = path.join(evidenceRoot, "gui-demo-mode.png");
-  const domPath = path.join(evidenceRoot, "gui-demo-mode.dom.txt");
-  await page.screenshot({ path: screenshotPath, fullPage: true });
-  const sanitizedText = await page.evaluate(() => document.body.innerText)
-    .then((text) => sanitizeEvidenceText(text));
-  await writeFile(domPath, sanitizedText, "utf8");
-  return { dir: evidenceRoot, screenshotPath, domPath };
-}
-
-function sanitizeEvidenceText(text) {
-  return text
-    .replaceAll(runtimeToken, "[redacted-runtime-token]")
-    .replaceAll(providerSecret, "[redacted-provider-secret]")
-    .replace(/sk-[A-Za-z0-9._-]+/g, "[redacted-api-key]")
-    .replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer [redacted]")
-    .replace(/(access[_-]?token|refresh[_-]?token|session[_-]?token|api[_-]?key|secret|password|cookie)=([^\s&?#)]+)/gi, "$1=[redacted]")
-    .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
-    .replace(/\/(?:private|var\/folders|tmp)\/[^\s)]+/g, "[redacted-private-path]")
-    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
-}
-
-function recordFailure(message) {
-  failures.push(sanitizeEvidenceText(String(message)));
-}
-
-async function openDetailsBySummary(page, summaryText, visibleLocator) {
-  if (await visibleLocator.isVisible().catch(() => false)) return;
-  const summary = page.locator("summary", { hasText: summaryText }).first();
-  await summary.click({ timeout: 5000 }).catch(async () => {
-    await page.locator("details", { hasText: summaryText }).first().evaluate((element) => {
-      if (element instanceof HTMLDetailsElement) element.open = true;
+  for (let index = 0; index < prompts.length; index += 1) {
+    const prompt = prompts[index];
+    await page.getByTestId("chat-composer").getByRole("textbox").fill(prompt);
+    const commandResponse = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return response.request().method() === "POST" && url.pathname.endsWith("/commands");
     });
-  });
-  await visibleLocator.waitFor({ state: "visible", timeout: 10_000 });
-}
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    assert((await commandResponse).ok(), `Manual Send ${index + 1} was not accepted.`);
+    await page.getByText(prompt, { exact: true }).waitFor({ state: "visible" });
+    await waitForAssistantCount(page, index + 1);
+  }
 
-async function startStaticServer(staticRoot) {
-  const server = http.createServer(async (request, response) => {
-    const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-    const pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    const requestedPath = path.normalize(path.join(staticRoot, pathname));
-    if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
-      response.writeHead(403).end("Forbidden");
-      return;
-    }
-    try {
-      const fileStat = await stat(requestedPath);
-      if (!fileStat.isFile()) {
-        response.writeHead(404).end("Not found");
-        return;
-      }
-      response.writeHead(200, { "content-type": contentType(requestedPath) });
-      createReadStream(requestedPath).pipe(response);
-    } catch {
-      response.writeHead(404).end("Not found");
-    }
-  });
-  return listen(server);
+  const assistantBubbles = await page.locator(".chat-bubble.assistant").allTextContents();
+  assert(assistantBubbles.length === 2, `Expected exactly two canned assistant responses, observed ${assistantBubbles.length}.`);
+  assert(assistantBubbles.every((text) => text.includes(assistantAnswer)), "A Demo Mode response did not contain the canned local answer.");
+  assert(chatCommandCount === 2, `Expected exactly two manual chat commands, observed ${chatCommandCount}.`);
+  assert(providerHits === 0, `Demo Mode unexpectedly made ${providerHits} provider call(s).`);
+  assert(runtimeRequests.some((item) => item.path.startsWith(`/p/${projectId}/v1/`)), "No project-scoped runtime request was observed.");
+  assert(!runtimeRequests.some((item) => item.method === "POST" && /^\/v1\/chats(?:\/|$)/.test(item.path)), "Manual project chat command escaped to the unscoped legacy runtime route.");
+  assert(!runtimeRequests.some((item) => item.path.includes("prj_other")), "Runtime request escaped into another project scope.");
+
+  const bridgePosts = await page.evaluate(() => window.__yetAiSmokeBridgePosts ?? []);
+  const privilegedPosts = bridgePosts.filter((message) => typeof message?.type === "string" && (
+    message.type === "gui.ideActionRequest"
+    || message.type === "gui.applyWorkspaceEditRequest"
+    || message.type.startsWith("gui.controlledAgent")
+  ));
+  assert(privilegedPosts.length === 0, `Browser emitted ${privilegedPosts.length} privileged IDE action(s).`);
+  assert(await page.locator("main.host-browser").isVisible(), "Project chat did not remain in browser host mode.");
+
+  await smoke.assertPrivacy();
+  smoke.assertHealthy();
+  const evidence = await saveVisualEvidence(page);
+  console.log("GUI Demo Mode smoke passed.");
+  console.log("Verified canonical /projects registration, project-scoped chat setup, exactly two manual canned responses, zero provider calls, browser-only authority, project isolation, and sanitized storage evidence.");
+  console.log(`Saved sanitized visual evidence under ${path.relative(root, evidence.dir)}/.`);
+} catch (error) {
+  console.error(redact(error instanceof Error ? error.message : String(error)));
+  console.error(`Runtime request tail: ${runtimeRequests.slice(-20).map((item) => `${item.method} ${item.path}`).join(", ")}`);
+  if (smoke?.page) {
+    console.error(`Page ${smoke.page.url()} body: ${redact((await smoke.page.locator("body").innerText().catch(() => "")).slice(0, 1200))}`);
+    console.error(`Buttons: ${redact(JSON.stringify(await smoke.page.getByRole("button").allTextContents().catch(() => [])))}`);
+  }
+  process.exitCode = 1;
+} finally {
+  await smoke?.close().catch(() => undefined);
+  await runtimeServer?.close().catch(() => undefined);
 }
 
 async function startRuntimeServer() {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    runtimeRequests.push({ method: request.method ?? "GET", path: url.pathname });
     if (request.method === "OPTIONS") return empty(response, 204);
-    if (url.pathname.startsWith("/v1/")) {
-      const authorized = request.headers.authorization === `Bearer ${runtimeToken}`;
-      runtimeApiRequests.push({ method: request.method, path: url.pathname, authorized });
-      if (!authorized) return json(response, 401, { error: "missing runtime Authorization bearer token" });
+
+    if (request.method === "GET" && url.pathname === "/v1/projects") {
+      return json(response, 200, { projects: registered ? [projectSummary()] : [], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
     }
-    if (request.method === "GET" && url.pathname === "/v1/ping") return json(response, 200, { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: new Date().toISOString() });
-    if (request.method === "GET" && url.pathname === "/v1/caps") return json(response, 200, { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: true, lsp: false } });
+    if (request.method === "POST" && url.pathname === "/v1/project-browser/sessions") {
+      return json(response, 200, { sessionId: "demo-discovery", expiresAt: "2099-01-01T00:00:00Z", root: { handle: "opaque-demo-root", displayName: "Demo workspace", selectable: true }, cloudRequired: false, providerAccess: "direct" });
+    }
+    if (request.method === "POST" && url.pathname === "/v1/project-browser/sessions/demo-discovery/list") {
+      return json(response, 200, { sessionId: "demo-discovery", directoryHandle: "opaque-demo-root", expiresAt: "2099-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" });
+    }
+    if (request.method === "POST" && url.pathname === "/v1/projects") {
+      const body = await readJsonBody(request);
+      assert(body.directoryHandle === "opaque-demo-root", "Project registration did not use the opaque discovery handle.");
+      assert(!JSON.stringify(body).includes(projectRootMarker), "Project registration exposed a private path marker.");
+      registered = true;
+      return json(response, 200, projectSummary());
+    }
+    if (request.method === "GET" && url.pathname === `/v1/projects/${projectId}`) return json(response, registered ? 200 : 404, registered ? projectSummary() : { error: "not found" });
+    if (request.method === "GET" && url.pathname === "/v1/ping") return json(response, 200, pingResponse());
+    if (request.method === "GET" && url.pathname === "/v1/caps") return json(response, 200, capsResponse());
     if (request.method === "GET" && url.pathname === "/v1/demo-mode") return json(response, 200, demoModeResponse());
     if (request.method === "POST" && url.pathname === "/v1/demo-mode") {
-      const body = await readJsonBody(request, response);
-      if (body === undefined) return;
+      const body = await readJsonBody(request);
       demoEnabled = body.enabled === true;
       return json(response, 200, demoModeResponse());
     }
     if (request.method === "GET" && url.pathname === "/v1/models") return json(response, 200, { models: demoEnabled ? [demoModel()] : [] });
     if (request.method === "GET" && url.pathname === "/v1/providers") return json(response, 200, { providers: demoEnabled ? [demoProvider()] : [], cloudRequired: false, providerAccess: "direct" });
-    if (request.method === "GET" && url.pathname === "/v1/provider-auth/openai/status") return json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "No account login in local demo smoke." });
-    if (request.method === "GET" && url.pathname === "/v1/chats") return json(response, 200, { chats: Array.from(chats.values()).map(toSummary) });
-    if (request.method === "POST" && url.pathname === "/v1/chats") {
-      const created = thread("chat-created", "Created demo smoke chat", []);
-      chats.set(created.chatId, created);
-      return json(response, 200, created);
-    }
-    if (request.method === "GET" && url.pathname === "/v1/chats/subscribe") {
-      subscribe(response, url.searchParams.get("chat_id") ?? "chat-001");
-      return;
-    }
-    const chatMatch = /^\/v1\/chats\/([^/]+)$/.exec(url.pathname);
-    if (chatMatch && request.method === "GET") {
-      const chatId = decodeURIComponent(chatMatch[1]);
-      return json(response, chats.has(chatId) ? 200 : 404, chats.get(chatId) ?? { error: "chat not found" });
-    }
+    if (request.method === "GET" && url.pathname === "/v1/provider-auth/openai/status") return json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "Demo smoke has no account login." });
     if (request.method === "POST" && /^\/v1\/providers\//.test(url.pathname)) {
       providerHits += 1;
-      return json(response, 500, { error: `provider should not be called ${providerSecret}` });
+      return json(response, 500, { error: `provider unavailable ${providerSecret}` });
     }
-    const commandMatch = /^\/v1\/chats\/([^/]+)\/commands$/.exec(url.pathname);
-    if (commandMatch && request.method === "POST") {
-      const chatId = decodeURIComponent(commandMatch[1]);
-      const body = await readJsonBody(request, response);
-      if (body === undefined) return;
-      const item = chats.get(chatId) ?? thread(chatId, chatId, []);
+
+    const scopedBase = `/p/${projectId}/v1`;
+    if (request.method === "GET" && url.pathname === `${scopedBase}/ping`) return json(response, 200, pingResponse());
+    if (request.method === "GET" && url.pathname === `${scopedBase}/caps`) return json(response, 200, capsResponse());
+    if (request.method === "GET" && url.pathname === `${scopedBase}/models`) return json(response, 200, { models: demoEnabled ? [demoModel()] : [] });
+    if (request.method === "GET" && url.pathname === `${scopedBase}/demo-mode`) return json(response, 200, demoModeResponse());
+    if (request.method === "GET" && url.pathname === `${scopedBase}/providers`) return json(response, 200, { providers: demoEnabled ? [demoProvider()] : [], cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && url.pathname === `${scopedBase}/provider-auth/openai/status`) return json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "Demo smoke has no account login." });
+    if (request.method === "GET" && url.pathname === `${scopedBase}/chats`) return json(response, 200, { chats: Array.from(chats.values()).map(toSummary) });
+    if (request.method === "POST" && url.pathname === `${scopedBase}/chats`) {
+      const item = thread(chatId, projectName, []);
+      chats.set(chatId, item);
+      return json(response, 200, item);
+    }
+    if (request.method === "GET" && url.pathname === `${scopedBase}/project-memory`) return json(response, 200, { notes: [] });
+    if (request.method === "GET" && url.pathname === `${scopedBase}/agent-progress`) return json(response, 200, { snapshots: [] });
+    if (request.method === "GET" && url.pathname === `${scopedBase}/chats/subscribe`) {
+      subscribe(response, url.searchParams.get("chat_id") ?? chatId);
+      return;
+    }
+    const chatGet = new RegExp(`^${scopedBase}/chats/([^/]+)$`).exec(url.pathname);
+    if (request.method === "GET" && chatGet) {
+      const item = chats.get(decodeURIComponent(chatGet[1]));
+      return json(response, item ? 200 : 404, item ?? { error: "not found" });
+    }
+    const command = new RegExp(`^${scopedBase}/chats/([^/]+)/commands$`).exec(url.pathname);
+    if (request.method === "POST" && command) {
+      const targetChatId = decodeURIComponent(command[1]);
+      const body = await readJsonBody(request);
+      const item = chats.get(targetChatId);
+      if (!item) return json(response, 404, { error: "chat not found" });
       if (body.type === "user_message") {
         chatCommandCount += 1;
-        item.messages.push(message(chatId, `user-${item.messages.length}`, "user", body.payload?.content ?? ""));
-        chats.set(chatId, item);
-        setTimeout(() => addTerminalDemoAssistantResponse(chatId, body.payload?.content ?? ""), 25);
+        const content = body.payload?.content ?? "";
+        item.messages.push(message(targetChatId, `user-${chatCommandCount}`, "user", content));
+        setTimeout(() => addAssistantResponse(targetChatId), 50);
       }
-      return json(response, 200, { accepted: true, chatId, requestId: body.requestId ?? "request-001", type: body.type });
+      return json(response, 200, { accepted: true, chatId: targetChatId, requestId: body.requestId ?? `demo-request-${chatCommandCount}`, type: body.type });
     }
-    response.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "not found" }));
+    return json(response, 404, { error: "not found" });
   });
-  return listen(server);
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(8001, "127.0.0.1", resolve); });
+  return { close: () => new Promise((resolve) => server.close(resolve)) };
 }
 
-async function readBody(request) {
-  const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
-  return Buffer.concat(chunks).toString("utf8");
+function projectSummary() {
+  return { projectId, displayName: projectName, status: "available", revision: "1", createdAt: "2026-07-29T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
+function pingResponse() { return { productId: "yet-ai", displayName: "Yet AI", version: "0.0.0", ready: true, serverTime: new Date().toISOString() }; }
+function capsResponse() { return { productId: "yet-ai", protocolVersion: "2026-05-15", runtime: { mode: "local", cloudRequired: false, providerAccess: "direct" }, capabilities: [], features: {}, providers: [], ide: { bridge: false, lsp: false } }; }
+function demoModeResponse() { return { enabled: demoEnabled, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality." }; }
+function demoModel() { return { id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } }; }
+function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel()], capabilities: { chat: true, completion: false, embeddings: false } }; }
+function thread(id, title, messages) { return { chatId: id, title, createdAt: "2026-07-29T00:00:00Z", updatedAt: "2026-07-29T00:00:00Z", messages }; }
+function message(id, messageId, role, content) { return { chatId: id, id: messageId, role, content, createdAt: "2026-07-29T00:00:00Z", status: "complete" }; }
+function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
 
-async function readJsonBody(request, response) {
-  let value;
-  try {
-    value = JSON.parse((await readBody(request)) || "{}");
-  } catch {
-    json(response, 400, { error: "malformed JSON request body" });
-    return undefined;
-  }
-  if (!isPlainObject(value)) {
-    json(response, 400, { error: "request body must be a JSON object" });
-    return undefined;
-  }
-  return value;
-}
-
-function isPlainObject(value) { return value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype; }
-
-function demoModeResponse() {
-  return { enabled: demoEnabled, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "Demo Mode uses local canned responses from the runtime. It requires no API key, makes no provider calls, and is not model quality." };
-}
-function subscribe(response, chatId) {
-  response.writeHead(200, corsHeaders({
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-  }));
-  const replay = replayEventsForSubscriber(chatId).map((event, index) => ({ ...event, seq: index + 1 }));
-  chatEventSeq.set(chatId, replay.length);
-  writeSse(response, snapshotEvent(chatId));
-  for (const event of replay) writeSse(response, event);
-  const chatSubscribers = subscribers.get(chatId) ?? new Set();
-  chatSubscribers.add(response);
-  subscribers.set(chatId, chatSubscribers);
-  const remove = () => chatSubscribers.delete(response);
+function subscribe(response, targetChatId) {
+  response.writeHead(200, corsHeaders({ "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive" }));
+  const item = chats.get(targetChatId) ?? thread(targetChatId, projectName, []);
+  writeSse(response, { seq: 0, type: "snapshot", chatId: targetChatId, payload: { thread: { id: targetChatId, title: item.title, messages: item.messages }, messages: item.messages, runtime: { streaming: false, waitingForResponse: false } } });
+  const active = subscribers.get(targetChatId) ?? new Set();
+  active.add(response);
+  subscribers.set(targetChatId, active);
+  const remove = () => active.delete(response);
   response.on("close", remove);
   response.on("error", remove);
 }
-function addTerminalDemoAssistantResponse(chatId, prompt) {
-  const content = terminalDemoAnswer(prompt);
-  const item = chats.get(chatId) ?? thread(chatId, chatId, []);
-  const assistantMessage = message(chatId, `assistant-${item.messages.length}`, "assistant", content);
-  item.messages.push(assistantMessage);
-  chats.set(chatId, item);
-  if (prompt === "Terminal message_added second prompt smoke." && (subscribers.get(chatId)?.size ?? 0) > 0) {
-    secondResponseHadActiveSse = true;
-  }
-  setActiveStream(chatId, true);
-  pushChatEvent(chatId, "stream_started", {});
-  pushChatEvent(chatId, "message_added", { message: assistantMessage });
-  setActiveStream(chatId, false);
-  pushChatEvent(chatId, "stream_finished", { finishReason: "stop" });
-  markTerminalReplayPersisted(chatId);
+function addAssistantResponse(targetChatId) {
+  const item = chats.get(targetChatId);
+  if (!item) return;
+  const assistant = message(targetChatId, `assistant-${chatCommandCount}`, "assistant", assistantAnswer);
+  item.messages.push(assistant);
+  pushEvent(targetChatId, "stream_started", {});
+  pushEvent(targetChatId, "message_added", { message: assistant });
+  pushEvent(targetChatId, "stream_finished", { finishReason: "stop" });
 }
-function terminalDemoAnswer(prompt) {
-  if (prompt.includes("Coding action: explain_selection")) {
-    return "Demo Mode Coding Actions explanation: selected code returns a greeting; no provider call was made.";
-  }
-  if (prompt.includes("Coding action: propose_safe_edit")) {
-    return JSON.stringify(safeEditProposalPayload());
-  }
-  return "Terminal message_added canned answer from Yet AI Demo Mode — no provider call was made.";
+function pushEvent(targetChatId, type, payload) {
+  const seq = (eventSequences.get(targetChatId) ?? 0) + 1;
+  eventSequences.set(targetChatId, seq);
+  const event = { seq, type, chatId: targetChatId, payload };
+  for (const response of subscribers.get(targetChatId) ?? []) writeSse(response, event);
 }
-function safeEditProposalPayload() {
-  const selectedText = "export function greet(name: string) {\n  return `Hello, ${name}`;\n}";
-  return {
-    requiresUserConfirmation: true,
-    summary: "Demo Mode safe edit no-op preview. No provider call was made; this is a local canned response, not model quality. Selected text is preserved exactly for this browser demo because the context includes a valid workspace-relative path.",
-    cloudRequired: false,
-    edits: [{
-      workspaceRelativePath: "src/demo.ts",
-      textReplacements: [{
-        range: { start: { line: 1, character: 0 }, end: { line: 3, character: 1 } },
-        replacementText: selectedText,
-      }],
-    }],
-  };
+function writeSse(response, event) { response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`); }
+
+async function waitForAssistantCount(page, count) {
+  await page.waitForFunction((expected) => document.querySelectorAll(".chat-bubble.assistant").length === expected, count, { timeout: 20_000 });
 }
-function pushChatEvent(chatId, type, payload) {
-  const events = chatEvents.get(chatId) ?? [];
-  const event = { seq: (chatEventSeq.get(chatId) ?? 0) + 1, type, chatId, payload };
-  chatEventSeq.set(chatId, event.seq);
-  events.push(event);
-  chatTerminalReplayRetention.set(chatId, "active_or_unpersisted");
-  chatEvents.set(chatId, events);
-  for (const response of subscribers.get(chatId) ?? []) writeSse(response, event);
+async function saveVisualEvidence(page) {
+  await mkdir(evidenceRoot, { recursive: true });
+  const screenshotPath = path.join(evidenceRoot, "gui-demo-mode.png");
+  const domPath = path.join(evidenceRoot, "gui-demo-mode.dom.txt");
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  const text = redact(await page.locator("body").innerText());
+  await writeFile(domPath, text, "utf8");
+  return { dir: evidenceRoot, screenshotPath, domPath };
 }
-function replayEventsForSubscriber(chatId) {
-  const activeStream = chatActiveStreams.get(chatId) === true;
-  const retention = chatTerminalReplayRetention.get(chatId) ?? "active_or_unpersisted";
-  if (!activeStream && retention === "snapshot_backed_prunable") {
-    chatEvents.set(chatId, []);
-  }
-  const replay = [...(chatEvents.get(chatId) ?? [])];
-  if (!activeStream && retention === "active_or_unpersisted" && !replay.some(isUnpersistedTerminalEvidence)) {
-    chatEvents.set(chatId, []);
-    chatTerminalReplayRetention.set(chatId, "snapshot_backed_prunable");
-  }
-  return replay;
-}
-function markTerminalReplayPersisted(chatId) {
-  if (chatActiveStreams.get(chatId) === true) return;
-  chatEvents.set(chatId, []);
-  chatTerminalReplayRetention.set(chatId, "snapshot_backed_prunable");
-}
-function setActiveStream(chatId, active) {
-  chatActiveStreams.set(chatId, active);
-}
-function isUnpersistedTerminalEvidence(event) {
-  return event.type === "error" && event.payload?.code === "chat_history_storage_error";
-}
-function snapshotEvent(chatId) {
-  const item = chats.get(chatId) ?? thread(chatId, chatId, []);
-  return { seq: 0, type: "snapshot", chatId, payload: { thread: { id: chatId, title: item.title, messages: item.messages }, messages: item.messages, runtime: { streaming: false, waitingForResponse: false } } };
-}
-async function injectActiveEditorContext(page, payload) {
-  await page.evaluate((contextPayload) => {
-    window.dispatchEvent(new MessageEvent("message", {
-      data: {
-        version: "2026-05-15",
-        type: "host.contextSnapshot",
-        payload: contextPayload,
-      },
-    }));
-  }, payload);
-}
-function writeSse(response, event) {
-  response.write(`event: ${event.type}\n`);
-  response.write(`data: ${JSON.stringify(event)}\n\n`);
-}
-function demoModel() { return { id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } }; }
-function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel()], capabilities: { chat: true, completion: false, embeddings: false } }; }
-function thread(chatId, title, messages) { return { chatId, title, createdAt: "2026-05-29T07:16:30Z", updatedAt: "2026-05-29T07:16:30Z", messages }; }
-function message(chatId, id, role, content) { return { chatId, id, role, content, createdAt: "2026-05-29T07:16:30Z", status: "complete" }; }
-function toSummary(item) { return { chatId: item.chatId, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt, messageCount: item.messages.length }; }
-async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
-async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
-async function assertNoVisibleText(page, text, label) { const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false); assert(!visible, `Unexpected visible ${label}: ${text}`); }
-async function expectComposerValue(page, text, label) {
-  const ok = await page.getByPlaceholder("Ask about the current file, selection, or project...").evaluate((element, expected) => element instanceof HTMLTextAreaElement && element.value.includes(expected), text).catch(() => false);
-  assert(ok, `Missing ${label} in composer: ${text}`);
-}
-async function assertChatWorkbenchLayout(page, label) {
-  const result = await page.evaluate(() => {
-    const scrollRegion = document.querySelector(".chat-scroll-region");
-    const composer = document.querySelector(".chat-composer");
-    const codingActions = document.querySelector(".ide-actions-card");
-    if (!(scrollRegion instanceof HTMLElement) || !(composer instanceof HTMLElement)) {
-      return { ok: false, reason: "missing chat-scroll-region or chat-composer" };
-    }
-    const style = window.getComputedStyle(scrollRegion);
-    const overflowY = style.overflowY;
-    const composerStyle = window.getComputedStyle(composer);
-    return {
-      ok: (overflowY === "auto" || overflowY === "scroll") && !scrollRegion.contains(composer) && composerStyle.position !== "sticky" && (!codingActions || composer.contains(codingActions)),
-      reason: `overflowY=${overflowY}, composerInsideScroll=${scrollRegion.contains(composer)}, composerPosition=${composerStyle.position}, codingActionsInComposer=${codingActions ? composer.contains(codingActions) : "missing"}`,
-    };
-  });
-  assert(result.ok, `chat workbench layout failed for ${label}: ${result.reason}`);
-}
-async function assertAssistantBubbleSequence(page, expectedAnswers, label) {
-  await page.waitForFunction(
-    ({ expectedCount, expected }) => {
-      const actual = Array.from(document.querySelectorAll(".chat-bubble.assistant"), (element) => element.textContent ?? "");
-      return actual.length === expectedCount && expected.every((answer, index) => actual[index]?.includes(answer));
-    },
-    { expectedCount: expectedAnswers.length, expected: expectedAnswers },
-    { timeout: 20_000 },
-  ).catch(() => undefined);
-  const actualAnswers = await page.locator(".chat-bubble.assistant").evaluateAll((elements) => elements.map((element) => element.textContent ?? ""));
-  assert(actualAnswers.length === expectedAnswers.length, `Expected ${label} to have ${expectedAnswers.length} assistant bubble(s), observed ${actualAnswers.length}.`);
-  for (const [index, expectedAnswer] of expectedAnswers.entries()) {
-    assert(actualAnswers[index]?.includes(expectedAnswer), `Expected ${label} bubble ${index + 1} to contain: ${expectedAnswer}`);
-  }
+async function readJsonBody(request) {
+  const chunks = [];
+  for await (const chunk of request) chunks.push(chunk);
+  return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
 }
 function empty(response, status) { response.writeHead(status, corsHeaders()); response.end(); }
-function json(response, status, payload) { response.writeHead(status, corsHeaders({ "content-type": "application/json" })); response.end(JSON.stringify(payload)); }
-function corsHeaders(extra = {}) { return { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", ...extra }; }
-function contentType(filePath) { if (filePath.endsWith(".html")) return "text/html; charset=utf-8"; if (filePath.endsWith(".js")) return "text/javascript; charset=utf-8"; if (filePath.endsWith(".css")) return "text/css; charset=utf-8"; if (filePath.endsWith(".svg")) return "image/svg+xml"; return "application/octet-stream"; }
-function assert(condition, message) { if (!condition) recordFailure(message); }
+function json(response, status, payload) { response.writeHead(status, corsHeaders({ "content-type": "application/json; charset=utf-8" })); response.end(JSON.stringify(payload)); }
+function corsHeaders(extra = {}) { return { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS", ...extra }; }
+function redact(value) { return String(value).split(providerSecret).join("[redacted]").split(projectRootMarker).join("[redacted-private-path]").replace(/\/Users\/[^\s;]+/g, "/Users/[redacted]").replace(/sk-[A-Za-z0-9._-]+/g, "[redacted-api-key]"); }
+function assert(condition, message) { if (!condition) throw new Error(message); }
