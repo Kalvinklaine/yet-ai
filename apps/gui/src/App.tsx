@@ -19,10 +19,10 @@ import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, id
 import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
 import { runtimeLifecycleDiagnostics, runtimeLifecycleHostCopy, type RuntimeLifecycleDiagnostics } from "./services/runtimeLifecycle";
 import { conversationHistoryStatusLabel, resolveChatAfterList, resolveFallbackChatAfterDelete } from "./services/conversationHistory";
-import { disconnectProviderAuth, exchangeProviderAuth, getProviderAuthStatus, startProviderAuth, type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
+import { type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, deleteChat, getAgentProgress, getCaps, getChat, getDemoMode, getModels, getPing, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, productIdentityWarning, publishControlledHostProgress, sendAbort, setDemoMode, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type CapsResponse, type ChatRuntimeSettings, type ChatSummary, type ControlledHostProgressInput, type DemoModeResponse, type ManualRunnerPlanProposal, type ModelSummary, type PingResponse, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
+import { createChat, deleteChat, getAgentProgress, getChat, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, listChats, productIdentity, publishControlledHostProgress, sendAbort, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type ChatRuntimeSettings, type ChatSummary, type ControlledHostProgressInput, type ManualRunnerPlanProposal, type RuntimeError, type RuntimeSettings, sendUserMessage } from "./services/runtimeClient";
 import { createProjectRuntimeSettings } from "./services/projectClient";
 import { buildProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
 import { ProjectScopeController, createProjectScopeCorrelation, type ProjectScopeCorrelation, type ProjectScopeResetters } from "./services/projectScope";
@@ -75,13 +75,11 @@ import { resolveHostReadyRuntimeSettings } from "./services/useLiveRuntimeSettin
 import { selectControlledRunProjectMemory } from "./services/controlledRunProjectMemorySelection";
 import { bindProjectChatLaunchIntentChatId, clearProjectChatLaunchIntent, clearProjectChatLaunchIntentIfMatches, consumeProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration, peekProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
 import { classifyControlledCapabilityProvenance, isLiveControlledCapability, type ControlledCapabilitySurface } from "./services/controlledCapabilityProvenance";
+import { useRuntimeController, type ProviderTestState, type RuntimeConnectionSource } from "./services/useRuntimeController";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
 const preHostRuntimeRefreshRetryCooldownMs = 1500;
-const providerAuthPendingPollFallbackSeconds = 3;
-const providerAuthPendingPollMinSeconds = 1;
-const providerAuthPendingPollMaxSeconds = 30;
 
 type InitialRuntimeConfig = {
   entryMode?: "hosted_chat";
@@ -200,13 +198,6 @@ type AbortActiveStreamOptions = {
   reportAbortErrors?: boolean;
 };
 
-type ProviderTestState = {
-  providerId: string;
-  state: "testing" | "success" | "failed";
-  detail: string;
-  status?: ProviderTestResponse["status"] | RuntimeError["status"];
-};
-
 type AgentProgressState = {
   state: "not_checked" | "loading" | "ready" | "error";
   response: AgentProgressListResponse | null;
@@ -259,7 +250,6 @@ type CodingTaskTemplate = {
   detail: string;
 };
 
-type RuntimeConnectionSource = "startup" | "manual" | "host.ready";
 type WorkbenchSurface = "chat" | "setup" | "debug";
 
 type VerificationOutputBundleItem = Extract<ExplicitContextBundleItem, { kind: "verification_output" }>;
@@ -482,24 +472,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [baseUrl, setBaseUrl] = useState(initialRuntimeSettings.baseUrl);
   const [token, setToken] = useState(initialRuntimeSettings.token);
   const [runtimeAccess, setRuntimeAccess] = useState(initialRuntimeSettings.runtimeAccess);
-  const [ping, setPing] = useState<PingResponse | null>(null);
-  const [caps, setCaps] = useState<CapsResponse | null>(null);
-  const [models, setModels] = useState<ModelSummary[]>([]);
-  const [demoMode, setDemoModeState] = useState<DemoModeResponse | null>(null);
-  const [demoModeError, setDemoModeError] = useState<RuntimeError | null>(null);
-  const [demoModeWorking, setDemoModeWorking] = useState(false);
-  const [providers, setProviders] = useState<ProviderSummary[]>([]);
-  const [connectionError, setConnectionError] = useState<RuntimeError | null>(null);
-  const [modelError, setModelError] = useState<RuntimeError | null>(null);
-  const [identityWarnings, setIdentityWarnings] = useState<string[]>([]);
-  const [providerError, setProviderError] = useState<RuntimeError | null>(null);
-  const [providerTestState, setProviderTestState] = useState<ProviderTestState | null>(null);
-  const [providerAuthError, setProviderAuthError] = useState<RuntimeError | null>(null);
-  const [providerAuthStatus, setProviderAuthStatus] = useState<ProviderAuthResponse | null>(null);
-  const [providerAuthUrlWarning, setProviderAuthUrlWarning] = useState<string | null>(null);
-  const [providerAuthExchangeCode, setProviderAuthExchangeCode] = useState("");
-  const [providerAuthExchangeError, setProviderAuthExchangeError] = useState<string | null>(null);
-  const [providerAuthExchangeWorking, setProviderAuthExchangeWorking] = useState(false);
   const [chatError, setChatError] = useState<RuntimeError | null>(null);
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>();
@@ -546,9 +518,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [projectMemoryQuery, setProjectMemoryQuery] = useState("");
   const [projectMemory, setProjectMemory] = useState<ProjectMemoryState>({ state: "idle", notes: [], error: null });
   const [projectMemoryStatus, setProjectMemoryStatus] = useState<string | null>(null);
-  const [runtimeRefreshStatus, setRuntimeRefreshStatus] = useState<{ state: "checking" | "connected" | "failed"; attempt: number; checkedAt: string; detail: string } | null>(null);
   const [runtimeLifecycle, setRuntimeLifecycle] = useState<{ diagnostics: RuntimeLifecycleDiagnostics; settingsRevision: number } | null>(null);
-  const [runtimeRefreshInFlight, setRuntimeRefreshInFlight] = useState(false);
   const [runtimeConnectionSource, setRuntimeConnectionSource] = useState<RuntimeConnectionSource>(() => isSameOriginProxyBaseUrl(initialRuntimeSettings.baseUrl) ? "host.ready" : "startup");
   const [hostReadyRefreshNonce, setHostReadyRefreshNonce] = useState(0);
   const [runtimeDetailsOpen, setRuntimeDetailsOpen] = useState(true);
@@ -557,9 +527,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [providerSetupStatus, setProviderSetupStatus] = useState<string | null>(null);
   const [providerSetupFocusRequest, setProviderSetupFocusRequest] = useState(0);
   const [settingsRevision, setSettingsRevision] = useState(0);
-  const runtimeRefreshAttemptRef = useRef(0);
-  const runtimeRefreshInFlightRef = useRef(false);
-  const runtimeRefreshQueuedRef = useRef(false);
   const hostReadyAppliedRef = useRef(Boolean(seededProjectHostAuthority) || isSameOriginProxyBaseUrl(initialRuntimeSettings.baseUrl));
   const projectHostAuthorityPropsRef = useRef({ projectId, hostedAuthorityKey, hostReadyGeneration });
   projectHostAuthorityPropsRef.current = { projectId, hostedAuthorityKey, hostReadyGeneration };
@@ -580,19 +547,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const launchIntentCreateRef = useRef<{ token: symbol; intentKey: string; revision: number; correlation: ProjectScopeCorrelation } | null>(null);
   const launchIntentMemoryRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
-  const providerTestAttemptRef = useRef(0);
-  const providerAuthMutationAttemptRef = useRef(0);
-  const providerAuthExchangeInFlightRef = useRef(false);
-  const providerAuthPollTimerRef = useRef<number | null>(null);
-  const providerAuthPollInFlightRef = useRef(false);
-  const providerAuthPollRequestRef = useRef(0);
   const chatHistoryAttemptRef = useRef(0);
-  const [providerAuthMutation, setProviderAuthMutation] = useState<"start" | "exchange" | "disconnect" | null>(null);
-  const [providerAuthPollTick, setProviderAuthPollTick] = useState(0);
-  const [runtimeDataRevision, setRuntimeDataRevision] = useState<number | null>(null);
-  const [providerDataRevision, setProviderDataRevision] = useState<number | null>(null);
-  const [providerAuthDataRevision, setProviderAuthDataRevision] = useState<number | null>(null);
-  const [demoModeDataRevision, setDemoModeDataRevision] = useState<number | null>(null);
   const [agentProgress, setAgentProgress] = useState<AgentProgressState>({ state: "not_checked", response: null, error: null });
   const activeStreamRef = useRef<ActiveStream | null>(null);
   const [editProposal, setEditProposal] = useState<EditProposalState | null>(null);
@@ -689,6 +644,17 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [oneStepLoopState, setOneStepLoopState] = useState<ControlledOneStepAgentLoopState>(() => createControlledOneStepAgentLoopState());
   const [controlledTaskExecutionState, setControlledTaskExecutionState] = useState<ControlledTaskExecutionState>(() => createInitialControlledTaskExecutionState());
   const [controlledRunHistory, setControlledRunHistory] = useState<ControlledRunHistoryItem[]>([]);
+  const addTimeline = useCallback((entry: string) => {
+    setTimeline((current) => [entry, ...current].slice(0, 80));
+  }, []);
+  const appendTrace = useCallback((draft: CodingSessionTraceDraft) => {
+    setCodingSessionTrace((current) => appendCodingSessionTraceEntry(current, draft));
+  }, []);
+  const addTimelineRef = useRef(addTimeline);
+  const appendTraceRef = useRef(appendTrace);
+  const refreshChatsRef = useRef<(targetSettings?: RuntimeSettings, revision?: number) => Promise<void>>(async () => undefined);
+  addTimelineRef.current = addTimeline;
+  appendTraceRef.current = appendTrace;
 
   const setUserChatInputDraft = (draft: string | ((current: string) => string)) => {
     chatInputUserLineageRef.current += 1;
@@ -700,6 +666,25 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     return projectId ? createProjectRuntimeSettings(globalSettings, projectId, projectScopeController.current()) : globalSettings;
   }, [baseUrl, projectId, projectScopeController, projectScopeRevision, runtimeAccess, token]);
   settingsRef.current = settings;
+  const runtimeController = useRuntimeController({
+    settingsRef,
+    settingsRevisionRef,
+    settingsRevision,
+    appendTraceRef,
+    addTimelineRef,
+    refreshChatsRef,
+    providerTestAction,
+  });
+  const {
+    ping, caps, models, demoMode, demoModeError, demoModeWorking, providers, connectionError, modelError, identityWarnings, providerError, providerTestState,
+    providerAuthError, providerAuthStatus, providerAuthUrlWarning, providerAuthExchangeCode, providerAuthExchangeError, providerAuthExchangeWorking, providerAuthMutation,
+    runtimeDataRevision, providerDataRevision, providerAuthDataRevision, demoModeDataRevision, runtimeRefreshStatus, runtimeRefreshInFlight,
+    runtimeRefreshAttemptRef, runtimeRefreshInFlightRef, runtimeRefreshQueuedRef, providerTestAttemptRef,
+    setProviderError, setProviderTestState, setProviderAuthError, setProviderAuthStatus, setProviderAuthUrlWarning, setProviderAuthExchangeCode, setProviderAuthExchangeError,
+    setRuntimeDataRevision, setProviderDataRevision, setProviderAuthDataRevision, setDemoModeDataRevision, setRuntimeRefreshStatus,
+    refreshRuntime, refreshProviders, refreshProviderAuthStatus, connect: connectRuntime, toggleDemoMode, invalidate: invalidateRuntimeController, clearRuntimeData, runtimeLifecycleChanged,
+    isCurrentRefresh,
+  } = runtimeController;
   const launchIntentScopeKey = `${projectId ?? "legacy"}:${showChatPage ? "chat" : projectPage ?? "root"}:${routedChatId ?? "draft"}:${hostReadyGeneration ?? "browser"}:${settingsRevision}`;
   chatIdRef.current = chatId;
   chatViewMessagesRef.current = chatView.messages;
@@ -1196,13 +1181,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setRuntimeFetchTraceConnectionSource(runtimeConnectionSource);
   }, [runtimeConnectionSource]);
 
-  const addTimeline = useCallback((entry: string) => {
-    setTimeline((current) => [entry, ...current].slice(0, 80));
-  }, []);
 
-  const appendTrace = useCallback((draft: CodingSessionTraceDraft) => {
-    setCodingSessionTrace((current) => appendCodingSessionTraceEntry(current, draft));
-  }, []);
 
   useEffect(() => {
     setRuntimeFetchTraceSink((event) => {
@@ -1401,35 +1380,15 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     setLaunchIntentCreateState({ state: "idle" });
     clearProjectChatLaunchIntent();
     settingsRevisionRef.current += 1;
-    providerTestAttemptRef.current += 1;
     setSettingsRevision(settingsRevisionRef.current);
-    setRuntimeDataRevision(null);
-    setProviderDataRevision(null);
-    setProviderAuthDataRevision(null);
-    setDemoModeDataRevision(null);
-    setDemoModeWorking(false);
+    invalidateRuntimeController();
     chatHistoryAttemptRef.current += 1;
     setChatHistoryRevision(null);
     setChatSummaries([]);
     setChatHistoryError(null);
     setChatHistoryLoading(false);
     setDeletingChatId(null);
-    setRuntimeRefreshStatus({
-      state: "checking",
-      attempt: runtimeRefreshAttemptRef.current + 1,
-      checkedAt: new Date().toLocaleTimeString(),
-      detail: "Runtime settings changed; checking current runtime…",
-    });
     setRuntimeLifecycle(null);
-    providerAuthMutationAttemptRef.current += 1;
-    providerAuthExchangeInFlightRef.current = false;
-    providerAuthPollInFlightRef.current = false;
-    providerAuthPollRequestRef.current += 1;
-    setProviderAuthMutation(null);
-    setProviderAuthExchangeCode("");
-    setProviderAuthExchangeWorking(false);
-    setProviderAuthExchangeError(null);
-    setProviderTestState(null);
     agentProgressAttemptRef.current += 1;
     setAgentProgress({ state: "not_checked", response: null, error: null });
     setAttachedContext(null);
@@ -1443,7 +1402,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     clearControlledFileReadState(null);
     clearControlledEditState(null);
     clearControlledCommandRunState(null);
-  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState]);
+  }, [abortActiveStream, clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, invalidateRuntimeController]);
 
   useEffect(() => {
     const resetters: ProjectScopeResetters = {
@@ -1609,7 +1568,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       } else if (message.type === "host.runtimeStatus") {
         const payload = message.payload as HostRuntimeStatusPayload;
         const revision = settingsRevisionRef.current;
-        setRuntimeLifecycle({ diagnostics: runtimeLifecycleDiagnostics(payload, adapter.host), settingsRevision: revision });
+        const diagnostics = runtimeLifecycleDiagnostics(payload, adapter.host);
+        setRuntimeLifecycle({ diagnostics, settingsRevision: revision });
+        runtimeLifecycleChanged(diagnostics);
         setTimeline((current) => [`Runtime lifecycle status received: ${payload.lifecycle}`, ...current].slice(0, 80));
         appendTrace({ family: "host.runtimeStatus", title: "Runtime lifecycle status received", status: payload.lifecycle === "connected" ? "succeeded" : payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch" ? "failed" : "info", summary: `Host reported runtime ${payload.lifecycle}.`, details: { lifecycle: payload.lifecycle, tokenState: payload.tokenState, authority: payload.authority } });
         if (payload.lifecycle === "disconnected" || payload.lifecycle === "stopped" || payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch") {
@@ -1617,14 +1578,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
           controlledEditCorrelationRef.current = null;
           oneStepFileReadRequestIdRef.current = null;
           oneStepEditRequestIdRef.current = null;
-          setRuntimeDataRevision(null);
-          setProviderDataRevision(null);
-          setProviderAuthDataRevision(null);
-          providerAuthExchangeInFlightRef.current = false;
-          setProviderAuthExchangeWorking(false);
-          setProviderAuthExchangeCode("");
-          setProviderAuthExchangeError(null);
-          setDemoModeDataRevision(null);
+          clearRuntimeData();
           stopPendingControlledCommandRunState("Runtime disconnected or blocked controlled verification. Stale host results will be ignored; no auto-retry was started.");
           setPendingControlledFileReadRequestId(null);
           setPendingControlledEditRequestId(null);
@@ -2062,7 +2016,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       unsubscribe();
       if (!bridgeAdapter) adapter.dispose();
     };
-  }, [appendTrace, applyHostReady, bridgeAdapter, projectId, projectScopeController, publishControlledProgress, stopPendingControlledCommandRunState]);
+  }, [appendTrace, applyHostReady, bridgeAdapter, clearRuntimeData, projectId, projectScopeController, publishControlledProgress, runtimeLifecycleChanged, stopPendingControlledCommandRunState]);
 
   const appendChatError = useCallback((message: string, code?: string) => {
     setChatView((current) => applyChatViewEvent(current, {
@@ -2086,244 +2040,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
   }, []);
 
-  const isCurrentRefresh = useCallback((revision: number) => revision === settingsRevisionRef.current, []);
-
-  const refreshRuntime = useCallback(async (targetSettings: RuntimeSettings, revision: number, keepInFlight = false) => {
-    const attempt = runtimeRefreshAttemptRef.current + 1;
-    runtimeRefreshAttemptRef.current = attempt;
-    const checkedAt = new Date().toLocaleTimeString();
-    runtimeRefreshInFlightRef.current = true;
-    setRuntimeRefreshInFlight(true);
-    setRuntimeRefreshStatus({ state: "checking", attempt, checkedAt, detail: "Checking runtime…" });
-    appendTrace({ family: "runtime.refresh", title: "Runtime refresh started", status: "pending", summary: `Attempt ${attempt} checking local runtime.`, details: { attempt } });
-    setConnectionError(null);
-    setModelError(null);
-    setIdentityWarnings([]);
-    try {
-      const [nextPing, nextCaps, nextModels, nextDemoMode] = await Promise.all([
-        getPing(targetSettings),
-        getCaps(targetSettings),
-        getModels(targetSettings),
-        getDemoMode(targetSettings),
-      ]);
-      if (!isCurrentRefresh(revision)) {
-        return;
-      }
-      const warnings: string[] = [];
-      let lastError: RuntimeError | null = null;
-      if (nextPing.ok) {
-        setPing(nextPing.data);
-        const warning = productIdentityWarning(nextPing.data);
-        if (warning) {
-          warnings.push(warning);
-        }
-      } else {
-        setPing(null);
-        setConnectionError(nextPing.error);
-        lastError = nextPing.error;
-      }
-      if (nextCaps.ok) {
-        setCaps(nextCaps.data);
-        const warning = productIdentityWarning(nextCaps.data);
-        if (warning) {
-          warnings.push(warning);
-        }
-      } else {
-        setCaps(null);
-        setConnectionError(nextCaps.error);
-        lastError = nextCaps.error;
-      }
-      if (nextModels.ok) {
-        setModels(nextModels.data.models);
-      } else {
-        setModels([]);
-        setModelError(nextModels.error);
-        lastError = nextModels.error;
-      }
-      if (nextDemoMode.ok) {
-        setDemoModeState(nextDemoMode.data);
-        setDemoModeError(null);
-      } else {
-        setDemoModeState(null);
-        setDemoModeError(nextDemoMode.error.status === 404 ? null : nextDemoMode.error);
-      }
-      setIdentityWarnings(warnings);
-      setRuntimeDataRevision(revision);
-      setDemoModeDataRevision(revision);
-      setRuntimeRefreshStatus({
-        state: lastError ? "failed" : "connected",
-        attempt,
-        checkedAt: new Date().toLocaleTimeString(),
-        detail: lastError ? `Runtime check failed: ${lastError.status} ${sanitizeDisplayText(lastError.message)}` : "Runtime connected",
-      });
-      appendTrace({
-        family: "runtime.refresh",
-        title: lastError ? "Runtime refresh failed" : "Runtime refresh connected",
-        status: lastError ? "failed" : "succeeded",
-        summary: lastError ? `Runtime check failed: ${lastError.status} ${lastError.message}` : "Runtime connected.",
-        details: { attempt, ready: nextPing.ok ? nextPing.data.ready : false, modelCount: nextModels.ok ? nextModels.data.models.length : 0 },
-      });
-    } catch (error) {
-      const runtimeError: RuntimeError = {
-        status: "network",
-        message: error instanceof Error ? error.message : "Runtime refresh failed",
-      };
-      if (!isCurrentRefresh(revision)) {
-        return;
-      }
-      setPing(null);
-      setCaps(null);
-      setModels([]);
-      setDemoModeState(null);
-      setIdentityWarnings([]);
-      setConnectionError(runtimeError);
-      setModelError(runtimeError);
-      setDemoModeError(runtimeError);
-      setRuntimeDataRevision(revision);
-      setDemoModeDataRevision(revision);
-      setRuntimeRefreshStatus({
-        state: "failed",
-        attempt,
-        checkedAt: new Date().toLocaleTimeString(),
-        detail: `Runtime check failed: ${runtimeError.status} ${sanitizeDisplayText(runtimeError.message)}`,
-      });
-      appendTrace({ family: "runtime.refresh", title: "Runtime refresh failed", status: "failed", summary: `Runtime check failed: ${runtimeError.status} ${runtimeError.message}`, details: { attempt } });
-    } finally {
-      if (!keepInFlight) {
-        runtimeRefreshInFlightRef.current = false;
-        setRuntimeRefreshInFlight(false);
-      }
-    }
-  }, [appendTrace, isCurrentRefresh]);
-
-  const refreshProviders = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
-    setProviderError(null);
-    const result = await listProviders(targetSettings);
-    if (!isCurrentRefresh(revision)) {
-      return;
-    }
-    if (result.ok) {
-      setProviders(result.data.providers);
-      setProviderDataRevision(revision);
-    } else {
-      setProviders([]);
-      setProviderError(result.error);
-      setProviderDataRevision(revision);
-    }
-  }, [isCurrentRefresh]);
-
-  const toggleDemoMode = useCallback(async (enabled: boolean) => {
-    const targetSettings = settingsRef.current;
-    const targetRevision = settingsRevisionRef.current;
-    setDemoModeWorking(true);
-    setDemoModeError(null);
-    const result = await setDemoMode(targetSettings, enabled);
-    if (!isCurrentRefresh(targetRevision)) {
-      return;
-    }
-    setDemoModeWorking(false);
-    if (result.ok) {
-      setDemoModeState(result.data);
-      setDemoModeDataRevision(targetRevision);
-      addTimeline(`Demo Mode ${enabled ? "enabled" : "disabled"} in local runtime`);
-      await refreshRuntime(targetSettings, targetRevision);
-      await refreshProviders(targetSettings, targetRevision);
-    } else {
-      setDemoModeError(result.error);
-      setDemoModeDataRevision(targetRevision);
-      addTimeline(`Demo Mode error: ${sanitizeDisplayText(result.error.message)}`);
-    }
-  }, [addTimeline, isCurrentRefresh, refreshProviders, refreshRuntime]);
-
-  const refreshProviderAuthStatus = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
-    setProviderAuthError(null);
-    setProviderAuthUrlWarning(null);
-    setProviderAuthExchangeError(null);
-    const result = await getProviderAuthStatus(targetSettings, "openai");
-    if (!isCurrentRefresh(revision)) {
-      return;
-    }
-    if (result.ok) {
-      setProviderAuthStatus(result.data);
-      setProviderAuthDataRevision(revision);
-    } else {
-      setProviderAuthStatus(null);
-      setProviderAuthError(result.error);
-      setProviderAuthDataRevision(revision);
-    }
-  }, [isCurrentRefresh]);
-
-  const pollProviderAuthStatus = useCallback(async (targetSettings: RuntimeSettings, revision: number, requestId: number) => {
-    if (providerAuthPollInFlightRef.current) {
-      return;
-    }
-    providerAuthPollInFlightRef.current = true;
-    try {
-      setProviderAuthError(null);
-      setProviderAuthUrlWarning(null);
-      setProviderAuthExchangeError(null);
-      const result = await getProviderAuthStatus(targetSettings, "openai");
-      if (!isCurrentRefresh(revision) || providerAuthPollRequestRef.current !== requestId) {
-        return;
-      }
-      if (result.ok) {
-        setProviderAuthStatus(result.data);
-        setProviderAuthDataRevision(revision);
-      } else {
-        setProviderAuthStatus(null);
-        setProviderAuthError(result.error);
-        setProviderAuthDataRevision(revision);
-      }
-    } finally {
-      if (providerAuthPollRequestRef.current === requestId) {
-        providerAuthPollInFlightRef.current = false;
-        if (isCurrentRefresh(revision)) {
-          setProviderAuthPollTick((tick) => tick + 1);
-        }
-      }
-    }
-  }, [isCurrentRefresh]);
-
-  useEffect(() => {
-    if (providerAuthPollTimerRef.current !== null) {
-      window.clearTimeout(providerAuthPollTimerRef.current);
-      providerAuthPollTimerRef.current = null;
-    }
-    if (activeProviderAuthStatus?.status !== "pending" || !isProviderAuthPollingSource(activeProviderAuthStatus.authSource)) {
-      return;
-    }
-    const targetSettings = settingsRef.current;
-    const targetRevision = settingsRevisionRef.current;
-    const delaySeconds = normalizeProviderAuthPollIntervalSeconds(activeProviderAuthStatus.pollIntervalSeconds);
-    providerAuthPollTimerRef.current = window.setTimeout(() => {
-      providerAuthPollTimerRef.current = null;
-      const requestId = providerAuthPollRequestRef.current;
-      void pollProviderAuthStatus(targetSettings, targetRevision, requestId);
-    }, delaySeconds * 1000);
-    return () => {
-      if (providerAuthPollTimerRef.current !== null) {
-        window.clearTimeout(providerAuthPollTimerRef.current);
-        providerAuthPollTimerRef.current = null;
-      }
-    };
-  }, [activeProviderAuthStatus?.authSource, activeProviderAuthStatus?.pollIntervalSeconds, activeProviderAuthStatus?.sessionId, activeProviderAuthStatus?.status, pollProviderAuthStatus, providerAuthPollTick, settingsRevision]);
-
-  useEffect(() => {
-    if (activeProviderAuthStatus?.status === "pending") {
-      return;
-    }
-    providerAuthExchangeInFlightRef.current = false;
-    setProviderAuthExchangeWorking(false);
-    setProviderAuthExchangeCode("");
-    setProviderAuthExchangeError(null);
-  }, [activeProviderAuthStatus?.status]);
-
-  useEffect(() => {
-    const lifecycle = activeRuntimeLifecycle?.lifecycle;
-    if ((lifecycle === "connected" || lifecycle === "degraded") && providerAuthDataRevision !== settingsRevision) {
-      void refreshProviderAuthStatus();
-    }
-  }, [activeRuntimeLifecycle?.lifecycle, providerAuthDataRevision, refreshProviderAuthStatus, settingsRevision]);
 
   const refreshChats = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = chatHistoryAttemptRef.current + 1;
@@ -2369,6 +2085,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
     setChatHistoryLoading(false);
   }, [clearEditProposalState, clearIdeActionState, isCurrentRefresh, projectId, routedChatId]);
+  refreshChatsRef.current = refreshChats;
 
   const loadChatThread = useCallback(async (targetChatId: string, targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = chatHistoryAttemptRef.current + 1;
@@ -2587,28 +2304,8 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       });
       addTimeline("Requested IDE-managed runtime refresh");
     }
-    if (runtimeRefreshInFlightRef.current) {
-      runtimeRefreshQueuedRef.current = true;
-      return;
-    }
-    runtimeRefreshInFlightRef.current = true;
-    setRuntimeRefreshInFlight(true);
-    try {
-      do {
-        runtimeRefreshQueuedRef.current = false;
-        const targetSettings = settingsRef.current;
-        const targetRevision = settingsRevisionRef.current;
-        await refreshRuntime(targetSettings, targetRevision, true);
-        await refreshProviders(targetSettings, targetRevision);
-        await refreshProviderAuthStatus(targetSettings, targetRevision);
-        await refreshChats(targetSettings, targetRevision);
-      } while (runtimeRefreshQueuedRef.current);
-    } finally {
-      runtimeRefreshInFlightRef.current = false;
-      runtimeRefreshQueuedRef.current = false;
-      setRuntimeRefreshInFlight(false);
-    }
-  }, [addTimeline, bridgeHost, refreshChats, refreshProviderAuthStatus, refreshProviders, refreshRuntime, runtimeConnectionSource]);
+    await connectRuntime();
+  }, [addTimeline, bridgeHost, connectRuntime, runtimeConnectionSource]);
 
   const refreshAgentProgress = useCallback(async () => {
     const targetSettings = settingsRef.current;
@@ -2731,118 +2428,17 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   };
 
   const runProviderTest = async (providerId: string) => {
-    const targetSettings = settingsRef.current;
-    const targetRevision = settingsRevisionRef.current;
-    const attempt = providerTestAttemptRef.current + 1;
-    providerTestAttemptRef.current = attempt;
-    setProviderTestState({ providerId, state: "testing", detail: "Testing provider reachability…" });
-    const result = await testProvider(targetSettings, providerId);
-    if (!isCurrentRefresh(targetRevision) || providerTestAttemptRef.current !== attempt) {
-      return;
+    if (await runtimeController.runProviderTest(providerId)) {
+      setProviderForm((current) => ({ ...current, apiKey: "" }));
     }
-    if (result.ok) {
-      const model = result.data.modelId ? ` Model: ${sanitizeDisplayText(result.data.modelId)}.` : "";
-      const action = providerTestAction(result.data.status);
-      setProviderTestState({
-        providerId,
-        state: result.data.ok ? "success" : "failed",
-        status: result.data.status,
-        detail: `${sanitizeDisplayText(result.data.message)}${model}${action ? ` ${action}` : ""}`,
-      });
-      if (result.data.ok) {
-        setProviderForm((current) => ({ ...current, apiKey: "" }));
-        await connect();
-      }
-    } else {
-      setProviderTestState({
-        providerId,
-        state: "failed",
-        status: result.error.status,
-        detail: sanitizeDisplayText(result.error.message),
-      });
-    }
-  };
-
-  const beginProviderAuthMutation = (mutation: "start" | "exchange" | "disconnect") => {
-    const attempt = providerAuthMutationAttemptRef.current + 1;
-    providerAuthMutationAttemptRef.current = attempt;
-    setProviderAuthMutation(mutation);
-    if (activeProviderAuthStatus?.authSource === "oauth" && activeProviderAuthStatus.status === "connected") {
-      setProviderAuthStatus({
-        ...activeProviderAuthStatus,
-        configured: false,
-        status: mutation === "disconnect" ? "not_configured" : "pending",
-        accountLabel: undefined,
-        redacted: undefined,
-        message: mutation === "disconnect" ? "Disconnecting provider account login." : "Updating provider account login.",
-      });
-      setProviderAuthDataRevision(settingsRevisionRef.current);
-    }
-    return attempt;
   };
 
   const startOpenAiLogin = async () => {
-    if (runtimeAuthMismatchError) {
-      setProviderAuthError(null);
-      setProviderAuthUrlWarning(null);
-      setProviderAuthExchangeError(null);
-      setProviderAuthExchangeCode("");
-      return;
-    }
-    const targetSettings = settingsRef.current;
-    const targetRevision = settingsRevisionRef.current;
-    const attempt = beginProviderAuthMutation("start");
-    setProviderAuthError(null);
-    setProviderAuthUrlWarning(null);
-    setProviderAuthExchangeError(null);
-    setProviderAuthExchangeCode("");
-    try {
-      const result = await startProviderAuth(targetSettings, "openai", { experimentalCodexLike: true });
-      if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
-        return;
-      }
-      if (!result.ok) {
-        setProviderAuthError(result.error);
-        return;
-      }
-      setProviderAuthStatus(result.data);
-      setProviderAuthDataRevision(targetRevision);
-      const authUrl = result.data.authorizationUrl;
-      if (authUrl) {
-        openSafeAuthUrl(authUrl, setProviderAuthUrlWarning);
-      }
-    } finally {
-      if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
-        setProviderAuthMutation(null);
-      }
-    }
+    await runtimeController.startOpenAiLogin(Boolean(runtimeAuthMismatchError), (url) => openSafeAuthUrl(url, setProviderAuthUrlWarning));
   };
 
   const disconnectOpenAiLogin = async () => {
-    const targetSettings = settingsRef.current;
-    const targetRevision = settingsRevisionRef.current;
-    const attempt = beginProviderAuthMutation("disconnect");
-    setProviderAuthError(null);
-    setProviderAuthUrlWarning(null);
-    setProviderAuthExchangeError(null);
-    setProviderAuthExchangeCode("");
-    try {
-      const result = await disconnectProviderAuth(targetSettings, "openai");
-      if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
-        return;
-      }
-      if (result.ok) {
-        setProviderAuthStatus(result.data);
-        setProviderAuthDataRevision(targetRevision);
-        await connect();
-      } else {
-        setProviderAuthError(result.error);
-      }
-    } finally {
-      if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
-        setProviderAuthMutation(null);
-      }
-    }
+    await runtimeController.disconnectOpenAiLogin();
   };
 
   const exchangeOpenAiLoginCode = async (event: FormEvent<HTMLFormElement>) => {
@@ -2850,46 +2446,13 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     const sessionId = activeProviderAuthStatus?.sessionId;
     const code = providerAuthExchangeCode.trim();
     const state = providerAuthPendingState.state;
-    const validation = validateProviderAuthExchangeInput(sessionId, code, state, providerAuthExchangeInFlightRef.current || providerAuthExchangeWorking || providerAuthMutation === "exchange");
-    setProviderAuthExchangeCode("");
+    const validation = validateProviderAuthExchangeInput(sessionId, code, state, providerAuthExchangeWorking || providerAuthMutation === "exchange");
     if (!validation.ok) {
+      setProviderAuthExchangeCode("");
       setProviderAuthExchangeError(validation.error);
       return;
     }
-    setProviderAuthError(null);
-    setProviderAuthExchangeError(null);
-    providerAuthExchangeInFlightRef.current = true;
-    setProviderAuthExchangeWorking(true);
-    const targetSettings = settingsRef.current;
-    const targetRevision = settingsRevisionRef.current;
-    const attempt = beginProviderAuthMutation("exchange");
-    try {
-      const result = await exchangeProviderAuth(targetSettings, "openai", validation.sessionId, validation.code, validation.state);
-      if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) {
-        return;
-      }
-      if (result.ok) {
-        setProviderAuthStatus(result.data);
-        setProviderAuthDataRevision(targetRevision);
-        if (result.data.success) {
-          await connect();
-          if (isCurrentRefresh(targetRevision)) {
-            setProviderAuthStatus(result.data);
-            setProviderAuthDataRevision(targetRevision);
-          }
-        } else {
-          setProviderAuthExchangeError("Authorization exchange did not complete. Retry once with a fresh browser code, reconnect, or use the API-key fallback.");
-        }
-      } else {
-        setProviderAuthError(result.error);
-      }
-    } finally {
-      if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) {
-        providerAuthExchangeInFlightRef.current = false;
-        setProviderAuthExchangeWorking(false);
-        setProviderAuthMutation(null);
-      }
-    }
+    await runtimeController.exchangeOpenAiLoginCode(validation.sessionId, validation.state);
   };
 
   useEffect(() => {
@@ -7206,16 +6769,6 @@ function isSafeProviderAuthExchangeValue(value: string, maxLength: number): bool
   );
 }
 
-function normalizeProviderAuthPollIntervalSeconds(value: number | undefined): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return providerAuthPendingPollFallbackSeconds;
-  }
-  return Math.min(providerAuthPendingPollMaxSeconds, Math.max(providerAuthPendingPollMinSeconds, value));
-}
-
-function isProviderAuthPollingSource(source: ProviderAuthResponse["authSource"]): boolean {
-  return source === "oauth";
-}
 
 function parseProviderAuthState(status: ProviderAuthResponse | null): { state?: string; error?: string } {
   if (!status || status.status !== "pending" || status.authSource !== "oauth" || !status.sessionId) {
