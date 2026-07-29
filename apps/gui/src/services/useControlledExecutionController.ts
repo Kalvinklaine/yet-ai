@@ -61,6 +61,11 @@ export function useControlledExecutionController(input: UseControlledExecutionCo
     oneStepEditRequestIdRef.current = null;
     oneStepCommandRunRequestIdRef.current = null;
     oneStepVerificationBundleRequestIdRef.current = null;
+    oneStepFileReadRequestRef.current = null;
+    oneStepEditRequestRef.current = null;
+    oneStepCommandRunRequestRef.current = null;
+    oneStepVerificationBundleRequestRef.current = null;
+    oneStepLoopRunCounterRef.current = 0;
   }, []);
 
   useEffect(() => clearCorrelations, [clearCorrelations, input.scopeKey]);

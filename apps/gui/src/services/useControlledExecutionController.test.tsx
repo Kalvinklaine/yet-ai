@@ -90,6 +90,31 @@ describe("useControlledExecutionController", () => {
     expect(controller[refName].current).toBeNull();
   });
 
+  it.each([
+    ["project", "project-b:chat-a:0:ready-a:vscode"],
+    ["chat", "project-a:chat-b:0:ready-a:vscode"],
+    ["settings", "project-a:chat-a:1:ready-a:vscode"],
+    ["host", "project-a:chat-a:0:ready-a:jetbrains"],
+    ["generation", "project-a:chat-a:0:ready-b:vscode"],
+  ] as const)("clears every accepted one-step request and counter immediately when %s scope changes", async (_axis, nextScopeKey) => {
+    let controller!: Controller;
+    const onController = (next: Controller) => { controller = next; };
+    await render({ host: "vscode", scopeKey: "project-a:chat-a:0:ready-a:vscode", onController });
+    controller.oneStepFileReadRequestRef.current = { requestId: "read-one" } as never;
+    controller.oneStepEditRequestRef.current = { requestId: "edit-one" } as never;
+    controller.oneStepCommandRunRequestRef.current = { requestId: "command-one" } as never;
+    controller.oneStepVerificationBundleRequestRef.current = { requestId: "verification-one" } as never;
+    controller.oneStepLoopRunCounterRef.current = 7;
+
+    await act(async () => root?.render(<Probe host="vscode" scopeKey={nextScopeKey} onController={onController} />));
+
+    expect(controller.oneStepFileReadRequestRef.current).toBeNull();
+    expect(controller.oneStepEditRequestRef.current).toBeNull();
+    expect(controller.oneStepCommandRunRequestRef.current).toBeNull();
+    expect(controller.oneStepVerificationBundleRequestRef.current).toBeNull();
+    expect(controller.oneStepLoopRunCounterRef.current).toBe(0);
+  });
+
   it.each(["browser", "jetbrains"] as const)("does not publish progress for unsupported %s host", async (host) => {
     let controller!: Controller;
     await render({ host, scopeKey: `${host}:scope`, onController: (next) => { controller = next; } });
