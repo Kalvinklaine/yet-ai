@@ -12,6 +12,7 @@ use tokio::sync::{broadcast, oneshot, Mutex};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::BroadcastStream;
 
+use crate::agent_progress::{AgentProgressRuntime, ChatProgressLifecycle};
 use crate::chat_history::{self, ChatMessageRole, ChatMessageStatus};
 use crate::demo_mode;
 use crate::provider_auth::{self, ExperimentalCodexChatAuth};
@@ -45,6 +46,20 @@ enum TerminalReplayRetention {
 struct ActiveStream {
     id: u64,
     handle: JoinHandle<()>,
+}
+
+#[derive(Clone, Debug)]
+struct ProjectProgressObserver {
+    runtime: AgentProgressRuntime,
+    project_id: String,
+}
+
+impl ProjectProgressObserver {
+    async fn publish(&self, chat_id: &str, stream_id: u64, lifecycle: ChatProgressLifecycle) {
+        self.runtime
+            .publish_chat_lifecycle(&self.project_id, chat_id, stream_id, lifecycle)
+            .await;
+    }
 }
 
 #[derive(Debug)]
@@ -234,6 +249,53 @@ impl ChatRuntime {
         content: String,
         context: Option<ChatContext>,
     ) {
+        self.accept_user_message_scoped(
+            scope,
+            provider_config_dir,
+            history_root,
+            chat_id,
+            content,
+            context,
+            None,
+        )
+        .await;
+    }
+
+    pub async fn accept_project_user_message(
+        &self,
+        project_id: &str,
+        provider_config_dir: std::path::PathBuf,
+        history_root: std::path::PathBuf,
+        chat_id: String,
+        content: String,
+        context: Option<ChatContext>,
+        progress_runtime: AgentProgressRuntime,
+    ) {
+        self.accept_user_message_scoped(
+            project_id,
+            provider_config_dir,
+            history_root,
+            chat_id,
+            content,
+            context,
+            Some(ProjectProgressObserver {
+                runtime: progress_runtime,
+                project_id: project_id.to_string(),
+            }),
+        )
+        .await;
+    }
+
+    async fn accept_user_message_scoped(
+        &self,
+        scope: &str,
+        provider_config_dir: std::path::PathBuf,
+        history_root: std::path::PathBuf,
+        chat_id: String,
+        content: String,
+        context: Option<ChatContext>,
+        progress: Option<ProjectProgressObserver>,
+    ) {
         let runtime_key = runtime_key(scope, &chat_id);
         let lock = self.history_lock(&runtime_key).await;
         let _history_guard = lock.lock().await;
@@ -243,13 +305,17 @@ impl ChatRuntime {
         let task_runtime_key = runtime_key.clone();
         let task_chat_id = chat_id.clone();
         let task_content = content.clone();
+        let task_progress = progress.clone();
         let (start_sender, start_receiver) = oneshot::channel();
+        let mut superseded_stream_id = None;
+        let stream_id;
         {
             let mut guard = self.inner.lock().await;
             let state = guard
                 .entry(runtime_key.clone())
                 .or_insert_with(|| ChatState::new(&chat_id));
             if let Some(active) = state.active_stream.take() {
+                superseded_stream_id = Some(active.id);
                 active.handle.abort();
                 state.push_event(
                     &chat_id,
@@ -260,7 +326,7 @@ impl ChatRuntime {
             } else {
                 state.supersede_unpersisted_terminal_replay();
             }
-            let stream_id = state.next_stream_id;
+            stream_id = state.next_stream_id;
             state.next_stream_id += 1;
             let handle = tokio::spawn(async move {
                 if start_receiver.await.is_ok() {
@@ -273,6 +339,7 @@ impl ChatRuntime {
                             stream_id,
                             task_content,
                             context,
+                            task_progress,
                         )
                         .await;
                 }
@@ -281,6 +348,20 @@ impl ChatRuntime {
                 id: stream_id,
                 handle,
             });
+        }
+        if let Some(progress) = &progress {
+            if let Some(superseded_stream_id) = superseded_stream_id {
+                progress
+                    .publish(
+                        &chat_id,
+                        superseded_stream_id,
+                        ChatProgressLifecycle::Failed,
+                    )
+                    .await;
+            }
+            progress
+                .publish(&chat_id, stream_id, ChatProgressLifecycle::Queued)
+                .await;
         }
         let _ = chat_history::append_message_in(
             &history_root,
@@ -300,6 +381,27 @@ impl ChatRuntime {
     pub async fn accept_abort_in(&self, scope: &str, chat_id: &str) {
         self.abort_active_stream(&runtime_key(scope, chat_id), chat_id)
             .await;
+    }
+
+    pub async fn accept_project_abort(
+        &self,
+        project_id: &str,
+        chat_id: &str,
+        progress_runtime: AgentProgressRuntime,
+    ) {
+        if let Some(stream_id) = self
+            .abort_active_stream(&runtime_key(project_id, chat_id), chat_id)
+            .await
+        {
+            progress_runtime
+                .publish_chat_lifecycle(
+                    project_id,
+                    chat_id,
+                    stream_id,
+                    ChatProgressLifecycle::Failed,
+                )
+                .await;
+        }
     }
 
     pub async fn subscribe(
@@ -425,7 +527,7 @@ impl ChatRuntime {
         state.mark_terminal_replay_persisted();
     }
 
-    async fn abort_active_stream(&self, runtime_key: &str, chat_id: &str) -> bool {
+    async fn abort_active_stream(&self, runtime_key: &str, chat_id: &str) -> Option<u64> {
         let lock = self.history_lock(runtime_key).await;
         let _history_guard = lock.lock().await;
         let mut guard = self.inner.lock().await;
@@ -433,8 +535,9 @@ impl ChatRuntime {
             .entry(runtime_key.to_string())
             .or_insert_with(|| ChatState::new(chat_id));
         let Some(active) = state.active_stream.take() else {
-            return false;
+            return None;
         };
+        let stream_id = active.id;
         active.handle.abort();
         state.push_event(
             chat_id,
@@ -442,7 +545,7 @@ impl ChatRuntime {
             json!({ "finishReason": "abort" }),
         );
         state.mark_terminal_replay_persisted();
-        true
+        Some(stream_id)
     }
 
     async fn run_stream(
@@ -454,6 +557,7 @@ impl ChatRuntime {
         stream_id: u64,
         content: String,
         context: Option<ChatContext>,
+        progress: Option<ProjectProgressObserver>,
     ) {
         if !self
             .push_stream_event(
@@ -467,8 +571,18 @@ impl ChatRuntime {
         {
             return;
         }
+        if let Some(progress) = &progress {
+            progress
+                .publish(&chat_id, stream_id, ChatProgressLifecycle::Started)
+                .await;
+        }
         if !self.is_active_stream(&runtime_key, stream_id).await {
             return;
+        }
+        if let Some(progress) = &progress {
+            progress
+                .publish(&chat_id, stream_id, ChatProgressLifecycle::Running)
+                .await;
         }
         let prompt = assemble_provider_prompt(&content, context.as_ref());
         let result = self
@@ -499,35 +613,64 @@ impl ChatRuntime {
                             json!({ "finishReason": "stop" }),
                         )
                         .await;
+                        if let Some(progress) = &progress {
+                            progress
+                                .publish(&chat_id, stream_id, ChatProgressLifecycle::Done)
+                                .await;
+                        }
                     }
                     return;
                 }
-                self.persist_terminal_history_and_event(
-                    &history_root,
-                    &runtime_key,
-                    &chat_id,
-                    stream_id,
-                    ChatMessageRole::Assistant,
-                    assistant_content,
-                    ChatMessageStatus::Complete,
-                    "stream_finished",
-                    json!({ "finishReason": "stop" }),
-                )
-                .await;
+                let persisted = self
+                    .persist_terminal_history_and_event(
+                        &history_root,
+                        &runtime_key,
+                        &chat_id,
+                        stream_id,
+                        ChatMessageRole::Assistant,
+                        assistant_content,
+                        ChatMessageStatus::Complete,
+                        "stream_finished",
+                        json!({ "finishReason": "stop" }),
+                    )
+                    .await;
+                if let Some(persisted) = persisted {
+                    if let Some(progress) = &progress {
+                        progress
+                            .publish(
+                                &chat_id,
+                                stream_id,
+                                if persisted {
+                                    ChatProgressLifecycle::Done
+                                } else {
+                                    ChatProgressLifecycle::Failed
+                                },
+                            )
+                            .await;
+                    }
+                }
             }
             Err(error) => {
-                self.persist_terminal_history_and_event(
-                    &history_root,
-                    &runtime_key,
-                    &chat_id,
-                    stream_id,
-                    ChatMessageRole::Error,
-                    error.client_message().to_string(),
-                    ChatMessageStatus::Error,
-                    "error",
-                    error.payload(),
-                )
-                .await;
+                let terminal = self
+                    .persist_terminal_history_and_event(
+                        &history_root,
+                        &runtime_key,
+                        &chat_id,
+                        stream_id,
+                        ChatMessageRole::Error,
+                        error.client_message().to_string(),
+                        ChatMessageStatus::Error,
+                        "error",
+                        error.payload(),
+                    )
+                    .await;
+                if terminal.is_some() {
+                    if let Some(progress) = &progress {
+                        progress
+                            .publish(&chat_id, stream_id, ChatProgressLifecycle::Failed)
+                            .await;
+                    }
+                }
             }
         }
     }
@@ -543,14 +686,14 @@ impl ChatRuntime {
         status: ChatMessageStatus,
         event_type: &str,
         payload: serde_json::Value,
-    ) -> bool {
+    ) -> Option<bool> {
         let lock = self.history_lock(runtime_key).await;
         let _guard = lock.lock().await;
         if !self
             .claim_stream_terminal_ownership(runtime_key, stream_id)
             .await
         {
-            return false;
+            return None;
         }
         let append_result =
             chat_history::append_message_in(history_root, chat_id, role, content, Some(status))
@@ -588,7 +731,7 @@ impl ChatRuntime {
             state.known_terminal_append_failure = true;
             state.push_event(chat_id, terminal.0, terminal.1);
         }
-        true
+        Some(terminal.2)
     }
 
     async fn snapshot_event(
@@ -4461,6 +4604,77 @@ mod tests {
         let states = runtime.inner.lock().await;
         assert!(states[&first_key].active_stream.is_none());
         assert!(states[&second_key].active_stream.is_some());
+    }
+
+    #[tokio::test]
+    async fn project_chat_abort_publishes_one_sanitized_failed_terminal() {
+        let runtime = super::ChatRuntime::new();
+        let progress = crate::agent_progress::AgentProgressRuntime::new();
+        let key = super::runtime_key("project-a", "chat_abort");
+        let handle = tokio::spawn(std::future::pending::<()>());
+        {
+            let mut states = runtime.inner.lock().await;
+            states
+                .entry(key)
+                .or_insert_with(|| super::ChatState::new("chat_abort"))
+                .active_stream = Some(super::ActiveStream { id: 3, handle });
+        }
+
+        runtime
+            .accept_project_abort("project-a", "chat_abort", progress.clone())
+            .await;
+        runtime
+            .accept_project_abort("project-a", "chat_abort", progress.clone())
+            .await;
+
+        let snapshot = progress.project_snapshot("project-a").await;
+        assert_eq!(snapshot.snapshots.len(), 1);
+        assert_eq!(snapshot.snapshots[0].phase, "failed");
+        assert_eq!(snapshot.snapshots[0].status, "failed");
+        assert_eq!(snapshot.snapshots[0].recent_events.len(), 1);
+        assert!(!serde_json::to_string(&snapshot)
+            .unwrap()
+            .contains("chat_abort"));
+    }
+
+    #[tokio::test]
+    async fn project_chat_provider_failure_publishes_failed_terminal() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let runtime = super::ChatRuntime::new();
+        let progress = crate::agent_progress::AgentProgressRuntime::new();
+
+        runtime
+            .accept_project_user_message(
+                "project-a",
+                dir.clone(),
+                history_root,
+                "chat_failure".to_string(),
+                "private request body".to_string(),
+                None,
+                progress.clone(),
+            )
+            .await;
+        for _ in 0..100 {
+            let snapshot = progress.project_snapshot("project-a").await;
+            if snapshot
+                .snapshots
+                .first()
+                .is_some_and(|snapshot| snapshot.status == "failed")
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        let snapshot = progress.project_snapshot("project-a").await;
+        assert_eq!(snapshot.snapshots.len(), 1);
+        assert_eq!(snapshot.snapshots[0].phase, "failed");
+        assert_eq!(snapshot.snapshots[0].status, "failed");
+        assert_eq!(snapshot.snapshots[0].recent_events.len(), 4);
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        assert!(!serialized.contains("private request body"));
+        assert!(!serialized.contains("provider_not_configured"));
     }
 
     #[tokio::test]

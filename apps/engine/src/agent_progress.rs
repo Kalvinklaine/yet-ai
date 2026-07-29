@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::DateTime;
+use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
@@ -106,6 +106,79 @@ impl AgentProgressRuntime {
             None => AgentProgressListResponse::empty(),
         }
     }
+
+    pub async fn publish_chat_lifecycle(
+        &self,
+        project_id: &str,
+        chat_id: &str,
+        stream_id: u64,
+        lifecycle: ChatProgressLifecycle,
+    ) {
+        let correlation = chat_progress_correlation(chat_id);
+        let run_id = format!("chat-{correlation}-run-{stream_id}");
+        let (phase, status, message) = lifecycle.fields();
+        let event = AgentProgressEvent {
+            protocol_version: "2026-05-29".to_string(),
+            event_id: format!("{run_id}-{}", lifecycle.event_suffix()),
+            run_id,
+            card_id: format!("chat-{correlation}"),
+            timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Micros, true),
+            phase: phase.to_string(),
+            status: status.to_string(),
+            message: message.to_string(),
+            tool: None,
+            heartbeat: None,
+            output_tail: None,
+            ide_action: None,
+            plan_proposal: None,
+            coding_task_session: None,
+        };
+        let _ = self.publish_project_event(project_id, event).await;
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChatProgressLifecycle {
+    Queued,
+    Started,
+    Running,
+    Done,
+    Failed,
+}
+
+impl ChatProgressLifecycle {
+    fn fields(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Queued => ("queued", "pending", "Chat response is queued."),
+            Self::Started => ("started", "running", "Chat response started."),
+            Self::Running => (
+                "reading_context",
+                "healthy_running",
+                "Chat response is running.",
+            ),
+            Self::Done => ("done", "done", "Chat response completed."),
+            Self::Failed => ("failed", "failed", "Chat response did not complete."),
+        }
+    }
+
+    fn event_suffix(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Started => "started",
+            Self::Running => "running",
+            Self::Done => "done",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+fn chat_progress_correlation(chat_id: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in chat_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 pub fn progress_source_path(cache_dir: &Path) -> PathBuf {
@@ -1397,6 +1470,82 @@ mod tests {
             plan_proposal: None,
             coding_task_session: None,
         }
+    }
+
+    #[tokio::test]
+    async fn chat_lifecycle_progress_uses_bounded_sanitized_stable_correlation() {
+        let runtime = AgentProgressRuntime::new();
+        let raw_chat_id = "chat-private-prompt-sk-abcdefghijkl";
+        for lifecycle in [
+            ChatProgressLifecycle::Queued,
+            ChatProgressLifecycle::Started,
+            ChatProgressLifecycle::Running,
+            ChatProgressLifecycle::Done,
+        ] {
+            runtime
+                .publish_chat_lifecycle("project-a", raw_chat_id, 7, lifecycle)
+                .await;
+        }
+
+        let response = runtime.project_snapshot("project-a").await;
+        assert_eq!(response.snapshots.len(), 1);
+        let snapshot = &response.snapshots[0];
+        assert_eq!(snapshot.phase, "done");
+        assert_eq!(snapshot.status, "done");
+        assert_eq!(snapshot.recent_events.len(), 4);
+        assert_eq!(
+            snapshot
+                .recent_events
+                .iter()
+                .map(|event| (event.phase.as_str(), event.status.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("queued", "pending"),
+                ("started", "running"),
+                ("reading_context", "healthy_running"),
+                ("done", "done"),
+            ]
+        );
+        let serialized = serde_json::to_string(&response).unwrap();
+        assert!(!serialized.contains(raw_chat_id));
+        assert!(!serialized.contains("prompt"));
+        assert!(!serialized.contains("sk-abcdefghijkl"));
+        assert!(serialized.len() < 4_000);
+    }
+
+    #[tokio::test]
+    async fn chat_lifecycle_progress_keeps_concurrent_runs_and_projects_separate() {
+        let runtime = AgentProgressRuntime::new();
+        let mut tasks = Vec::new();
+        for (project_id, chat_id, stream_id, lifecycle) in [
+            ("project-a", "chat-a", 1, ChatProgressLifecycle::Done),
+            ("project-a", "chat-b", 1, ChatProgressLifecycle::Failed),
+            ("project-b", "chat-a", 1, ChatProgressLifecycle::Done),
+        ] {
+            let runtime = runtime.clone();
+            tasks.push(tokio::spawn(async move {
+                runtime
+                    .publish_chat_lifecycle(project_id, chat_id, stream_id, lifecycle)
+                    .await;
+            }));
+        }
+        for task in tasks {
+            task.await.unwrap();
+        }
+
+        let first = runtime.project_snapshot("project-a").await;
+        let second = runtime.project_snapshot("project-b").await;
+        assert_eq!(first.snapshots.len(), 2);
+        assert_eq!(second.snapshots.len(), 1);
+        assert!(runtime.snapshot().await.snapshots.is_empty());
+        assert!(first
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.status == "done"));
+        assert!(first
+            .snapshots
+            .iter()
+            .any(|snapshot| snapshot.status == "failed"));
     }
 
     #[tokio::test]

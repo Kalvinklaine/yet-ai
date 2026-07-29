@@ -5700,6 +5700,171 @@ async fn agent_progress_returns_authenticated_empty_read_only_response() {
 }
 
 #[tokio::test]
+async fn project_chat_commands_publish_real_isolated_sanitized_progress() {
+    let paths = test_storage_paths();
+    let first_root = paths.project_dir.parent().unwrap().join("first-workspace");
+    let second_root = paths.project_dir.parent().unwrap().join("second-workspace");
+    std::fs::create_dir_all(&first_root).unwrap();
+    std::fs::create_dir_all(&second_root).unwrap();
+    let state = test_app_state(
+        ProductIdentity::load().unwrap(),
+        AuthToken::new(TEST_TOKEN).unwrap(),
+        paths,
+    );
+    let first = state
+        .project_registry_runtime
+        .register(&first_root, Some("First"))
+        .await
+        .unwrap();
+    let second = state
+        .project_registry_runtime
+        .register(&second_root, Some("Second"))
+        .await
+        .unwrap();
+    let app = app(state.clone());
+
+    let (status, _) = json_response_from(
+        app.clone(),
+        authed_request(
+            Method::POST,
+            "/v1/demo-mode",
+            Body::from(json!({ "enabled": true }).to_string()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let mut chats = Vec::new();
+    for project_id in [&first.project_id, &first.project_id, &second.project_id] {
+        let (status, chat) = json_response_from(
+            app.clone(),
+            authed_request(
+                Method::POST,
+                &format!("/p/{project_id}/v1/chats"),
+                Body::empty(),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        chats.push((
+            project_id.clone(),
+            chat["chatId"].as_str().unwrap().to_string(),
+        ));
+    }
+
+    let sends = chats
+        .iter()
+        .enumerate()
+        .map(|(index, (project_id, chat_id))| {
+            json_response_from(
+                app.clone(),
+                authed_request(
+                    Method::POST,
+                    &format!("/p/{project_id}/v1/chats/{chat_id}/commands"),
+                    Body::from(
+                        json!({
+                            "requestId": format!("project-progress-{index}"),
+                            "type": "user_message",
+                            "payload": { "content": format!("private prompt {index}") }
+                        })
+                        .to_string(),
+                    ),
+                ),
+            )
+        });
+    for (status, body) in futures_util::future::join_all(sends).await {
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["accepted"], true);
+    }
+
+    for _ in 0..100 {
+        let first_progress = state
+            .agent_progress_runtime
+            .project_snapshot(&first.project_id)
+            .await;
+        let second_progress = state
+            .agent_progress_runtime
+            .project_snapshot(&second.project_id)
+            .await;
+        if first_progress.snapshots.len() == 2
+            && second_progress.snapshots.len() == 1
+            && first_progress
+                .snapshots
+                .iter()
+                .chain(second_progress.snapshots.iter())
+                .all(|snapshot| snapshot.status == "done")
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    let first_progress = state
+        .agent_progress_runtime
+        .project_snapshot(&first.project_id)
+        .await;
+    let second_progress = state
+        .agent_progress_runtime
+        .project_snapshot(&second.project_id)
+        .await;
+    assert_eq!(first_progress.snapshots.len(), 2);
+    assert_eq!(second_progress.snapshots.len(), 1);
+    for snapshot in first_progress
+        .snapshots
+        .iter()
+        .chain(second_progress.snapshots.iter())
+    {
+        assert_eq!(snapshot.phase, "done");
+        assert_eq!(snapshot.status, "done");
+        assert_eq!(snapshot.recent_events.len(), 4);
+    }
+    let serialized = format!(
+        "{}{}",
+        serde_json::to_string(&first_progress).unwrap(),
+        serde_json::to_string(&second_progress).unwrap()
+    );
+    for forbidden in [
+        "private prompt",
+        "project-progress",
+        "first-workspace",
+        "second-workspace",
+    ] {
+        assert!(!serialized.contains(forbidden));
+    }
+    assert!(state
+        .agent_progress_runtime
+        .snapshot()
+        .await
+        .snapshots
+        .is_empty());
+
+    let (status, missing) = json_response_from(
+        app,
+        authed_request(
+            Method::POST,
+            "/p/prj_missing_project_123/v1/chats/chat_missing/commands",
+            Body::from(
+                json!({
+                    "requestId": "missing-project-progress",
+                    "type": "user_message",
+                    "payload": { "content": "must not publish" }
+                })
+                .to_string(),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(missing["category"], "not_found");
+    assert!(state
+        .agent_progress_runtime
+        .project_snapshot("prj_missing_project_123")
+        .await
+        .snapshots
+        .is_empty());
+}
+
+#[tokio::test]
 async fn agent_progress_requires_bearer_token() {
     let response = test_app()
         .oneshot(

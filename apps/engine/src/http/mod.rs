@@ -1288,7 +1288,11 @@ async fn project_chat_command(
             }
             state
                 .chat_runtime
-                .accept_abort_in(context.project_id(), &chat_id)
+                .accept_project_abort(
+                    context.project_id(),
+                    &chat_id,
+                    state.agent_progress_runtime.clone(),
+                )
                 .await;
         }
         "user_message" => {
@@ -1298,13 +1302,14 @@ async fn project_chat_command(
             };
             state
                 .chat_runtime
-                .accept_user_message_in(
+                .accept_project_user_message(
                     context.project_id(),
                     state.storage_paths.config_dir.clone(),
                     context.storage().chat_history.clone(),
                     chat_id.clone(),
                     content.to_string(),
                     chat_context,
+                    state.agent_progress_runtime.clone(),
                 )
                 .await;
         }
