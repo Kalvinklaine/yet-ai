@@ -71,11 +71,13 @@ import { appendControlledRunHistoryItem, createControlledRunHistoryItem, type Co
 import type { BoundedPatchVerificationLoopMetadata } from "./services/boundedPatchVerificationLoop";
 import type { AgentRunInput } from "./services/agentRunState";
 import { resolveHostReadyRuntimeSettings } from "./services/useLiveRuntimeSettings";
-import { selectControlledRunProjectMemory } from "./services/controlledRunProjectMemorySelection";
-import { bindProjectChatLaunchIntentChatId, clearProjectChatLaunchIntent, clearProjectChatLaunchIntentIfMatches, consumeProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration, peekProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
+import { clearProjectChatLaunchIntent, clearProjectChatLaunchIntentIfMatches, getBrowserProjectChatLifecycleGeneration } from "./services/projectChatLaunchIntent";
 import { classifyControlledCapabilityProvenance, isLiveControlledCapability, type ControlledCapabilitySurface } from "./services/controlledCapabilityProvenance";
 import { useRuntimeController, type ProviderTestState, type RuntimeConnectionSource } from "./services/useRuntimeController";
 import { useChatController, type ChatControllerResetters } from "./services/useChatController";
+import { mergeLaunchMemoryBundleItems, useProjectLaunchController } from "./services/useProjectLaunchController";
+
+export { mergeLaunchMemoryBundleItems } from "./services/useProjectLaunchController";
 
 const defaultBaseUrl = "http://127.0.0.1:8001";
 const productName = productIdentity.displayName;
@@ -238,53 +240,6 @@ type ProjectMemoryState = {
   notes: ProjectMemoryNote[];
   error: RuntimeError | null;
 };
-
-type LaunchIntentCreateState =
-  | { state: "idle" }
-  | { state: "creating"; intentKey: string; scopeKey: string }
-  | { state: "failed"; intentKey: string; scopeKey: string };
-
-export type LaunchMemoryBundleMerge = {
-  items: ExplicitContextBundleItem[];
-  addedCount: number;
-  duplicateCount: number;
-  capacityOmittedCount: number;
-  selectionOmittedCount: number;
-  status: string;
-};
-
-export function mergeLaunchMemoryBundleItems(current: ExplicitContextBundleItem[], candidates: ProjectMemoryBundleItem[], selectedCount: number): LaunchMemoryBundleMerge {
-  let items = current;
-  let addedCount = 0;
-  let duplicateCount = 0;
-  let capacityOmittedCount = 0;
-  for (const candidate of candidates) {
-    if (items.some((item) => item.key === candidate.key)) {
-      duplicateCount += 1;
-      continue;
-    }
-    const next = addExplicitContextBundleItem(items, candidate);
-    if (next === items) {
-      capacityOmittedCount += 1;
-      continue;
-    }
-    items = next;
-    addedCount += 1;
-  }
-  const selectionOmittedCount = Math.max(0, selectedCount - candidates.length);
-  const omissions = [
-    selectionOmittedCount > 0 ? `${selectionOmittedCount} unavailable or unsafe` : "",
-    duplicateCount > 0 ? `${duplicateCount} already attached` : "",
-    capacityOmittedCount > 0 ? `${capacityOmittedCount} did not fit controlled bundle limits` : "",
-  ].filter(Boolean);
-  const omissionStatus = omissions.length > 0 ? ` ${omissions.join(", ")} selected note${selectionOmittedCount + duplicateCount + capacityOmittedCount === 1 ? " was" : "s were"} omitted.` : "";
-  const status = addedCount > 0
-    ? `Attached ${addedCount} explicitly selected project memory note${addedCount === 1 ? "" : "s"} for review before Send.${omissionStatus}`
-    : omissions.length > 0
-      ? `No selected project memory was added.${omissionStatus} Nothing was attached.`
-      : "Selected project memory was unavailable or unsafe. Nothing was attached.";
-  return { items, addedCount, duplicateCount, capacityOmittedCount, selectionOmittedCount, status };
-}
 
 const emptyProviderForm: ProviderForm = {
   providerId: "openai-local",
@@ -451,7 +406,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [runtimeAccess, setRuntimeAccess] = useState(initialRuntimeSettings.runtimeAccess);
   const [providerForm, setProviderForm] = useState<ProviderForm>(emptyProviderForm);
   const [selectedProviderId, setSelectedProviderId] = useState<string | undefined>();
-  const [launchIntentCreateState, setLaunchIntentCreateState] = useState<LaunchIntentCreateState>({ state: "idle" });
   const [workbenchSurface, setWorkbenchSurface] = useState<WorkbenchSurface>("chat");
   const [manualRunnerDraftPlan, setManualRunnerDraftPlan] = useState("");
   const [codingTaskGoal, setCodingTaskGoal] = useState("");
@@ -506,9 +460,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const preHostRuntimeRefreshRequestCounterRef = useRef(0);
   const settingsRevisionRef = useRef(0);
   const settingsRef = useRef<ChatRuntimeSettings>(projectId ? createProjectRuntimeSettings(initialRuntimeSettings, projectId, projectScopeController.current()) : initialRuntimeSettings);
-  const launchIntentCreateRef = useRef<{ token: symbol; intentKey: string; revision: number; correlation: ProjectScopeCorrelation } | null>(null);
-  const launchIntentMemoryRef = useRef<string | null>(null);
-  const mountedRef = useRef(true);
   const [agentProgress, setAgentProgress] = useState<AgentProgressState>({ state: "not_checked", response: null, error: null });
   const [editProposal, setEditProposal] = useState<EditProposalState | null>(null);
   const [applyResult, setApplyResult] = useState<ApplyResultState | null>(null);
@@ -669,6 +620,38 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     isCurrentRefresh,
   } = runtimeController;
   const launchIntentScopeKey = `${projectId ?? "legacy"}:${showChatPage ? "chat" : projectPage ?? "root"}:${routedChatId ?? "draft"}:${hostReadyGeneration ?? "browser"}:${settingsRevision}`;
+  const applyProjectLaunchCreatedChat = useCallback((created: Parameters<typeof hydrateChatViewFromThread>[1], targetRevision: number) => {
+    chatIdRef.current = created.chatId;
+    setChatId(created.chatId);
+    setChatSummaries((current) => upsertChatSummary(current, created));
+    setChatHistoryRevision(targetRevision);
+    setChatView(hydrateChatViewFromThread(resetChatViewState(created.chatId), created));
+  }, [chatIdRef, setChatHistoryRevision, setChatId, setChatSummaries, setChatView]);
+  const navigateToProjectLaunchChat = useCallback((targetChatId: string) => {
+    if (projectId) navigate?.({ kind: "project", projectId, page: "chat", chatId: targetChatId });
+  }, [navigate, projectId]);
+  const { launchIntentCreateState, resetProjectLaunchController } = useProjectLaunchController({
+    projectId,
+    showChatPage,
+    projectPage,
+    routedChatId,
+    hostReadyGeneration,
+    projectHostAuthorityReady,
+    activeChatSummary: chatHistoryRevision === settingsRevision ? chatSummaries.find((item) => item.chatId === chatId) : undefined,
+    chatId,
+    launchIntentScopeKey,
+    settingsRef,
+    settingsRevisionRef,
+    chatIdRef,
+    projectScopeController,
+    abortActiveStream,
+    setChatInput,
+    applyCreatedChat: applyProjectLaunchCreatedChat,
+    navigateToCreatedChat: navigateToProjectLaunchChat,
+    setExplicitContextBundleItems,
+    setIncludeExplicitContextBundle,
+    setExplicitContextBundleStatus,
+  });
   chatIdRef.current = chatId;
   chatViewMessagesRef.current = chatView.messages;
   attachedContextRef.current = attachedContext;
@@ -1336,9 +1319,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
 
   const markSettingsChanged = useCallback(() => {
     invalidateChatController();
-    launchIntentCreateRef.current = null;
-    setLaunchIntentCreateState({ state: "idle" });
-    clearProjectChatLaunchIntent();
+    resetProjectLaunchController(true);
     settingsRevisionRef.current += 1;
     setSettingsRevision(settingsRevisionRef.current);
     invalidateRuntimeController();
@@ -1356,7 +1337,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     clearControlledFileReadState(null);
     clearControlledEditState(null);
     clearControlledCommandRunState(null);
-  }, [clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, invalidateChatController, invalidateRuntimeController]);
+  }, [clearEditProposalState, clearExplicitContextBundle, clearModelProposalState, clearIdeActionState, clearControlledFileReadState, clearControlledEditState, clearControlledCommandRunState, invalidateChatController, invalidateRuntimeController, resetProjectLaunchController]);
 
   useEffect(() => {
     const resetters: ProjectScopeResetters = {
@@ -1365,8 +1346,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         setProjectMemory({ state: "idle", notes: [], error: null }); setProjectMemoryStatus(null);
       },
       active_chat: () => {
-        launchIntentCreateRef.current = null;
-        setLaunchIntentCreateState({ state: "idle" });
+        resetProjectLaunchController();
         const nextChatId = route.kind === "project" ? route.page === "chat" && route.chatId ? route.chatId : null : "chat-001";
         resetChatForScope(nextChatId); setTimeline([]);
       },
@@ -1399,7 +1379,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       setSettingsRevision(settingsRevisionRef.current);
       setProjectScopeRevision((current) => current + 1);
     }
-  }, [clearControlledCommandRunState, clearControlledEditState, clearControlledFileReadState, clearControlledMultifileApplyState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, projectId, projectScopeController, resetChatForScope]);
+  }, [clearControlledCommandRunState, clearControlledEditState, clearControlledFileReadState, clearControlledMultifileApplyState, clearEditProposalState, clearExplicitContextBundle, clearIdeActionState, clearModelProposalState, projectId, projectScopeController, resetChatForScope, resetProjectLaunchController]);
 
   useEffect(() => {
     const previous = projectHostAuthorityIdentityRef.current;
@@ -1418,15 +1398,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   }, [clearIdeActionState, hostReadyGeneration, hostedAuthorityKey, projectId]);
 
   useEffect(() => () => projectScopeController.dispose(), [projectScopeController]);
-
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      launchIntentCreateRef.current = null;
-      clearProjectChatLaunchIntent();
-    };
-  }, []);
 
   const updateRuntimeSettings = useCallback((nextSettings: RuntimeSettings) => {
     const normalizedSettings: RuntimeSettings = { ...nextSettings, token: nextSettings.token ?? "", runtimeAccess: nextSettings.runtimeAccess ?? "direct" };
@@ -2155,106 +2126,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     }
     await runtimeController.exchangeOpenAiLoginCode(validation.sessionId, validation.state);
   };
-
-  useEffect(() => {
-    if (!projectId || !showChatPage) {
-      launchIntentCreateRef.current = null;
-      setLaunchIntentCreateState({ state: "idle" });
-      clearProjectChatLaunchIntent();
-      return;
-    }
-    const lifecycleGeneration = hostReadyGeneration ?? getBrowserProjectChatLifecycleGeneration();
-    if (hostReadyGeneration && !projectHostAuthorityReady) return;
-    const currentChatId = chatIdRef.current;
-    const pending = peekProjectChatLaunchIntent({ projectId, lifecycleGeneration });
-    if (pending && pending.chatId === undefined && routedChatId) {
-      clearProjectChatLaunchIntent();
-      launchIntentCreateRef.current = null;
-      setLaunchIntentCreateState({ state: "idle" });
-      return;
-    }
-    if (routedChatId && !activeChatSummary) return;
-    if (pending && pending.chatId === undefined) {
-      const intentKey = `${projectId}:${lifecycleGeneration}:${pending.createdAtEpochMs}`;
-      if (launchIntentCreateRef.current?.intentKey === intentKey) return;
-      if (pending.selectedNoteIds.length === 0) {
-        consumeProjectChatLaunchIntent({ projectId, lifecycleGeneration });
-        return;
-      }
-      const token = Symbol("project-chat-launch-intent-create");
-      const targetSettings = settingsRef.current;
-      const targetRevision = settingsRevisionRef.current;
-      const correlation = createProjectScopeCorrelation(projectScopeController.current());
-      launchIntentCreateRef.current = { token, intentKey, revision: targetRevision, correlation };
-      setLaunchIntentCreateState({ state: "creating", intentKey, scopeKey: launchIntentScopeKey });
-      abortActiveStream("SSE stopped and abort requested before starting a new project chat");
-      setChatInput("");
-      void createChat(targetSettings).then((created) => {
-        const activeCreate = launchIntentCreateRef.current;
-        if (!mountedRef.current || activeCreate?.token !== token || launchIntentScopeKey !== `${projectId ?? "legacy"}:${showChatPage ? "chat" : projectPage ?? "root"}:${routedChatId ?? "draft"}:${hostReadyGeneration ?? "browser"}:${settingsRevisionRef.current}`) return;
-        launchIntentCreateRef.current = null;
-        if (!created.ok || !created.data.chatId?.trim() || settingsRevisionRef.current !== targetRevision || !projectScopeController.accepts(correlation)) {
-          clearProjectChatLaunchIntent();
-          setLaunchIntentCreateState({ state: "failed", intentKey, scopeKey: launchIntentScopeKey });
-          return;
-        }
-        if (!bindProjectChatLaunchIntentChatId({ projectId, lifecycleGeneration }, created.data.chatId)) {
-          setLaunchIntentCreateState({ state: "failed", intentKey, scopeKey: launchIntentScopeKey });
-          return;
-        }
-        chatIdRef.current = created.data.chatId;
-        setChatId(created.data.chatId);
-        setChatSummaries((current) => upsertChatSummary(current, created.data));
-        setChatHistoryRevision(targetRevision);
-        setChatView(hydrateChatViewFromThread(resetChatViewState(created.data.chatId), created.data));
-        setLaunchIntentCreateState({ state: "idle" });
-        navigate?.({ kind: "project", projectId, page: "chat", chatId: created.data.chatId });
-      });
-      return;
-    }
-    if (!currentChatId) return;
-    const intent = peekProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
-    if (!intent) return;
-    if (intent.selectedNoteIds.length === 0) {
-      consumeProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
-      return;
-    }
-    const targetRevision = settingsRevisionRef.current;
-    const correlation = createProjectScopeCorrelation(projectScopeController.current());
-    const intentKey = `${projectId}:${currentChatId}:${intent.createdAtEpochMs}`;
-    if (launchIntentMemoryRef.current === intentKey) return;
-    launchIntentMemoryRef.current = intentKey;
-    void listProjectMemory(settingsRef.current).then((result) => {
-      if (launchIntentMemoryRef.current === intentKey) launchIntentMemoryRef.current = null;
-      if (settingsRevisionRef.current !== targetRevision || chatIdRef.current !== currentChatId || !projectScopeController.accepts(correlation)) return;
-      const consumed = consumeProjectChatLaunchIntent({ projectId, chatId: currentChatId, lifecycleGeneration });
-      if (!consumed) return;
-      if (!result.ok) {
-        setExplicitContextBundleStatus("Selected project memory could not be loaded. Nothing was attached.");
-        return;
-      }
-      const selection = selectControlledRunProjectMemory({ selectedNoteIds: consumed.selectedNoteIds, notes: result.data.notes, maxSelectedNotes: 3 });
-      const selected = selection.attachments.filter((attachment) => attachment.status === "selected" && attachment.selectedBody !== undefined);
-      const candidates = selected.map((attachment) => projectMemoryToBundleItem({
-        kind: "project_memory",
-        noteId: attachment.noteId,
-        title: attachment.titleLabel,
-        text: attachment.selectedBody!,
-        tags: attachment.tagLabels,
-        taskLabel: attachment.taskLabel,
-        sessionLabel: attachment.sessionLabel,
-        attachTraceLabel: `project-chat-launch:${consumed.source}`,
-      }));
-      setExplicitContextBundleItems((current) => {
-        const merged = mergeLaunchMemoryBundleItems(current, candidates, selection.selectedCount);
-        if (merged.addedCount > 0) setIncludeExplicitContextBundle(true);
-        setExplicitContextBundleStatus(merged.status);
-        return merged.items;
-      });
-    });
-  }, [abortActiveStream, activeChatSummary, chatId, hostReadyGeneration, launchIntentScopeKey, navigate, projectHostAuthorityReady, projectId, projectPage, projectScopeController, routedChatId, showChatPage]);
-
-
 
   useEffect(() => {
     const scrollRegion = chatScrollRegionRef.current;
