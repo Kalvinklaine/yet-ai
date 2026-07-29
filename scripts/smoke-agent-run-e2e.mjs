@@ -43,6 +43,17 @@ const rawMarkers = [
 const failures = [];
 const runtimeRequests = [];
 const smokePages = new Map();
+const controlledHostCapabilities = {
+  protocolVersion: "controlled_host_capabilities_v2",
+  hostSurface: "vscode",
+  authority: "metadata_only",
+  capabilities: { controlledStart: "supported", controlledRead: "supported", controlledEdit: "supported", controlledVerification: "supported", controlledRepair: "unsupported" },
+  correlationRequirements: ["request_id", "runtime_session_id", "explicit_user_gesture"],
+  authorityFlags: { metadataOnly: true, controlledRead: false, controlledEdit: false, controlledVerification: false, controlledStart: false, repair: false, shell: false, git: false, packageInstall: false, network: false, provider: false, tool: false, hiddenSearch: false, indexing: false, autoApply: false, autoRun: false, autoFix: false },
+  limits: { maxReadBytes: 8192, maxReadLines: 240, maxEditFiles: 1, maxEditOperations: 4, maxPatchBytes: 12000, maxVerificationOutputBytes: 12000, maxVerificationOutputLines: 240, maxRepairAttempts: 0 },
+  reasonCodes: ["metadata_only", "explicit_user_gesture_required"],
+  safeLabels: { host: "VS Code host", support: "Controlled smoke path ready" },
+};
 let lastCommandBody;
 let commandCount = 0;
 let sentPrompt = "";
@@ -264,11 +275,12 @@ async function createSmokePage(chromium) {
     workspaceBinding: { state: "auto_bound", projectId: hostedProjectId, displayName: "Agent Run smoke workspace" },
   });
   await page.getByRole("button", { name: "Legacy data", exact: true }).click();
+  await page.locator("[data-testid='task-agent-tools-drawer']").waitFor({ state: "attached", timeout: 20_000 });
   await dispatchHostMessage(page, {
     version: fixture.bridgeVersion,
     type: "host.ready",
     requestId: hostedReadyGeneration,
-    payload: { runtimeUrl: runtimeOrigin, sessionToken: hostedSessionToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
+    payload: { runtimeUrl: runtimeOrigin, sessionToken: hostedSessionToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false, controlledCapabilities: controlledHostCapabilities },
   });
   await page.evaluate(() => {
     for (const details of document.querySelectorAll("details")) details.open = details.dataset.testid !== "coding-session-trace-details";

@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { App } from "./App";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ProjectHub } from "./components/ProjectHub";
 import { ProjectShell } from "./components/ProjectShell";
 import { LegacyData } from "./components/LegacyData";
@@ -8,6 +7,8 @@ import { ProjectLink, navigateProjectRoute, parseProjectId, parseProjectRoute, s
 import type { WorkspaceBindingPayload } from "./bridge/bridgeAdapter";
 import { useLiveRuntimeSettings } from "./services/useLiveRuntimeSettings";
 import { clearProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
+
+const App = lazy(() => import("./App").then((module) => ({ default: module.App })));
 
 export function ProjectRouterShell() {
   const hostedChatEntry = isHostedChatEntry(window.location.pathname, window.__yetAiInitialRuntimeConfig?.entryMode);
@@ -81,7 +82,7 @@ export function ProjectRouterShell() {
 
   if (hostedChatEntry) {
     if (authorizedHostedRoute) {
-      return <App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostedAuthorityKey={openedHostedRoute?.authorityToken} hostReadyGeneration={hostReadyGeneration} />;
+      return <LazyApp><App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostedAuthorityKey={openedHostedRoute?.authorityToken} hostReadyGeneration={hostReadyGeneration} /></LazyApp>;
     }
     return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} hostReadyGeneration={hostReadyGeneration} getAuthorityToken={getHostedAuthorityToken} onOpen={openHostedRoute} />;
   }
@@ -92,10 +93,18 @@ export function ProjectRouterShell() {
     return <ProjectHub settings={settings} navigate={navigate} />;
   }
   if (route.kind === "project") {
-    return <ProjectShell route={route} settings={settings} navigate={navigate}>{route.page === "home" ? null : <App route={route} navigate={navigate} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />}</ProjectShell>;
+    return <ProjectShell route={route} settings={settings} navigate={navigate}>{route.page === "home" ? null : <LazyApp><App route={route} navigate={navigate} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} /></LazyApp>}</ProjectShell>;
   }
   if (route.kind === "legacy") return <LegacyData settings={settings} navigate={navigate} />;
-  return <App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} />;
+  return <LazyApp><App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} /></LazyApp>;
+}
+
+function LazyApp({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<RouteLoading />}>{children}</Suspense>;
+}
+
+function RouteLoading() {
+  return <main className="app-shell" data-testid="route-loading"><section className="card stack" role="status" aria-live="polite"><h1>Loading workspace…</h1><p>Preparing the requested local workspace surface.</p></section></main>;
 }
 
 type HostedRoute = Extract<AppRoute, { kind: "legacy" | "settings" | "project" }>;

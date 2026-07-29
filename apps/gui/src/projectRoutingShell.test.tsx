@@ -106,6 +106,23 @@ afterEach(() => {
 });
 
 describe("ProjectRouterShell", () => {
+  it("renders a deterministic accessible loading state while the workspace surface loads", async () => {
+    window.history.replaceState(null, "", "/settings");
+    const container = document.createElement("div");
+    document.body.append(container);
+
+    act(() => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    const loading = container.querySelector("[data-testid='route-loading'] [role='status']");
+    expect(loading?.getAttribute("aria-live")).toBe("polite");
+    expect(loading?.textContent).toContain("Loading workspace…");
+    await act(async () => undefined);
+    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("settings");
+  });
+
   it("replaces the root URL with projects and renders the project hub route", async () => {
     window.history.replaceState(null, "", "/");
     const replaceState = vi.spyOn(window.history, "replaceState");
