@@ -1,6 +1,197 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use tokio::io::AsyncWriteExt;
 
 use crate::identity::ProductIdentity;
+
+static PRIVATE_WRITE_TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AtomicPrivateWriteMode {
+    Replace,
+    CreateNew,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct AtomicPrivateWriteOptions {
+    pub max_bytes: usize,
+    pub mode: AtomicPrivateWriteMode,
+    pub sync_parent: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AtomicPrivateWriteOutcome {
+    Written,
+    AlreadyExists,
+}
+
+pub(crate) async fn atomic_write_private_file(
+    path: &Path,
+    bytes: &[u8],
+    options: AtomicPrivateWriteOptions,
+) -> std::io::Result<AtomicPrivateWriteOutcome> {
+    if bytes.len() > options.max_bytes || path.parent().is_none() || path.file_name().is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid private file write",
+        ));
+    }
+    let temp_path = unique_private_temp_path(path);
+    let mut open_options = tokio::fs::OpenOptions::new();
+    open_options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        tokio::fs::OpenOptions::mode(&mut open_options, 0o600);
+    }
+    let result = async {
+        let mut file = open_options.open(&temp_path).await?;
+        file.write_all(bytes).await?;
+        file.sync_all().await?;
+        set_private_file_permissions(file).await?;
+        let outcome = match options.mode {
+            AtomicPrivateWriteMode::Replace => {
+                replace_file(&temp_path, path).await?;
+                AtomicPrivateWriteOutcome::Written
+            }
+            AtomicPrivateWriteMode::CreateNew => match tokio::fs::hard_link(&temp_path, path).await
+            {
+                Ok(()) => AtomicPrivateWriteOutcome::Written,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    AtomicPrivateWriteOutcome::AlreadyExists
+                }
+                Err(error) => return Err(error),
+            },
+        };
+        if options.sync_parent && outcome == AtomicPrivateWriteOutcome::Written {
+            sync_private_parent_directory(path).await?;
+        }
+        Ok(outcome)
+    }
+    .await;
+    let cleanup = cleanup_private_temp_file(&temp_path).await;
+    match (result, cleanup) {
+        (Ok(outcome), Ok(())) => Ok(outcome),
+        (Err(error), Ok(())) => Err(error),
+        (_, Err(error)) => Err(error),
+    }
+}
+
+fn unique_private_temp_path(path: &Path) -> PathBuf {
+    let counter = PRIVATE_WRITE_TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("private.json");
+    path.with_file_name(format!(
+        ".{file_name}.tmp.{}.{}",
+        std::process::id(),
+        counter
+    ))
+}
+
+async fn cleanup_private_temp_file(path: &Path) -> std::io::Result<()> {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(windows))]
+async fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    tokio::fs::rename(source, destination).await
+}
+
+#[cfg(windows)]
+async fn replace_file(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    tokio::task::spawn_blocking(move || {
+        let result = unsafe {
+            MoveFileExW(
+                source.as_ptr(),
+                destination.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        };
+        if result == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+#[cfg(unix)]
+async fn set_private_file_permissions(file: tokio::fs::File) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let file = file.into_std().await;
+    tokio::task::spawn_blocking(move || {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+#[cfg(not(unix))]
+async fn set_private_file_permissions(file: tokio::fs::File) -> std::io::Result<()> {
+    drop(file);
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn sync_private_parent_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "private file has no parent",
+        )
+    })?;
+    let parent = parent.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        let directory = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(parent)?;
+        match directory.sync_all() {
+            Ok(()) => Ok(()),
+            Err(error) if unsupported_directory_sync_error(&error) => Ok(()),
+            Err(error) => Err(error),
+        }
+    })
+    .await
+    .map_err(std::io::Error::other)?
+}
+
+#[cfg(unix)]
+fn unsupported_directory_sync_error(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied
+            | std::io::ErrorKind::Unsupported
+            | std::io::ErrorKind::InvalidInput
+    ) || error.raw_os_error() == Some(libc::EINVAL)
+}
+
+#[cfg(not(unix))]
+async fn sync_private_parent_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoragePaths {
@@ -290,7 +481,111 @@ mod tests {
 
     use crate::identity::ProductIdentity;
 
-    use super::resolve_storage_paths;
+    use super::{
+        atomic_write_private_file, resolve_storage_paths, AtomicPrivateWriteMode,
+        AtomicPrivateWriteOptions, AtomicPrivateWriteOutcome,
+    };
+
+    fn write_options(mode: AtomicPrivateWriteMode) -> AtomicPrivateWriteOptions {
+        AtomicPrivateWriteOptions {
+            max_bytes: 16,
+            mode,
+            sync_parent: true,
+        }
+    }
+
+    fn temp_files(parent: &Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(parent)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
+            .map(|entry| entry.path())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn atomic_private_writer_replaces_and_create_new_preserves_existing() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state.json");
+        assert_eq!(
+            atomic_write_private_file(
+                &path,
+                br#"{"value":1}"#,
+                write_options(AtomicPrivateWriteMode::Replace),
+            )
+            .await
+            .unwrap(),
+            AtomicPrivateWriteOutcome::Written
+        );
+        assert_eq!(
+            atomic_write_private_file(
+                &path,
+                br#"{"value":2}"#,
+                write_options(AtomicPrivateWriteMode::CreateNew),
+            )
+            .await
+            .unwrap(),
+            AtomicPrivateWriteOutcome::AlreadyExists
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), br#"{"value":1}"#);
+        assert!(temp_files(temp.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn atomic_private_writer_rejects_oversize_without_temp_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state.json");
+        let error = atomic_write_private_file(
+            &path,
+            b"seventeen-bytes!!!",
+            write_options(AtomicPrivateWriteMode::Replace),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!path.exists());
+        assert!(temp_files(temp.path()).is_empty());
+    }
+
+    #[tokio::test]
+    async fn atomic_private_writer_cleans_temp_after_commit_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let destination = temp.path().join("destination");
+        std::fs::create_dir(&destination).unwrap();
+        assert!(atomic_write_private_file(
+            &destination,
+            b"private",
+            write_options(AtomicPrivateWriteMode::Replace),
+        )
+        .await
+        .is_err());
+        assert!(destination.is_dir());
+        assert!(temp_files(temp.path()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn atomic_private_writer_sets_private_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("state.json");
+        atomic_write_private_file(
+            &path,
+            b"private",
+            write_options(AtomicPrivateWriteMode::Replace),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::symlink_metadata(path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
 
     #[test]
     fn resolver_uses_identity_storage_names() {

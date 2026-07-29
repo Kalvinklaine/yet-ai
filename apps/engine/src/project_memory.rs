@@ -1,11 +1,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::io::AsyncWriteExt;
 
 const PROTOCOL_VERSION: &str = "2026-06-17";
 const STORE_FILE_MAX_BYTES: u64 = 1024 * 1024;
@@ -18,8 +16,6 @@ const MAX_NOTES: usize = 100;
 const MAX_TAGS: usize = 10;
 const DEFAULT_SEARCH_LIMIT: usize = 20;
 const MAX_SEARCH_LIMIT: usize = 20;
-
-static TEMP_PROJECT_MEMORY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -530,63 +526,20 @@ async fn reject_project_memory_file_symlink(path: &Path) -> Result<(), ProjectMe
 }
 
 async fn atomic_write_project_memory(path: &Path, bytes: &[u8]) -> Result<(), ProjectMemoryError> {
-    let temp_path = temp_project_memory_path(path);
-    let mut options = tokio::fs::OpenOptions::new();
-    options.create_new(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        tokio::fs::OpenOptions::mode(&mut options, 0o600);
-    }
-    let result = async {
-        ensure_project_memory_directory(path).await?;
-        let mut file = options
-            .open(&temp_path)
-            .await
-            .map_err(|_| ProjectMemoryError::Storage)?;
-        file.write_all(bytes)
-            .await
-            .map_err(|_| ProjectMemoryError::Storage)?;
-        file.sync_all()
-            .await
-            .map_err(|_| ProjectMemoryError::Storage)?;
-        set_private_permissions_for_open_file(file).await?;
-        ensure_project_memory_directory(path).await?;
-        reject_project_memory_file_symlink(path).await?;
-        tokio::fs::rename(&temp_path, path)
-            .await
-            .map_err(|_| ProjectMemoryError::Storage)?;
-        set_private_permissions(path).await?;
-        sync_parent_directory(path).await
-    }
-    .await;
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            cleanup_project_memory_temp_file(&temp_path).await?;
-            Err(error)
-        }
-    }
-}
-
-fn temp_project_memory_path(path: &Path) -> PathBuf {
-    let counter = TEMP_PROJECT_MEMORY_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("notes.json");
-    path.with_file_name(format!(
-        ".{file_name}.tmp.{}.{}",
-        std::process::id(),
-        counter
-    ))
-}
-
-async fn cleanup_project_memory_temp_file(path: &Path) -> Result<(), ProjectMemoryError> {
-    match tokio::fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(ProjectMemoryError::Storage),
-    }
+    ensure_project_memory_directory(path).await?;
+    reject_project_memory_file_symlink(path).await?;
+    crate::storage::atomic_write_private_file(
+        path,
+        bytes,
+        crate::storage::AtomicPrivateWriteOptions {
+            max_bytes: STORE_FILE_MAX_BYTES as usize,
+            mode: crate::storage::AtomicPrivateWriteMode::Replace,
+            sync_parent: true,
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|_| ProjectMemoryError::Storage)
 }
 
 #[cfg(unix)]
@@ -638,67 +591,6 @@ fn open_file_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-}
-
-#[cfg(unix)]
-async fn set_private_permissions_for_open_file(
-    file: tokio::fs::File,
-) -> Result<(), ProjectMemoryError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let file = file.into_std().await;
-    tokio::task::spawn_blocking(move || {
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| ProjectMemoryError::Storage)
-    })
-    .await
-    .map_err(|_| ProjectMemoryError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions_for_open_file(
-    _file: tokio::fs::File,
-) -> Result<(), ProjectMemoryError> {
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn set_private_permissions(path: &Path) -> Result<(), ProjectMemoryError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .await
-        .map_err(|_| ProjectMemoryError::Storage)
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions(_path: &Path) -> Result<(), ProjectMemoryError> {
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn sync_parent_directory(path: &Path) -> Result<(), ProjectMemoryError> {
-    let dir = path
-        .parent()
-        .ok_or(ProjectMemoryError::Storage)?
-        .to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
-            .open(dir)
-            .map_err(|_| ProjectMemoryError::Storage)?;
-        file.sync_all().map_err(|_| ProjectMemoryError::Storage)
-    })
-    .await
-    .map_err(|_| ProjectMemoryError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn sync_parent_directory(_path: &Path) -> Result<(), ProjectMemoryError> {
-    Ok(())
 }
 
 #[cfg(test)]

@@ -1,13 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
 
 use crate::providers;
 
-static TEMP_SECRET_COUNTER: AtomicU64 = AtomicU64::new(0);
 const OS_KEYCHAIN_SERVICE: &str = "yet-ai.provider-secrets";
 const OS_KEYCHAIN_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
 static KEYCHAIN_PUT_IF_ABSENT_LOCK: LazyLock<tokio::sync::Mutex<()>> =
@@ -694,41 +691,18 @@ async fn write_secret_record(path: &Path, record: &SecretRecord) -> Result<(), S
     ensure_secret_directory(dir, false).await?;
     reject_secret_file_symlink(path).await?;
     let content = serde_json::to_vec_pretty(record).map_err(|_| SecretStoreError::Storage)?;
-    let temp_path = temp_secret_path(path);
-    let mut options = tokio::fs::OpenOptions::new();
-    options.create_new(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-    let result = async {
-        let mut file = options
-            .open(&temp_path)
-            .await
-            .map_err(|_| SecretStoreError::Storage)?;
-        file.write_all(&content)
-            .await
-            .map_err(|_| SecretStoreError::Storage)?;
-        file.sync_all()
-            .await
-            .map_err(|_| SecretStoreError::Storage)?;
-        set_private_permissions_for_open_file(file).await?;
-        tokio::fs::rename(&temp_path, path)
-            .await
-            .map_err(|_| SecretStoreError::Storage)
-    }
-    .await;
-    match result {
-        Ok(()) => {
-            let _ = set_private_permissions(path).await;
-            let _ = sync_parent_directory(path).await;
-            Ok(())
-        }
-        Err(error) => {
-            cleanup_temp_secret_file(&temp_path).await?;
-            Err(error)
-        }
-    }
+    crate::storage::atomic_write_private_file(
+        path,
+        &content,
+        crate::storage::AtomicPrivateWriteOptions {
+            max_bytes: 1024 * 1024,
+            mode: crate::storage::AtomicPrivateWriteMode::Replace,
+            sync_parent: true,
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|_| SecretStoreError::Storage)
 }
 
 async fn write_secret_record_if_absent(
@@ -739,103 +713,18 @@ async fn write_secret_record_if_absent(
     ensure_secret_directory(dir, false).await?;
     reject_secret_file_symlink(path).await?;
     let content = serde_json::to_vec_pretty(record).map_err(|_| SecretStoreError::Storage)?;
-    let temp_path = temp_secret_path(path);
-    let mut options = tokio::fs::OpenOptions::new();
-    options.create_new(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-    let result = async {
-        let mut file = options
-            .open(&temp_path)
-            .await
-            .map_err(|_| SecretStoreError::Storage)?;
-        file.write_all(&content)
-            .await
-            .map_err(|_| SecretStoreError::Storage)?;
-        file.sync_all()
-            .await
-            .map_err(|_| SecretStoreError::Storage)?;
-        set_private_permissions_for_open_file(file).await?;
-        match tokio::fs::hard_link(&temp_path, path).await {
-            Ok(()) => Ok(true),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-            Err(_) => Err(SecretStoreError::Storage),
-        }
-    }
-    .await;
-    let cleanup = cleanup_temp_secret_file(&temp_path).await;
-    match (result, cleanup) {
-        (Ok(created), Ok(())) => {
-            if created {
-                let _ = set_private_permissions(path).await;
-                let _ = sync_parent_directory(path).await;
-            }
-            Ok(created)
-        }
-        (Err(error), Ok(())) => Err(error),
-        (_, Err(error)) => Err(error),
-    }
-}
-
-async fn cleanup_temp_secret_file(path: &Path) -> Result<(), SecretStoreError> {
-    match tokio::fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) => match tokio::fs::symlink_metadata(path).await {
-            Ok(_) => Err(SecretStoreError::Storage),
-            Err(metadata_error)
-                if error.kind() == std::io::ErrorKind::NotFound
-                    && metadata_error.kind() == std::io::ErrorKind::NotFound =>
-            {
-                Ok(())
-            }
-            Err(_) => Err(SecretStoreError::Storage),
+    crate::storage::atomic_write_private_file(
+        path,
+        &content,
+        crate::storage::AtomicPrivateWriteOptions {
+            max_bytes: 1024 * 1024,
+            mode: crate::storage::AtomicPrivateWriteMode::CreateNew,
+            sync_parent: true,
         },
-    }
-}
-#[cfg(unix)]
-async fn sync_parent_directory(path: &Path) -> Result<(), SecretStoreError> {
-    let dir = path
-        .parent()
-        .ok_or(SecretStoreError::Storage)?
-        .to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        match open_directory_no_follow(&dir).and_then(|directory| directory.sync_all()) {
-            Ok(()) => Ok(()),
-            Err(error) if is_unsupported_directory_sync_error(&error) => Ok(()),
-            Err(_) => Err(SecretStoreError::Storage),
-        }
-    })
+    )
     .await
-    .map_err(|_| SecretStoreError::Storage)?
-}
-
-#[cfg(unix)]
-fn is_unsupported_directory_sync_error(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::PermissionDenied
-            | std::io::ErrorKind::Unsupported
-            | std::io::ErrorKind::InvalidInput
-    ) || error.raw_os_error() == Some(22)
-}
-#[cfg(not(unix))]
-async fn sync_parent_directory(_path: &Path) -> Result<(), SecretStoreError> {
-    Ok(())
-}
-
-fn temp_secret_path(path: &Path) -> PathBuf {
-    let counter = TEMP_SECRET_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("secret.json");
-    path.with_file_name(format!(
-        ".{file_name}.tmp.{}.{}",
-        std::process::id(),
-        counter
-    ))
+    .map(|outcome| outcome == crate::storage::AtomicPrivateWriteOutcome::Written)
+    .map_err(|_| SecretStoreError::Storage)
 }
 
 #[cfg(unix)]
@@ -885,47 +774,6 @@ fn open_directory_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
         .open(path)
-}
-
-#[cfg(unix)]
-async fn set_private_permissions_for_open_file(
-    file: tokio::fs::File,
-) -> Result<(), SecretStoreError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let file = file.into_std().await;
-    tokio::task::spawn_blocking(move || {
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| SecretStoreError::Storage)
-    })
-    .await
-    .map_err(|_| SecretStoreError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions_for_open_file(
-    file: tokio::fs::File,
-) -> Result<(), SecretStoreError> {
-    drop(file);
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn set_private_permissions(path: &Path) -> Result<(), SecretStoreError> {
-    use std::os::unix::fs::PermissionsExt;
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let file = open_file_no_follow(&path).map_err(|_| SecretStoreError::Storage)?;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| SecretStoreError::Storage)
-    })
-    .await
-    .map_err(|_| SecretStoreError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions(_path: &Path) -> Result<(), SecretStoreError> {
-    Ok(())
 }
 
 #[cfg(unix)]
@@ -2098,41 +1946,6 @@ mod tests {
         assert_eq!(file_mode(&root), 0o700);
         assert_eq!(file_mode(&provider_dir), 0o700);
         assert_eq!(file_mode(&secret_path), 0o600);
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn file_secret_store_syncs_parent_directory_after_write() {
-        let dir = temp_dir();
-        let store = FileSecretStore::new(&dir);
-        store
-            .put_secret(
-                "openai-local",
-                SecretKind::ApiKey,
-                "sk-directory-sync-secret-abcd",
-            )
-            .await
-            .unwrap();
-        let secret_path = store
-            .secret_path("openai-local", SecretKind::ApiKey)
-            .expect("valid path");
-
-        super::sync_parent_directory(&secret_path).await.unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn directory_sync_unsupported_errors_are_tolerated() {
-        for kind in [
-            std::io::ErrorKind::PermissionDenied,
-            std::io::ErrorKind::Unsupported,
-            std::io::ErrorKind::InvalidInput,
-        ] {
-            let error = std::io::Error::from(kind);
-            assert!(super::is_unsupported_directory_sync_error(&error));
-        }
-        let error = std::io::Error::from_raw_os_error(22);
-        assert!(super::is_unsupported_directory_sync_error(&error));
     }
 
     #[tokio::test]

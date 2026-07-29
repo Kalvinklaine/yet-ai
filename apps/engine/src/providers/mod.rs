@@ -1,18 +1,17 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
 
 use crate::demo_mode;
 use crate::secret_store::{
     provider_secret_store, redact_secret, ProviderSecretStore, SecretKind, SecretStoreError,
 };
 
-static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+const PROVIDER_CONFIG_FILE_MAX_BYTES: usize = 2_000_000;
+const PROVIDER_TEST_STATE_FILE_MAX_BYTES: usize = 16_384;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -627,7 +626,9 @@ fn local_availability_reason_for_test_state(
         (ProviderKind::Ollama, ProviderTestStatus::MissingModel) => {
             Some("Local server is reachable but the model is not installed.".to_string())
         }
-        (ProviderKind::Ollama, _) => Some("Local server could not confirm model availability.".to_string()),
+        (ProviderKind::Ollama, _) => {
+            Some("Local server could not confirm model availability.".to_string())
+        }
         _ => None,
     }
 }
@@ -794,8 +795,8 @@ pub async fn update_provider_config(
     }
     let secret_change = if let Some(auth) = request.auth {
         let secret_change = secret_change_for_auth_request(&auth);
-        test_state_maybe_stale |= config.auth.auth_type != auth.auth_type
-            || !matches!(secret_change, SecretChange::None);
+        test_state_maybe_stale |=
+            config.auth.auth_type != auth.auth_type || !matches!(secret_change, SecretChange::None);
         config.auth = StoredAuthConfig {
             auth_type: auth.auth_type,
             api_key: None,
@@ -1203,7 +1204,9 @@ async fn openai_models_model_present(
     let models = value["data"]
         .as_array()
         .ok_or(ProviderTestStatus::UpstreamError)?;
-    Ok(models.iter().any(|model| model["id"].as_str() == Some(model_id)))
+    Ok(models
+        .iter()
+        .any(|model| model["id"].as_str() == Some(model_id)))
 }
 
 fn provider_test_response(
@@ -1272,42 +1275,18 @@ async fn write_provider_test_state(
         .await
         .map_err(|_| ProviderError::Storage)?;
     let content = serde_json::to_vec_pretty(state).map_err(|_| ProviderError::Storage)?;
-    let temp_path = temp_provider_config_path(path);
-    let mut options = tokio::fs::OpenOptions::new();
-    options.create_new(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-    let result = async {
-        let mut file = options
-            .open(&temp_path)
-            .await
-            .map_err(|_| ProviderError::Storage)?;
-        file.write_all(&content)
-            .await
-            .map_err(|_| ProviderError::Storage)?;
-        file.sync_all().await.map_err(|_| ProviderError::Storage)?;
-        drop(file);
-        set_private_permissions(&temp_path).await?;
-        tokio::fs::rename(&temp_path, path)
-            .await
-            .map_err(|_| ProviderError::Storage)
-    }
-    .await;
-    let cleanup = tokio::fs::remove_file(&temp_path).await;
-    match result {
-        Ok(()) => {
-            set_private_permissions(path).await?;
-            Ok(())
-        }
-        Err(error) => {
-            if cleanup.is_err() {
-                return Err(ProviderError::Storage);
-            }
-            Err(error)
-        }
-    }
+    crate::storage::atomic_write_private_file(
+        path,
+        &content,
+        crate::storage::AtomicPrivateWriteOptions {
+            max_bytes: PROVIDER_TEST_STATE_FILE_MAX_BYTES,
+            mode: crate::storage::AtomicPrivateWriteMode::Replace,
+            sync_parent: true,
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|_| ProviderError::Storage)
 }
 
 fn sanitize_provider_test_message(message: &str) -> String {
@@ -1579,16 +1558,14 @@ async fn write_provider_config(
     path: &Path,
     config: &StoredProviderConfig,
 ) -> Result<(), ProviderError> {
-    write_temp_then(path, config, false).await?;
-    set_private_permissions(path).await
+    write_temp_then(path, config, false).await
 }
 
 async fn create_provider_config_file(
     path: &Path,
     config: &StoredProviderConfig,
 ) -> Result<(), ProviderError> {
-    write_temp_then(path, config, true).await?;
-    set_private_permissions(path).await
+    write_temp_then(path, config, true).await
 }
 
 async fn write_temp_then(
@@ -1601,75 +1578,27 @@ async fn write_temp_then(
         .await
         .map_err(|_| ProviderError::Storage)?;
     let content = serde_json::to_vec_pretty(config).map_err(|_| ProviderError::Storage)?;
-    let temp_path = temp_provider_config_path(path);
-    let mut options = tokio::fs::OpenOptions::new();
-    options.create_new(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        options.mode(0o600);
-    }
-    let result = async {
-        let mut file = options
-            .open(&temp_path)
-            .await
-            .map_err(|_| ProviderError::Storage)?;
-        file.write_all(&content)
-            .await
-            .map_err(|_| ProviderError::Storage)?;
-        file.sync_all().await.map_err(|_| ProviderError::Storage)?;
-        drop(file);
-        set_private_permissions(&temp_path).await?;
-        if create_new {
-            match tokio::fs::hard_link(&temp_path, path).await {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    Err(ProviderError::AlreadyExists)
-                }
-                Err(_) => Err(ProviderError::Storage),
-            }
-        } else {
-            tokio::fs::rename(&temp_path, path)
-                .await
-                .map_err(|_| ProviderError::Storage)
+    let outcome = crate::storage::atomic_write_private_file(
+        path,
+        &content,
+        crate::storage::AtomicPrivateWriteOptions {
+            max_bytes: PROVIDER_CONFIG_FILE_MAX_BYTES,
+            mode: if create_new {
+                crate::storage::AtomicPrivateWriteMode::CreateNew
+            } else {
+                crate::storage::AtomicPrivateWriteMode::Replace
+            },
+            sync_parent: true,
+        },
+    )
+    .await
+    .map_err(|_| ProviderError::Storage)?;
+    match outcome {
+        crate::storage::AtomicPrivateWriteOutcome::Written => Ok(()),
+        crate::storage::AtomicPrivateWriteOutcome::AlreadyExists => {
+            Err(ProviderError::AlreadyExists)
         }
     }
-    .await;
-    let cleanup = tokio::fs::remove_file(&temp_path).await;
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            if cleanup.is_err() {
-                return Err(ProviderError::Storage);
-            }
-            Err(error)
-        }
-    }
-}
-
-fn temp_provider_config_path(path: &Path) -> PathBuf {
-    let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("provider.json");
-    path.with_file_name(format!(
-        ".{file_name}.tmp.{}.{}",
-        std::process::id(),
-        counter
-    ))
-}
-
-#[cfg(unix)]
-async fn set_private_permissions(path: &Path) -> Result<(), ProviderError> {
-    use std::os::unix::fs::PermissionsExt;
-    tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-        .await
-        .map_err(|_| ProviderError::Storage)
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions(_path: &Path) -> Result<(), ProviderError> {
-    Ok(())
 }
 
 fn normalize_base_url(

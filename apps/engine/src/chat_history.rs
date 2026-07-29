@@ -1,13 +1,9 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use base64::Engine;
 use chrono::{SecondsFormat, Utc};
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
-
-static TEMP_CHAT_HISTORY_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 const CHAT_HISTORY_DIR: &str = "chat-history";
 const CHAT_HISTORY_FILE_MAX_BYTES: u64 = 2_000_000;
@@ -414,63 +410,20 @@ async fn reject_chat_history_file_symlink(path: &Path) -> Result<(), ChatHistory
 }
 
 async fn atomic_write_chat_history(path: &Path, bytes: &[u8]) -> Result<(), ChatHistoryError> {
-    let temp_path = temp_chat_history_path(path);
-    let mut options = tokio::fs::OpenOptions::new();
-    options.create_new(true).write(true).truncate(true);
-    #[cfg(unix)]
-    {
-        tokio::fs::OpenOptions::mode(&mut options, 0o600);
-    }
-    let result = async {
-        ensure_chat_history_directory(path).await?;
-        let mut file = options
-            .open(&temp_path)
-            .await
-            .map_err(|_| ChatHistoryError::Storage)?;
-        file.write_all(bytes)
-            .await
-            .map_err(|_| ChatHistoryError::Storage)?;
-        file.sync_all()
-            .await
-            .map_err(|_| ChatHistoryError::Storage)?;
-        set_private_permissions_for_open_file(file).await?;
-        ensure_chat_history_directory(path).await?;
-        reject_chat_history_file_symlink(path).await?;
-        tokio::fs::rename(&temp_path, path)
-            .await
-            .map_err(|_| ChatHistoryError::Storage)?;
-        set_private_permissions(path).await?;
-        sync_parent_directory(path).await
-    }
-    .await;
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            cleanup_chat_history_temp_file(&temp_path).await?;
-            Err(error)
-        }
-    }
-}
-
-fn temp_chat_history_path(path: &Path) -> PathBuf {
-    let counter = TEMP_CHAT_HISTORY_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("thread.json");
-    path.with_file_name(format!(
-        ".{file_name}.tmp.{}.{}",
-        std::process::id(),
-        counter
-    ))
-}
-
-async fn cleanup_chat_history_temp_file(path: &Path) -> Result<(), ChatHistoryError> {
-    match tokio::fs::remove_file(path).await {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(_) => Err(ChatHistoryError::Storage),
-    }
+    ensure_chat_history_directory(path).await?;
+    reject_chat_history_file_symlink(path).await?;
+    crate::storage::atomic_write_private_file(
+        path,
+        bytes,
+        crate::storage::AtomicPrivateWriteOptions {
+            max_bytes: CHAT_HISTORY_FILE_MAX_BYTES as usize,
+            mode: crate::storage::AtomicPrivateWriteMode::Replace,
+            sync_parent: true,
+        },
+    )
+    .await
+    .map(|_| ())
+    .map_err(|_| ChatHistoryError::Storage)
 }
 
 #[cfg(unix)]
@@ -522,89 +475,6 @@ fn open_file_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
         .read(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-}
-
-#[cfg(unix)]
-fn open_directory_no_follow(path: &Path) -> std::io::Result<std::fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
-        .open(path)
-}
-
-#[cfg(unix)]
-async fn set_private_permissions_for_open_file(
-    file: tokio::fs::File,
-) -> Result<(), ChatHistoryError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let file = file.into_std().await;
-    tokio::task::spawn_blocking(move || {
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| ChatHistoryError::Storage)
-    })
-    .await
-    .map_err(|_| ChatHistoryError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions_for_open_file(
-    file: tokio::fs::File,
-) -> Result<(), ChatHistoryError> {
-    drop(file);
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn set_private_permissions(path: &Path) -> Result<(), ChatHistoryError> {
-    use std::os::unix::fs::PermissionsExt;
-    let path = path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        let file = open_file_no_follow(&path).map_err(|_| ChatHistoryError::Storage)?;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))
-            .map_err(|_| ChatHistoryError::Storage)
-    })
-    .await
-    .map_err(|_| ChatHistoryError::Storage)?
-}
-
-#[cfg(not(unix))]
-async fn set_private_permissions(_path: &Path) -> Result<(), ChatHistoryError> {
-    Ok(())
-}
-
-#[cfg(unix)]
-async fn sync_parent_directory(path: &Path) -> Result<(), ChatHistoryError> {
-    let dir = path
-        .parent()
-        .ok_or(ChatHistoryError::Storage)?
-        .to_path_buf();
-    tokio::task::spawn_blocking(move || {
-        match open_directory_no_follow(&dir).and_then(|directory| directory.sync_all()) {
-            Ok(()) => Ok(()),
-            Err(error) if is_unsupported_directory_sync_error(&error) => Ok(()),
-            Err(_) => Err(ChatHistoryError::Storage),
-        }
-    })
-    .await
-    .map_err(|_| ChatHistoryError::Storage)?
-}
-
-#[cfg(unix)]
-fn is_unsupported_directory_sync_error(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        std::io::ErrorKind::PermissionDenied
-            | std::io::ErrorKind::Unsupported
-            | std::io::ErrorKind::InvalidInput
-    ) || error.raw_os_error() == Some(22)
-}
-
-#[cfg(not(unix))]
-async fn sync_parent_directory(_path: &Path) -> Result<(), ChatHistoryError> {
-    Ok(())
 }
 
 #[cfg(test)]
