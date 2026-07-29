@@ -21,7 +21,7 @@ export function defineGuiSmokeEntry({ mode, route, entryMode } = {}) {
   throw new Error("GUI smoke entry must use one canonical browser or hosted route without mixing modes.");
 }
 
-export async function createGuiSmokeBootstrap({ distRoot, chromium, entry, viewport = { width: 800, height: 600 }, privacyMarkers = [], criticalRequest = defaultCriticalRequest }) {
+export async function createGuiSmokeBootstrap({ distRoot, chromium, entry, viewport = { width: 800, height: 600 }, privacyMarkers = [], criticalRequest = defaultCriticalRequest, launchOptions = {} }) {
   const normalizedEntry = defineGuiSmokeEntry(entry);
   await requireBuiltGui(distRoot);
   const failures = [];
@@ -35,7 +35,7 @@ export async function createGuiSmokeBootstrap({ distRoot, chromium, entry, viewp
 
   try {
     server = await startSpaServer(distRoot, normalizedEntry);
-    browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true, ...launchOptions });
     context = await browser.newContext();
     page = await context.newPage({ viewport });
     page.on("pageerror", (error) => failures.push(`page error: ${safeDiagnostic(error.message, privacyMarkers)}`));
@@ -88,10 +88,14 @@ export async function createGuiSmokeBootstrap({ distRoot, chromium, entry, viewp
     const readyPayload = runtimeProxyBaseUrl
       ? { runtimeProxyBaseUrl, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false }
       : { runtimeUrl, sessionToken, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false };
-    await page.evaluate(({ requestId: generation, readyPayload: payload, binding }) => {
+    await page.waitForTimeout(50);
+    await page.evaluate(({ requestId: generation, readyPayload: payload }) => {
       window.dispatchEvent(new MessageEvent("message", { data: { version: "2026-05-15", type: "host.ready", requestId: generation, payload } }));
+    }, { requestId, readyPayload });
+    await page.waitForTimeout(50);
+    await page.evaluate(({ requestId: generation, binding }) => {
       window.dispatchEvent(new MessageEvent("message", { data: { version: "2026-05-15", type: "host.workspaceBinding", requestId: generation, payload: { protocolVersion: "workspace_binding_v1", requestId: generation, ...binding } } }));
-    }, { requestId, readyPayload, binding: workspaceBinding });
+    }, { requestId, binding: workspaceBinding });
   }
 
   async function assertPrivacy() {

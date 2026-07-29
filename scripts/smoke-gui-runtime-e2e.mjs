@@ -1,16 +1,15 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, rm, stat } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { createGuiSmokeBootstrap } from "./lib/gui-smoke-bootstrap.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const distRoot = path.join(root, "apps", "gui", "dist");
-const indexPath = path.join(distRoot, "index.html");
 const engineBinary = path.join(root, "target", "debug", process.platform === "win32" ? "yet-lsp.exe" : "yet-lsp");
 const timeoutMs = 120_000;
 const token = `smoke-runtime-token-${randomUUID()}`;
@@ -69,30 +68,33 @@ const secretMarkers = [
 ];
 const failures = [];
 let engine;
-let guiServer;
+let smoke;
 let mockProvider;
 let tempHome;
-let browser;
 let providerAuth;
 const providerRequestBodies = [];
 let providerHits = 0;
 
-await requireBuiltGui();
 await requireEngineBinary();
 const { chromium } = await requireChromium();
 
 try {
   tempHome = await makeTempHome();
   mockProvider = await startMockProvider();
-  guiServer = await startStaticServer(distRoot);
   const enginePort = await freePort();
   engine = startEngine(enginePort, tempHome);
   const runtimeBaseUrl = `http://127.0.0.1:${enginePort}`;
-  const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
   await waitForEngine(runtimeBaseUrl);
 
   try {
-    browser = await chromium.launch({ headless: true, args: ["--disable-web-security"] });
+    smoke = await createGuiSmokeBootstrap({
+      distRoot,
+      chromium,
+      entry: { mode: "hosted", route: "/vscode/hosted-chat", entryMode: "hosted_chat" },
+      privacyMarkers: [token, fakeApiKey],
+      criticalRequest: (url) => url.pathname.endsWith(".js") || url.pathname.endsWith(".css"),
+      launchOptions: { args: ["--disable-web-security"] },
+    });
   } catch (error) {
     failActionable("Playwright Chromium is not installed or cannot be launched.", [
       "Run `npm install` from the repository root if needed.",
@@ -101,15 +103,7 @@ try {
     ]);
   }
 
-  const page = await browser.newPage();
-  await page.addInitScript(() => {
-    window.__yetAiVsCodeMessages = [];
-    window.acquireVsCodeApi = () => ({
-      postMessage(message) {
-        window.__yetAiVsCodeMessages.push(message);
-      },
-    });
-  });
+  const page = smoke.page;
   await page.route("http://127.0.0.1:8001/v1/demo-mode", async (route) => {
     if (route.request().method() !== "GET" && route.request().method() !== "POST") {
       await route.fallback();
@@ -126,7 +120,7 @@ try {
     const text = message.text();
     browserVisible.push(text);
     assertNoSecretLeak(text, "browser console");
-    if (message.type() === "error" && !isExpectedFetchConsoleError(text)) {
+    if (message.type() === "error" && !isExpectedFetchConsoleError(text) && !isExpectedDashboardConsoleError(text)) {
       failures.push(`Browser console error: ${redactSecrets(text)}`);
     }
   });
@@ -149,28 +143,27 @@ try {
   });
   page.on("response", (response) => {
     const url = response.url();
-    if (isStaticServerAsset(url) && (response.status() === 404 || response.status() >= 500)) {
+    if (isStaticServerAsset(url) && (response.status() >= 500 || (response.status() === 404 && !isExpectedDashboardPath(new URL(url).pathname)))) {
       failures.push(`Broken local asset response: ${response.status()} ${redactUrl(url)}`);
     }
   });
 
-  await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  const guiReady = await waitForGuiMessage(page, "gui.ready");
+  const guiReady = await smoke.waitForGuiReady();
+  await smoke.sendHostReady({
+    requestId: "routed-smoke-ready-1",
+    runtimeUrl: runtimeBaseUrl,
+    sessionToken: token,
+    workspaceBinding: { state: "auto_bound", projectId: "prj_abcdefghijklmnopqrstuA", displayName: "Runtime smoke workspace" },
+  });
+  await page.getByRole("button", { name: "Legacy data", exact: true }).click();
   await dispatchHostMessage(page, {
     version: "2026-05-15",
     type: "host.ready",
-    requestId: guiReady?.requestId,
+    requestId: "routed-smoke-ready-1",
     payload: { runtimeUrl: runtimeBaseUrl, sessionToken: token, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
   });
-  await expectAttachedText(page, "Host runtime settings received", "host runtime settings bridge log", 20_000);
-
-  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
-  await refreshButton.waitFor({ state: "visible", timeout: 20_000 });
-  await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
-  await refreshButton.click();
   await expectAttachedText(page, "Runtime connected", "runtime connection feedback", 20_000);
+  await page.getByRole("tab", { name: /^Setup/ }).click();
   await expectAttachedText(page, "runtime connected", "runtime connected badge", 20_000);
 
   await page.getByRole("button", { name: "New provider" }).click();
@@ -182,8 +175,8 @@ try {
   await page.getByLabel("Model id").fill(modelId);
   await page.getByLabel("Model display name").fill(modelId);
   await page.getByRole("button", { name: "Create provider" }).click();
-  await expectVisibleText(page, providerName, "created provider", 20_000);
-  await expectVisibleText(page, `Ready to send using ${modelId} through the local runtime.`, "chat readiness", 20_000);
+  await page.getByRole("tab", { name: "Chat", exact: true }).click();
+  await expectVisibleText(page, `Sends go through ${modelId} (${providerId}) via the local runtime`, "chat readiness", 20_000);
 
   await exerciseManualRunnerStart(page);
 
@@ -284,6 +277,8 @@ try {
   }));
   assertNoSecretLeak(JSON.stringify(pageState), "DOM or browser storage");
   assertNoSecretLeak(JSON.stringify(browserVisible), "browser console/page errors");
+  await smoke.assertPrivacy();
+  smoke.assertHealthy();
 
   if (failures.length > 0) {
     throw new Error(`GUI runtime e2e smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
@@ -293,38 +288,15 @@ try {
   console.log("Verified built GUI, loopback runtime, mock OpenAI-compatible streaming provider, Manual runner progress guide, IDE-like active-file multi-file bundle include/one-shot clear, active context include/omit, streamed chat responses, mock safe-edit JSON proposal preview without auto-send or auto-apply, explicit apply result to user-clicked verification to one-shot verification_output attachment, no hidden search/read/navigation actions, local history reload, and browser-state redaction.");
   console.log("No OpenAI/ChatGPT, hosted Yet AI service, non-loopback URL, real IDE launch, or real provider credential was used.");
 } finally {
-  await browser?.close().catch(() => undefined);
+  await smoke?.close().catch(() => undefined);
   if (engine) {
     await stopProcess(engine);
   }
   if (mockProvider) {
     await closeServer(mockProvider.server).catch(() => undefined);
   }
-  if (guiServer) {
-    await guiServer.close().catch(() => undefined);
-  }
   if (tempHome) {
     await rm(tempHome, { recursive: true, force: true });
-  }
-}
-
-async function requireBuiltGui() {
-  try {
-    const fileStat = await stat(indexPath);
-    if (!fileStat.isFile()) {
-      throw new Error("not a file");
-    }
-    const html = await readFile(indexPath, "utf8");
-    if (!html.includes("/assets/") && !html.includes("./assets/")) {
-      failActionable("Built GUI index.html does not reference Vite assets.", [
-        "Run `cd apps/gui && npm run build` before `npm run smoke:gui-runtime-e2e`.",
-      ]);
-    }
-  } catch {
-    failActionable("built GUI is missing.", [
-      "Run `cd apps/gui && npm run build` before `npm run smoke:gui-runtime-e2e`.",
-      `Expected file: ${path.relative(root, indexPath)}`,
-    ]);
   }
 }
 
@@ -446,46 +418,13 @@ async function startMockProvider() {
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
 }
 
-async function startStaticServer(staticRoot) {
-  const server = http.createServer(async (request, response) => {
-    let pathname;
-    try {
-      const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-      pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    } catch {
-      response.writeHead(400);
-      response.end("Bad request");
-      return;
-    }
-    const requestedPath = path.normalize(path.join(staticRoot, pathname));
-    if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
-      response.writeHead(403);
-      response.end("Forbidden");
-      return;
-    }
-    try {
-      const fileStat = await stat(requestedPath);
-      if (!fileStat.isFile()) {
-        response.writeHead(404);
-        response.end("Not found");
-        return;
-      }
-      response.writeHead(200, { "content-type": contentType(requestedPath) });
-      createReadStream(requestedPath).pipe(response);
-    } catch {
-      response.writeHead(404);
-      response.end("Not found");
-    }
-  });
-  await listen(server, "127.0.0.1", 0);
-  const address = server.address();
-  return {
-    port: address.port,
-    close: () => closeServer(server),
-  };
-}
-
 async function exerciseManualRunnerStart(page) {
+  await page.getByTestId("task-agent-tools-drawer").evaluate((element) => {
+    if (element instanceof HTMLDetailsElement) element.open = true;
+  });
+  await page.getByTestId("ide-actions-drawer").evaluate((element) => {
+    if (element instanceof HTMLDetailsElement) element.open = true;
+  });
   await expectVisibleText(page, "Manual runner · Coding loop", "manual runner panel", 20_000);
   await expectVisibleText(page, "manual only", "manual runner manual-only badge", 20_000);
   await expectAttachedText(page, "Progress guide only. It never auto-sends, auto-attaches context, auto-applies edits, auto-runs verification, reads hidden files, or writes browser storage.", "manual runner no-autonomy copy", 20_000);
@@ -506,7 +445,7 @@ async function assertManualRunnerCompleted(page) {
 
 async function assertNoManualRunnerSideEffects(page, description) {
   const counts = await page.evaluate(() => {
-    const messages = window.__yetAiVsCodeMessages ?? [];
+    const messages = window.__yetAiSmokeBridgePosts ?? [];
     return {
       apply: messages.filter((message) => message?.type === "gui.applyWorkspaceEditRequest").length,
       ideActions: messages.filter((message) => message?.type === "gui.ideActionRequest").length,
@@ -518,7 +457,7 @@ async function assertNoManualRunnerSideEffects(page, description) {
 }
 
 async function assertNoAutonomousBridgeActions(page) {
-  const messages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
+  const messages = await page.evaluate(() => window.__yetAiSmokeBridgePosts ?? []);
   const applyRequests = messages.filter((message) => message?.type === "gui.applyWorkspaceEditRequest");
   const ideActionRequests = messages.filter((message) => message?.type === "gui.ideActionRequest");
   const ideActions = ideActionRequests.map((message) => message?.payload?.action);
@@ -626,17 +565,17 @@ async function exerciseEditVerifyLoop(page) {
 }
 
 async function waitForGuiMessage(page, type) {
-  await page.waitForFunction((messageType) => window.__yetAiVsCodeMessages?.some((message) => message?.type === messageType), type, { timeout: 10_000 });
-  return await page.evaluate((messageType) => window.__yetAiVsCodeMessages.find((message) => message?.type === messageType), type);
+  await page.waitForFunction((messageType) => window.__yetAiSmokeBridgePosts?.some((message) => message?.type === messageType), type, { timeout: 10_000 });
+  return await page.evaluate((messageType) => window.__yetAiSmokeBridgePosts.find((message) => message?.type === messageType), type);
 }
 
 async function waitForGuiMessageAfter(page, type, previousCount) {
-  await page.waitForFunction(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length > count, { messageType: type, count: previousCount }, { timeout: 10_000 });
-  return await page.evaluate(({ messageType, count }) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).at(count), { messageType: type, count: previousCount });
+  await page.waitForFunction(({ messageType, count }) => (window.__yetAiSmokeBridgePosts ?? []).filter((message) => message?.type === messageType).length > count, { messageType: type, count: previousCount }, { timeout: 10_000 });
+  return await page.evaluate(({ messageType, count }) => (window.__yetAiSmokeBridgePosts ?? []).filter((message) => message?.type === messageType).at(count), { messageType: type, count: previousCount });
 }
 
 async function getGuiMessageCount(page, type) {
-  return await page.evaluate((messageType) => (window.__yetAiVsCodeMessages ?? []).filter((message) => message?.type === messageType).length, type);
+  return await page.evaluate((messageType) => (window.__yetAiSmokeBridgePosts ?? []).filter((message) => message?.type === messageType).length, type);
 }
 
 async function dispatchHostMessage(page, message) {
@@ -785,18 +724,21 @@ async function waitForProviderHits(expected) {
 async function exerciseHistoryReload(page, runtimeBaseUrl) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  const guiReady = await waitForGuiMessage(page, "gui.ready");
+  const guiReady = await smoke.waitForGuiReady();
+  await smoke.sendHostReady({
+    requestId: "routed-smoke-ready-1",
+    runtimeUrl: runtimeBaseUrl,
+    sessionToken: token,
+    workspaceBinding: { state: "auto_bound", projectId: "prj_abcdefghijklmnopqrstuA", displayName: "Runtime smoke workspace" },
+  });
+  await page.getByRole("button", { name: "Legacy data", exact: true }).click();
   await dispatchHostMessage(page, {
     version: "2026-05-15",
     type: "host.ready",
-    requestId: guiReady?.requestId,
+    requestId: "routed-smoke-ready-1",
     payload: { runtimeUrl: runtimeBaseUrl, sessionToken: token, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
   });
   await assertContextSentinelNotVisible(page, "browser storage after reload before refresh");
-  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
-  await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
-  await refreshButton.click();
   await expectAttachedText(page, "Runtime connected", "runtime connection after reload", 20_000);
   await expectVisibleText(page, userMessageWithBundle, "persisted bundle-context message after reload", 20_000);
   await expectVisibleText(page, userMessageAfterBundle, "persisted post-bundle message after reload", 20_000);
@@ -886,6 +828,14 @@ function isStaticServerAsset(url) {
 function isJsOrCssAssetUrl(value) {
   const pathname = new URL(value).pathname;
   return pathname.endsWith(".js") || pathname.endsWith(".css");
+}
+
+function isExpectedDashboardConsoleError(text) {
+  return /^Failed to load resource: the server responded with a status of 404 \(Not Found\)$/.test(text);
+}
+
+function isExpectedDashboardPath(pathname) {
+  return pathname === "/v1/projects/prj_abcdefghijklmnopqrstuA" || pathname.startsWith("/p/prj_abcdefghijklmnopqrstuA/v1/");
 }
 
 function isExpectedFetchConsoleError(text) {

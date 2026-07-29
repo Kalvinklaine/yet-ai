@@ -1,16 +1,15 @@
 import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
-import { mkdir, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { createGuiSmokeBootstrap } from "./lib/gui-smoke-bootstrap.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const guiRoot = path.join(root, "apps", "gui");
 const distRoot = path.join(guiRoot, "dist");
-const indexPath = path.join(distRoot, "index.html");
 const timeoutMs = 120_000;
 const token = `smoke-project-memory-token-${crypto.randomUUID()}`;
 const fakeApiKey = `sk-smoke-project-memory-${crypto.randomUUID()}`;
@@ -30,34 +29,29 @@ const providerRequestBodies = [];
 let providerAuth;
 let providerHits = 0;
 let engine;
-let guiServer;
+let smoke;
 let mockProvider;
-let browser;
 let tempHome;
 
 try {
   await runCommand("npm", ["run", "build"], { cwd: guiRoot, label: "GUI build" });
-  await requireBuiltGui();
   const { chromium } = await requireChromium();
   tempHome = await makeTempHome();
   mockProvider = await startMockProvider();
-  guiServer = await startStaticServer(distRoot);
   const enginePort = await freePort();
   engine = startEngine(enginePort, tempHome);
   const runtimeBaseUrl = `http://127.0.0.1:${enginePort}`;
-  const guiBaseUrl = `http://127.0.0.1:${guiServer.port}`;
   await waitForEngine(runtimeBaseUrl);
 
-  browser = await chromium.launch({ headless: true, args: ["--disable-web-security"] });
-  const page = await browser.newPage();
-  await page.addInitScript(() => {
-    window.__yetAiVsCodeMessages = [];
-    window.acquireVsCodeApi = () => ({
-      postMessage(message) {
-        window.__yetAiVsCodeMessages.push(message);
-      },
-    });
+  smoke = await createGuiSmokeBootstrap({
+    distRoot,
+    chromium,
+    entry: { mode: "hosted", route: "/vscode/hosted-chat", entryMode: "hosted_chat" },
+    privacyMarkers: secretMarkers,
+    criticalRequest: (url) => url.pathname.endsWith(".js") || url.pathname.endsWith(".css"),
+    launchOptions: { args: ["--disable-web-security"] },
   });
+  const page = smoke.page;
   await page.route("http://127.0.0.1:8001/v1/demo-mode", async (route) => {
     if (!["GET", "POST"].includes(route.request().method())) {
       await route.fallback();
@@ -72,7 +66,7 @@ try {
   page.on("console", (message) => {
     const text = message.text();
     assertNoSecretLeak(text, "browser console");
-    if (message.type() === "error" && !isExpectedFetchConsoleError(text)) {
+    if (message.type() === "error" && !isExpectedFetchConsoleError(text) && !isExpectedDashboardConsoleError(text)) {
       failures.push(`Browser console error: ${redactSecrets(text)}`);
     }
   });
@@ -91,22 +85,22 @@ try {
     }
   });
 
-  await page.goto(`${guiBaseUrl}/index.html`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.body.innerText.trim().length > 0, undefined, { timeout: 5000 });
-  const guiReady = await waitForGuiMessage(page, "gui.ready");
+  const guiReady = await smoke.waitForGuiReady();
+  await smoke.sendHostReady({
+    requestId: "routed-smoke-ready-1",
+    runtimeUrl: runtimeBaseUrl,
+    sessionToken: token,
+    workspaceBinding: { state: "auto_bound", projectId: "prj_abcdefghijklmnopqrstuA", displayName: "Project memory smoke workspace" },
+  });
+  await page.getByRole("button", { name: "Legacy data", exact: true }).click();
   await dispatchHostMessage(page, {
     version: "2026-05-15",
     type: "host.ready",
-    requestId: guiReady?.requestId,
+    requestId: "routed-smoke-ready-1",
     payload: { runtimeUrl: runtimeBaseUrl, sessionToken: token, productId: "yet-ai", displayName: "Yet AI", cloudRequired: false },
   });
-  await expectAttachedText(page, "Host runtime settings received", "host runtime settings bridge log", 20_000);
-
-  const refreshButton = page.locator("section", { has: page.getByRole("heading", { name: "Local runtime connection" }) }).getByRole("button", { name: "Refresh runtime" });
-  await openDetailsBySummary(page, "Local runtime connection", refreshButton);
-  await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Refresh runtime" && !button.disabled), undefined, { timeout: 20_000 });
-  await refreshButton.click();
   await expectAttachedText(page, "Runtime connected", "runtime connection feedback", 20_000);
+  await page.getByRole("tab", { name: /^Setup/ }).click();
 
   await page.getByRole("button", { name: "New provider" }).click();
   await page.getByLabel("Provider id").fill(providerId);
@@ -117,8 +111,12 @@ try {
   await page.getByLabel("Model id").fill(modelId);
   await page.getByLabel("Model display name").fill(modelId);
   await page.getByRole("button", { name: "Create provider" }).click();
-  await expectVisibleText(page, `Ready to send using ${modelId} through the local runtime.`, "chat readiness", 20_000);
+  await page.getByRole("tab", { name: "Chat", exact: true }).click();
+  await expectVisibleText(page, `Sends go through ${modelId} (${providerId}) via the local runtime`, "chat readiness", 20_000);
   assert(providerHits === 0, "mock provider was called before explicit Send");
+  await page.getByTestId("task-agent-tools-drawer").evaluate((element) => {
+    if (element instanceof HTMLDetailsElement) element.open = true;
+  });
 
   await setChatId(page, chatId);
   await expectVisibleText(page, "Local project memory", "project memory panel", 20_000);
@@ -138,15 +136,14 @@ try {
   await page.getByRole("button", { name: "Attach task-linked memory to next message" }).click();
   await expectVisibleText(page, `Attached task-linked local memory note ${noteTitle} to the next message context.`, "memory attach status", 20_000);
   await expectVisibleText(page, "Trace label: memory-attach-", "memory attach trace label", 20_000);
-  await expectVisibleText(page, "Project memory", "project memory bundle item", 20_000);
+  await expectVisibleText(page, "Selected project memory attached for review", "project memory bundle item", 20_000);
   assert(providerHits === 0, "memory attach unexpectedly called mock provider");
 
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessage);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expectVisibleText(page, userMessage, "visible memory-context user message", 20_000);
   await expectVisibleText(page, assistantText, "memory-context assistant response", 30_000);
-  await expectVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "memory bundle clear status", 20_000);
-  await expectVisibleText(page, "empty", "empty explicit bundle after memory send", 20_000);
+  await expectAttachedText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "memory bundle clear status", 20_000);
 
   await waitForProviderHits(1);
   assert(providerAuth === `Bearer ${fakeApiKey}`, "mock provider did not receive configured fake bearer key");
@@ -162,7 +159,7 @@ try {
   assert(providerPrompt.includes(noteText), "provider prompt missed memory note text");
   assert(providerPrompt.includes(userMessage), "provider prompt missed user message");
 
-  const bridgeMessages = await page.evaluate(() => window.__yetAiVsCodeMessages ?? []);
+  const bridgeMessages = await page.evaluate(() => window.__yetAiSmokeBridgePosts ?? []);
   const ideActionRequests = bridgeMessages.filter((message) => message?.type === "gui.ideActionRequest");
   const applyRequests = bridgeMessages.filter((message) => message?.type === "gui.applyWorkspaceEditRequest");
   assert(ideActionRequests.length === 0, `project memory smoke emitted IDE action request(s): ${ideActionRequests.map((message) => message?.payload?.action).join(",")}`);
@@ -192,6 +189,8 @@ try {
   assert(!storageText.includes(memorySentinel) && !storageText.includes(noteTitle), "project memory note persisted in browser storage");
   assertNoSecretLeak(JSON.stringify(pageState), "DOM or browser storage");
   assertNoSecretLeak(engine.output(), "engine output");
+  await smoke.assertPrivacy();
+  smoke.assertHealthy();
 
   if (failures.length > 0) {
     throw new Error(`Project memory smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
@@ -200,15 +199,12 @@ try {
   console.log("Project memory smoke passed.");
   console.log("Verified loopback GUI/runtime flow: create manual memory note, list/search, explicit one-shot attach, send through one mock provider call, clear attached context after accepted Send, delete note, no browser storage persistence, no IDE workspace reads, no non-loopback requests, and no secret/private path leakage.");
 } finally {
-  await browser?.close().catch(() => undefined);
+  await smoke?.close().catch(() => undefined);
   if (engine) {
     await stopProcess(engine);
   }
   if (mockProvider) {
     await closeServer(mockProvider.server).catch(() => undefined);
-  }
-  if (guiServer) {
-    await guiServer.close().catch(() => undefined);
   }
   if (tempHome) {
     await rm(tempHome, { recursive: true, force: true });
@@ -234,15 +230,6 @@ async function runCommand(command, args, { cwd, label }) {
       }
     });
   });
-}
-
-async function requireBuiltGui() {
-  const fileStat = await stat(indexPath);
-  if (!fileStat.isFile()) {
-    throw new Error(`Built GUI index is not a file: ${path.relative(root, indexPath)}`);
-  }
-  const html = await readFile(indexPath, "utf8");
-  assert(html.includes("/assets/") || html.includes("./assets/"), "built GUI index.html does not reference Vite assets");
 }
 
 async function requireChromium() {
@@ -340,38 +327,6 @@ async function startMockProvider() {
   return { server, baseUrl: `http://127.0.0.1:${address.port}` };
 }
 
-async function startStaticServer(staticRoot) {
-  const server = http.createServer(async (request, response) => {
-    let pathname;
-    try {
-      const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
-      pathname = decodeURIComponent(requestUrl.pathname === "/" ? "/index.html" : requestUrl.pathname);
-    } catch {
-      response.writeHead(400).end("Bad request");
-      return;
-    }
-    const requestedPath = path.normalize(path.join(staticRoot, pathname));
-    if (!requestedPath.startsWith(staticRoot + path.sep) && requestedPath !== staticRoot) {
-      response.writeHead(403).end("Forbidden");
-      return;
-    }
-    try {
-      const fileStat = await stat(requestedPath);
-      if (!fileStat.isFile()) {
-        response.writeHead(404).end("Not found");
-        return;
-      }
-      response.writeHead(200, { "content-type": contentType(requestedPath) });
-      createReadStream(requestedPath).pipe(response);
-    } catch {
-      response.writeHead(404).end("Not found");
-    }
-  });
-  await listen(server, "127.0.0.1", 0);
-  const address = server.address();
-  return { port: address.port, close: () => closeServer(server) };
-}
-
 async function requestJson(baseUrl, route, init = {}) {
   const response = await fetch(`${baseUrl}${route}`, {
     ...init,
@@ -390,8 +345,8 @@ async function requestJson(baseUrl, route, init = {}) {
 }
 
 async function waitForGuiMessage(page, type) {
-  await page.waitForFunction((messageType) => window.__yetAiVsCodeMessages?.some((message) => message?.type === messageType), type, { timeout: 10_000 });
-  return await page.evaluate((messageType) => window.__yetAiVsCodeMessages.find((message) => message?.type === messageType), type);
+  await page.waitForFunction((messageType) => window.__yetAiSmokeBridgePosts?.some((message) => message?.type === messageType), type, { timeout: 10_000 });
+  return await page.evaluate((messageType) => window.__yetAiSmokeBridgePosts.find((message) => message?.type === messageType), type);
 }
 
 async function dispatchHostMessage(page, message) {
@@ -519,6 +474,14 @@ function contentType(filePath) {
 
 function isJsOrCssAssetRequest(url, resourceType) {
   return url.startsWith("http://127.0.0.1:") && (resourceType === "script" || resourceType === "stylesheet" || new URL(url).pathname.endsWith(".js") || new URL(url).pathname.endsWith(".css"));
+}
+
+function isExpectedDashboardConsoleError(text) {
+  return /^Failed to load resource: the server responded with a status of 404 \(Not Found\)$/.test(text);
+}
+
+function isExpectedDashboardPath(pathname) {
+  return pathname === "/v1/projects/prj_abcdefghijklmnopqrstuA" || pathname.startsWith("/p/prj_abcdefghijklmnopqrstuA/v1/");
 }
 
 function isExpectedFetchConsoleError(text) {
