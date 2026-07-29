@@ -180,4 +180,18 @@ class BridgeMessagesTest {
         assertNull(BridgeMessages.workspaceBindingSelectionRequired("ready-1", "private_root"))
         assertNotNull(BridgeMessages.workspaceBindingSelectionRequired("ready-1", "root_unavailable"))
     }
+
+    @Test
+    fun generatedSharedPayloadValidatorsAcceptFixturesAndRejectUnknownFields() {
+        val contracts = java.nio.file.Path.of("../../../packages/contracts/examples/bridge")
+        val runtime = JsonParser.parseString(java.nio.file.Files.readString(contracts.resolve("host-runtime-status-connected-vscode.json"))).asJsonObject.getAsJsonObject("payload")
+        val binding = JsonParser.parseString(java.nio.file.Files.readString(contracts.resolve("host-workspace-binding-auto-bound.json"))).asJsonObject.getAsJsonObject("payload")
+
+        assertEquals(true, BridgeMessages.isSharedRuntimeStatusPayload(runtime))
+        assertEquals(true, BridgeMessages.isSharedWorkspaceBindingPayload(binding))
+        runtime.addProperty("unknown", true)
+        binding.addProperty("unknown", true)
+        assertEquals(false, BridgeMessages.isSharedRuntimeStatusPayload(runtime))
+        assertEquals(false, BridgeMessages.isSharedWorkspaceBindingPayload(binding))
+    }
 }

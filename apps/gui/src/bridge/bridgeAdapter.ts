@@ -1,3 +1,5 @@
+import { isGeneratedRuntimeStatusPayload, isGeneratedWorkspaceBindingPayload, type GeneratedRuntimeStatusPayload, type GeneratedWorkspaceBindingPayload } from "./generated/sharedHostContracts";
+
 export type BridgeHost = "browser" | "vscode" | "jetbrains";
 
 export type WorkspaceEditPosition = {
@@ -110,36 +112,10 @@ export type GuiMessage = {
   payload?: Record<string, unknown> | IdeActionRequestPayload | ApplyWorkspaceEditPayload;
 };
 
-export type RuntimeLifecycleState = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
+export type RuntimeLifecycleState = GeneratedRuntimeStatusPayload["lifecycle"];
 
-export type HostRuntimeStatusPayload = {
-  protocolVersion: "2026-06-21";
-  surface: BridgeHost;
-  lifecycle: RuntimeLifecycleState;
-  runtimeOwner: "browser_preview" | "ide_host" | "external" | "user" | "test_harness";
-  launchMode: "auto" | "connect" | "launch" | "preview" | "manual" | "unknown";
-  tokenState: "unknown" | "not_required" | "absent" | "present" | "mismatch" | "invalid";
-  processState: "unknown" | "not_owned" | "checking" | "starting" | "running" | "exited" | "stopped" | "failed";
-  diagnosis: string;
-  nextAction: string;
-  cloudRequired: false;
-  authority: "metadata_only";
-};
-
-export type WorkspaceBindingPayload =
-  | {
-      protocolVersion: "workspace_binding_v1";
-      requestId: string;
-      state: "auto_bound";
-      projectId: string;
-      displayName: string;
-    }
-  | {
-      protocolVersion: "workspace_binding_v1";
-      requestId: string;
-      state: "selection_required";
-      reason: "no_root" | "multiple_roots" | "root_unavailable";
-    };
+export type HostRuntimeStatusPayload = GeneratedRuntimeStatusPayload;
+export type WorkspaceBindingPayload = GeneratedWorkspaceBindingPayload;
 
 export type DashboardSectionState =
   | { status: "loading" }
@@ -902,36 +878,11 @@ function isControlledHostSafeLabels(value: unknown): boolean {
 }
 
 export function isHostRuntimeStatusPayload(value: unknown): value is HostRuntimeStatusPayload {
-  if (!isPlainObject(value) || !hasOnlyKeys(value, ["protocolVersion", "surface", "lifecycle", "runtimeOwner", "launchMode", "tokenState", "processState", "diagnosis", "nextAction", "cloudRequired", "authority"])) {
-    return false;
-  }
-  return value.protocolVersion === "2026-06-21" &&
-    optionalRuntimeSurface(value.surface) &&
-    optionalRuntimeLifecycle(value.lifecycle) &&
-    optionalRuntimeOwner(value.runtimeOwner) &&
-    optionalRuntimeLaunchMode(value.launchMode) &&
-    optionalRuntimeTokenState(value.tokenState) &&
-    optionalRuntimeProcessState(value.processState) &&
-    safeMessage(value.diagnosis) &&
-    safeMessage(value.nextAction) &&
-    value.cloudRequired === false &&
-    value.authority === "metadata_only";
+  return isGeneratedRuntimeStatusPayload(value);
 }
 
 export function isWorkspaceBindingPayload(value: unknown): value is WorkspaceBindingPayload {
-  if (!isPlainObject(value) || value.protocolVersion !== "workspace_binding_v1" || !isBoundedRequestId(value.requestId) || typeof value.requestId !== "string") {
-    return false;
-  }
-  if (value.state === "auto_bound") {
-    return hasOnlyKeys(value, ["protocolVersion", "requestId", "state", "projectId", "displayName"]) &&
-      isOpaqueProjectId(value.projectId) &&
-      isSafeWorkspaceDisplayName(value.displayName);
-  }
-  if (value.state === "selection_required") {
-    return hasOnlyKeys(value, ["protocolVersion", "requestId", "state", "reason"]) &&
-      (value.reason === "no_root" || value.reason === "multiple_roots" || value.reason === "root_unavailable");
-  }
-  return false;
+  return isGeneratedWorkspaceBindingPayload(value);
 }
 
 export function isDashboardSectionState(value: unknown): value is DashboardSectionState {
@@ -1209,28 +1160,8 @@ function optionalIdeActionType(value: unknown): boolean {
   return value === undefined || value === "getContextSnapshot" || value === "getActiveFileExcerpt" || value === "openWorkspaceFile" || value === "revealWorkspaceRange" || value === "runVerificationCommand" || value === "searchWorkspaceSnippets";
 }
 
-function optionalRuntimeLifecycle(value: unknown): value is RuntimeLifecycleState {
-  return value === "unknown" || value === "checking" || value === "starting" || value === "connected" || value === "degraded" || value === "disconnected" || value === "restarting" || value === "stopped" || value === "auth_mismatch" || value === "invalid_settings" || value === "failed";
-}
-
 function optionalRuntimeSurface(value: unknown): value is BridgeHost {
   return value === "browser" || value === "vscode" || value === "jetbrains";
-}
-
-function optionalRuntimeOwner(value: unknown): boolean {
-  return value === "browser_preview" || value === "ide_host" || value === "external" || value === "user" || value === "test_harness";
-}
-
-function optionalRuntimeLaunchMode(value: unknown): boolean {
-  return value === "auto" || value === "connect" || value === "launch" || value === "preview" || value === "manual" || value === "unknown";
-}
-
-function optionalRuntimeTokenState(value: unknown): boolean {
-  return value === "unknown" || value === "not_required" || value === "absent" || value === "present" || value === "mismatch" || value === "invalid";
-}
-
-function optionalRuntimeProcessState(value: unknown): boolean {
-  return value === "unknown" || value === "not_owned" || value === "checking" || value === "starting" || value === "running" || value === "exited" || value === "stopped" || value === "failed";
 }
 
 function isVerificationCommandId(value: unknown): value is VerificationCommandId {
@@ -1380,10 +1311,6 @@ function optionalSessionToken(value: unknown): boolean {
 
 function optionalProductId(value: unknown): boolean {
   return value === undefined || (typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(value) && !/auth|bearer|api[_-]?key|token|secret|sk-(?:proj-)?[A-Za-z0-9_-]{8,}/i.test(value));
-}
-
-function isOpaqueProjectId(value: unknown): boolean {
-  return typeof value === "string" && /^prj_[A-Za-z0-9_-]{21}[AQgw]$/.test(value);
 }
 
 export function isSafeWorkspaceDisplayName(value: unknown): value is string {

@@ -1,6 +1,7 @@
 package ai.yet.plugin.bridge
 
 import ai.yet.plugin.identity.ProductIdentity
+import ai.yet.plugin.bridge.generated.SharedHostContracts
 import ai.yet.plugin.runtime.RuntimeLifecycleStatus
 import ai.yet.plugin.runtime.RuntimeSettings
 import com.google.gson.JsonObject
@@ -104,7 +105,7 @@ object BridgeMessages {
         addProperty("version", ProductIdentity.bridgeVersion)
         addProperty("type", "host.runtimeStatus")
         add("payload", JsonObject().apply {
-            addProperty("protocolVersion", "2026-06-21")
+            addProperty("protocolVersion", SharedHostContracts.RUNTIME_PROTOCOL_VERSION)
             addProperty("surface", "jetbrains")
             addProperty("lifecycle", status.lifecycle.wireName)
             addProperty("runtimeOwner", status.runtimeOwner)
@@ -146,7 +147,7 @@ object BridgeMessages {
         addProperty("type", "host.workspaceBinding")
         addProperty("requestId", requestId)
         add("payload", JsonObject().apply {
-            addProperty("protocolVersion", "workspace_binding_v1")
+            addProperty("protocolVersion", SharedHostContracts.WORKSPACE_BINDING_PROTOCOL_VERSION)
             addProperty("requestId", requestId)
             payloadFields()
         })
@@ -200,6 +201,13 @@ object BridgeMessages {
             value.trim() == value &&
             value.none { it.isISOControl() || it == '/' || it == '\\' } &&
             !ProjectDisplayNameReservedRegex.containsMatchIn(value)
+
+    fun isSharedRuntimeStatusPayload(value: JsonObject): Boolean =
+        SharedHostContracts.isRuntimeStatusPayload(value) { text ->
+            text.isNotEmpty() && text.length <= 1000 && text.none { it.isISOControl() } && !ProjectDisplayNameReservedRegex.containsMatchIn(text)
+        }
+
+    fun isSharedWorkspaceBindingPayload(value: JsonObject): Boolean = SharedHostContracts.isWorkspaceBindingPayload(value)
 
     private val SecretRequestIdRegex = Regex("authorization|bearer|api[_-]?key|token|secret|access[_-]?token|provider[_-]?key|openai[_-]?api[_-]?key|sk-(?:proj-)?[A-Za-z0-9_-]{8,}", RegexOption.IGNORE_CASE)
     private val ProjectIdRegex = Regex("^prj_[A-Za-z0-9_-]{21}[AQgw]$")

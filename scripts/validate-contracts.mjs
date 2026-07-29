@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { checkBridgeContractFreshness } from "./generate-bridge-contracts.mjs";
 
 function normalizeContractPath(path) {
   return path.replace(/\\/g, "/");
@@ -2225,6 +2226,13 @@ let schemaDiscoverySucceeded = false;
 let exampleDiscoverySucceeded = false;
 let invalidExampleDiscoverySucceeded = false;
 let identity = null;
+
+try {
+  const staleBridgeContracts = await checkBridgeContractFreshness();
+  failures.push(...staleBridgeContracts.map((path) => `${path}: generated bridge contract is stale; run npm run generate:bridge-contracts`));
+} catch (error) {
+  failures.push(`generated bridge contract freshness failure (${error.message})`);
+}
 
 try {
   schemaFiles = await discoverJsonFiles("packages/contracts/schemas");

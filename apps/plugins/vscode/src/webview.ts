@@ -10,6 +10,7 @@ import { isControlledCommandRunGuiMessage, isInvalidControlledCommandRunRequestM
 import { isControlledVerificationBundleGuiMessage, isInvalidControlledVerificationBundleRequestMessage, runControlledVerificationBundleRequest } from "./controlledVerificationBundle";
 import { isControlledLexicalSearchGuiMessage, isInvalidControlledLexicalSearchRequestMessage, runControlledLexicalSearchRequest } from "./controlledLexicalSearch";
 import { ProductIdentity, bridgeVersion, configurationPrefix } from "./identity";
+import type { GeneratedRuntimeStatusPayload, GeneratedWorkspaceBindingPayload } from "./generated/sharedHostContracts";
 
 export type HostMessage =
   | { version: string; type: "host.ready"; requestId?: string; payload?: Record<string, unknown> }
@@ -17,10 +18,11 @@ export type HostMessage =
   | { version: string; type: "host.workspaceBinding"; requestId: string; payload: WorkspaceBindingPayload }
   | { version: string; type: "host.contextSnapshot" | "host.ideActionProgress" | "host.ideActionResult" | "host.applyWorkspaceEditResult" | "host.controlledAgentFileReadResult" | "host.controlledAgentEditResult" | "host.controlledAgentMultifileApplyResult" | "host.controlledAgentCommandRunResult" | "host.controlledAgentVerificationBundleResult" | "host.controlledAgentLexicalSearchResult"; requestId?: string; payload?: Record<string, unknown> };
 
-type RuntimeStatusLifecycle = "unknown" | "checking" | "starting" | "connected" | "degraded" | "disconnected" | "restarting" | "stopped" | "auth_mismatch" | "invalid_settings" | "failed";
-type RuntimeStatusLaunchMode = "auto" | "connect" | "launch" | "preview" | "manual" | "unknown";
-type RuntimeStatusTokenState = "unknown" | "not_required" | "absent" | "present" | "mismatch" | "invalid";
-type RuntimeStatusProcessState = "unknown" | "not_owned" | "checking" | "starting" | "running" | "exited" | "stopped" | "failed";
+type HostRuntimeStatusPayload = GeneratedRuntimeStatusPayload;
+type RuntimeStatusLifecycle = HostRuntimeStatusPayload["lifecycle"];
+type RuntimeStatusLaunchMode = HostRuntimeStatusPayload["launchMode"];
+type RuntimeStatusTokenState = HostRuntimeStatusPayload["tokenState"];
+type RuntimeStatusProcessState = HostRuntimeStatusPayload["processState"];
 
 type ControlledCapabilityMetadata = {
   protocolVersion: "controlled_host_capabilities_v2";
@@ -88,9 +90,7 @@ type GuiMessage = {
   payload?: Record<string, unknown>;
 };
 
-export type WorkspaceBindingPayload =
-  | { protocolVersion: "workspace_binding_v1"; requestId: string; state: "auto_bound"; projectId: string; displayName: string }
-  | { protocolVersion: "workspace_binding_v1"; requestId: string; state: "selection_required"; reason: "no_root" | "multiple_roots" | "root_unavailable" };
+export type WorkspaceBindingPayload = GeneratedWorkspaceBindingPayload;
 
 type WorkspaceFolderInput = { uri: { scheme: string; fsPath: string } };
 type WorkspaceBindingFetch = (input: string | URL, init?: RequestInit) => Promise<Response>;

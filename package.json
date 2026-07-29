@@ -150,6 +150,8 @@
     "validate:hygiene": "node scripts/validate-public-hygiene.mjs",
     "validate:docs": "node scripts/validate-docs-index.mjs",
     "validate:contracts": "node scripts/validate-contracts.mjs",
+    "generate:bridge-contracts": "node scripts/generate-bridge-contracts.mjs",
+    "check:bridge-contracts": "node scripts/generate-bridge-contracts.mjs --check",
     "validate:controlled-agent-dev-preview-fixtures": "node scripts/validate-controlled-agent-dev-preview-fixtures.mjs",
     "validate:ide-artifact-contract": "node scripts/validate-ide-artifact-contract.mjs",
     "validate:ide-artifact-workflow": "node scripts/validate-ide-artifact-workflow.mjs",
