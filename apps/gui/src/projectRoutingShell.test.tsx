@@ -154,6 +154,20 @@ describe("ProjectRouterShell", () => {
     expect(container.querySelector("[data-testid='app-route']")).toBeNull();
   });
 
+  it("keeps the canonical browser entry separate from hosted entry mode", async () => {
+    window.history.replaceState(null, "", "/projects");
+    const container = document.createElement("div");
+    document.body.append(container);
+
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+
+    expect(container.textContent).toContain("Projects");
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).toBeNull();
+  });
+
   it.each([
     "/panel/panel-test/hosted-chat",
     "/vscode/hosted-chat",

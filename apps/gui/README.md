@@ -28,6 +28,12 @@ npm run smoke:gui-conversation-history
 npm run smoke:controlled-run-history
 ```
 
+Built-GUI route smokes share the fail-closed bootstrap in `scripts/lib/gui-smoke-bootstrap.mjs`. It serves only the selected canonical SPA entry (`/projects`, `/vscode/hosted-chat`, or `/panel/:id/hosted-chat`), keeps browser and hosted entry modes separate, and centralizes loopback, critical-response, privacy, cookie, trusted-host readiness, workspace-binding, and cleanup checks. Verify its route contract with:
+
+```sh
+npm run check:gui-smoke-bootstrap
+```
+
 The complete browser-first project boundary has a focused real-engine smoke:
 
 ```sh
