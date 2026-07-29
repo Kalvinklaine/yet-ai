@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
@@ -51,8 +52,9 @@ impl AgentProgressRuntime {
     ) -> Result<AgentProgressListResponse, AgentProgressError> {
         validate_event(&event)?;
         let mut guard = self.legacy.lock().await;
-        guard.generated_at = Some(event.timestamp.clone());
-        upsert_event_snapshot(&mut guard, event);
+        if upsert_event_snapshot(&mut guard, event.clone()) {
+            guard.generated_at = Some(event.timestamp);
+        }
         normalize_response(&mut guard)?;
         Ok(guard.clone())
     }
@@ -88,8 +90,9 @@ impl AgentProgressRuntime {
                 response: AgentProgressListResponse::empty(),
             });
         bucket.last_used = sequence;
-        bucket.response.generated_at = Some(event.timestamp.clone());
-        upsert_event_snapshot(&mut bucket.response, event);
+        if upsert_event_snapshot(&mut bucket.response, event.clone()) {
+            bucket.response.generated_at = Some(event.timestamp);
+        }
         normalize_response(&mut bucket.response)?;
         Ok(bucket.response.clone())
     }
@@ -143,7 +146,10 @@ pub enum ChatProgressLifecycle {
     Started,
     Running,
     Done,
-    Failed,
+    Cancelled,
+    Superseded,
+    ProviderFailed,
+    HistoryFailed,
 }
 
 impl ChatProgressLifecycle {
@@ -157,7 +163,14 @@ impl ChatProgressLifecycle {
                 "Chat response is running.",
             ),
             Self::Done => ("done", "done", "Chat response completed."),
-            Self::Failed => ("failed", "failed", "Chat response did not complete."),
+            Self::Cancelled => ("failed", "failed", "Chat response was cancelled."),
+            Self::Superseded => ("failed", "failed", "Chat response was replaced."),
+            Self::ProviderFailed => (
+                "failed",
+                "failed",
+                "Chat service could not complete the response.",
+            ),
+            Self::HistoryFailed => ("failed", "failed", "Chat history could not be saved."),
         }
     }
 
@@ -167,18 +180,20 @@ impl ChatProgressLifecycle {
             Self::Started => "started",
             Self::Running => "running",
             Self::Done => "done",
-            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
+            Self::Superseded => "superseded",
+            Self::ProviderFailed => "provider-failed",
+            Self::HistoryFailed => "history-failed",
         }
     }
 }
 
 fn chat_progress_correlation(chat_id: &str) -> String {
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in chat_id.as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    format!("{hash:016x}")
+    let digest = Sha256::digest(chat_id.as_bytes());
+    digest[..24]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub fn progress_source_path(cache_dir: &Path) -> PathBuf {
@@ -506,7 +521,10 @@ fn merge_runtime_response(
     Ok(response)
 }
 
-fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentProgressEvent) {
+fn upsert_event_snapshot(
+    response: &mut AgentProgressListResponse,
+    event: AgentProgressEvent,
+) -> bool {
     let recent_event = AgentProgressRecentEvent {
         event_id: event.event_id.clone(),
         timestamp: event.timestamp.clone(),
@@ -519,6 +537,9 @@ fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentP
         .iter_mut()
         .find(|snapshot| snapshot.run_id == event.run_id && snapshot.card_id == event.card_id);
     if let Some(snapshot) = snapshot {
+        if matches!(snapshot.phase.as_str(), "done" | "failed") {
+            return false;
+        }
         snapshot.updated_at = event.timestamp.clone();
         snapshot.phase = event.phase;
         snapshot.status = event.status;
@@ -543,7 +564,7 @@ fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentP
             let overflow = snapshot.recent_events.len() - MAX_RECENT_EVENTS;
             snapshot.recent_events.drain(0..overflow);
         }
-        return;
+        return true;
     }
     response.snapshots.insert(
         0,
@@ -581,6 +602,7 @@ fn upsert_event_snapshot(response: &mut AgentProgressListResponse, event: AgentP
     if response.snapshots.len() > MAX_SNAPSHOTS {
         response.snapshots.truncate(MAX_SNAPSHOTS);
     }
+    true
 }
 
 async fn read_bounded(path: &Path) -> Result<Vec<u8>, AgentProgressError> {
@@ -1519,7 +1541,12 @@ mod tests {
         let mut tasks = Vec::new();
         for (project_id, chat_id, stream_id, lifecycle) in [
             ("project-a", "chat-a", 1, ChatProgressLifecycle::Done),
-            ("project-a", "chat-b", 1, ChatProgressLifecycle::Failed),
+            (
+                "project-a",
+                "chat-b",
+                1,
+                ChatProgressLifecycle::ProviderFailed,
+            ),
             ("project-b", "chat-a", 1, ChatProgressLifecycle::Done),
         ] {
             let runtime = runtime.clone();
@@ -1546,6 +1573,48 @@ mod tests {
             .snapshots
             .iter()
             .any(|snapshot| snapshot.status == "failed"));
+    }
+
+    #[test]
+    fn chat_lifecycle_correlation_is_stable_opaque_and_collision_resistant() {
+        let private_chat_id = "chat-private-project-user-request";
+        let first = chat_progress_correlation(private_chat_id);
+        let repeated = chat_progress_correlation(private_chat_id);
+        let second = chat_progress_correlation("chat-private-project-user-requesu");
+
+        assert_eq!(first, repeated);
+        assert_ne!(first, second);
+        assert_eq!(first.len(), 48);
+        assert!(first.chars().all(|value| value.is_ascii_hexdigit()));
+        assert!(!first.contains(private_chat_id));
+        assert_eq!(first, "b5864776fc01aa882bdd6091b1f8b7be00fd4dca4f0f366e");
+    }
+
+    #[tokio::test]
+    async fn chat_lifecycle_progress_never_regresses_after_terminal() {
+        let runtime = AgentProgressRuntime::new();
+        for lifecycle in [
+            ChatProgressLifecycle::Queued,
+            ChatProgressLifecycle::Cancelled,
+            ChatProgressLifecycle::Started,
+            ChatProgressLifecycle::Running,
+            ChatProgressLifecycle::Done,
+        ] {
+            runtime
+                .publish_chat_lifecycle("project-a", "chat-terminal", 9, lifecycle)
+                .await;
+        }
+
+        let response = runtime.project_snapshot("project-a").await;
+        let snapshot = &response.snapshots[0];
+        assert_eq!(snapshot.phase, "failed");
+        assert_eq!(snapshot.status, "failed");
+        assert_eq!(snapshot.message, "Chat response was cancelled.");
+        assert_eq!(snapshot.recent_events.len(), 2);
+        assert_eq!(
+            snapshot.recent_events[1].event_id.split('-').next_back(),
+            Some("cancelled")
+        );
     }
 
     #[tokio::test]

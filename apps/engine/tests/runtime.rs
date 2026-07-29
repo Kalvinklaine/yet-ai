@@ -12455,7 +12455,7 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
 
 #[cfg(unix)]
 #[tokio::test]
-async fn chat_new_message_supersedes_failed_terminal_replay_for_late_subscribers() {
+async fn chat_new_message_history_failure_does_not_start_replacement_provider_stream() {
     let paths = test_storage_paths();
     let app = app(test_app_state(
         ProductIdentity::load().unwrap(),
@@ -12508,38 +12508,28 @@ async fn chat_new_message_supersedes_failed_terminal_replay_for_late_subscribers
         send_user_message_with_content(app.clone(), chat_id, "second prompt").await,
         StatusCode::OK
     );
-    tokio::time::timeout(std::time::Duration::from_secs(2), second_delta_receiver)
-        .await
-        .expect("second stream should emit a delta")
-        .expect("second stream delta signal should be sent");
-    let during_text = sse_text_from(
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(200), second_delta_receiver)
+            .await
+            .is_err()
+    );
+    let failed_text = sse_text_from(
         app.clone(),
         &format!("/v1/chats/subscribe?chat_id={chat_id}"),
     )
     .await;
-    let during_events = sse_json_events(&during_text);
-    assert_eq!(during_events[0]["type"], "snapshot");
-    assert!(
-        !during_events.iter().any(|event| event["type"] == "error"
-            && event["payload"]["code"] == "chat_history_storage_error"),
-        "subscriber during new stream saw old terminal storage error: {during_events:?}"
-    );
-    assert!(
-        !during_events
-            .iter()
-            .any(|event| event["type"] == "stream_delta"
-                && event["payload"]["delta"]["content"] == "old"),
-        "subscriber during new stream saw old stream delta: {during_events:?}"
-    );
-    assert!(during_events
+    let failed_events = sse_json_events(&failed_text);
+    assert_eq!(failed_events[0]["type"], "snapshot");
+    let error = find_error_event(&failed_events);
+    assert_eq!(error["payload"]["code"], "chat_history_storage_error");
+    assert!(!failed_events
         .iter()
-        .any(|event| event["type"] == "stream_delta"
-            && event["payload"]["delta"]["content"] == "new"));
-    assert!(!during_text.contains(api_key));
+        .any(|event| { event["type"] == "stream_started" || event["type"] == "stream_delta" }));
+    assert!(!failed_text.contains(api_key));
 
     std::fs::remove_file(&history_path).unwrap();
     std::fs::rename(&target, &history_path).unwrap();
-    let _ = release_second_sender.send(());
+    drop(release_second_sender);
     let after_text = sse_text_from(
         app.clone(),
         &format!("/v1/chats/subscribe?chat_id={chat_id}"),
@@ -12548,9 +12538,9 @@ async fn chat_new_message_supersedes_failed_terminal_replay_for_late_subscribers
     let after_events = sse_json_events(&after_text);
     assert_eq!(after_events[0]["type"], "snapshot");
     assert!(
-        !after_events.iter().any(|event| event["type"] == "error"
+        after_events.iter().any(|event| event["type"] == "error"
             && event["payload"]["code"] == "chat_history_storage_error"),
-        "subscriber after new stream saw old terminal storage error: {after_events:?}"
+        "subscriber after history failure lost terminal storage evidence: {after_events:?}"
     );
     assert!(
         !after_events
@@ -12562,16 +12552,11 @@ async fn chat_new_message_supersedes_failed_terminal_replay_for_late_subscribers
     assert!(!after_text.contains(api_key));
 
     let mut auth_receiver = auth_receiver;
-    for scenario in [
-        "first terminal supersede stream",
-        "second terminal supersede stream",
-    ] {
-        let auth = tokio::time::timeout(std::time::Duration::from_secs(2), auth_receiver.recv())
-            .await
-            .unwrap_or_else(|_| panic!("{scenario}: expected auth observation"))
-            .unwrap_or_else(|| panic!("{scenario}: auth observation channel closed"));
-        assert_stored_secret(auth.as_deref(), "Bearer sk-terminal-supersede-secret-abcd");
-    }
+    let auth = tokio::time::timeout(std::time::Duration::from_secs(2), auth_receiver.recv())
+        .await
+        .expect("first stream auth observation")
+        .expect("auth observation channel closed");
+    assert_stored_secret(auth.as_deref(), "Bearer sk-terminal-supersede-secret-abcd");
     assert_no_observed_auth(auth_receiver).await;
 }
 

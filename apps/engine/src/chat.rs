@@ -355,7 +355,7 @@ impl ChatRuntime {
                     .publish(
                         &chat_id,
                         superseded_stream_id,
-                        ChatProgressLifecycle::Failed,
+                        ChatProgressLifecycle::Superseded,
                     )
                     .await;
             }
@@ -363,7 +363,7 @@ impl ChatRuntime {
                 .publish(&chat_id, stream_id, ChatProgressLifecycle::Queued)
                 .await;
         }
-        let _ = chat_history::append_message_in(
+        let append_result = chat_history::append_message_in(
             &history_root,
             &chat_id,
             ChatMessageRole::User,
@@ -371,6 +371,19 @@ impl ChatRuntime {
             Some(ChatMessageStatus::Complete),
         )
         .await;
+        if append_result.is_err() {
+            let terminal_owned = self
+                .fail_before_stream_start(&runtime_key, &chat_id, stream_id)
+                .await;
+            if terminal_owned {
+                if let Some(progress) = &progress {
+                    progress
+                        .publish(&chat_id, stream_id, ChatProgressLifecycle::HistoryFailed)
+                        .await;
+                }
+            }
+            return;
+        }
         let _ = start_sender.send(());
     }
 
@@ -398,7 +411,7 @@ impl ChatRuntime {
                     project_id,
                     chat_id,
                     stream_id,
-                    ChatProgressLifecycle::Failed,
+                    ChatProgressLifecycle::Cancelled,
                 )
                 .await;
         }
@@ -478,6 +491,38 @@ impl ChatRuntime {
             return false;
         }
         state.push_event(chat_id, event_type, payload);
+        true
+    }
+
+    async fn fail_before_stream_start(
+        &self,
+        runtime_key: &str,
+        chat_id: &str,
+        stream_id: u64,
+    ) -> bool {
+        let mut guard = self.inner.lock().await;
+        let Some(state) = guard.get_mut(runtime_key) else {
+            return false;
+        };
+        if !state
+            .active_stream
+            .as_ref()
+            .is_some_and(|active| active.id == stream_id)
+        {
+            return false;
+        }
+        if let Some(active) = state.active_stream.take() {
+            active.handle.abort();
+        }
+        state.known_terminal_append_failure = true;
+        state.push_event(
+            chat_id,
+            "error",
+            json!({
+                "code": "chat_history_storage_error",
+                "message": "Chat message could not be saved to local storage."
+            }),
+        );
         true
     }
 
@@ -643,7 +688,7 @@ impl ChatRuntime {
                                 if persisted {
                                     ChatProgressLifecycle::Done
                                 } else {
-                                    ChatProgressLifecycle::Failed
+                                    ChatProgressLifecycle::HistoryFailed
                                 },
                             )
                             .await;
@@ -667,7 +712,7 @@ impl ChatRuntime {
                 if terminal.is_some() {
                     if let Some(progress) = &progress {
                         progress
-                            .publish(&chat_id, stream_id, ChatProgressLifecycle::Failed)
+                            .publish(&chat_id, stream_id, ChatProgressLifecycle::ProviderFailed)
                             .await;
                     }
                 }
@@ -4675,6 +4720,58 @@ mod tests {
         let serialized = serde_json::to_string(&snapshot).unwrap();
         assert!(!serialized.contains("private request body"));
         assert!(!serialized.contains("provider_not_configured"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn project_chat_user_history_failure_stops_before_provider_stream() {
+        let dir = temp_dir();
+        let outside = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let history_root = dir.join("projects/project-a/chat-history");
+        std::fs::create_dir_all(history_root.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &history_root).unwrap();
+        crate::demo_mode::set(&dir, true).await.unwrap();
+        let runtime = super::ChatRuntime::new();
+        let progress = crate::agent_progress::AgentProgressRuntime::new();
+        let chat_id = "chat_history_failure";
+
+        runtime
+            .accept_project_user_message(
+                "project-a",
+                dir,
+                history_root,
+                chat_id.to_string(),
+                "private request body".to_string(),
+                None,
+                progress.clone(),
+            )
+            .await;
+
+        let key = super::runtime_key("project-a", chat_id);
+        let states = runtime.inner.lock().await;
+        let state = &states[&key];
+        assert!(state.active_stream.is_none());
+        assert_eq!(state.events.len(), 1);
+        assert_eq!(state.events[0].event_type, "error");
+        assert_eq!(
+            state.events[0].payload["code"],
+            "chat_history_storage_error"
+        );
+        drop(states);
+
+        let snapshot = progress.project_snapshot("project-a").await;
+        assert_eq!(snapshot.snapshots.len(), 1);
+        assert_eq!(snapshot.snapshots[0].phase, "failed");
+        assert_eq!(
+            snapshot.snapshots[0].message,
+            "Chat history could not be saved."
+        );
+        assert_eq!(snapshot.snapshots[0].recent_events.len(), 2);
+        let serialized = serde_json::to_string(&snapshot).unwrap();
+        assert!(!serialized.contains(chat_id));
+        assert!(!serialized.contains("private request body"));
     }
 
     #[tokio::test]
