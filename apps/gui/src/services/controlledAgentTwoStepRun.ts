@@ -1,6 +1,6 @@
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./redaction";
 
-export type ControlledAgentTwoStepRunPhase = "idle" | "planning_requested" | "waiting_for_user_review" | "execution_requested" | "applying_edits" | "running_verification_bundle" | "followup_ready" | "completed" | "failed" | "stopped";
+export type ControlledAgentTwoStepRunPhase = "idle" | "planning_requested" | "planning_completed" | "waiting_for_user_review" | "execution_requested" | "applying_edits" | "running_verification_bundle" | "followup_ready" | "completed" | "blocked" | "failed" | "stopped";
 export type ControlledAgentTwoStepRunStopReason = "missing_user_gate" | "invalid_transition" | "stale_result" | "duplicate_event" | "unsafe_metadata" | "unsupported_authority" | "budget_exceeded" | "verification_failed" | "user_stop" | "malformed_input";
 export type ControlledAgentTwoStepRunDiagnosticCode = "malformed_input" | "unsafe_metadata" | "missing_user_gate" | "invalid_transition" | "stale_result" | "duplicate_event" | "unsupported_authority" | "limit_exceeded" | "verification_failed";
 
@@ -529,7 +529,7 @@ function boundedNumber(value: unknown, min: number, max: number): value is numbe
 }
 
 function isTerminal(phase: ControlledAgentTwoStepRunPhase): boolean {
-  return phase === "completed" || phase === "failed" || phase === "stopped" || phase === "followup_ready";
+  return phase === "completed" || phase === "blocked" || phase === "failed" || phase === "stopped" || phase === "followup_ready";
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

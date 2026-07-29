@@ -116,6 +116,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const multifileProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_multifile, "controlled_multifile", host);
   const verificationProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_verification_run, "controlled_verification_run", host);
   const verificationBundleProvenance = controlledCapabilityPresentation(capabilityProvenance?.controlled_verification_bundle, "controlled_verification_bundle", host);
+  const controlledRunLiveReady = host === "vscode" && readProvenance.liveReady && editProvenance.liveReady && verificationProvenance.liveReady;
   const applyRiskSummary = buildAgentRunApplyRiskSummary({
     proposal: metadata?.proposal ? agentRunProposalToApplyRiskPayload(metadata.proposal, details) : undefined,
     agentRun: input,
@@ -158,7 +159,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const controlledTaskHasWorkspaceLineage = controlledTaskExecutionSummary?.lineage.hasWorkspaceReadinessId ?? (controlledTaskLineage?.workspaceReadinessId !== undefined);
   const controlledTaskHasRuntimeLineage = controlledTaskExecutionSummary?.lineage.hasRuntimeSessionId ?? (controlledTaskLineage?.runtimeSessionId !== undefined);
   const oneStepActive = Boolean(controlledTaskExecutionState && !["idle", "completed", "blocked", "stopped"].includes(controlledTaskExecutionState.phase));
-  const canStartOneStep = host === "vscode" && readProvenance.liveReady && editProvenance.liveReady && verificationBundleProvenance.liveReady && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
+  const canStartOneStep = controlledRunLiveReady && Boolean(onStartOneStepRun) && !oneStepActive && oneStepReadReady && oneStepEditReady && oneStepCommandReady;
   const canStopOneStep = Boolean(onStopOneStepRun) && oneStepActive;
   const showLegacyRepairLoop = !controlledTaskExecutionState && Boolean(repairLoop && repairLoop.state !== "disabled");
   const repairEligibleState = repairLoop?.state === "eligible" || repairLoop?.state === "proposal_ready";
@@ -237,7 +238,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
   const showRecoveryGuidance = !controlledTaskExecutionState && (showOneStepLoop || showLegacyRepairLoop || view.state === "verification_failed");
 
   return (
-    <section className={`readiness-card ${view.enabled ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
+    <section className={`readiness-card ${view.enabled && controlledRunLiveReady ? "ready" : "warn"} agent-run-panel stack`} aria-label="Experimental Agent Run" data-testid="agent-run-panel">
       <div className="row">
         <strong>Agent Run · dev-preview, not autonomy</strong>
         <span className={`badge ${host === "vscode" ? "ok" : "warn"}`}>{host === "vscode" ? "VS Code explicit controls" : host === "jetbrains" ? "JetBrains partial/fail-closed" : "browser preview only"}</span>
@@ -310,10 +311,10 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         {controlledTaskHarness.host === "jetbrains" && <span className="subtle">JetBrains remains partial/fail-closed until controlled workflow parity is verified.</span>}
         {controlledTaskHarness.diagnostics.length > 0 && <span className="subtle">Harness diagnostics: {controlledTaskHarness.diagnostics.map((item) => `${sanitizeDisplayText(item.code)}: ${sanitizeDisplayText(item.message)}`).join(" · ")}</span>}
       </section>}
-      {controlledTwoStepRunState && <section className={`readiness-card ${controlledTwoStepRunState.phase === "failed" || controlledTwoStepRunState.phase === "stopped" ? "warn" : "ready"} stack`} role="status" aria-label="Two-step controlled run staged evidence">
+      {controlledTwoStepRunState && <section className={`readiness-card ${controlledRunLiveReady && controlledTwoStepRunState.phase !== "blocked" && controlledTwoStepRunState.phase !== "failed" && controlledTwoStepRunState.phase !== "stopped" ? "ready" : "warn"} stack`} role="status" aria-label="Two-step controlled run staged evidence">
         <div className="row">
           <strong>S119 two-step run staged evidence</strong>
-          <span className={controlledTwoStepRunState.phase === "failed" || controlledTwoStepRunState.phase === "stopped" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(controlledTwoStepRunState.phase.replace(/_/g, " "))}</span>
+          <span className={controlledRunLiveReady && controlledTwoStepRunState.phase !== "blocked" && controlledTwoStepRunState.phase !== "failed" && controlledTwoStepRunState.phase !== "stopped" ? "badge ok" : "badge warn"}>{sanitizeDisplayText(controlledTwoStepRunState.phase.replace(/_/g, " "))}</span>
           <span className="badge">display only</span>
           <span className="badge">metadata only</span>
           <span className="badge">no unattended autonomy</span>
@@ -648,7 +649,7 @@ export function AgentRunPanel({ input, host, pendingApply, pendingVerification, 
         </div>
       )}
       {showOneStepLoop && oneStepLoopState && (
-        <div className={`readiness-card ${canStartOneStep || controlledTaskExecutionState?.phase === "context_ready" || controlledTaskExecutionState?.phase === "completed" ? "ready" : "warn"} stack`} role="status" aria-label="Controlled task execution Start">
+        <div className={`readiness-card ${controlledRunLiveReady && (canStartOneStep || controlledTaskExecutionState?.phase === "context_ready" || controlledTaskExecutionState?.phase === "completed") ? "ready" : "warn"} stack`} role="status" aria-label="Controlled task execution Start">
           <div className="row">
             <strong>Controlled task execution Start</strong>
             <span className={host === "vscode" ? "badge ok" : "badge warn"}>{host === "vscode" ? "VS Code-only" : host === "jetbrains" ? "JetBrains fail-closed" : "browser unsupported"}</span>
@@ -1275,14 +1276,24 @@ function isTerminalControlledVerificationStatus(status: ControlledAgentVerificat
 }
 
 function twoStepRunManualGateCopy(state: ControlledAgentTwoStepRunState): string {
-  if (state.phase === "planning_requested") return "Planning was requested by the user; sanitized plan evidence must be reviewed before execution can be requested.";
-  if (state.phase === "waiting_for_user_review") return "Planning complete; waiting for explicit user review before any execution request.";
-  if (state.phase === "execution_requested") return "Execution was separately requested by the user; apply outcome is still staged evidence, not automatic verification.";
-  if (state.phase === "applying_edits") return "Apply outcome metadata is visible; allowlisted verification still needs its own explicit user gate.";
-  if (state.phase === "running_verification_bundle") return "Verification was separately requested by the user; follow-up remains manual review only.";
-  if (state.phase === "followup_ready") return "A sanitized follow-up is ready for manual review; the panel does not send it.";
-  if (state.phase === "completed") return "Planning, review, execution, apply, and verification evidence are complete after explicit user gates.";
-  if (state.phase === "failed") return "Unsafe, missing, stale, duplicate, or failed metadata blocked the two-step run safely.";
-  if (state.phase === "stopped") return "The two-step run stopped after an explicit user or policy stop signal.";
-  return "Two-step run is idle until the user explicitly requests planning.";
+  switch (state.phase) {
+    case "idle": return "Two-step run is idle until the user explicitly requests planning.";
+    case "planning_requested": return "Planning was requested by the user; sanitized plan evidence must be reviewed before execution can be requested.";
+    case "planning_completed": return "Sanitized planning evidence is complete, but execution remains blocked until explicit user review and a separate execution request.";
+    case "waiting_for_user_review": return "Planning complete; waiting for explicit user review before any execution request.";
+    case "execution_requested": return "Execution was separately requested by the user; apply outcome is still staged evidence, not automatic verification.";
+    case "applying_edits": return "Apply outcome metadata is visible; allowlisted verification still needs its own explicit user gate.";
+    case "running_verification_bundle": return "Verification was separately requested by the user; follow-up remains manual review only.";
+    case "followup_ready": return "A sanitized follow-up is ready for manual review; the panel does not send it.";
+    case "completed": return "Planning, review, execution, apply, and verification evidence are complete after explicit user gates.";
+    case "blocked": return "Policy, budget, readiness, or correlation blocked the two-step run safely; no automatic action was started.";
+    case "failed": return "Unsafe, missing, stale, duplicate, or failed metadata blocked the two-step run safely.";
+    case "stopped": return "The two-step run stopped after an explicit user or policy stop signal.";
+    default: return assertNeverTwoStepPhase(state.phase);
+  }
+}
+
+function assertNeverTwoStepPhase(phase: never): never {
+  const exhaustive: never = phase;
+  throw new Error(`Unhandled controlled two-step run phase: ${String(exhaustive)}`);
 }

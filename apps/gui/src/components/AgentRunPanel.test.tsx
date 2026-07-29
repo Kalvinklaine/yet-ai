@@ -871,6 +871,104 @@ describe("AgentRunPanel", () => {
     expect(findButton("Start one-step Agent Run").disabled).toBe(true);
   });
 
+  it("gates one-step Start on matching live command-run provenance rather than verification-bundle provenance", () => {
+    const onStartOneStepRun = vi.fn();
+    const provenance = classifyControlledCapabilityProvenance({ host: "vscode", hostCapabilities: liveHostCapabilities });
+    provenance.controlled_verification_run = {
+      ...provenance.controlled_verification_run,
+      status: "fixture_demo",
+      readiness: "display_only",
+      executionSupport: "unavailable",
+      evidenceLabel: "Unrelated fixture command-run metadata",
+    };
+
+    renderPanel(undefined, {
+      host: "vscode",
+      oneStepLoopState: idleOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+      onStartOneStepRun,
+      capabilityProvenance: provenance,
+    });
+
+    expect(provenance.controlled_verification_bundle.status).toBe("live_host");
+    expect(findButton("Start one-step Agent Run").disabled).toBe(true);
+    expect(cardByLabel("Controlled task execution Start").classList.contains("ready")).toBe(false);
+
+    provenance.controlled_verification_run = classifyControlledCapabilityProvenance({ host: "vscode", hostCapabilities: liveHostCapabilities }).controlled_verification_run;
+    provenance.controlled_verification_bundle = {
+      ...provenance.controlled_verification_bundle,
+      status: "unsupported",
+      readiness: "unsupported",
+      executionSupport: "unavailable",
+    };
+    renderPanel(undefined, {
+      host: "vscode",
+      oneStepLoopState: idleOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+      onStartOneStepRun,
+      capabilityProvenance: provenance,
+    });
+
+    expect(findButton("Start one-step Agent Run").disabled).toBe(false);
+    expect(cardByLabel("Controlled task execution Start").classList.contains("ready")).toBe(true);
+  });
+
+  it.each([
+    { phase: "planning_completed", copy: "Sanitized planning evidence is complete, but execution remains blocked until explicit user review and a separate execution request." },
+    { phase: "blocked", copy: "Policy, budget, readiness, or correlation blocked the two-step run safely; no automatic action was started." },
+  ] as const)("renders truthful two-step copy for $phase", ({ phase, copy }) => {
+    const state = { ...evaluateControlledAgentTwoStepRun(twoStepCompletedFixture), phase };
+    renderPanel(undefined, { host: "vscode", controlledTwoStepRunState: state });
+
+    expect(panelText()).toContain(copy);
+    expect(cardByLabel("Two-step controlled run staged evidence").classList.contains(phase === "blocked" ? "warn" : "ready")).toBe(true);
+  });
+
+  it.each(["browser", "jetbrains"] as const)("keeps AgentRun and Start warning-only on %s", (host) => {
+    renderPanel(readyInput, {
+      host,
+      oneStepLoopState: idleOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+      onStartOneStepRun: vi.fn(),
+    });
+
+    expect(cardByLabel("Experimental Agent Run").classList.contains("ready")).toBe(false);
+    expect(cardByLabel("Controlled task execution Start").classList.contains("ready")).toBe(false);
+    expect(findButton("Start one-step Agent Run").disabled).toBe(true);
+  });
+
+  it("keeps AgentRun and Start warning-only for local-derived provenance", () => {
+    const provenance = classifyControlledCapabilityProvenance({ host: "vscode", hostCapabilities: liveHostCapabilities });
+    for (const surface of ["controlled_read", "controlled_edit", "controlled_verification_run"] as const) {
+      provenance[surface] = {
+        ...provenance[surface],
+        status: "local_derived",
+        readiness: "display_only",
+        executionSupport: "unavailable",
+        evidenceLabel: "GUI-local state",
+      };
+    }
+    renderPanel(readyInput, {
+      host: "vscode",
+      oneStepLoopState: idleOneStepLoop,
+      oneStepReadRequest: readyOneStepRequest,
+      oneStepEditRequest: readyOneStepRequest,
+      oneStepCommandRunRequest: readyOneStepRequest,
+      onStartOneStepRun: vi.fn(),
+      capabilityProvenance: provenance,
+    });
+
+    expect(cardByLabel("Experimental Agent Run").classList.contains("ready")).toBe(false);
+    expect(cardByLabel("Controlled task execution Start").classList.contains("ready")).toBe(false);
+    expect(findButton("Start one-step Agent Run").disabled).toBe(true);
+  });
+
   it("renders sanitized controlled dev-preview reports for active and terminal one-step states", () => {
     const onStartOneStepRun = vi.fn();
     const onStopOneStepRun = vi.fn();
@@ -1943,6 +2041,14 @@ function findButton(name: string) {
 
 function optionalButton(name: string) {
   return Array.from(container?.querySelectorAll<HTMLButtonElement>("button") ?? []).find((item) => item.textContent === name);
+}
+
+function cardByLabel(label: string) {
+  const card = container?.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+  if (!card) {
+    throw new Error(`Card not found: ${label}`);
+  }
+  return card;
 }
 
 function actionButtonLabels() {
