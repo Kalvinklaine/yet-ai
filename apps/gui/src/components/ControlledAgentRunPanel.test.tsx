@@ -5,6 +5,7 @@ import worktreeReadiness from "../../../../packages/contracts/examples/engine/co
 import authorityRegistry from "../../../../packages/contracts/examples/engine/controlled-agent-authority-registry-v1.json";
 import twoStepCompletedFixture from "../../../../packages/contracts/examples/engine/controlled-agent-two-step-run-completed.json";
 import { initializeControlledAgentRunState, reduceControlledAgentRunState, type ControlledAgentRunState } from "../services/controlledAgentRunState";
+import { buildControlledAgentProgressReport, type ControlledAgentProgressReport } from "../services/controlledAgentProgressReport";
 import { evaluateControlledAgentTwoStepRun } from "../services/controlledAgentTwoStepRun";
 import { ControlledAgentRunPanel } from "./ControlledAgentRunPanel";
 
@@ -178,6 +179,37 @@ describe("ControlledAgentRunPanel", () => {
     }
   });
 
+  it("distinguishes absent controlled progress without retry or authority", () => {
+    const cases = [
+      [initializeControlledAgentRunState(undefined), "Progress not started", "Progress publication has not started"],
+      [readyState(), "Progress publication in flight", "no correlated progress report has arrived"],
+      [reduceControlledAgentRunState(readyState(), { type: "complete" }), "Progress missing or dropped", "ended without a correlated progress report"],
+    ] as const;
+
+    for (const [state, label, summary] of cases) {
+      renderPanel(state, "vscode");
+      const publication = findSection("Controlled progress publication state");
+      expect(publication.textContent).toContain(label);
+      expect(publication.textContent).toContain(summary);
+      expect(publication.textContent).toContain("does not retry publication");
+      expect(publication.textContent).toContain("grants authority: false");
+      expect(publication.querySelector("button")).toBeNull();
+    }
+  });
+
+  it("renders received progress and warns for every terminal non-success status", () => {
+    const activeReport = buildControlledAgentProgressReport({ runState: readyState() });
+    renderPanel(readyState(), "vscode", activeReport);
+    expect(findSection("Controlled progress publication state").textContent).toContain("Progress received");
+
+    for (const status of ["stopped", "failed", "blocked"] as const) {
+      const report = { ...activeReport, status, phaseLabel: status, currentStepLabel: status };
+      renderPanel(readyState(), "vscode", report);
+      const badge = findSection("Controlled progress report metadata").querySelector(".badge.warn");
+      expect(badge?.textContent).toBe(status);
+    }
+  });
+
   it("omits unsafe controlled dev-preview report evidence", () => {
     const secret = "sk-" + "q".repeat(40);
     renderPanel({ ...readyState(), summary: `Unsafe ${secret} /Users/alice/private.ts` }, "vscode");
@@ -283,7 +315,7 @@ function renderInteractivePanel() {
   });
 }
 
-function renderPanel(state: ControlledAgentRunState, host: "browser" | "vscode" | "jetbrains" | "unknown" = "unknown") {
+function renderPanel(state: ControlledAgentRunState, host: "browser" | "vscode" | "jetbrains" | "unknown" = "unknown", progressReport?: ControlledAgentProgressReport) {
   if (root) {
     act(() => root?.unmount());
   }
@@ -293,7 +325,7 @@ function renderPanel(state: ControlledAgentRunState, host: "browser" | "vscode" 
   document.body.append(container);
   root = createRoot(container);
   act(() => {
-    root?.render(<ControlledAgentRunPanel state={state} host={host} onStop={stopSpy} />);
+    root?.render(<ControlledAgentRunPanel state={state} host={host} progressReport={progressReport} onStop={stopSpy} />);
   });
 }
 
@@ -349,4 +381,12 @@ function findButton(label: string) {
     throw new Error(`Button not found: ${label}`);
   }
   return button;
+}
+
+function findSection(label: string) {
+  const section = container?.querySelector(`[aria-label="${label}"]`);
+  if (!(section instanceof HTMLElement)) {
+    throw new Error(`Section not found: ${label}`);
+  }
+  return section;
 }

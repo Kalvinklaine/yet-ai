@@ -60,6 +60,15 @@ export type ControlledAgentProgressReport = {
   diagnostics: string[];
 };
 
+export type ControlledAgentProgressAvailability = {
+  state: "not_started" | "publication_in_flight" | "missing_or_dropped" | "received";
+  label: string;
+  summary: string;
+  failClosed: boolean;
+};
+
+type ControlledAgentProgressRunPhase = "idle" | "opt_in_required" | "workspace_ready" | "reading_context" | "planning" | "waiting_for_user" | "running_verification" | "stopping" | "stopped" | "blocked" | "failed" | "completed";
+
 type ReportParts = {
   status?: ControlledAgentProgressStatus;
   phaseLabel?: string;
@@ -156,6 +165,39 @@ export function buildControlledAgentProgressReport(input: unknown): ControlledAg
   }
 
   return buildReport({ ...parts, diagnostics });
+}
+
+export function evaluateControlledAgentProgressAvailability(phase: ControlledAgentProgressRunPhase, report: ControlledAgentProgressReport | undefined): ControlledAgentProgressAvailability {
+  if (report) {
+    return {
+      state: "received",
+      label: "Progress received",
+      summary: "A correlated sanitized progress report is available for display.",
+      failClosed: false,
+    };
+  }
+  if (phase === "idle" || phase === "opt_in_required") {
+    return {
+      state: "not_started",
+      label: "Progress not started",
+      summary: "Progress publication has not started because the controlled run is not active.",
+      failClosed: false,
+    };
+  }
+  if (phase === "completed" || phase === "stopped" || phase === "blocked" || phase === "failed") {
+    return {
+      state: "missing_or_dropped",
+      label: "Progress missing or dropped",
+      summary: "The controlled run ended without a correlated progress report. Treat progress as unavailable and review the run state; no retry is automatic.",
+      failClosed: true,
+    };
+  }
+  return {
+    state: "publication_in_flight",
+    label: "Progress publication in flight",
+    summary: "The controlled run is active, but no correlated progress report has arrived. Treat progress as unavailable while publication is in flight; no retry is automatic.",
+    failClosed: true,
+  };
 }
 
 function collectReportParts(input: Record<string, unknown>, diagnostics: string[]): ReportParts {

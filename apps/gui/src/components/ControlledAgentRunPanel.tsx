@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import authorityRegistry from "../../../../packages/contracts/examples/engine/controlled-agent-authority-registry-v1.json";
 import type { BridgeHost } from "../bridge/bridgeAdapter";
 import { createControlledAgentDevPreviewReport } from "../services/controlledAgentDevPreviewReport";
-import type { ControlledAgentProgressReport } from "../services/controlledAgentProgressReport";
+import { evaluateControlledAgentProgressAvailability, type ControlledAgentProgressReport } from "../services/controlledAgentProgressReport";
 import { evaluateControlledAgentDevPreviewStatus } from "../services/controlledAgentDevPreviewStatus";
 import type { ControlledLocalAgentMvpReport } from "../services/controlledLocalAgentMvp";
 import type { ControlledAgentRunState } from "../services/controlledAgentRunState";
@@ -84,6 +84,7 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
   const runProvenance = controlledCapabilityPresentation(provenance?.controlled_run_state, "controlled_run_state", host);
   const recoveryProvenance = controlledCapabilityPresentation(provenance?.controlled_recovery, "controlled_recovery", host);
   const recoveryPresentation = buildControlledRecoveryPresentation({ host, visibleStates: recoveryStates(host, state), provenanceLabel: recoveryProvenance.label });
+  const progressAvailability = evaluateControlledAgentProgressAvailability(state.phase, progressReport);
 
   return (
     <section className="readiness-card warn controlled-agent-run-panel stack" aria-label="Controlled agent run skeleton" data-testid="controlled-agent-run-panel">
@@ -177,12 +178,22 @@ export function ControlledAgentRunPanel({ state, progressReport, mvpReport, host
         <span className="subtle">Safety boundaries: {devPreviewReport.safetyBoundaryLabels.join(" · ")}</span>
       </section>
       <span className="subtle">S91 dev-preview: VS Code is the supported explicit-control path. Browser is preview-only and unsupported for privileged controlled actions. JetBrains stays partial/fail-closed where controlled gaps remain. Sanitized reports only.</span>
+      <section className={`readiness-card ${progressAvailability.failClosed ? "warn" : "ready"} stack`} role="status" aria-label="Controlled progress publication state">
+        <div className="row">
+          <strong>Controlled progress publication</strong>
+          <span className={progressAvailability.failClosed ? "badge warn" : "badge"}>{progressAvailability.label}</span>
+          <span className="badge">display only</span>
+          <span className="badge">grants authority: false</span>
+        </div>
+        <span>{progressAvailability.summary}</span>
+        <span className="subtle">This state does not retry publication, start or resume a run, execute tools, or grant runtime or host authority.</span>
+      </section>
       {progressReport && <section className="readiness-card warn stack" aria-label="Controlled progress report metadata">
         <div className="row">
           <strong>Progress report</strong>
           <span className="badge">S79 metadata</span>
           <span className="badge">sanitized labels only</span>
-          <span className={progressReport.status === "blocked" || progressReport.status === "failed" ? "badge warn" : "badge ok"}>{sanitizeDisplayText(progressReport.status)}</span>
+          <span className={progressReport.status === "completed" ? "badge ok" : progressReport.status === "stopped" || progressReport.status === "blocked" || progressReport.status === "failed" ? "badge warn" : "badge"}>{sanitizeDisplayText(progressReport.status)}</span>
         </div>
         <div className="agent-progress-grid" aria-label="Controlled progress report status">
           <span>Report phase: {sanitizeDisplayText(progressReport.phaseLabel)}</span>
