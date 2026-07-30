@@ -986,8 +986,11 @@ async function runExplicitContextBundleScenario(page) {
   if (chatCommandBodies.length !== 1 || matchingBundleCommands.length !== 1) failures.push(`Explicit context bundle send posted ${chatCommandBodies.length} chat commands, ${matchingBundleCommands.length} matching its prompt/request, instead of exactly one.`);
   assertExplicitContextBundleChatCommand(bundleCommand, "vscode");
   await openComposerDrawer(page, "ide-actions-drawer");
+  const explicitBundleRegion = page.locator("[data-testid='ide-actions-drawer']").first().getByRole("status", { name: "Multi-file context bundle", exact: true });
+  await centerInNearestScrollContainer(explicitBundleRegion);
+  await explicitBundleRegion.waitFor({ state: "visible", timeout: 10_000 });
   await expectBodyVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "VS Code bundle one-shot clear status");
-  await expectAttachedText(page, "empty", "VS Code bundle empty after send");
+  await explicitBundleRegion.getByText("empty", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
   await expectNoTextInExplicitBundle(page, bundleExcerptOneText, "first VS Code bundle preview after send");
   await expectNoTextInExplicitBundle(page, bundleExcerptTwoText, "second VS Code bundle preview after send");
 
