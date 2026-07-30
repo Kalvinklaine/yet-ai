@@ -197,6 +197,7 @@ try {
 
 const runtimeServer = await startMockRuntimeServer();
 const runtimeBaseUrl = `http://127.0.0.1:${runtimeServer.port}`;
+await assertMockRuntimeRejectsMissingAuthorization(runtimeBaseUrl);
 const packagedGuiServer = await startPackagedGuiPanelServer(packagedGuiRoot, runtimeBaseUrl);
 const guiBaseUrl = `http://127.0.0.1:${packagedGuiServer.port}`;
 const panelGuiBaseUrl = `${guiBaseUrl}${panelBasePath}`;
@@ -250,10 +251,11 @@ try {
   });
   page.on("response", (response) => {
     const url = response.url();
-    if (url.startsWith(guiBaseUrl) && (isJsOrCssAssetUrl(url) || response.status() === 404 || response.status() >= 500)) {
-      if (response.status() === 404 || response.status() >= 500) {
-        failures.push(`Broken local asset response: ${response.status()} ${url}`);
-      }
+    if (url.startsWith(guiBaseUrl) && isJsOrCssAssetUrl(url) && (response.status() === 404 || response.status() >= 500)) {
+      failures.push(`Broken local asset response: ${response.status()} ${url}`);
+    }
+    if (isPanelProxyRuntimeUrl(url) && ([401, 403, 404].includes(response.status()) || response.status() >= 500)) {
+      failures.push(`Broken panel proxy response: ${response.status()} ${redactUrl(url)}`);
     }
   });
 
@@ -2339,6 +2341,14 @@ async function assertMockRuntimeRejectsBadChatBodies(baseUrl) {
   }
 }
 
+async function assertMockRuntimeRejectsMissingAuthorization(baseUrl) {
+  const response = await fetch(`${baseUrl}/p/${projectId}/v1/project-memory`);
+  const body = await response.text();
+  if (response.status !== 401 || !body.includes("Unauthorized local runtime request") || body.includes(runtimeToken)) {
+    throw new Error(`JetBrains mock runtime missing-authorization probe returned ${response.status} instead of a sanitized 401.`);
+  }
+}
+
 function assertJetBrainsContext(context) {
   if (!context || typeof context !== "object") {
     failures.push("Mock runtime did not receive active context on the enabled-toggle chat command.");
@@ -4058,6 +4068,15 @@ function isJsOrCssAssetUrl(value) {
   return pathname.endsWith(".js") || pathname.endsWith(".css");
 }
 
+function isPanelProxyRuntimeUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.origin === guiBaseUrl && (url.pathname.startsWith(`${panelBasePath}/v1/`) || url.pathname.startsWith(`${panelBasePath}/p/`));
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedBrowserUrl(value, origins) {
   try {
     const url = new URL(value);
@@ -4127,13 +4146,16 @@ function assertProjectScopedChatProxyCoverage() {
     ["GET", `/p/${projectId}/v1/chats/subscribe`],
   ];
   for (const [method, pathname] of expected) {
-    const match = entries.find((entry) => entry.method === method && entry.pathname === pathname);
-    if (!match) {
+    const matches = entries.filter((entry) => entry.method === method && entry.pathname === pathname);
+    if (matches.length === 0) {
       failures.push(`JetBrains project phase did not reach scoped runtime path ${method} ${pathname}.`);
       continue;
     }
     const expectedBrowserPath = `${panelBasePath}${pathname}`;
-    if (match.browserPath?.split("?", 1)[0] !== expectedBrowserPath) failures.push(`JetBrains project proxy browser path did not match ${expectedBrowserPath} for upstream ${pathname}.`);
+    for (const match of matches) {
+      if (match.authorized !== true) failures.push(`JetBrains project proxy request was not bearer-authorized: ${method} ${pathname}.`);
+      if (match.browserPath?.split("?", 1)[0] !== expectedBrowserPath) failures.push(`JetBrains project proxy browser path did not match ${expectedBrowserPath} for upstream ${pathname}.`);
+    }
   }
   const unscoped = entries.filter((entry) => /^\/v1\/chats(?:\/|$)/.test(entry.pathname));
   if (unscoped.length > 0) failures.push(`JetBrains project phase observed unscoped chat fallback: ${formatRuntimeRequestLog(unscoped)}.`);
