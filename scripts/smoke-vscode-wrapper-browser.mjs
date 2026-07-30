@@ -800,6 +800,17 @@ async function openComposerDrawer(page, testId) {
   await body.waitFor({ state: "visible", timeout: 10_000 });
 }
 
+async function closeComposerDrawer(page, testId) {
+  const drawer = page.locator(`[data-testid='${testId}']`).first();
+  await drawer.waitFor({ state: "attached", timeout: 10_000 });
+  if (!await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false)) return;
+  const summary = drawer.locator(":scope > summary").first();
+  await centerInNearestScrollContainer(summary);
+  await summary.focus();
+  await summary.press("Enter");
+  await drawer.locator(":scope > .composer-drawer-body").first().waitFor({ state: "hidden", timeout: 10_000 });
+}
+
 async function runSafeEditProposalScenario(page) {
   const chatCommandCountBeforeEditProposal = countChatCommandPosts();
   await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(editProposalPrompt);
@@ -857,13 +868,18 @@ async function runProjectMemoryScenario(page) {
 }
 
 async function runWorkspaceSnippetSearchScenario(page) {
+  await closeComposerDrawer(page, "task-agent-tools-drawer");
   await openComposerDrawer(page, "ide-actions-drawer");
+  const ideActionsDrawer = page.locator("[data-testid='ide-actions-drawer']").first();
   await expectBodyVisibleText(page, "Project snippets", "VS Code snippet search surface");
   await expectAttachedText(page, "IDE search", "VS Code snippet search IDE badge");
-  await page.getByPlaceholder("function name or symbol text").fill(snippetSearchQuery);
+  await ideActionsDrawer.getByPlaceholder("function name or symbol text").fill(snippetSearchQuery);
   await expectBodyVisibleText(page, "Literal query ready", "VS Code snippet search literal validation");
   const preClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
-  await page.getByRole("button", { name: "Search project snippets", exact: true }).click();
+  const searchButton = ideActionsDrawer.getByRole("button", { name: "Search project snippets", exact: true });
+  await centerInNearestScrollContainer(searchButton);
+  await searchButton.focus();
+  await searchButton.press("Enter");
   const searchRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", preClickIdeRequestCount);
   if (!searchRequest) {
     failures.push("Clicking Search project snippets did not send gui.ideActionRequest.");
@@ -882,18 +898,34 @@ async function runWorkspaceSnippetSearchScenario(page) {
   await expectBodyVisibleText(page, "1 sanitized snippet returned", "VS Code snippet search result status");
   await expectBodyVisibleText(page, snippetSearchPath, "VS Code snippet search result path");
   await expectAttachedText(page, snippetSearchText, "VS Code snippet search bounded preview");
-  await page.locator("label.provider-item", { hasText: snippetSearchPath }).getByRole("checkbox").check();
-  await page.getByRole("button", { name: "Attach selected snippets (1)", exact: true }).click();
+  const snippetResult = ideActionsDrawer.locator("label.provider-item", { hasText: snippetSearchPath }).filter({ hasText: snippetSearchText }).first();
+  const snippetCheckbox = snippetResult.getByRole("checkbox");
+  await centerInNearestScrollContainer(snippetCheckbox);
+  await snippetCheckbox.focus();
+  await snippetCheckbox.press("Space");
+  await page.waitForFunction(({ drawerTestId, resultPath }) => {
+    const drawer = document.querySelector(`[data-testid='${drawerTestId}']`);
+    const result = Array.from(drawer?.querySelectorAll("label.provider-item") ?? []).find((element) => element.textContent?.includes(resultPath));
+    return result?.querySelector("input[type='checkbox']")?.checked === true;
+  }, { drawerTestId: "ide-actions-drawer", resultPath: snippetSearchPath }, { timeout: 10_000 });
+  const attachButton = ideActionsDrawer.getByRole("button", { name: "Attach selected snippets (1)", exact: true });
+  await centerInNearestScrollContainer(attachButton);
+  await attachButton.focus();
+  await attachButton.press("Enter");
   await expectBodyVisibleText(page, "Added 1 project snippet to the one-shot bundle.", "VS Code snippet search bundle attach status");
   await assertBrowserStorageDoesNotContain(page, [snippetSearchPath, snippetSearchText], "VS Code snippet search storage check");
 }
 
 async function runVerificationCommandScenario(page) {
   await openComposerDrawer(page, "ide-actions-drawer");
+  const ideActionsDrawer = page.locator("[data-testid='ide-actions-drawer']").first();
   await expectBodyVisibleText(page, "Verification commands", "VS Code verification commands surface");
   await expectBodyVisibleText(page, "Allowlisted local verification only", "VS Code verification command policy");
   const preClickIdeRequestCount = await getGuiMessageCount(page, "gui.ideActionRequest");
-  await page.getByRole("button", { name: "Repository check", exact: true }).click();
+  const repositoryCheckButton = ideActionsDrawer.getByRole("button", { name: "Repository check", exact: true });
+  await centerInNearestScrollContainer(repositoryCheckButton);
+  await repositoryCheckButton.focus();
+  await repositoryCheckButton.press("Enter");
   const verificationRequest = await waitForGuiMessageAfter(page, "gui.ideActionRequest", preClickIdeRequestCount);
   if (!verificationRequest) {
     failures.push("Clicking Repository check did not send gui.ideActionRequest.");
@@ -955,7 +987,7 @@ async function runExplicitContextBundleScenario(page) {
   assertExplicitContextBundleChatCommand(bundleCommand, "vscode");
   await openComposerDrawer(page, "ide-actions-drawer");
   await expectBodyVisibleText(page, "One-shot explicit context bundle attached to the last accepted message and cleared.", "VS Code bundle one-shot clear status");
-  await expectBodyVisibleText(page, "empty", "VS Code bundle empty after send");
+  await expectAttachedText(page, "empty", "VS Code bundle empty after send");
   await expectNoTextInExplicitBundle(page, bundleExcerptOneText, "first VS Code bundle preview after send");
   await expectNoTextInExplicitBundle(page, bundleExcerptTwoText, "second VS Code bundle preview after send");
 
