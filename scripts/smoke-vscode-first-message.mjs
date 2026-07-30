@@ -25,7 +25,7 @@ const userMessageText = "Say hello through VS Code packaged GUI smoke.";
 const assistantText = "VS Code packaged smoke response.";
 const failures = [];
 const consoleMessages = [];
-let runtimeReady = false;
+let runtimeReady = true;
 const runtimeApiRequests = [];
 let observedRuntimeAuthorization = false;
 let chatCommandRequest;
@@ -112,6 +112,9 @@ try {
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   await assertHostedEntryRoute(page);
   await waitForGuiReady(page);
+  if (runtimeApiRequests.length !== 0) {
+    throw new Error(`VS Code first-message GUI sent runtime requests before host.ready: ${runtimeApiRequests.map((entry) => `${entry.method} ${entry.pathname}`).join(", ")}.`);
+  }
   hostGeneration = createHostGeneration();
   await dispatchHostedWorkspaceAuthority(page, hostGeneration);
 
@@ -137,34 +140,31 @@ try {
     }));
   }, { version: bridgeVersion });
 
-  await page.waitForTimeout(100);
-  if (consoleMessages.includes("Rejected invalid host bridge message")) {
-    throw new Error("VS Code first-message host.ready was rejected by the GUI bridge contract.");
-  }
-
   await page.getByText("Current Workspace Dashboard", { exact: true }).waitFor({ state: "attached", timeout: 10_000 });
   await page.getByText(projectDisplayName, { exact: true }).first().waitFor({ state: "visible", timeout: 10_000 });
   if (await page.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) {
     failures.push("Current Workspace Dashboard mounted the composer before explicit Start new chat.");
   }
-  await page.getByRole("button", { name: "Start new chat", exact: true }).click();
+  const startNewChat = page.getByRole("button", { name: "Start new chat", exact: true });
+  await waitForEnabledStart(page, startNewChat);
+  if (consoleMessages.includes("Rejected invalid host bridge message")) {
+    throw new Error("VS Code first-message host.ready was rejected by the GUI bridge contract.");
+  }
+  await startNewChat.click();
   await page.getByText("Project chat", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
   await page.locator("textarea").waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
     const body = await page.locator("body").innerText().catch(() => "");
     throw new Error(`Project chat did not mount its composer after Start new chat. ${messageOf(error)}\nVisible body excerpt: ${sanitizeDiagnosticText(body).slice(0, 4000)}`);
   });
   await page.locator("main.app-shell.host-vscode").waitFor({ state: "attached", timeout: 10_000 });
-  await expectVisibleBodyText(page, "PROVIDER REQUIRED", "provider-required first-message state", 20_000);
-  await expectVisibleBodyText(page, "Configure a provider/model or enable Demo Mode before sending.", "provider-required guidance", 20_000);
-  if (!await sendButton(page).isDisabled()) {
-    failures.push("Send was enabled before provider/model readiness.");
-  }
+  await waitForLazyAppSubscriber(page);
+  runtimeReady = true;
+  await dispatchHostedWorkspaceAuthority(page, hostGeneration);
+  await page.locator("[data-testid='ide-actions-drawer']").waitFor({ state: "attached", timeout: 20_000 });
   if (!observedRuntimeAuthorization) {
     failures.push("Mock runtime did not observe the VS Code host.ready runtime session token.");
   }
 
-  runtimeReady = true;
-  await dispatchHostedWorkspaceAuthority(page, hostGeneration);
   await expectVisibleBodyText(page, "Sends go through VS Code Smoke Model (vscode-smoke-provider) via the local runtime", "safe mock provider/model readiness", 20_000);
   await expectVisibleBodyText(page, "Ready to send.", "exact send readiness", 20_000);
   if (await sendButton(page).isDisabled()) {
@@ -224,7 +224,7 @@ try {
   }
 
   console.log("VS Code first-message preview smoke passed.");
-  console.log("Verified VS Code dev-preview artifacts plus packaged GUI host.ready bootstrap, provider-required gate, safe mock provider/model readiness, user_message command, mock SSE assistant rendering, active-context include, loopback-only networking, and browser-visible redaction.");
+  console.log("Verified VS Code dev-preview artifacts plus packaged GUI host.ready bootstrap, ready Project Command Center, explicit Start new chat, lazy App authority handoff, safe mock provider/model readiness, manual user_message command, mock SSE assistant rendering, active-context include, loopback-only networking, and browser-visible redaction.");
   console.log("No OpenAI, ChatGPT, hosted Yet AI service, real provider credential, non-loopback provider call, or VS Code launch was used.");
 } finally {
   await browser?.close().catch(() => undefined);
@@ -294,6 +294,28 @@ async function dispatchHostedWorkspaceAuthority(page, requestId) {
       },
     }));
   }, { version: bridgeVersion, runtimeUrl: runtimeBaseUrl, token: runtimeToken, requestId, projectId, displayName: projectDisplayName });
+}
+
+async function waitForEnabledStart(page, startButton) {
+  try {
+    await page.waitForFunction(() => {
+      const button = Array.from(document.querySelectorAll("button")).find((candidate) => candidate.textContent?.trim() === "Start new chat");
+      return button instanceof HTMLButtonElement && !button.disabled;
+    }, undefined, { timeout: 20_000 });
+  } catch (error) {
+    const diagnostic = await startButton.evaluate((button) => {
+      const reasonId = button.getAttribute("aria-describedby");
+      const reason = reasonId ? document.getElementById(reasonId)?.textContent?.trim() : "";
+      return { disabled: button instanceof HTMLButtonElement ? button.disabled : null, reason: reason || "No blocked reason was rendered." };
+    }).catch(() => ({ disabled: null, reason: "Start new chat was not attached." }));
+    throw new Error(`Start new chat did not become truthfully ready: ${sanitizeDiagnosticText(JSON.stringify(diagnostic)).slice(0, 800)}. ${messageOf(error)}`);
+  }
+}
+
+async function waitForLazyAppSubscriber(page) {
+  await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }));
 }
 
 async function expectVisibleActiveContext(page) {
@@ -400,6 +422,7 @@ async function startMockRuntimeServer() {
     }
     if (request.method === "POST" && runtimePath === "/v1/chats") {
       chatCreated = true;
+      runtimeReady = false;
       json(response, 201, mockChatThread());
       return;
     }
