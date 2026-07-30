@@ -21,6 +21,7 @@ const evidenceRoot = path.join(root, "dist", "visual-smoke", "jetbrains-wrapper-
 const requiredVisibleText = ["Current Workspace Dashboard", "Connecting workspace"];
 const bridgeVersion = "2026-05-15";
 const projectId = "prj_abcdefghijklmnopqrstuA";
+const unexpectedProjectId = "prj_AbcdefghijklmnopqrstuA";
 const projectDisplayName = "JetBrains Smoke Workspace";
 const readinessTimeoutMs = 100;
 const pluginLikeViewport = { width: 800, height: 800 };
@@ -3069,11 +3070,17 @@ async function startMockRuntimeServer() {
     }
     const runtimeLogEntry = { method: request.method ?? "GET", pathname: requestUrl.pathname, authorized, browserPath: request.headers["x-yet-ai-smoke-browser-path"], browserOrigin: request.headers.origin };
     runtimeRequestLog.push(runtimeLogEntry);
-    if (projectPhaseRuntimeLogStart !== undefined && /^\/v1\/chats(?:\/|$)/.test(requestUrl.pathname)) {
-      failures.push(`JetBrains project phase used forbidden unscoped chat runtime path ${request.method ?? "GET"} ${requestUrl.pathname}.`);
-      json(response, 404, { error: "Project chat requests must be scoped." });
+    if (projectPhaseRuntimeLogStart !== undefined && (/^\/v1\/chats(?:\/|$)/.test(requestUrl.pathname) || requestUrl.pathname === "/v1/project-memory")) {
+      failures.push(`JetBrains project phase used forbidden unscoped runtime path ${request.method ?? "GET"} ${requestUrl.pathname}.`);
+      json(response, 404, { error: "Project requests must be scoped." });
       return;
     }
+    const projectRoute = /^\/p\/([^/]+)(\/v1\/.*)$/.exec(requestUrl.pathname);
+    if (projectRoute && projectRoute[1] !== projectId) {
+      json(response, 404, { error: "Project not found" });
+      return;
+    }
+    const scopedPath = projectRoute?.[2] ?? requestUrl.pathname;
     const allowedOrigin = request.headers.origin === undefined;
     if (!allowedOrigin) {
       failures.push(`Mock runtime received request from unexpected origin ${String(request.headers.origin)}.`);
@@ -3148,7 +3155,7 @@ async function startMockRuntimeServer() {
       json(response, 200, { providers: demoModeEnabled ? [readyDemoProvider()] : [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
-    if (request.method === "GET" && requestUrl.pathname === "/v1/project-memory") {
+    if (request.method === "GET" && scopedPath === "/v1/project-memory") {
       json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
@@ -3185,7 +3192,6 @@ async function startMockRuntimeServer() {
       json(response, 201, { chatId: "chat-001", title: "JetBrains smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messages: [] });
       return;
     }
-    const scopedPath = requestUrl.pathname.startsWith(`/p/${projectId}/v1/`) ? requestUrl.pathname.slice(`/p/${projectId}`.length) : requestUrl.pathname;
     if (request.method === "POST" && requestUrl.pathname === "/v1/provider-auth/openai/start") {
       let body;
       try {
@@ -3758,6 +3764,7 @@ async function assertPackagedGuiPanelServerParity(panelGuiBaseUrl) {
   }
   assertPanelProxyPathValidation();
   await assertPanelProxyHttpRejections(panelGuiBaseUrl);
+  await assertUnexpectedProjectMemoryRejected(panelGuiBaseUrl);
   const indexHtml = await readFile(packagedGuiIndexPath, "utf8");
   const assetPaths = Array.from(indexHtml.matchAll(/(?:src|href)="\.\/(assets\/[^"?#]+\.(?:js|css))"/g), (match) => match[1]);
   for (const [extension, expectedMime] of [[".js", "application/javascript; charset=utf-8"], [".css", "text/css; charset=utf-8"]]) {
@@ -3972,6 +3979,13 @@ async function assertPanelProxyHttpRejections(panelGuiBaseUrl) {
   }
 }
 
+async function assertUnexpectedProjectMemoryRejected(panelGuiBaseUrl) {
+  const response = await fetch(`${panelGuiBaseUrl}/p/${unexpectedProjectId}/v1/project-memory`);
+  if (response.status !== 404) {
+    throw new Error(`JetBrains project-memory mock accepted unexpected project ${unexpectedProjectId} with status ${response.status}.`);
+  }
+}
+
 function rawHttpGetStatus(value) {
   const target = new URL(value);
   return new Promise((resolve, reject) => {
@@ -4105,6 +4119,7 @@ function assertPanelProxyRuntimeCoverage() {
 function assertProjectScopedChatProxyCoverage() {
   const entries = runtimeRequestLog.slice(projectPhaseRuntimeLogStart ?? runtimeRequestLog.length);
   const expected = [
+    ["GET", `/p/${projectId}/v1/project-memory`],
     ["POST", `/p/${projectId}/v1/chats`],
     ["GET", `/p/${projectId}/v1/chats`],
     ["GET", `/p/${projectId}/v1/chats/chat-001`],
@@ -4122,6 +4137,8 @@ function assertProjectScopedChatProxyCoverage() {
   }
   const unscoped = entries.filter((entry) => /^\/v1\/chats(?:\/|$)/.test(entry.pathname));
   if (unscoped.length > 0) failures.push(`JetBrains project phase observed unscoped chat fallback: ${formatRuntimeRequestLog(unscoped)}.`);
+  const unscopedMemory = entries.filter((entry) => entry.pathname === "/v1/project-memory");
+  if (unscopedMemory.length > 0) failures.push(`JetBrains project phase observed unscoped project-memory fallback: ${formatRuntimeRequestLog(unscopedMemory)}.`);
 }
 
 function countRuntimeRequests(method, pathname) {
