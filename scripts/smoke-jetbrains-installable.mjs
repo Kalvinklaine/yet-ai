@@ -156,6 +156,33 @@ function assertGradleFailureDiagnosticSelfCheck() {
   if (diagnostic.length > diagnosticTailCharacters * 2 + 2048) {
     throw new Error(`Gradle failure diagnostic exceeded its bound: ${diagnostic.length}`);
   }
+
+  const posixRoot = "/Users/build agent/work/yet ai";
+  const windowsRoot = "C:\\Build Agent\\work\\yet ai";
+  const pathDiagnostic = [
+    sanitizeDiagnosticText(`repo_posix="${posixRoot}/dist/plugins/jetbrains/plugin.zip"`, {}, posixRoot),
+    sanitizeDiagnosticText(`repo_file="file://${posixRoot.replaceAll(" ", "%20")}/apps/plugins/jetbrains/build.gradle.kts"`, {}, posixRoot),
+    sanitizeDiagnosticText(`repo_windows="C:\\Build Agent\\work\\yet ai\\dist\\plugins\\jetbrains\\plugin.zip"`, {}, windowsRoot),
+    sanitizeDiagnosticText("repo_mixed='C:\\Build Agent/work\\yet ai/apps\\plugins/jetbrains/build.gradle.kts'", {}, windowsRoot),
+    sanitizeDiagnosticText("external_posix='/Users/private person/Desktop/external artifact.zip'", {}, posixRoot),
+    sanitizeDiagnosticText("external_windows=\"D:\\Other User\\external files\\artifact.zip\"", {}, windowsRoot),
+    sanitizeDiagnosticText("external_unc='\\\\server name\\private share\\artifact.zip'", {}, windowsRoot),
+    sanitizeDiagnosticText("external_file=\"file:///tmp/external%20files/artifact.zip\"", {}, posixRoot),
+  ].join("\n");
+  for (const expected of [
+    "repo_posix=\"dist/plugins/jetbrains/plugin.zip\"",
+    "repo_file=\"apps/plugins/jetbrains/build.gradle.kts\"",
+    "repo_windows=\"dist/plugins/jetbrains/plugin.zip\"",
+    "repo_mixed='apps/plugins/jetbrains/build.gradle.kts'",
+  ]) {
+    assertIncludes(pathDiagnostic, expected, `Gradle failure diagnostic repository path ${expected}`);
+  }
+  for (const expected of ["external_posix='<path>'", "external_windows=\"<path>\"", "external_unc='<path>'", "external_file=\"<path>\""]) {
+    assertIncludes(pathDiagnostic, expected, `Gradle failure diagnostic external path ${expected}`);
+  }
+  for (const forbidden of ["build agent", "Build Agent", "private person", "Other User", "server name", "private share", "external files", "external%20files", "C:\\", "/Users/", "/tmp/"]) {
+    assertExcludes(pathDiagnostic, forbidden, `Gradle failure diagnostic path privacy ${forbidden}`);
+  }
 }
 
 function formatGradleFailureDiagnostic(command, result, platform, environment = process.env) {
@@ -178,7 +205,7 @@ function sanitizeDiagnosticTail(value, environment) {
   return sanitizeDiagnosticText(lines.slice(-diagnosticTailCharacters), environment) || "<empty>";
 }
 
-function sanitizeDiagnosticText(value, environment) {
+function sanitizeDiagnosticText(value, environment, repositoryRoot = root) {
   let sanitized = String(value);
   const privateValues = Object.entries(environment)
     .filter(([name, secret]) => isSensitiveDiagnosticEnvName(name) && typeof secret === "string" && secret.length >= 4)
@@ -193,12 +220,51 @@ function sanitizeDiagnosticText(value, environment) {
     .replace(/((?:cookie|set[-_]?cookie)\s*:\s*)[^\r\n]+/gi, "$1<redacted>")
     .replace(/([?&#](?:access_token|refresh_token|id_token|api_key|apikey|key|token|code|secret|auth_code|authorization_code|code_verifier|cookie)=)[^\s"'`<>]*/gi, "$1<redacted>")
     .replace(/((?:access[_-]?token|refresh[_-]?token|id[_-]?token|oauth[_-]?token|auth[_-]?token|runtime[_-]?token|session[_-]?token|client[_-]?secret|auth[_-]?code|authorization[_-]?code|code[_-]?verifier|pkce[_-]?verifier|verifier|cookie|set[_-]?cookie|api[_-]?key|provider[_-]?key|openai[_-]?key|anthropic[_-]?key|secret[_-]?key|password|secret)\s*["'`]*\s*[=:]\s*["'`]*)[^\s,;)}\]"'`]+/gi, "$1<redacted>")
-    .replace(/sk-(?:proj-)?[A-Za-z0-9._-]{8,}/gi, "<redacted>")
-    .replace(/\bfile:\/{2,3}(?:[A-Za-z]:)?[^\s"'`<>|]+/gi, "<path>")
-    .replace(/\\\\[^\s"'`<>|\\]+\\[^\s"'`<>|]+/g, "<path>")
-    .replace(/\b[A-Za-z]:[\\/](?:[^\s"'`<>|]+[\\/])*[^\s"'`<>|]*/g, "<path>")
-    .replace(/\/(?:[^\s"'`<>|]+\/)*[^\s"'`<>|]*/g, "<path>");
-  return sanitized;
+    .replace(/sk-(?:proj-)?[A-Za-z0-9._-]{8,}/gi, "<redacted>");
+  return sanitizeDiagnosticPaths(sanitized, repositoryRoot);
+}
+
+function sanitizeDiagnosticPaths(value, repositoryRoot) {
+  const replacements = [];
+  const replacePath = (candidate) => {
+    const index = replacements.push(safeDiagnosticPath(candidate, repositoryRoot)) - 1;
+    return `YETAI_DIAGNOSTIC_PATH_${index}_`;
+  };
+  const quotedPath = /(["'`])((?:file:\/{2,3}(?:[A-Za-z]:)?|\\\\|[A-Za-z]:[\\/]|\/)[^\r\n"'`<>|]+)\1/gi;
+  let sanitized = value.replace(quotedPath, (_, quote, candidate) => `${quote}${replacePath(candidate)}${quote}`);
+  sanitized = sanitized
+    .replace(/\bfile:\/{2,3}(?:[A-Za-z]:)?[^\s"'`<>|]+/gi, replacePath)
+    .replace(/\\\\[^\s"'`<>|\\]+\\[^\s"'`<>|]+(?:[\\/][^\s"'`<>|]+)*/g, replacePath)
+    .replace(/\b[A-Za-z]:[\\/](?:[^\s"'`<>|]+[\\/])*[^\s"'`<>|]*/g, replacePath)
+    .replace(/\/(?:[^\s"'`<>|]+\/)*[^\s"'`<>|]*/g, replacePath);
+  return sanitized.replace(/YETAI_DIAGNOSTIC_PATH_(\d+)_/g, (_, index) => replacements[Number(index)]);
+}
+
+function safeDiagnosticPath(candidate, repositoryRoot) {
+  let decoded = candidate;
+  if (/^file:/i.test(decoded)) {
+    try {
+      decoded = decodeURIComponent(decoded.replace(/^file:\/{2,3}/i, ""));
+      if (!/^[A-Za-z]:[\\/]/.test(decoded)) {
+        decoded = `/${decoded}`;
+      }
+    } catch {
+      return "<path>";
+    }
+  }
+  const normalizedCandidate = decoded.replaceAll("\\", "/").replace(/\/{2,}/g, "/").replace(/\/$/, "");
+  const normalizedRoot = String(repositoryRoot).replaceAll("\\", "/").replace(/\/{2,}/g, "/").replace(/\/$/, "");
+  const windowsStyle = /^[A-Za-z]:\//.test(normalizedRoot);
+  const comparableCandidate = windowsStyle ? normalizedCandidate.toLowerCase() : normalizedCandidate;
+  const comparableRoot = windowsStyle ? normalizedRoot.toLowerCase() : normalizedRoot;
+  if (!comparableCandidate.startsWith(`${comparableRoot}/`)) {
+    return "<path>";
+  }
+  const relative = normalizedCandidate.slice(normalizedRoot.length + 1);
+  if (relative.length === 0 || relative.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return "<path>";
+  }
+  return relative;
 }
 
 function isSensitiveDiagnosticEnvName(name) {
