@@ -1,6 +1,7 @@
 package ai.yet.plugin.ui
 
 import ai.yet.plugin.runtime.RuntimeSettings
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
@@ -11,17 +12,24 @@ import kotlin.test.assertTrue
 class PackagedGuiServerArtifactSmokeTest {
     @Test
     fun currentPackagedGuiAssetsResolveThroughProductionPanelRoutes() {
-        val classBytes = requireNotNull(PackagedGuiServer::class.java.getResourceAsStream("/ai/yet/plugin/ui/PackagedGuiServer.class"))
+        val classResource = requireNotNull(PackagedGuiServer::class.java.getResource("/ai/yet/plugin/ui/PackagedGuiServer.class"))
+        val classBytes = classResource.openStream()
             .use { it.readBytes() }
         val indexBytes = requireNotNull(PackagedGuiServer::class.java.getResourceAsStream("/yet-ai-gui/index.html"))
             .use { it.readBytes() }
         val expectedClassSha = System.getProperty("yetAi.packagedSmokeClassSha256")
             ?: error("Missing required artifact identity property yetAi.packagedSmokeClassSha256")
+        val expectedJarSha = System.getProperty("yetAi.packagedSmokeJarSha256")
+            ?: error("Missing required artifact identity property yetAi.packagedSmokeJarSha256")
         val expectedIndexSha = System.getProperty("yetAi.packagedSmokeIndexSha256")
             ?: error("Missing required artifact identity property yetAi.packagedSmokeIndexSha256")
         val expectedRootZipSha = System.getProperty("yetAi.packagedSmokeRootZipSha256")
             ?: error("Missing required artifact identity property yetAi.packagedSmokeRootZipSha256")
         assertTrue(expectedRootZipSha.matches(Regex("[a-f0-9]{64}")))
+        val jarUrl = classResource.toString().substringBefore("!/ai/yet/plugin/ui/PackagedGuiServer.class")
+        val executedJar = File(URI(jarUrl.removePrefix("jar:")))
+        assertTrue(executedJar.isFile)
+        assertEquals(expectedJarSha, sha256(executedJar.readBytes()))
         assertEquals(expectedClassSha, sha256(classBytes))
         assertEquals(expectedIndexSha, sha256(indexBytes))
 

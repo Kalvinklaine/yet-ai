@@ -2,7 +2,6 @@ import org.gradle.api.GradleException
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.Sync
-import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import org.gradle.api.tasks.testing.Test
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -56,7 +55,8 @@ val packagedEngineResourcesDir = layout.buildDirectory.dir("generated/resources/
 val artifactMetadataResourcesDir = layout.buildDirectory.dir("generated/resources/yet-ai-artifact")
 val stagedEngineBinary = packagedEngineResourcesDir.map { it.file("yet-ai-engine/$engineBinaryFileName") }
 val artifactMetadataFile = artifactMetadataResourcesDir.map { it.file("yet-ai-artifact/build.properties") }
-val installableSmokeZipPath = providers.environmentVariable("YET_AI_INSTALLABLE_SMOKE_ZIP")
+val installableSmokeZipFile = providers.environmentVariable("YET_AI_INSTALLABLE_SMOKE_ZIP")
+    .map { file(it).canonicalFile }
 
 fun sha256(file: java.io.File): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -242,22 +242,105 @@ tasks {
         mainClass.set("ai.yet.plugin.ui.SmokeRenderWrapperHtmlKt")
     }
 
-    val packagedPluginJar = named<AbstractArchiveTask>("composedJar").flatMap { it.archiveFile }
+    val workspaceComposedJar = layout.buildDirectory.file("libs/${project.name}-${project.version}.jar")
+    val artifactSmokeDirectory = layout.buildDirectory.dir("tmp/packaged-gui-server-artifact-smoke")
+    val extractedPluginJar = artifactSmokeDirectory.map { it.file("nested-production.jar") }
+    val artifactSmokeIdentity = artifactSmokeDirectory.map { it.file("identity.properties") }
+    val preparePackagedGuiServerArtifactSmoke by registering {
+        group = "verification"
+        description = "Extracts and verifies the production plugin JAR used by the packaged GUI smoke."
+        inputs.file(installableSmokeZipFile)
+            .withPropertyName("installablePluginZip")
+            .withPathSensitivity(PathSensitivity.NONE)
+            .optional()
+        inputs.file(workspaceComposedJar)
+            .withPropertyName("workspaceComposedJar")
+            .withPathSensitivity(PathSensitivity.NONE)
+            .optional()
+        outputs.file(extractedPluginJar)
+        outputs.file(artifactSmokeIdentity)
+        outputs.upToDateWhen { false }
+        doLast {
+            val installableZipFile = installableSmokeZipFile.orNull
+                ?: throw GradleException("The dedicated artifact smoke requires YET_AI_INSTALLABLE_SMOKE_ZIP.")
+            val rootDistDirectory = layout.projectDirectory.dir("../../../dist/plugins/jetbrains").asFile.canonicalFile
+            if (!installableZipFile.isAbsolute || !installableZipFile.isFile || installableZipFile.parentFile != rootDistDirectory || !installableZipFile.name.endsWith("-dev-preview.zip")) {
+                throw GradleException("The dedicated artifact smoke ZIP must be an existing root dev-preview ZIP under dist/plugins/jetbrains/.")
+            }
+            val composedJarFile = workspaceComposedJar.get().asFile.canonicalFile
+            if (!composedJarFile.isFile) {
+                throw GradleException("The prepared workspace composed JAR is missing. Run npm run prepare:jetbrains-preview before the dedicated artifact smoke.")
+            }
+            val extractedJarFile = extractedPluginJar.get().asFile
+            extractedJarFile.parentFile.mkdirs()
+            val nestedEntryName = ZipFile(installableZipFile).use { zip ->
+                val entries = zip.entries().asSequence().toList()
+                val unsafeEntries = entries.filter { entry ->
+                    val name = entry.name
+                    val path = name.removeSuffix("/")
+                    name.isBlank() || name.contains('\\') || name.startsWith('/') || Regex("^[A-Za-z]:").containsMatchIn(name) ||
+                        path.split('/').any { it.isBlank() || it == "." || it == ".." }
+                }
+                if (unsafeEntries.isNotEmpty()) {
+                    throw GradleException("Installable plugin contains an unsafe ZIP entry path.")
+                }
+                val pluginJars = entries.filter {
+                    !it.isDirectory &&
+                        it.name.matches(Regex("[^/]+/lib/yet-ai-jetbrains-[^/]+\\.jar")) &&
+                        !it.name.endsWith("-searchableOptions.jar")
+                }
+                if (pluginJars.size != 1) {
+                    throw GradleException("Installable plugin must contain exactly one production plugin JAR; found ${pluginJars.size}.")
+                }
+                val nestedEntry = pluginJars.single()
+                zip.getInputStream(nestedEntry).use { input ->
+                    Files.newOutputStream(extractedJarFile.toPath()).use { output -> input.copyTo(output) }
+                }
+                nestedEntry.name
+            }
+            val composedSha = sha256(composedJarFile)
+            val nestedSha = sha256(extractedJarFile)
+            if (composedSha != nestedSha) {
+                throw GradleException("Installable plugin production JAR does not match the prepared workspace composed JAR. Re-run npm run prepare:jetbrains-preview.")
+            }
+            val entryHashes = ZipFile(extractedJarFile).use { jar ->
+                listOf(
+                    "ai/yet/plugin/ui/PackagedGuiServer.class",
+                    "yet-ai-gui/index.html",
+                ).associateWith { entryName ->
+                    val entry = jar.getEntry(entryName)
+                        ?: throw GradleException("Extracted production plugin JAR is missing $entryName.")
+                    jar.getInputStream(entry).use { input ->
+                        MessageDigest.getInstance("SHA-256").digest(input.readBytes()).joinToString("") { "%02x".format(it) }
+                    }
+                }
+            }
+            artifactSmokeIdentity.get().asFile.writeText(
+                listOf(
+                    "nestedEntry=$nestedEntryName",
+                    "jarSha256=$nestedSha",
+                    "zipSha256=${sha256(installableZipFile)}",
+                    "classSha256=${entryHashes.getValue("ai/yet/plugin/ui/PackagedGuiServer.class")}",
+                    "indexSha256=${entryHashes.getValue("yet-ai-gui/index.html")}",
+                ).joinToString("\n", postfix = "\n")
+            )
+        }
+    }
     val standardTest = named<Test>("test")
     register<Test>("smokePackagedGuiServerBehavior") {
         group = "verification"
         description = "Verifies production packaged GUI panel behavior from the current installable artifact."
-        dependsOn("buildPlugin", "prepareTest", "testClasses")
+        dependsOn(preparePackagedGuiServerArtifactSmoke, "testClasses")
         testClassesDirs = sourceSets["test"].output.classesDirs
         useJUnitPlatform()
         filter {
             includeTestsMatching("ai.yet.plugin.ui.PackagedGuiServerArtifactSmokeTest")
         }
-        inputs.file(packagedPluginJar)
-            .withPropertyName("packagedPluginJar")
+        inputs.file(extractedPluginJar)
+            .withPropertyName("extractedPluginJar")
             .withPathSensitivity(PathSensitivity.NONE)
-        inputs.file(installableSmokeZipPath)
-            .withPropertyName("installablePluginZip")
+        inputs.file(artifactSmokeIdentity)
+            .withPropertyName("artifactSmokeIdentity")
             .withPathSensitivity(PathSensitivity.NONE)
         outputs.upToDateWhen { false }
 
@@ -265,48 +348,23 @@ tasks {
         doFirst {
             executedTests = 0
             val configuredTest = standardTest.get()
-            classpath = files(packagedPluginJar) + configuredTest.classpath.minus(sourceSets["main"].output)
+            val projectBuildDirectory = layout.buildDirectory.get().asFile.canonicalFile.toPath()
+            val runtimeClasspath = configuredTest.classpath.minus(sourceSets["main"].output).filter { candidate ->
+                val canonicalCandidate = candidate.canonicalFile
+                !(canonicalCandidate.isFile && canonicalCandidate.extension == "jar" && canonicalCandidate.toPath().startsWith(projectBuildDirectory) && canonicalCandidate.name.startsWith(project.name))
+            }
+            classpath = files(extractedPluginJar) + files(runtimeClasspath)
             executable = configuredTest.executable
             jvmArgs(configuredTest.allJvmArgs)
-            val composedJarFile = packagedPluginJar.get().asFile
-            val configuredZipPath = installableSmokeZipPath.orNull
-                ?: throw GradleException("The dedicated artifact smoke requires YET_AI_INSTALLABLE_SMOKE_ZIP.")
-            val installableZipFile = file(configuredZipPath).canonicalFile
-            val rootDistDirectory = layout.projectDirectory.dir("../../../dist/plugins/jetbrains").asFile.canonicalFile
-            if (!installableZipFile.isFile || installableZipFile.parentFile != rootDistDirectory || !installableZipFile.name.endsWith("-dev-preview.zip")) {
-                throw GradleException("The dedicated artifact smoke ZIP must be an existing root dev-preview ZIP under dist/plugins/jetbrains/.")
+            val identity = artifactSmokeIdentity.get().asFile.readLines().associate { line ->
+                val separator = line.indexOf('=')
+                if (separator <= 0) throw GradleException("Invalid packaged GUI artifact smoke identity metadata.")
+                line.substring(0, separator) to line.substring(separator + 1)
             }
-            val nestedJarBytes = ZipFile(installableZipFile).use { zip ->
-                val pluginJars = zip.entries().asSequence()
-                    .filter {
-                        !it.isDirectory &&
-                            it.name.matches(Regex("[^/]+/lib/yet-ai-jetbrains-[^/]+\\.jar")) &&
-                            !it.name.endsWith("-searchableOptions.jar")
-                    }
-                    .toList()
-                if (pluginJars.size != 1) {
-                    throw GradleException("Installable plugin must contain exactly one production plugin JAR; found ${pluginJars.size}.")
-                }
-                zip.getInputStream(pluginJars.single()).use { it.readBytes() }
-            }
-            val composedSha = sha256(composedJarFile)
-            val nestedSha = MessageDigest.getInstance("SHA-256").digest(nestedJarBytes).joinToString("") { "%02x".format(it) }
-            if (composedSha != nestedSha) {
-                throw GradleException("Installable plugin production JAR does not match the composed JAR executed by the smoke test.")
-            }
-            systemProperty("yetAi.packagedSmokeRootZipSha256", sha256(installableZipFile))
-            ZipFile(composedJarFile).use { jar ->
-                mapOf(
-                    "yetAi.packagedSmokeClassSha256" to "ai/yet/plugin/ui/PackagedGuiServer.class",
-                    "yetAi.packagedSmokeIndexSha256" to "yet-ai-gui/index.html",
-                ).forEach { (property, entryName) ->
-                    val entry = jar.getEntry(entryName)
-                        ?: throw GradleException("Composed plugin JAR is missing $entryName.")
-                    val bytes = jar.getInputStream(entry).use { it.readBytes() }
-                    val digest = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-                    systemProperty(property, digest)
-                }
-            }
+            systemProperty("yetAi.packagedSmokeRootZipSha256", identity.getValue("zipSha256"))
+            systemProperty("yetAi.packagedSmokeJarSha256", identity.getValue("jarSha256"))
+            systemProperty("yetAi.packagedSmokeClassSha256", identity.getValue("classSha256"))
+            systemProperty("yetAi.packagedSmokeIndexSha256", identity.getValue("indexSha256"))
         }
         afterTest(KotlinClosure2({ _: org.gradle.api.tasks.testing.TestDescriptor, _: org.gradle.api.tasks.testing.TestResult ->
             executedTests += 1
@@ -315,7 +373,8 @@ tasks {
             if (executedTests != 1L) {
                 throw GradleException("Packaged GUI server behavior smoke must execute exactly one test; executed $executedTests.")
             }
-            println("PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 jarSha256=${sha256(packagedPluginJar.get().asFile)} zipSha256=${sha256(file(installableSmokeZipPath.get()))}")
+            val identity = artifactSmokeIdentity.get().asFile.readLines().associate { line -> line.substringBefore('=') to line.substringAfter('=') }
+            println("PACKAGED_GUI_SERVER_ARTIFACT_SMOKE_EXECUTED tests=1 jarSha256=${identity.getValue("jarSha256")} zipSha256=${identity.getValue("zipSha256")}")
         }
     }
 
