@@ -11,6 +11,8 @@ const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
 const rootDistDir = path.join(root, "dist", "plugins", "jetbrains");
 const archiveInspectMaxBuffer = 128 * 1024 * 1024;
+const diagnosticTailLines = 80;
+const diagnosticTailCharacters = 12 * 1024;
 const failures = [];
 const identity = JSON.parse(await readFile(path.join(root, "product", "identity.json"), "utf8"));
 const binaryFileName = process.platform === "win32" ? `${identity.engine.binaryName}.exe` : identity.engine.binaryName;
@@ -23,6 +25,7 @@ const gradleCommandSelfCheck = process.argv.includes("--self-check-gradle-comman
 if (gradleCommandSelfCheck) {
   assertGradleArtifactSmokeCommandSelfCheck();
   assertArtifactSmokeMarkerSelfCheck();
+  assertGradleFailureDiagnosticSelfCheck();
   console.log("Gradle artifact smoke command self-check passed.");
   process.exit(0);
 }
@@ -78,7 +81,7 @@ function checkPackagedGuiServerBehavior(rootZipPath, expectedHashes) {
     env: { ...process.env, YET_AI_INSTALLABLE_SMOKE_ZIP: path.normalize(path.resolve(rootZipPath)) },
   });
   if (result.status !== 0) {
-    failures.push("Production packaged GUI server behavior smoke failed. Rebuild the current JetBrains preview and rerun the installable smoke.");
+    failures.push(`Production packaged GUI server behavior smoke failed. Rebuild the current JetBrains preview and rerun the installable smoke.\n${formatGradleFailureDiagnostic(command, result, process.platform)}`);
     return;
   }
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
@@ -90,7 +93,7 @@ function checkPackagedGuiServerBehavior(rootZipPath, expectedHashes) {
 }
 
 function buildGradleArtifactSmokeCommand(platform) {
-  const gradleArgs = ["smokePackagedGuiServerBehavior", "--console=plain"];
+  const gradleArgs = ["smokePackagedGuiServerBehavior", "--console=plain", "--stacktrace"];
   if (platform === "win32") {
     return { file: "cmd.exe", args: ["/d", "/s", "/c", "gradle.bat", ...gradleArgs] };
   }
@@ -98,9 +101,76 @@ function buildGradleArtifactSmokeCommand(platform) {
 }
 
 function assertGradleArtifactSmokeCommandSelfCheck() {
-  const args = ["smokePackagedGuiServerBehavior", "--console=plain"];
+  const args = ["smokePackagedGuiServerBehavior", "--console=plain", "--stacktrace"];
   assertDeepEqual(buildGradleArtifactSmokeCommand("win32"), { file: "cmd.exe", args: ["/d", "/s", "/c", "gradle.bat", ...args] }, "Windows Gradle artifact smoke command shape");
   assertDeepEqual(buildGradleArtifactSmokeCommand("darwin"), { file: "gradle", args }, "POSIX Gradle artifact smoke command shape");
+}
+
+function assertGradleFailureDiagnosticSelfCheck() {
+  const command = buildGradleArtifactSmokeCommand("win32");
+  const diagnostic = formatGradleFailureDiagnostic(command, {
+    status: null,
+    signal: "SIGTERM",
+    error: new Error("spawn C:\\Users\\builder\\yet-ai\\gradle.bat failed with session_token=private-session-value"),
+    stdout: `${Array.from({ length: diagnosticTailLines + 5 }, (_, index) => `line-${index}`).join("\n")}\n/home/builder/yet-ai/build/output.jar`,
+    stderr: "Authorization: Bearer private-bearer-value\nYET_AI_SESSION_TOKEN=private-env-value\nC:\\Users\\builder\\yet-ai\\failure.txt",
+  }, "win32", { YET_AI_SESSION_TOKEN: "private-env-value" });
+  for (const expected of [
+    "platform=win32",
+    "command=cmd.exe /d /s /c gradle.bat smokePackagedGuiServerBehavior --console=plain --stacktrace",
+    "status=null",
+    "signal=SIGTERM",
+    "error=spawn <path> failed with session_token=<redacted>",
+    "stdout_tail=",
+    "stderr_tail=",
+    "<path>",
+    "<redacted>",
+    "line-84",
+  ]) {
+    assertIncludes(diagnostic, expected, `Gradle failure diagnostic ${expected}`);
+  }
+  for (const forbidden of ["private-session-value", "private-bearer-value", "private-env-value", "/home/builder", "C:\\Users\\builder", "line-0\n"]) {
+    assertExcludes(diagnostic, forbidden, `Gradle failure diagnostic redaction ${forbidden}`);
+  }
+  if (diagnostic.length > diagnosticTailCharacters * 2 + 2048) {
+    throw new Error(`Gradle failure diagnostic exceeded its bound: ${diagnostic.length}`);
+  }
+}
+
+function formatGradleFailureDiagnostic(command, result, platform, environment = process.env) {
+  const commandShape = [command.file, ...command.args].join(" ");
+  const error = result.error instanceof Error ? result.error.message : result.error;
+  return [
+    "Nested Gradle diagnostic:",
+    `platform=${sanitizeDiagnosticText(platform, environment)}`,
+    `command=${commandShape}`,
+    `status=${result.status ?? "null"}`,
+    `signal=${sanitizeDiagnosticText(result.signal ?? "none", environment)}`,
+    `error=${sanitizeDiagnosticText(error ?? "none", environment)}`,
+    `stdout_tail=\n${sanitizeDiagnosticTail(result.stdout, environment)}`,
+    `stderr_tail=\n${sanitizeDiagnosticTail(result.stderr, environment)}`,
+  ].join("\n");
+}
+
+function sanitizeDiagnosticTail(value, environment) {
+  const lines = String(value ?? "").split(/\r?\n/).slice(-diagnosticTailLines).join("\n");
+  return sanitizeDiagnosticText(lines.slice(-diagnosticTailCharacters), environment) || "<empty>";
+}
+
+function sanitizeDiagnosticText(value, environment) {
+  let sanitized = String(value);
+  const privateValues = Object.entries(environment)
+    .filter(([name, secret]) => /(?:token|secret|password|api[_-]?key)/i.test(name) && typeof secret === "string" && secret.length >= 4)
+    .map(([, secret]) => secret)
+    .sort((left, right) => right.length - left.length);
+  for (const secret of privateValues) {
+    sanitized = sanitized.split(secret).join("<redacted>");
+  }
+  sanitized = sanitized
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1<redacted>")
+    .replace(/((?:session[_-]?token|api[_-]?key|password|secret)\s*[=:]\s*)[^\s]+/gi, "$1<redacted>")
+    .replace(/(?:[A-Za-z]:[\\/]|\/)(?:[^\s"'`<>|]+[\\/])*[^\s"'`<>|]*/g, "<path>");
+  return sanitized;
 }
 
 function assertArtifactSmokeMarkerSelfCheck() {
@@ -129,6 +199,18 @@ function artifactSmokeMarkerMatches(output, expectedHashes) {
 function assertDeepEqual(actual, expected, label) {
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new Error(`${label} mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`);
+  }
+}
+
+function assertIncludes(actual, expected, label) {
+  if (!actual.includes(expected)) {
+    throw new Error(`${label} mismatch: expected ${JSON.stringify(actual)} to include ${JSON.stringify(expected)}`);
+  }
+}
+
+function assertExcludes(actual, forbidden, label) {
+  if (actual.includes(forbidden)) {
+    throw new Error(`${label} mismatch: expected ${JSON.stringify(actual)} to exclude ${JSON.stringify(forbidden)}`);
   }
 }
 
