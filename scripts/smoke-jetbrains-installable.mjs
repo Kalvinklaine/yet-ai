@@ -108,13 +108,32 @@ function assertGradleArtifactSmokeCommandSelfCheck() {
 
 function assertGradleFailureDiagnosticSelfCheck() {
   const command = buildGradleArtifactSmokeCommand("win32");
+  const secretValues = [
+    "access-value-1",
+    "refresh-value-2",
+    "auth-value-3",
+    "cookie-value-4",
+    "set-cookie-value-5",
+    "client-secret-value-6",
+    "auth-code-value-7",
+    "verifier-value-8",
+    "bearer-value-9",
+    "basic-value-10",
+    "api-key-value-11",
+    "password-value-12",
+    "session-value-13",
+    "environment-value-14",
+    "provider-key-value-15",
+    "runtime-value-16",
+    "query-secret-value-17",
+  ];
   const diagnostic = formatGradleFailureDiagnostic(command, {
     status: null,
     signal: "SIGTERM",
-    error: new Error("spawn C:\\Users\\builder\\yet-ai\\gradle.bat failed with session_token=private-session-value"),
-    stdout: `${Array.from({ length: diagnosticTailLines + 5 }, (_, index) => `line-${index}`).join("\n")}\n/home/builder/yet-ai/build/output.jar`,
-    stderr: "Authorization: Bearer private-bearer-value\nYET_AI_SESSION_TOKEN=private-env-value\nC:\\Users\\builder\\yet-ai\\failure.txt",
-  }, "win32", { YET_AI_SESSION_TOKEN: "private-env-value" });
+    error: new Error("spawn C:\\Users\\builder\\yet-ai\\gradle.bat failed with session_token=session-value-13"),
+    stdout: `${Array.from({ length: diagnosticTailLines + 5 }, (_, index) => `line-${index}`).join("\n")}\n> Task :plugin:test PASSED\nTest suite status: 12 tests completed\naccess_token=access-value-1\nrefresh-token: refresh-value-2\nauth_token=auth-value-3\nCookie: cookie-value-4\nSet-Cookie: set-cookie-value-5\nclient_secret=client-secret-value-6\nauth_code=auth-code-value-7\ncode_verifier=verifier-value-8\n/home/builder/yet-ai/build/output.jar`,
+    stderr: "Authorization: Bearer bearer-value-9\nProxy-Authorization: Basic basic-value-10\napiKey=api-key-value-11\npassword=password-value-12\nYET_AI_SESSION_TOKEN=environment-value-14\nprovider_key=provider-key-value-15\nruntimeToken=runtime-value-16\nhttps://example.invalid/callback?secret=query-secret-value-17\nC:\\Users\\builder\\yet-ai\\failure.txt\n/tmp/mixed/C:\\agent\\workspace\\report.txt",
+  }, "win32", { YET_AI_SESSION_TOKEN: "environment-value-14" });
   for (const expected of [
     "platform=win32",
     "command=cmd.exe /d /s /c gradle.bat smokePackagedGuiServerBehavior --console=plain --stacktrace",
@@ -126,10 +145,12 @@ function assertGradleFailureDiagnosticSelfCheck() {
     "<path>",
     "<redacted>",
     "line-84",
+    "> Task :plugin:test PASSED",
+    "Test suite status: 12 tests completed",
   ]) {
     assertIncludes(diagnostic, expected, `Gradle failure diagnostic ${expected}`);
   }
-  for (const forbidden of ["private-session-value", "private-bearer-value", "private-env-value", "/home/builder", "C:\\Users\\builder", "line-0\n"]) {
+  for (const forbidden of [...secretValues, "/home/builder", "C:\\Users\\builder", "C:\\agent", "/tmp/mixed", "line-0\n"]) {
     assertExcludes(diagnostic, forbidden, `Gradle failure diagnostic redaction ${forbidden}`);
   }
   if (diagnostic.length > diagnosticTailCharacters * 2 + 2048) {
@@ -160,17 +181,28 @@ function sanitizeDiagnosticTail(value, environment) {
 function sanitizeDiagnosticText(value, environment) {
   let sanitized = String(value);
   const privateValues = Object.entries(environment)
-    .filter(([name, secret]) => /(?:token|secret|password|api[_-]?key)/i.test(name) && typeof secret === "string" && secret.length >= 4)
+    .filter(([name, secret]) => isSensitiveDiagnosticEnvName(name) && typeof secret === "string" && secret.length >= 4)
     .map(([, secret]) => secret)
     .sort((left, right) => right.length - left.length);
   for (const secret of privateValues) {
     sanitized = sanitized.split(secret).join("<redacted>");
   }
   sanitized = sanitized
-    .replace(/(authorization\s*:\s*bearer\s+)[^\s]+/gi, "$1<redacted>")
-    .replace(/((?:session[_-]?token|api[_-]?key|password|secret)\s*[=:]\s*)[^\s]+/gi, "$1<redacted>")
-    .replace(/(?:[A-Za-z]:[\\/]|\/)(?:[^\s"'`<>|]+[\\/])*[^\s"'`<>|]*/g, "<path>");
+    .replace(/((?:proxy-)?authorization\s*:\s*)[^\r\n]+/gi, "$1<redacted>")
+    .replace(/\b((?:bearer|basic)\s+)[A-Za-z0-9._~:/?#[\]@!$&'()*+,;=%-]{4,}/gi, "$1<redacted>")
+    .replace(/((?:cookie|set[-_]?cookie)\s*:\s*)[^\r\n]+/gi, "$1<redacted>")
+    .replace(/([?&#](?:access_token|refresh_token|id_token|api_key|apikey|key|token|code|secret|auth_code|authorization_code|code_verifier|cookie)=)[^\s"'`<>]*/gi, "$1<redacted>")
+    .replace(/((?:access[_-]?token|refresh[_-]?token|id[_-]?token|oauth[_-]?token|auth[_-]?token|runtime[_-]?token|session[_-]?token|client[_-]?secret|auth[_-]?code|authorization[_-]?code|code[_-]?verifier|pkce[_-]?verifier|verifier|cookie|set[_-]?cookie|api[_-]?key|provider[_-]?key|openai[_-]?key|anthropic[_-]?key|secret[_-]?key|password|secret)\s*["'`]*\s*[=:]\s*["'`]*)[^\s,;)}\]"'`]+/gi, "$1<redacted>")
+    .replace(/sk-(?:proj-)?[A-Za-z0-9._-]{8,}/gi, "<redacted>")
+    .replace(/\bfile:\/{2,3}(?:[A-Za-z]:)?[^\s"'`<>|]+/gi, "<path>")
+    .replace(/\\\\[^\s"'`<>|\\]+\\[^\s"'`<>|]+/g, "<path>")
+    .replace(/\b[A-Za-z]:[\\/](?:[^\s"'`<>|]+[\\/])*[^\s"'`<>|]*/g, "<path>")
+    .replace(/\/(?:[^\s"'`<>|]+\/)*[^\s"'`<>|]*/g, "<path>");
   return sanitized;
+}
+
+function isSensitiveDiagnosticEnvName(name) {
+  return /(?:^|[_-])(?:access[_-]?token|refresh[_-]?token|auth[_-]?token|session[_-]?token|token|api[_-]?key|authorization|bearer|cookie|client[_-]?secret|auth[_-]?code|code[_-]?verifier|pkce[_-]?verifier|verifier|password|secret|credential|provider|openai|anthropic|github|aws|azure|google)(?:$|[_-])/i.test(name);
 }
 
 function assertArtifactSmokeMarkerSelfCheck() {
