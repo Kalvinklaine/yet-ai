@@ -168,19 +168,40 @@ function assertGradleFailureDiagnosticSelfCheck() {
     sanitizeDiagnosticText("external_windows=\"D:\\Other User\\external files\\artifact.zip\"", {}, windowsRoot),
     sanitizeDiagnosticText("external_unc='\\\\server name\\private share\\artifact.zip'", {}, windowsRoot),
     sanitizeDiagnosticText("external_file=\"file:///tmp/external%20files/artifact.zip\"", {}, posixRoot),
+    sanitizeDiagnosticText(`unquoted_repo_posix=${posixRoot}/dist/plugins/jetbrains/plugin archive.zip, task=:plugin:verify PASSED`, {}, posixRoot),
+    sanitizeDiagnosticText(`unquoted_repo_file=file://${posixRoot.replaceAll(" ", "%20")}/apps/plugins/jetbrains/build report.txt; status=ready`, {}, posixRoot),
+    sanitizeDiagnosticText(`unquoted_repo_windows=${windowsRoot}\\dist\\plugins\\jetbrains\\plugin archive.zip: status=ready`, {}, windowsRoot),
+    sanitizeDiagnosticText(`unquoted_repo_root=${posixRoot}; status=ready`, {}, posixRoot),
+    sanitizeDiagnosticText("unquoted_external_posix=/Users/Alice Smith/Desktop/external artifact.zip, task=:plugin:test FAILED", {}, posixRoot),
+    sanitizeDiagnosticText("unquoted_external_windows=C:\\Users\\Alice Smith\\Desktop\\external artifact.zip; status=failed", {}, windowsRoot),
+    sanitizeDiagnosticText("unquoted_external_unc=\\\\server name\\private share\\external artifact.zip) status=failed", {}, windowsRoot),
+    sanitizeDiagnosticText("unquoted_external_file=file:///Users/Alice Smith/Desktop/external%20artifact.zip\n> Task :plugin:test PASSED", {}, posixRoot),
   ].join("\n");
   for (const expected of [
     "repo_posix=\"dist/plugins/jetbrains/plugin.zip\"",
     "repo_file=\"apps/plugins/jetbrains/build.gradle.kts\"",
     "repo_windows=\"dist/plugins/jetbrains/plugin.zip\"",
     "repo_mixed='apps/plugins/jetbrains/build.gradle.kts'",
+    "unquoted_repo_posix=dist/plugins/jetbrains/plugin archive.zip, task=:plugin:verify PASSED",
+    "unquoted_repo_file=apps/plugins/jetbrains/build report.txt; status=ready",
+    "unquoted_repo_windows=dist/plugins/jetbrains/plugin archive.zip: status=ready",
   ]) {
     assertIncludes(pathDiagnostic, expected, `Gradle failure diagnostic repository path ${expected}`);
   }
-  for (const expected of ["external_posix='<path>'", "external_windows=\"<path>\"", "external_unc='<path>'", "external_file=\"<path>\""]) {
+  for (const expected of [
+    "external_posix='<path>'",
+    "external_windows=\"<path>\"",
+    "external_unc='<path>'",
+    "external_file=\"<path>\"",
+    "unquoted_external_posix=<path>, task=:plugin:test FAILED",
+    "unquoted_external_windows=<path>; status=failed",
+    "unquoted_external_unc=<path>) status=failed",
+    "unquoted_external_file=<path>\n> Task :plugin:test PASSED",
+    "unquoted_repo_root=<path>; status=ready",
+  ]) {
     assertIncludes(pathDiagnostic, expected, `Gradle failure diagnostic external path ${expected}`);
   }
-  for (const forbidden of ["build agent", "Build Agent", "private person", "Other User", "server name", "private share", "external files", "external%20files", "C:\\", "/Users/", "/tmp/"]) {
+  for (const forbidden of ["build agent", "Build Agent", "private person", "Other User", "Alice Smith", "server name", "private share", "external files", "external%20files", "external artifact", "external%20artifact", "C:\\", "/Users/", "/tmp/"]) {
     assertExcludes(pathDiagnostic, forbidden, `Gradle failure diagnostic path privacy ${forbidden}`);
   }
 }
@@ -232,12 +253,43 @@ function sanitizeDiagnosticPaths(value, repositoryRoot) {
   };
   const quotedPath = /(["'`])((?:file:\/{2,3}(?:[A-Za-z]:)?|\\\\|[A-Za-z]:[\\/]|\/)[^\r\n"'`<>|]+)\1/gi;
   let sanitized = value.replace(quotedPath, (_, quote, candidate) => `${quote}${replacePath(candidate)}${quote}`);
+  sanitized = replaceUnquotedSpacedDiagnosticPaths(sanitized, repositoryRoot, replacePath);
   sanitized = sanitized
     .replace(/\bfile:\/{2,3}(?:[A-Za-z]:)?[^\s"'`<>|]+/gi, replacePath)
     .replace(/\\\\[^\s"'`<>|\\]+\\[^\s"'`<>|]+(?:[\\/][^\s"'`<>|]+)*/g, replacePath)
     .replace(/\b[A-Za-z]:[\\/](?:[^\s"'`<>|]+[\\/])*[^\s"'`<>|]*/g, replacePath)
     .replace(/\/(?:[^\s"'`<>|]+\/)*[^\s"'`<>|]*/g, replacePath);
   return sanitized.replace(/YETAI_DIAGNOSTIC_PATH_(\d+)_/g, (_, index) => replacements[Number(index)]);
+}
+
+function replaceUnquotedSpacedDiagnosticPaths(value, repositoryRoot, replacePath) {
+  const terminator = String.raw`(?=$|\r?\n|[,;)}\]"'\x60]|[:.!?](?:\s|$)|\s+(?:failed|because|does|was|is|could|cannot|from|for|at|with|after|before|during|while|but)\b)`;
+  const pathTail = String.raw`[^\r\n"'\x60<>|]{1,768}?`;
+  const rootVariants = new Set([
+    String(repositoryRoot),
+    String(repositoryRoot).replaceAll("\\", "/"),
+    String(repositoryRoot).replaceAll("/", "\\"),
+  ]);
+  let sanitized = value;
+  for (const rootVariant of rootVariants) {
+    const rootPrefixes = [rootVariant];
+    if (rootVariant.startsWith("/") || /^[A-Za-z]:[\\/]/.test(rootVariant)) {
+      rootPrefixes.push(`file://${rootVariant.replaceAll(" ", "%20")}`);
+    }
+    for (const prefix of rootPrefixes) {
+      const rootPath = new RegExp(`${escapeRegExp(prefix)}[\\/]${pathTail}${terminator}`, "gi");
+      sanitized = sanitized.replace(rootPath, replacePath);
+    }
+  }
+  const spacedAbsolutePath = new RegExp(
+    String.raw`(?:file:\/{2,3}(?:[A-Za-z]:)?|\\\\|[A-Za-z]:[\\/]|\/)(?=[^\r\n"'\x60<>|]{0,768}\s)(?=[^\r\n"'\x60<>|]{0,768}[\\/])${pathTail}${terminator}`,
+    "gi",
+  );
+  return sanitized.replace(spacedAbsolutePath, replacePath);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function safeDiagnosticPath(candidate, repositoryRoot) {
