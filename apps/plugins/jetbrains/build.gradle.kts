@@ -1,8 +1,12 @@
 import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.tasks.Jar
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Instant
@@ -242,7 +246,7 @@ tasks {
         mainClass.set("ai.yet.plugin.ui.SmokeRenderWrapperHtmlKt")
     }
 
-    val workspaceComposedJar = layout.buildDirectory.file("libs/${project.name}-${project.version}.jar")
+    val composedJarArchive = named<Jar>("composedJar").flatMap { it.archiveFile }
     val artifactSmokeDirectory = layout.buildDirectory.dir("tmp/packaged-gui-server-artifact-smoke")
     val extractedPluginJar = artifactSmokeDirectory.map { it.file("nested-production.jar") }
     val artifactSmokeIdentity = artifactSmokeDirectory.map { it.file("identity.properties") }
@@ -251,10 +255,6 @@ tasks {
         description = "Extracts and verifies the production plugin JAR used by the packaged GUI smoke."
         inputs.file(installableSmokeZipFile)
             .withPropertyName("installablePluginZip")
-            .withPathSensitivity(PathSensitivity.NONE)
-            .optional()
-        inputs.file(workspaceComposedJar)
-            .withPropertyName("workspaceComposedJar")
             .withPathSensitivity(PathSensitivity.NONE)
             .optional()
         outputs.file(extractedPluginJar)
@@ -267,7 +267,7 @@ tasks {
             if (!installableZipFile.isAbsolute || !installableZipFile.isFile || installableZipFile.parentFile != rootDistDirectory || !installableZipFile.name.endsWith("-dev-preview.zip")) {
                 throw GradleException("The dedicated artifact smoke ZIP must be an existing root dev-preview ZIP under dist/plugins/jetbrains/.")
             }
-            val composedJarFile = workspaceComposedJar.get().asFile.canonicalFile
+            val composedJarFile = composedJarArchive.get().asFile.canonicalFile
             if (!composedJarFile.isFile) {
                 throw GradleException("The prepared workspace composed JAR is missing. Run npm run prepare:jetbrains-preview before the dedicated artifact smoke.")
             }
@@ -326,7 +326,14 @@ tasks {
             )
         }
     }
-    val standardTest = named<Test>("test")
+    val externalTestRuntime = listOf("intellijPlatformTestClasspath", "intellijPlatformTestRuntimeClasspath")
+        .map { configurationName ->
+            configurations[configurationName].incoming.artifactView {
+                componentFilter { it !is ProjectComponentIdentifier }
+            }.files
+        }
+        .reduce { classpath, configuration -> classpath + configuration }
+    val javaToolchains = project.extensions.getByType(JavaToolchainService::class.java)
     register<Test>("smokePackagedGuiServerBehavior") {
         group = "verification"
         description = "Verifies production packaged GUI panel behavior from the current installable artifact."
@@ -343,19 +350,22 @@ tasks {
             .withPropertyName("artifactSmokeIdentity")
             .withPathSensitivity(PathSensitivity.NONE)
         outputs.upToDateWhen { false }
+        javaLauncher.set(javaToolchains.launcherFor {
+            languageVersion.set(JavaLanguageVersion.of(17))
+        })
 
         var executedTests = 0L
         doFirst {
             executedTests = 0
-            val configuredTest = standardTest.get()
-            val projectBuildDirectory = layout.buildDirectory.get().asFile.canonicalFile.toPath()
-            val runtimeClasspath = configuredTest.classpath.minus(sourceSets["main"].output).filter { candidate ->
-                val canonicalCandidate = candidate.canonicalFile
-                !(canonicalCandidate.isFile && canonicalCandidate.extension == "jar" && canonicalCandidate.toPath().startsWith(projectBuildDirectory) && canonicalCandidate.name.startsWith(project.name))
+            val productionJar = extractedPluginJar.get().asFile.canonicalFile
+            val externalRuntime = externalTestRuntime.files.map { it.canonicalFile }
+            val forbiddenRuntime = externalRuntime.filter { candidate ->
+                candidate == productionJar || candidate.toPath().startsWith(layout.buildDirectory.get().asFile.canonicalFile.toPath())
             }
-            classpath = files(extractedPluginJar) + files(runtimeClasspath)
-            executable = configuredTest.executable
-            jvmArgs(configuredTest.allJvmArgs)
+            if (forbiddenRuntime.isNotEmpty()) {
+                throw GradleException("Packaged GUI artifact smoke runtime contains project-produced production output.")
+            }
+            classpath = files(productionJar) + sourceSets["test"].output + externalTestRuntime
             val identity = artifactSmokeIdentity.get().asFile.readLines().associate { line ->
                 val separator = line.indexOf('=')
                 if (separator <= 0) throw GradleException("Invalid packaged GUI artifact smoke identity metadata.")
@@ -365,6 +375,7 @@ tasks {
             systemProperty("yetAi.packagedSmokeJarSha256", identity.getValue("jarSha256"))
             systemProperty("yetAi.packagedSmokeClassSha256", identity.getValue("classSha256"))
             systemProperty("yetAi.packagedSmokeIndexSha256", identity.getValue("indexSha256"))
+            systemProperty("yetAi.packagedSmokeJar", productionJar.absolutePath)
         }
         afterTest(KotlinClosure2({ _: org.gradle.api.tasks.testing.TestDescriptor, _: org.gradle.api.tasks.testing.TestResult ->
             executedTests += 1
