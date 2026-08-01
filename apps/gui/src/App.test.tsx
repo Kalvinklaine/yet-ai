@@ -3566,9 +3566,9 @@ describe("provider secret boundary", () => {
       const url = String(input);
       if (url.endsWith("/v1/provider-auth/openai/status")) {
         statusCalls += 1;
-        return Promise.resolve(jsonResponse(statusCalls === 1
-          ? { ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 }
-          : connectedExperimentalAuthResponse()));
+        if (statusCalls === 1) return Promise.resolve(jsonResponse({ ...pendingExperimentalAuthResponse(), pollIntervalSeconds: 1 }));
+        if (statusCalls === 2) return Promise.resolve(jsonResponse(connectedExperimentalAuthResponse()));
+        return Promise.resolve(jsonResponse({ error: "temporary auth status failure access_token=private" }, 503));
       }
       return mockRuntimeResponse(input, init, {
         chats: [chatSummary(chatId, "Existing before login", 1)],
@@ -3595,6 +3595,9 @@ describe("provider secret boundary", () => {
     expect(findButton("Send").disabled).toBe(false);
     expect(container?.querySelector(".chat-id-badge")?.textContent).toBe(chatId);
     expect(container?.textContent).toContain("History survives login");
+    expect(statusCalls).toBe(3);
+    expect(container?.textContent).not.toContain("access_token");
+    expect(container?.textContent).not.toContain("private");
     await act(async () => setTextareaValue(chatInput(), "Continue the existing chat"));
     await act(async () => {
       findButton("Send").click();

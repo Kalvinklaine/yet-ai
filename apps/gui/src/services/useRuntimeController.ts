@@ -148,10 +148,10 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
     if (result.ok) {
       setProviderAuthStatus(result.data);
     } else {
-      const preservePendingLogin = providerAuthDataRevisionRef.current === revision
-        && providerAuthStatusRef.current?.status === "pending"
-        && providerAuthStatusRef.current.authSource === "oauth";
-      if (!preservePendingLogin) setProviderAuthStatus(null);
+      const preserveOAuthLogin = providerAuthDataRevisionRef.current === revision
+        && providerAuthStatusRef.current?.authSource === "oauth"
+        && (providerAuthStatusRef.current.status === "pending" || providerAuthStatusRef.current.status === "connected");
+      if (!preserveOAuthLogin) setProviderAuthStatus(null);
       setProviderAuthError(result.error);
     }
     setProviderAuthDataRevision(revision);

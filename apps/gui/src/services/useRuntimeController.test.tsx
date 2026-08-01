@@ -72,7 +72,7 @@ async function mount(onChange: (controller: Controller) => void, settings = { ba
 }
 
 describe("useRuntimeController", () => {
-  it("refreshes shared runtime state once when pending callback polling becomes connected", async () => {
+  it("preserves callback-connected auth when the shared status refresh fails once", async () => {
     vi.useFakeTimers();
     let authCalls = 0;
     const refreshChats = vi.fn(async () => undefined);
@@ -80,9 +80,10 @@ describe("useRuntimeController", () => {
       const url = String(input);
       if (url.endsWith("/v1/provider-auth/openai/status")) {
         authCalls += 1;
-        return Promise.resolve(response(authCalls === 1
-          ? { provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, pollIntervalSeconds: 1 }
-          : { provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false }));
+        if (authCalls === 1) return Promise.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, pollIntervalSeconds: 1 }));
+        if (authCalls === 2) return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false }));
+        if (authCalls === 3) return Promise.resolve(new Response(JSON.stringify({ error: "temporary access_token=private" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+        return Promise.resolve(response({ provider: "openai", configured: false, status: "expired", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false }));
       }
       return Promise.resolve(runtimeReply(url));
     });
@@ -101,11 +102,20 @@ describe("useRuntimeController", () => {
     });
 
     expect(controller.providerAuthStatus?.status).toBe("connected");
+    expect(controller.providerAuthError?.status).toBe(503);
+    expect(controller.providerAuthError?.message).not.toContain("private");
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/ping"))).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/models"))).toHaveLength(1);
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/providers"))).toHaveLength(1);
     expect(refreshChats).toHaveBeenCalledTimes(1);
     expect(refreshChats).toHaveBeenCalledWith(expect.objectContaining({ baseUrl: "http://127.0.0.1:8001" }), 0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/provider-auth/openai/exchange") && init?.method === "POST")).toHaveLength(0);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats") && init?.method === "POST")).toHaveLength(0);
+
+    await act(async () => { await controller.refreshProviderAuthStatus(); });
+
+    expect(controller.providerAuthStatus?.status).toBe("expired");
+    expect(controller.providerAuthError).toBeNull();
   });
 
   it("keeps pending auth through a transient poll failure and refreshes after connection", async () => {
