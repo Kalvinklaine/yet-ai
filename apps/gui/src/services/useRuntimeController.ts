@@ -74,7 +74,9 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
   const providerAuthPollInFlightRef = useRef(false);
   const providerAuthPollRequestRef = useRef(0);
   const providerAuthDataRevisionRef = useRef<number | null>(null);
+  const providerAuthStatusRef = useRef<ProviderAuthResponse | null>(null);
   providerAuthDataRevisionRef.current = providerAuthDataRevision;
+  providerAuthStatusRef.current = providerAuthStatus;
 
   const isCurrentRefresh = useCallback((revision: number) => revision === settingsRevisionRef.current, [settingsRevisionRef]);
 
@@ -194,16 +196,23 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
       setProviderAuthError(null); setProviderAuthUrlWarning(null); setProviderAuthExchangeError(null);
       const result = await getProviderAuthStatus(targetSettings, "openai");
       if (!isCurrentRefresh(revision) || providerAuthPollRequestRef.current !== requestId) return;
+      const completedPendingLogin = result.ok
+        && providerAuthDataRevisionRef.current === revision
+        && providerAuthStatusRef.current?.status === "pending"
+        && providerAuthStatusRef.current.authSource === "oauth"
+        && result.data.status === "connected";
       setProviderAuthStatus(result.ok ? result.data : null);
+      providerAuthStatusRef.current = result.ok ? result.data : null;
       if (!result.ok) setProviderAuthError(result.error);
       setProviderAuthDataRevision(revision);
+      if (completedPendingLogin) await connect();
     } finally {
       if (providerAuthPollRequestRef.current === requestId) {
         providerAuthPollInFlightRef.current = false;
         if (isCurrentRefresh(revision)) setProviderAuthPollTick((tick) => tick + 1);
       }
     }
-  }, [isCurrentRefresh]);
+  }, [connect, isCurrentRefresh]);
 
   const activeProviderAuthStatus = providerAuthDataRevision === settingsRevision ? providerAuthStatus : null;
   useEffect(() => {
