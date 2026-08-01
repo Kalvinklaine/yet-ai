@@ -143,7 +143,7 @@ describe("ProjectHub", () => {
     await act(async () => { (container.querySelector('[aria-label="Reconnect project Missing"]') as HTMLButtonElement).click(); });
     await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     expect(container.textContent).toContain("Project could not be reconnected");
-    expect(container.textContent).toContain("Refresh Projects before trying again.");
+    expect(container.textContent).toContain("Reload the project state before trying again.");
     expect(container.textContent).not.toContain("Retry discovery");
     await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Close and refresh Projects") as HTMLButtonElement).click(); });
     expect(client.listProjects).toHaveBeenCalledTimes(2);
