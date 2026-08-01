@@ -31,8 +31,16 @@ try {
   const home = path.join(evidenceRoot, "home");
   const projectARoot = path.join(home, "Project Alpha Root");
   const projectBRoot = path.join(home, "Project Beta Root");
+  const hubMissingRoot = path.join(home, "Hub Missing Root");
+  const routeMissingRoot = path.join(home, "Route Missing Root");
+  const hubReplacementRoot = path.join(home, "Hub Reconnected Root");
+  const routeReplacementRoot = path.join(home, "Route Reconnected Root");
   await mkdir(projectARoot, { recursive: true });
   await mkdir(projectBRoot, { recursive: true });
+  await mkdir(hubMissingRoot, { recursive: true });
+  await mkdir(routeMissingRoot, { recursive: true });
+  await mkdir(hubReplacementRoot, { recursive: true });
+  await mkdir(routeReplacementRoot, { recursive: true });
   const engineEnv = isolatedEnvironment(home);
   const projectA = await registerProject(engineEnv, projectARoot, "Alpha safe label");
   const projectB = await registerProject(engineEnv, projectBRoot, "Beta safe label");
@@ -211,15 +219,46 @@ try {
   await pageA.goto(`${baseUrl}/p/${projectA.projectId}/memory`);
   await expectText(pageA, "alpha-memory-only");
 
-  await verifyBrowserPrivacy(context, browserPages, [projectARoot, projectBRoot, token]);
+  const hubReconnectProject = await registerProject(engineEnv, hubMissingRoot, "Hub reconnect safe label");
+  const routeReconnectProject = await registerProject(engineEnv, routeMissingRoot, "Route reconnect safe label");
+  await rm(hubMissingRoot, { recursive: true });
+  await rm(routeMissingRoot, { recursive: true });
+  await pageA.goto(`${baseUrl}/projects`);
+  await expectText(pageA, "Directory unavailable");
+  await expectText(pageA, "Hub reconnect safe label");
+  const hubReconnectResponse = waitForProjectRebind(pageA, hubReconnectProject.projectId);
+  await pageA.getByRole("button", { name: "Reconnect project Hub reconnect safe label" }).click();
+  await pageA.getByRole("button", { name: /Hub Reconnected Root/ }).click();
+  await assertPageExcludes(pageA, [hubMissingRoot, hubReplacementRoot], "Hub reconnect dialog");
+  await pageA.getByRole("button", { name: "Reconnect project directory", exact: true }).click();
+  const hubRepaired = await hubReconnectResponse;
+  assert(hubRepaired.projectId === hubReconnectProject.projectId, "Hub reconnect changed the durable project ID.");
+  const hubReconnectRow = pageA.locator("tr", { hasText: "Hub reconnect safe label" });
+  await pageA.waitForFunction((label) => Array.from(document.querySelectorAll("tr")).some((row) => row.textContent?.includes(label) && row.textContent.includes("Ready")), "Hub reconnect safe label", { timeout: timeoutMs });
+  assert(await hubReconnectRow.getByRole("link", { name: "Open Hub reconnect safe label", exact: true }).getAttribute("href") === `/p/${hubReconnectProject.projectId}/`, "Hub reconnect did not restore the same project route.");
+
+  await pageA.goto(`${baseUrl}/p/${routeReconnectProject.projectId}/chat`);
+  await expectText(pageA, "Project directory unavailable");
+  assert(pageA.url() === `${baseUrl}/p/${routeReconnectProject.projectId}/chat`, "Blocked project route changed before reconnect.");
+  const routeReconnectResponse = waitForProjectRebind(pageA, routeReconnectProject.projectId);
+  await pageA.getByRole("button", { name: "Reconnect directory", exact: true }).click();
+  await pageA.getByRole("button", { name: /Route Reconnected Root/ }).click();
+  await assertPageExcludes(pageA, [routeMissingRoot, routeReplacementRoot], "Blocked-route reconnect dialog");
+  await pageA.getByRole("button", { name: "Reconnect project directory", exact: true }).click();
+  const routeRepaired = await routeReconnectResponse;
+  assert(routeRepaired.projectId === routeReconnectProject.projectId, "Blocked-route reconnect changed the durable project ID.");
+  await expectText(pageA, "Route reconnect safe label");
+  assert(pageA.url() === `${baseUrl}/p/${routeReconnectProject.projectId}/chat`, "Blocked project route was not retained after reconnect.");
+
+  await verifyBrowserPrivacy(context, browserPages, [projectARoot, projectBRoot, hubMissingRoot, routeMissingRoot, hubReplacementRoot, routeReplacementRoot, token]);
   assert(browserFailures.length === 0, `Browser diagnostics failed:\n${browserFailures.join("\n")}`);
   const engineOutput = `${stdout}\n${stderr}`;
-  for (const privateValue of [projectARoot, projectBRoot, token]) {
+  for (const privateValue of [projectARoot, projectBRoot, hubMissingRoot, routeMissingRoot, hubReplacementRoot, routeReplacementRoot, token]) {
     assert(!engineOutput.includes(privateValue), "Engine logs exposed a raw project root or auth marker.");
   }
 
   console.log("Browser project isolation smoke passed.");
-  console.log("Verified two real projects across hub, scoped API/UI, tabs, refresh, switching/SSE retirement, archive/restore, and legacy separation.");
+  console.log("Verified real-project hub and blocked-route reconnect plus scoped API/UI, tabs, refresh, switching/SSE retirement, archive/restore, and legacy separation.");
   console.log("Verified loopback-only execution and absence of project roots or auth material from browser-visible and engine-log evidence.");
 } catch (error) {
   console.error(redact(error instanceof Error ? error.message : String(error)));
@@ -361,6 +400,22 @@ async function waitForSuccessfulResponse(page, pathname, label, expectedContentT
     assert((response.headers()["content-type"] ?? "").includes(expectedContentType), `${label} did not return ${expectedContentType}.`);
   }
   return response;
+}
+
+async function waitForProjectRebind(page, projectId) {
+  const pathname = `/v1/projects/${projectId}/rebind`;
+  const response = await page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return candidate.request().method() === "POST" && url.pathname === pathname;
+  }, { timeout: timeoutMs });
+  const requestBody = JSON.parse(response.request().postData() ?? "{}");
+  assert(JSON.stringify(Object.keys(requestBody).sort()) === JSON.stringify(["directoryHandle", "directorySessionId", "expectedRevision"]), "Project reconnect request did not use the narrow opaque contract.");
+  assert(response.ok(), `Project reconnect returned HTTP ${response.status()}.`);
+  const text = await response.text();
+  assert(!text.includes(evidenceRoot), "Project reconnect response exposed a private temporary path.");
+  const project = JSON.parse(text);
+  assert(project.projectId === projectId && project.status === "available" && project.rootAvailable === true, "Project reconnect response did not preserve identity and restore availability.");
+  return project;
 }
 
 async function waitForChatTerminalEvent(port, projectId, chatId) {
