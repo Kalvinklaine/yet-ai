@@ -13,14 +13,20 @@ const accessToken = `codex-loopback-access-${randomUUID()}`;
 const refreshToken = `codex-loopback-refresh-${randomUUID()}`;
 const accountId = "acct-loopback-smoke";
 const idToken = jwtWithPayload({ chatgpt_account_id: accountId });
-const chatId = `smoke_codex_${randomUUID().replaceAll("-", "_")}`;
+let chatId;
 const invalidChatId = `smoke_codex_invalid_${randomUUID().replaceAll("-", "_")}`;
 const requestId = `smoke-codex-request-${randomUUID()}`;
 const invalidRequestId = `smoke-codex-invalid-request-${randomUUID()}`;
 const firstChatSentinel = "SMOKE_CODEX_FIRST_CHAT";
 const invalidChatSentinel = "SMOKE_CODEX_INVALID_CHAT";
-const staleModel = "gpt-5.1";
-const recoveredModel = "gpt-5.2";
+const staleModel = "gpt-5.6-sol";
+const recoveredModel = "gpt-5.6-terra";
+const modelCatalog = {
+  data: [
+    { id: staleModel, visibility: "list", supportedInApi: true, priority: 10 },
+    { id: recoveredModel, visibility: "list", supportedInApi: true, priority: 20 }
+  ]
+};
 const invalidProviderFragment = `raw-mock-provider-fragment-${randomUUID()}`;
 const timeoutMs = 120_000;
 
@@ -31,6 +37,7 @@ let chatEndpoint;
 let tokenRequestCount = 0;
 let chatRequestCount = 0;
 let modelDiscoveryRequestCount = 0;
+let chatCreateRequestCount = 0;
 let tokenRequestGrantType;
 let tokenRequestContentType;
 let modelDiscoveryAuthorizationHeader;
@@ -51,9 +58,15 @@ try {
   tokenEndpoint = await startMockTokenEndpoint();
   chatEndpoint = await startMockChatEndpoint();
   const enginePort = await freePort();
-  engine = startEngine(enginePort, tempHome);
+  const callbackPort = await freePort();
+  engine = startEngine(enginePort, callbackPort, tempHome);
   const baseUrl = `http://127.0.0.1:${enginePort}`;
   await waitForEngine(baseUrl);
+
+  const existingChat = await requestJson(baseUrl, "/v1/chats", { method: "POST" });
+  chatId = existingChat.chatId;
+  assert(typeof chatId === "string" && chatId.startsWith("chat_"), "pre-login chat creation returned an invalid chat id");
+  assert(chatCreateRequestCount === 1, "pre-login chat was not created exactly once");
 
   const initial = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
   assert(initial.status === "login_unavailable", "initial status was not login_unavailable");
@@ -103,6 +116,10 @@ try {
   assert(connected.status === "connected", "status did not report connected state");
   assert(connected.configured === true, "connected status was not configured");
   assert(connected.accountLabel === "loopback codex smoke account", "connected status returned unexpected account label");
+  assert(chatCreateRequestCount === 1, "login created a replacement chat");
+
+  const sameChat = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(chatId)}`);
+  assert(sameChat.chatId === chatId, "login did not preserve the pre-login chat id");
 
   const subscription = subscribe(baseUrl, chatId);
   const command = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(chatId)}/commands`, {
@@ -124,6 +141,7 @@ try {
   assertMonotonicSequence(events);
   assert(chatRequestCount === 2, "mock responses endpoint did not retry once after stale-model rejection");
   assert(modelDiscoveryRequestCount === 2, "mock model discovery endpoint was not called once for recovery");
+  assert(chatCreateRequestCount === 1, "model recovery created a replacement chat");
   assert(recoveryDiscoverySessionHeader === loginDiscoverySessionHeader, "recovery discovery did not reuse stored session metadata");
   assert(recoveryDiscoverySessionHeader !== chatId, "recovery discovery used the chat id as session metadata");
   assert(chatAuthorizationHeader === `Bearer ${accessToken}`, "mock responses endpoint did not receive experimental bearer auth");
@@ -135,6 +153,8 @@ try {
   assert(chatContentTypeHeader?.startsWith("application/json"), "mock responses endpoint did not receive JSON content type");
   assertResponsesBody(chatRequestBodies[0], firstChatSentinel, staleModel);
   assertResponsesBody(chatRequestBodies[1], firstChatSentinel, recoveredModel);
+  assert(chatRequestBodies.filter((body) => body.model === staleModel).length === 1, "rejected model was attempted more than once");
+  assert(chatRequestBodies.filter((body) => body.model === recoveredModel).length === 1, "alternate model was not attempted exactly once during recovery");
 
   const invalidSubscription = subscribe(baseUrl, invalidChatId);
   const invalidCommand = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(invalidChatId)}/commands`, {
@@ -155,6 +175,7 @@ try {
   assertMonotonicSequence(invalidStream.events);
   assert(chatRequestCount === 3, "mock responses endpoint was not called for recovery and invalid chat cases");
   assertResponsesBody(chatRequestBodies[2], invalidChatSentinel, recoveredModel);
+  assert(chatCreateRequestCount === 1, "later chat command created a replacement chat");
   assert(!invalidStream.raw.includes(invalidProviderFragment), "raw mock provider body leaked into live SSE");
 
   const disconnect = await requestJson(baseUrl, "/v1/provider-auth/openai/disconnect", {
@@ -173,13 +194,15 @@ try {
     mode: "local-loopback-mock-only",
     lifecycle: [initial.status, start.status, pending.status, exchange.status, connected.status, disconnect.status, afterDisconnect.status],
     tokenExchange: "form-urlencoded-authorization-code",
-    modelDiscovery: "stale-model-rediscovered-and-persisted",
+    modelDiscovery: "unchanged-ordered-catalog-alternate-persisted",
     discoverySession: "stored-and-reused-without-value-output",
     responsesSse: "dedicated-responses-endpoint",
     tokenEndpointCalls: tokenRequestCount,
     modelDiscoveryCalls: modelDiscoveryRequestCount,
     responsesEndpointCalls: chatRequestCount,
-    firstChat: "stale-model-recovered-once",
+    existingChat: "created-before-login-and-reused-without-replacement",
+    firstChat: "rejected-first-model-recovered-once",
+    chatCreateCalls: chatCreateRequestCount,
     invalidRequest: "allowlisted-format-reason-without-provider-body",
     disconnected: afterDisconnect.status === "login_unavailable",
     cloudRequired: false
@@ -214,7 +237,7 @@ async function makeTempHome() {
   return home;
 }
 
-function startEngine(port, home) {
+function startEngine(port, callbackPort, home) {
   const child = spawn("cargo", ["run", "-p", "yet-lsp", "--quiet"], {
     cwd: rootDir,
     env: {
@@ -227,7 +250,8 @@ function startEngine(port, home) {
       NO_PROXY: appendNoProxy(process.env.NO_PROXY),
       no_proxy: appendNoProxy(process.env.no_proxy),
       YET_AI_AUTH_TOKEN: runtimeToken,
-      YET_AI_HTTP_PORT: String(port)
+      YET_AI_HTTP_PORT: String(port),
+      YET_AI_PROVIDER_AUTH_CALLBACK_PORT: String(callbackPort)
     },
     stdio: ["ignore", "pipe", "pipe"]
   });
@@ -305,9 +329,7 @@ async function startMockChatEndpoint() {
       if (modelDiscoveryRequestCount === 1) loginDiscoverySessionHeader = request.headers.session_id;
       if (modelDiscoveryRequestCount === 2) recoveryDiscoverySessionHeader = request.headers.session_id;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        data: [{ id: "gpt-4-unsafe" }, { id: modelDiscoveryRequestCount === 1 ? staleModel : recoveredModel }]
-      }));
+      response.end(JSON.stringify(modelCatalog));
       return;
     }
     if (request.method !== "POST" || request.url !== "/responses") {
@@ -380,6 +402,7 @@ function assertResponsesBody(body, expectedText, expectedModel) {
 
 async function requestJson(baseUrl, route, init = {}) {
   const { expectedStatus, ...fetchInit } = init;
+  if (route === "/v1/chats" && init.method === "POST") chatCreateRequestCount += 1;
   const response = await fetch(`${baseUrl}${route}`, {
     ...fetchInit,
     headers: {
