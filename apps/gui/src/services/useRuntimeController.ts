@@ -26,6 +26,8 @@ type RuntimeRefreshStatus = {
   detail: string;
 };
 
+type ProviderAuthRefreshResult = "succeeded" | "failed" | "stale";
+
 type RuntimeControllerInput = {
   settingsRef: MutableRefObject<RuntimeSettings>;
   settingsRevisionRef: MutableRefObject<number>;
@@ -73,6 +75,7 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
   const providerAuthPollTimerRef = useRef<number | null>(null);
   const providerAuthPollInFlightRef = useRef(false);
   const providerAuthPollRequestRef = useRef(0);
+  const providerAuthRefreshRequestRef = useRef(0);
   const providerAuthDataRevisionRef = useRef<number | null>(null);
   const providerAuthStatusRef = useRef<ProviderAuthResponse | null>(null);
   const providerAuthAuthorityRef = useRef<string | null>(null);
@@ -153,21 +156,49 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
     setProviderDataRevision(revision);
   }, [isCurrentRefresh, settingsRef, settingsRevisionRef]);
 
-  const refreshProviderAuthStatus = useCallback(async (targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
+  const acceptProviderAuthProjection = useCallback((status: ProviderAuthResponse | null, revision: number, authorityKey: string | null) => {
+    providerAuthStatusRef.current = status;
+    providerAuthDataRevisionRef.current = revision;
+    providerAuthAuthorityRef.current = authorityKey;
+    setProviderAuthStatus(status);
+    setProviderAuthDataRevision(revision);
+  }, []);
+
+  const refreshProviderAuthStatusForAuthority = useCallback(async (targetSettings: RuntimeSettings, revision: number, authorityKey: string | null): Promise<ProviderAuthRefreshResult> => {
+    const requestId = providerAuthRefreshRequestRef.current + 1;
+    providerAuthRefreshRequestRef.current = requestId;
+    const authorityChanged = providerAuthDataRevisionRef.current === revision && providerAuthAuthorityRef.current !== authorityKey;
+    if (authorityChanged) {
+      providerAuthDataRevisionRef.current = null;
+      setProviderAuthDataRevision(null);
+    }
     setProviderAuthError(null); setProviderAuthUrlWarning(null); setProviderAuthExchangeError(null);
     const result = await getProviderAuthStatus(targetSettings, "openai");
-    if (!isCurrentRefresh(revision)) return;
+    if (!isCurrentRefresh(revision) || providerAuthRefreshRequestRef.current !== requestId) return "stale";
     if (result.ok) {
-      setProviderAuthStatus(result.data);
+      acceptProviderAuthProjection(result.data, revision, authorityKey);
     } else {
       const preserveOAuthLogin = providerAuthDataRevisionRef.current === revision
+        && providerAuthAuthorityRef.current === authorityKey
         && providerAuthStatusRef.current?.authSource === "oauth"
         && (providerAuthStatusRef.current.status === "pending" || providerAuthStatusRef.current.status === "connected");
-      if (!preserveOAuthLogin) setProviderAuthStatus(null);
+      if (!preserveOAuthLogin) {
+        providerAuthStatusRef.current = null;
+        setProviderAuthStatus(null);
+        if (!authorityChanged) {
+          providerAuthDataRevisionRef.current = revision;
+          providerAuthAuthorityRef.current = authorityKey;
+          setProviderAuthDataRevision(revision);
+        }
+      }
       setProviderAuthError(result.error);
     }
-    setProviderAuthDataRevision(revision);
-  }, [isCurrentRefresh, settingsRef, settingsRevisionRef]);
+    return result.ok ? "succeeded" : "failed";
+  }, [acceptProviderAuthProjection, isCurrentRefresh, settingsRef, settingsRevisionRef]);
+
+  const refreshProviderAuthStatus = useCallback((targetSettings = settingsRef.current, revision = settingsRevisionRef.current) => (
+    refreshProviderAuthStatusForAuthority(targetSettings, revision, providerAuthAuthorityRef.current)
+  ), [refreshProviderAuthStatusForAuthority, settingsRef, settingsRevisionRef]);
 
   const connect = useCallback(async () => {
     if (runtimeRefreshInFlightRef.current) { runtimeRefreshQueuedRef.current = true; return; }
@@ -221,12 +252,10 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
         && providerAuthStatusRef.current.authSource === "oauth"
         && result.data.status === "connected";
       if (result.ok) {
-        setProviderAuthStatus(result.data);
-        providerAuthStatusRef.current = result.data;
+        acceptProviderAuthProjection(result.data, revision, providerAuthAuthorityRef.current);
       } else {
         setProviderAuthError(result.error);
       }
-      setProviderAuthDataRevision(revision);
       if (completedPendingLogin) await connect();
     } finally {
       if (providerAuthPollRequestRef.current === requestId) {
@@ -234,7 +263,7 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
         if (isCurrentRefresh(revision)) setProviderAuthPollTick((tick) => tick + 1);
       }
     }
-  }, [connect, isCurrentRefresh]);
+  }, [acceptProviderAuthProjection, connect, isCurrentRefresh]);
 
   const activeProviderAuthStatus = providerAuthDataRevision === settingsRevision ? providerAuthStatus : null;
   useEffect(() => {
@@ -273,23 +302,35 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
     providerAuthAuthorityRequestsRef.current.set(authorityKey, authorityAttempt);
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
-    void refreshProviderAuthStatus(targetSettings, targetRevision).then(() => {
-      if (isCurrentRefresh(targetRevision) && providerAuthAuthorityAttemptRef.current === authorityAttempt) {
-        providerAuthAuthorityRef.current = authorityKey;
+    void refreshProviderAuthStatusForAuthority(targetSettings, targetRevision, authorityKey).then((result) => {
+      if (result !== "succeeded" && providerAuthAuthorityRequestsRef.current.get(authorityKey) === authorityAttempt) {
+        providerAuthAuthorityRequestsRef.current.delete(authorityKey);
       }
     }).finally(() => {
       if (providerAuthAuthorityRequestsRef.current.get(authorityKey) === authorityAttempt) {
         providerAuthAuthorityRequestsRef.current.delete(authorityKey);
       }
     });
-  }, [isCurrentRefresh, refreshProviderAuthStatus, settingsRef, settingsRevisionRef]);
+  }, [refreshProviderAuthStatus, refreshProviderAuthStatusForAuthority, settingsRef, settingsRevisionRef]);
+
+  const cancelProviderAuthWork = useCallback((cancelMutation: boolean) => {
+    if (providerAuthPollTimerRef.current !== null) window.clearTimeout(providerAuthPollTimerRef.current);
+    providerAuthPollTimerRef.current = null;
+    providerAuthPollRequestRef.current += 1;
+    providerAuthPollInFlightRef.current = false;
+    if (cancelMutation) {
+      providerAuthMutationAttemptRef.current += 1;
+      providerAuthExchangeInFlightRef.current = false;
+    }
+  }, []);
 
   const beginProviderAuthMutation = useCallback((mutation: "start" | "exchange" | "disconnect") => {
+    cancelProviderAuthWork(true);
     const attempt = providerAuthMutationAttemptRef.current + 1;
     providerAuthMutationAttemptRef.current = attempt;
     setProviderAuthMutation(mutation);
     return attempt;
-  }, []);
+  }, [cancelProviderAuthWork]);
 
   const startOpenAiLogin = useCallback(async (blocked: boolean, openAuthUrl: (url: string) => void) => {
     if (blocked) { setProviderAuthError(null); setProviderAuthUrlWarning(null); setProviderAuthExchangeError(null); setProviderAuthExchangeCode(""); return; }
@@ -301,12 +342,12 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
       const result = await startProviderAuth(targetSettings, "openai", { experimentalCodexLike: true });
       if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) return;
       if (!result.ok) { setProviderAuthError(result.error); return; }
-      setProviderAuthStatus(result.data); setProviderAuthDataRevision(targetRevision);
+      acceptProviderAuthProjection(result.data, targetRevision, providerAuthAuthorityRef.current);
       if (result.data.authorizationUrl) openAuthUrl(result.data.authorizationUrl);
     } finally {
       if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) setProviderAuthMutation(null);
     }
-  }, [beginProviderAuthMutation, isCurrentRefresh, settingsRef, settingsRevisionRef]);
+  }, [acceptProviderAuthProjection, beginProviderAuthMutation, isCurrentRefresh, settingsRef, settingsRevisionRef]);
 
   const disconnectOpenAiLogin = useCallback(async () => {
     const targetSettings = settingsRef.current;
@@ -316,28 +357,32 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
     try {
       const result = await disconnectProviderAuth(targetSettings, "openai");
       if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) return;
-      if (result.ok) { setProviderAuthStatus(result.data); setProviderAuthDataRevision(targetRevision); await connect(); }
+      if (result.ok) {
+        acceptProviderAuthProjection(result.data, targetRevision, providerAuthAuthorityRef.current);
+        await connect();
+        if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) acceptProviderAuthProjection(result.data, targetRevision, providerAuthAuthorityRef.current);
+      }
       else setProviderAuthError(result.error);
     } finally {
       if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) setProviderAuthMutation(null);
     }
-  }, [beginProviderAuthMutation, connect, isCurrentRefresh, settingsRef, settingsRevisionRef]);
+  }, [acceptProviderAuthProjection, beginProviderAuthMutation, connect, isCurrentRefresh, settingsRef, settingsRevisionRef]);
 
   const exchangeOpenAiLoginCode = useCallback(async (sessionId: string | undefined, state: string | undefined) => {
     const code = providerAuthExchangeCode.trim();
     setProviderAuthExchangeCode("");
     if (!sessionId || !code || providerAuthExchangeInFlightRef.current || providerAuthExchangeWorking || providerAuthMutation === "exchange") return false;
     setProviderAuthError(null); setProviderAuthExchangeError(null);
-    providerAuthExchangeInFlightRef.current = true; setProviderAuthExchangeWorking(true);
     const targetSettings = settingsRef.current;
     const targetRevision = settingsRevisionRef.current;
     const attempt = beginProviderAuthMutation("exchange");
+    providerAuthExchangeInFlightRef.current = true; setProviderAuthExchangeWorking(true);
     try {
       const result = await exchangeProviderAuth(targetSettings, "openai", sessionId, code, state);
       if (!isCurrentRefresh(targetRevision) || providerAuthMutationAttemptRef.current !== attempt) return false;
       if (result.ok) {
-        setProviderAuthStatus(result.data); setProviderAuthDataRevision(targetRevision);
-        if (result.data.success) { await connect(); if (isCurrentRefresh(targetRevision)) { setProviderAuthStatus(result.data); setProviderAuthDataRevision(targetRevision); } }
+        acceptProviderAuthProjection(result.data, targetRevision, providerAuthAuthorityRef.current);
+        if (result.data.success) { await connect(); if (isCurrentRefresh(targetRevision) && providerAuthMutationAttemptRef.current === attempt) acceptProviderAuthProjection(result.data, targetRevision, providerAuthAuthorityRef.current); }
         else setProviderAuthExchangeError("Authorization exchange did not complete. Retry once with a fresh browser code, reconnect, or use the API-key fallback.");
       } else setProviderAuthError(result.error);
       return result.ok && result.data.success;
@@ -346,7 +391,7 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
         providerAuthExchangeInFlightRef.current = false; setProviderAuthExchangeWorking(false); setProviderAuthMutation(null);
       }
     }
-  }, [beginProviderAuthMutation, connect, isCurrentRefresh, providerAuthExchangeCode, providerAuthExchangeWorking, providerAuthMutation, settingsRef, settingsRevisionRef]);
+  }, [acceptProviderAuthProjection, beginProviderAuthMutation, connect, isCurrentRefresh, providerAuthExchangeCode, providerAuthExchangeWorking, providerAuthMutation, settingsRef, settingsRevisionRef]);
 
   const runProviderTest = useCallback(async (providerId: string) => {
     const targetSettings = settingsRef.current;
@@ -367,23 +412,24 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
 
   const invalidate = useCallback(() => {
     providerTestAttemptRef.current += 1;
-    providerAuthMutationAttemptRef.current += 1;
-    providerAuthExchangeInFlightRef.current = false;
-    providerAuthPollInFlightRef.current = false;
-    providerAuthPollRequestRef.current += 1;
+    cancelProviderAuthWork(true);
+    providerAuthRefreshRequestRef.current += 1;
     providerAuthAuthorityRef.current = null;
     providerAuthAuthorityRequestsRef.current.clear();
     providerAuthAuthorityAttemptRef.current += 1;
     setRuntimeDataRevision(null); setProviderDataRevision(null); setProviderAuthDataRevision(null); setDemoModeDataRevision(null);
     setDemoModeWorking(false); setProviderAuthMutation(null); setProviderAuthExchangeCode(""); setProviderAuthExchangeWorking(false); setProviderAuthExchangeError(null); setProviderTestState(null);
     setRuntimeRefreshStatus({ state: "checking", attempt: runtimeRefreshAttemptRef.current + 1, checkedAt: new Date().toLocaleTimeString(), detail: "Runtime settings changed; checking current runtime…" });
-  }, []);
+  }, [cancelProviderAuthWork]);
 
   const clearRuntimeData = useCallback(() => {
+    cancelProviderAuthWork(true);
+    providerAuthRefreshRequestRef.current += 1;
     setRuntimeDataRevision(null); setProviderDataRevision(null); setProviderAuthDataRevision(null); setDemoModeDataRevision(null);
-    providerAuthExchangeInFlightRef.current = false; setProviderAuthExchangeWorking(false); setProviderAuthExchangeCode(""); setProviderAuthExchangeError(null);
+    providerAuthDataRevisionRef.current = null; providerAuthStatusRef.current = null; setProviderAuthStatus(null);
+    setProviderAuthMutation(null); setProviderAuthExchangeWorking(false); setProviderAuthExchangeCode(""); setProviderAuthExchangeError(null);
     providerAuthAuthorityRef.current = null; providerAuthAuthorityRequestsRef.current.clear(); providerAuthAuthorityAttemptRef.current += 1;
-  }, []);
+  }, [cancelProviderAuthWork]);
 
   return useMemo(() => ({
     ping, caps, models, demoMode, demoModeError, demoModeWorking, providers, connectionError, modelError, identityWarnings, providerError, providerTestState,

@@ -106,6 +106,121 @@ describe("useRuntimeController", () => {
     expect(authCalls).toBe(3);
   });
 
+  it("hides old-authority auth, retries a failed switch, and ignores a late old-authority completion", async () => {
+    const lateAuthorityA = deferred<Response>();
+    let authCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        if (authCalls === 2) return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, accountLabel: "authority-a" }));
+        if (authCalls === 3) return lateAuthorityA.promise;
+        if (authCalls === 4) return Promise.resolve(new Response(JSON.stringify({ error: "temporary" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+        if (authCalls === 5) return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, accountLabel: "authority-b" }));
+      }
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    const currentSettings = { baseUrl: "http://127.0.0.1:8001", token: "", runtimeAccess: "direct" as const };
+    await mount((next) => { controller = next; }, currentSettings);
+    await act(async () => { await controller.connect(); });
+    const connected = { lifecycle: "connected" } as RuntimeLifecycleDiagnostics;
+
+    await act(async () => { controller.runtimeLifecycleChanged(connected, "authority-a"); await Promise.resolve(); await Promise.resolve(); });
+    expect(controller.providerAuthStatus).toMatchObject({ status: "connected", accountLabel: "authority-a" });
+
+    await act(async () => {
+      void controller.refreshProviderAuthStatus(currentSettings, 0);
+      await Promise.resolve();
+      controller.runtimeLifecycleChanged(connected, "authority-b");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(controller.providerAuthDataRevision).toBeNull();
+    expect(controller.providerAuthStatus).toBeNull();
+
+    await act(async () => { controller.runtimeLifecycleChanged(connected, "authority-b"); await Promise.resolve(); await Promise.resolve(); });
+    expect(controller.providerAuthStatus).toMatchObject({ status: "connected", accountLabel: "authority-b" });
+
+    lateAuthorityA.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, accountLabel: "late-authority-a" }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(controller.providerAuthStatus).toMatchObject({ status: "connected", accountLabel: "authority-b" });
+    expect(authCalls).toBe(5);
+  });
+
+  it("does not let a pending poll overwrite a successful disconnect", async () => {
+    vi.useFakeTimers();
+    const stalePoll = deferred<Response>();
+    let authCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        if (authCalls === 1) return Promise.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, pollIntervalSeconds: 1 }));
+        if (authCalls === 2) return stalePoll.promise;
+        return Promise.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, pollIntervalSeconds: 1 }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/disconnect") && init?.method === "POST") return Promise.resolve(response({ provider: "openai", configured: false, status: "revoked", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, success: true }));
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; });
+    await act(async () => { await controller.connect(); });
+    await act(async () => { vi.advanceTimersByTime(1000); await Promise.resolve(); });
+    await act(async () => { await controller.disconnectOpenAiLogin(); });
+    stalePoll.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(controller.providerAuthStatus?.status).toBe("revoked");
+  });
+
+  it("does not let a pending poll overwrite a successful exchange", async () => {
+    vi.useFakeTimers();
+    const stalePoll = deferred<Response>();
+    let authCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        if (authCalls === 1) return Promise.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, pollIntervalSeconds: 1, sessionId: "session-1" }));
+        if (authCalls === 2) return stalePoll.promise;
+        return Promise.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, pollIntervalSeconds: 1 }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/exchange") && init?.method === "POST") return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, success: true }));
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; });
+    await act(async () => { await controller.connect(); });
+    await act(async () => { vi.advanceTimersByTime(1000); await Promise.resolve(); });
+    await act(async () => { controller.setProviderAuthExchangeCode("code"); });
+    await act(async () => { await controller.exchangeOpenAiLoginCode("session-1", "state-1"); });
+    stalePoll.resolve(response({ provider: "openai", configured: false, status: "expired", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(controller.providerAuthStatus?.status).toBe("connected");
+  });
+
+  it("ignores a stale login start completion after runtime data is cleared", async () => {
+    const staleStart = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/start") && init?.method === "POST") return staleStart.promise;
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; });
+    await act(async () => { await controller.connect(); });
+    await act(async () => { void controller.startOpenAiLogin(false, vi.fn()); await Promise.resolve(); controller.clearRuntimeData(); });
+    staleStart.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, success: true, authorizationUrl: "https://login.example.test" }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(controller.providerAuthStatus).toBeNull();
+    expect(controller.providerAuthDataRevision).toBeNull();
+    expect(controller.providerAuthMutation).toBeNull();
+  });
+
   it.each([
     ["start", "/v1/provider-auth/openai/start", "startOpenAiLogin"],
     ["disconnect", "/v1/provider-auth/openai/disconnect", "disconnectOpenAiLogin"],
