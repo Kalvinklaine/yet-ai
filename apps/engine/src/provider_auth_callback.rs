@@ -149,15 +149,26 @@ fn loopback_listeners_from_bind_results(
     ipv4: std::io::Result<TcpListener>,
     ipv6: std::io::Result<TcpListener>,
 ) -> Result<LoopbackListeners, CallbackStartError> {
-    let listeners = [ipv4, ipv6]
-        .into_iter()
-        .filter_map(Result::ok)
-        .collect::<Vec<_>>();
-    if listeners.is_empty() {
-        Err(CallbackStartError)
-    } else {
-        Ok(LoopbackListeners { listeners })
+    match (ipv4, ipv6) {
+        (Ok(ipv4), Ok(ipv6)) => Ok(LoopbackListeners {
+            listeners: vec![ipv4, ipv6],
+        }),
+        (Ok(listener), Err(error)) | (Err(error), Ok(listener))
+            if loopback_family_is_unavailable(&error) =>
+        {
+            Ok(LoopbackListeners {
+                listeners: vec![listener],
+            })
+        }
+        _ => Err(CallbackStartError),
     }
+}
+
+fn loopback_family_is_unavailable(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::AddrNotAvailable | std::io::ErrorKind::Unsupported
+    )
 }
 
 #[cfg(not(test))]
@@ -1530,7 +1541,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn one_loopback_listener_family_is_sufficient() {
+    async fn loopback_listener_bind_policy_fails_closed_except_for_unavailable_family() {
         let first = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ipv4_only = loopback_listeners_from_bind_results(
             Ok(first),
@@ -1553,17 +1564,64 @@ mod tests {
         .unwrap();
         assert_eq!(ipv6_only.listeners.len(), 1);
 
-        let both_failed = loopback_listeners_from_bind_results(
+        let third = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let unsupported_ipv6 = loopback_listeners_from_bind_results(
+            Ok(third),
             Err(std::io::Error::new(
-                std::io::ErrorKind::AddrInUse,
+                std::io::ErrorKind::Unsupported,
+                "unsupported",
+            )),
+        )
+        .unwrap();
+        assert_eq!(unsupported_ipv6.listeners.len(), 1);
+
+        let fourth = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let unsupported_ipv4 = loopback_listeners_from_bind_results(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "unsupported",
+            )),
+            Ok(fourth),
+        )
+        .unwrap();
+        assert_eq!(unsupported_ipv4.listeners.len(), 1);
+
+        let fifth = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let sixth = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dual = loopback_listeners_from_bind_results(Ok(fifth), Ok(sixth)).unwrap();
+        assert_eq!(dual.listeners.len(), 2);
+
+        for kind in [
+            std::io::ErrorKind::AddrInUse,
+            std::io::ErrorKind::PermissionDenied,
+            std::io::ErrorKind::Other,
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            assert!(loopback_listeners_from_bind_results(
+                Ok(listener),
+                Err(std::io::Error::new(kind, "bind failed")),
+            )
+            .is_err());
+
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            assert!(loopback_listeners_from_bind_results(
+                Err(std::io::Error::new(kind, "bind failed")),
+                Ok(listener),
+            )
+            .is_err());
+        }
+
+        assert!(loopback_listeners_from_bind_results(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
                 "unavailable",
             )),
             Err(std::io::Error::new(
                 std::io::ErrorKind::AddrNotAvailable,
                 "unavailable",
             )),
-        );
-        assert!(both_failed.is_err());
+        )
+        .is_err());
     }
 
     #[tokio::test]
