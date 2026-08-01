@@ -247,6 +247,39 @@ impl ProjectBrowserRuntime {
         session.handles.remove(directory_handle);
         Ok(summary)
     }
+
+    pub async fn rebind(
+        &self,
+        registry: &ProjectRegistryRuntime,
+        project_id: &str,
+        expected_revision: &str,
+        session_id: &str,
+        directory_handle: &str,
+    ) -> Result<ProjectSummary, ProjectBrowserError> {
+        validate_id(session_id, "pds_")?;
+        validate_id(directory_handle, "dir_")?;
+        let home = self
+            .home
+            .as_deref()
+            .ok_or(ProjectBrowserError::UnsafeFilesystem)?;
+        let mut sessions = self.sessions.lock().await;
+        remove_expired(&mut sessions);
+        let session = sessions
+            .get_mut(session_id)
+            .ok_or(ProjectBrowserError::DiscoveryExpired)?;
+        let target = session
+            .handles
+            .get(directory_handle)
+            .ok_or(ProjectBrowserError::DiscoveryExpired)?;
+        let path = canonical_readable_directory(&target.path)?;
+        ensure_confined(home, &path)?;
+        let summary = registry
+            .rebind(project_id, expected_revision, path)
+            .await
+            .map_err(ProjectBrowserError::Registry)?;
+        session.handles.remove(directory_handle);
+        Ok(summary)
+    }
 }
 
 impl Default for ProjectBrowserRuntime {
@@ -334,6 +367,14 @@ fn remove_expired(sessions: &mut HashMap<String, DiscoverySession>) {
 mod tests {
     use super::*;
 
+    fn registry(temp: &tempfile::TempDir) -> ProjectRegistryRuntime {
+        ProjectRegistryRuntime::new(&crate::storage::StoragePaths {
+            project_dir: temp.path().join("legacy"),
+            config_dir: temp.path().join("config"),
+            cache_dir: temp.path().join("cache"),
+        })
+    }
+
     #[tokio::test]
     async fn project_browser_lists_only_immediate_safe_directories_and_rejects_foreign_handles() {
         let temp = tempfile::tempdir().unwrap();
@@ -403,6 +444,321 @@ mod tests {
                 .unwrap_err(),
             ProjectBrowserError::DiscoveryExpired
         );
+    }
+
+    #[tokio::test]
+    async fn project_browser_rebind_consumes_handle_only_after_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_root = temp.path().join("Old");
+        let new_root = temp.path().join("New");
+        std::fs::create_dir(&old_root).unwrap();
+        std::fs::create_dir(&new_root).unwrap();
+        let registry = registry(&temp);
+        let created = registry.register(&old_root, Some("Stable")).await.unwrap();
+        std::fs::remove_dir(&old_root).unwrap();
+        let browser = ProjectBrowserRuntime::with_home(Some(temp.path().to_path_buf()));
+        let session = browser.create_session().await.unwrap();
+        let new_root_handle = browser
+            .list(&session.session_id, &session.root.handle)
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.display_name == "New")
+            .unwrap()
+            .handle;
+
+        let rebound = browser
+            .rebind(
+                &registry,
+                &created.project_id,
+                &created.revision,
+                &session.session_id,
+                &new_root_handle,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(rebound.project_id, created.project_id);
+        assert_eq!(rebound.revision, "2");
+        assert!(rebound.root_available);
+        assert_eq!(
+            browser
+                .rebind(
+                    &registry,
+                    &created.project_id,
+                    &rebound.revision,
+                    &session.session_id,
+                    &new_root_handle,
+                )
+                .await
+                .unwrap_err(),
+            ProjectBrowserError::DiscoveryExpired
+        );
+        assert!(!serde_json::to_string(&rebound)
+            .unwrap()
+            .contains(temp.path().to_str().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn project_browser_rebind_preserves_handle_and_registry_for_retryable_failures() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_root = temp.path().join("Old");
+        let new_root = temp.path().join("New");
+        std::fs::create_dir(&old_root).unwrap();
+        std::fs::create_dir(&new_root).unwrap();
+        let registry = registry(&temp);
+        let created = registry.register(&old_root, Some("Stable")).await.unwrap();
+        let browser = ProjectBrowserRuntime::with_home(Some(temp.path().to_path_buf()));
+        let session = browser.create_session().await.unwrap();
+        let new_root_handle = browser
+            .list(&session.session_id, &session.root.handle)
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.display_name == "New")
+            .unwrap()
+            .handle;
+
+        assert_eq!(
+            browser
+                .rebind(
+                    &registry,
+                    &created.project_id,
+                    "999",
+                    &session.session_id,
+                    &new_root_handle,
+                )
+                .await
+                .unwrap_err(),
+            ProjectBrowserError::Registry(ProjectRegistryError::Conflict)
+        );
+        let unchanged = registry
+            .get_private_entry(&created.project_id)
+            .await
+            .unwrap();
+        assert_eq!(unchanged.revision, created.revision);
+        assert_eq!(
+            unchanged.canonical_root(),
+            std::fs::canonicalize(&old_root).unwrap()
+        );
+        assert_eq!(
+            browser
+                .rebind(
+                    &registry,
+                    &created.project_id,
+                    &created.revision,
+                    &session.session_id,
+                    "dir_00000000000000000000000000000000",
+                )
+                .await
+                .unwrap_err(),
+            ProjectBrowserError::DiscoveryExpired
+        );
+        assert!(browser
+            .rebind(
+                &registry,
+                &created.project_id,
+                &created.revision,
+                &session.session_id,
+                &new_root_handle,
+            )
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn project_browser_rebind_registry_failures_preserve_handles_and_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_root = temp.path().join("First");
+        let owned_root = temp.path().join("Owned");
+        let candidate_root = temp.path().join("Candidate");
+        for root in [&first_root, &owned_root, &candidate_root] {
+            std::fs::create_dir(root).unwrap();
+        }
+        let registry = registry(&temp);
+        let first = registry.register(&first_root, Some("First")).await.unwrap();
+        let owned = registry.register(&owned_root, Some("Owned")).await.unwrap();
+        let browser = ProjectBrowserRuntime::with_home(Some(temp.path().to_path_buf()));
+        let session = browser.create_session().await.unwrap();
+        let listed = browser
+            .list(&session.session_id, &session.root.handle)
+            .await
+            .unwrap();
+        let handle = |name: &str| {
+            listed
+                .entries
+                .iter()
+                .find(|entry| entry.display_name == name)
+                .unwrap()
+                .handle
+                .clone()
+        };
+        let owned_handle = handle("Owned");
+        let candidate_handle = handle("Candidate");
+
+        for (project_id, revision, directory_handle, expected) in [
+            (
+                first.project_id.as_str(),
+                "999",
+                candidate_handle.as_str(),
+                ProjectRegistryError::Conflict,
+            ),
+            (
+                "prj_AAAAAAAAAAAAAAAAAAAAAA",
+                "1",
+                candidate_handle.as_str(),
+                ProjectRegistryError::NotFound,
+            ),
+            (
+                first.project_id.as_str(),
+                first.revision.as_str(),
+                owned_handle.as_str(),
+                ProjectRegistryError::Conflict,
+            ),
+        ] {
+            assert_eq!(
+                browser
+                    .rebind(
+                        &registry,
+                        project_id,
+                        revision,
+                        &session.session_id,
+                        directory_handle,
+                    )
+                    .await
+                    .unwrap_err(),
+                ProjectBrowserError::Registry(expected)
+            );
+            assert!(browser
+                .sessions
+                .lock()
+                .await
+                .get(&session.session_id)
+                .unwrap()
+                .handles
+                .contains_key(directory_handle));
+        }
+
+        let archived = registry
+            .archive(&first.project_id, &first.revision)
+            .await
+            .unwrap();
+        assert_eq!(
+            browser
+                .rebind(
+                    &registry,
+                    &first.project_id,
+                    &archived.revision,
+                    &session.session_id,
+                    &candidate_handle,
+                )
+                .await
+                .unwrap_err(),
+            ProjectBrowserError::Registry(ProjectRegistryError::Archived)
+        );
+        assert!(browser
+            .sessions
+            .lock()
+            .await
+            .get(&session.session_id)
+            .unwrap()
+            .handles
+            .contains_key(&candidate_handle));
+        let summaries = registry.list_summaries().await.unwrap();
+        assert_eq!(summaries[0].revision, archived.revision);
+        assert_eq!(summaries[1].revision, owned.revision);
+    }
+
+    #[tokio::test]
+    async fn project_browser_rebind_expired_session_does_not_mutate_registry() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Root");
+        let candidate = temp.path().join("Candidate");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&candidate).unwrap();
+        let registry = registry(&temp);
+        let created = registry.register(&root, Some("Stable")).await.unwrap();
+        let browser = ProjectBrowserRuntime::with_home(Some(temp.path().to_path_buf()));
+        let session = browser.create_session().await.unwrap();
+        browser
+            .sessions
+            .lock()
+            .await
+            .get_mut(&session.session_id)
+            .unwrap()
+            .expires = Instant::now();
+
+        assert_eq!(
+            browser
+                .rebind(
+                    &registry,
+                    &created.project_id,
+                    &created.revision,
+                    &session.session_id,
+                    &session.root.handle,
+                )
+                .await
+                .unwrap_err(),
+            ProjectBrowserError::DiscoveryExpired
+        );
+        let unchanged = registry.list_summaries().await.unwrap().pop().unwrap();
+        assert_eq!(unchanged.project_id, created.project_id);
+        assert_eq!(unchanged.revision, created.revision);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn project_browser_rebind_rejects_escape_without_consuming_or_mutating() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let root = temp.path().join("Root");
+        std::fs::create_dir(&root).unwrap();
+        let registry = registry(&temp);
+        let created = registry.register(&root, Some("Stable")).await.unwrap();
+        let browser = ProjectBrowserRuntime::with_home(Some(temp.path().to_path_buf()));
+        let session = browser.create_session().await.unwrap();
+        let escape_handle = random_id("dir_").unwrap();
+        browser
+            .sessions
+            .lock()
+            .await
+            .get_mut(&session.session_id)
+            .unwrap()
+            .handles
+            .insert(
+                escape_handle.clone(),
+                DirectoryTarget {
+                    path: outside.path().to_path_buf(),
+                    depth: 1,
+                },
+            );
+
+        assert_eq!(
+            browser
+                .rebind(
+                    &registry,
+                    &created.project_id,
+                    &created.revision,
+                    &session.session_id,
+                    &escape_handle,
+                )
+                .await
+                .unwrap_err(),
+            ProjectBrowserError::OutsideAllowedRoot
+        );
+        assert!(browser
+            .sessions
+            .lock()
+            .await
+            .get(&session.session_id)
+            .unwrap()
+            .handles
+            .contains_key(&escape_handle));
+        let unchanged = registry.list_summaries().await.unwrap().pop().unwrap();
+        assert_eq!(unchanged.revision, created.revision);
+        assert_eq!(unchanged.project_id, created.project_id);
     }
 
     #[tokio::test]
