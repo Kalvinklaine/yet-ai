@@ -36,15 +36,25 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `POST /v1/project-browser/sessions`
 - `POST /v1/project-browser/sessions/{session_id}/list`
 - `POST /v1/projects`
+- `POST /v1/projects/{project_id}/rebind`
 - `POST /v1/projects/resolve-local-workspace` (trusted IDE host only)
 
 ## Browser project isolation smoke
 
-`npm run smoke:browser-project-isolation` builds the real engine and GUI, registers two temporary projects through the CLI, starts the authenticated loopback runtime with isolated config/cache/home directories, and drives the engine-served GUI in Playwright. It covers safe project summaries, scoped chat/memory/progress APIs, generic cross-project not-found responses, independent tabs and refreshed routes, stale SSE retirement after project navigation, archive/restore persistence, and separate legacy compatibility storage. The smoke uses Demo Mode and generated credentials only; it makes no non-loopback request and requires no provider credentials, hosted account, or cloud service.
+`npm run smoke:browser-project-isolation` builds the real engine and GUI, registers isolated temporary projects through the CLI, starts the authenticated loopback runtime with isolated config/cache/home directories, and drives the engine-served GUI in Playwright. It covers safe project summaries, scoped chat/memory/progress APIs, generic cross-project not-found responses, independent tabs and refreshed routes, stale SSE retirement after project navigation, archive/restore persistence, explicit hub and blocked-route reconnect with identity preservation, and separate legacy compatibility storage. The smoke uses Demo Mode and generated credentials only; it makes no non-loopback request and requires no provider credentials, hosted account, or cloud service.
 
 ## Local project registration
 
 Browser registration starts an authenticated, short-lived discovery session rooted at the canonical user home. The API lists only immediate, non-hidden, readable child directories as sanitized basenames and opaque session-bound handles. It does not return or accept absolute paths, list files, recurse, scan for repositories, read contents, index, or watch directories. Discovery is bounded by lifetime, navigation depth, sessions, handles, and entries; canonicalization and containment checks prevent symlink escape. A successful `POST /v1/projects` consumes the selected handle.
+
+The implemented project-directory reconnect path is `live_engine` behavior at `POST /v1/projects/{project_id}/rebind`. Its strict JSON body contains only `expectedRevision`, `directorySessionId`, and `directoryHandle`; unknown fields and raw paths are rejected. The engine validates and canonicalizes the opaque discovery selection under the home-root boundary, rejects stale, archived, unknown, conflicting, unavailable, or unsafe targets, and consumes the handle only after a successful registry rebind. Success preserves the existing opaque project id and project-ID-scoped data while replacing only the private root binding and incrementing the revision. Missing, replaced, and unbound roots remain unavailable until this explicit action succeeds; the runtime does not scan for or silently adopt a replacement.
+
+Focused engine and end-to-end evidence for this contract is:
+
+```sh
+cargo test -p yet-lsp rebind
+npm run smoke:browser-project-isolation
+```
 
 Trusted VS Code and JetBrains host code may call `POST /v1/projects/resolve-local-workspace` with bearer authentication and `X-Yet-AI-Caller: ide_host`. Its strict JSON body is `{ "root": "<local-directory>", "displayName": "<optional-label>" }`. The bounded local root is canonicalized and resolved through the same private registry, so aliases and concurrent calls return one opaque project identity. The response is only the public project summary; request roots are never echoed in responses or public logs. Missing, unreadable, unsafe, archived, or conflicting roots fail with sanitized categories. GUI callers, browser same-origin proxy callers, and unknown callers are forbidden from this path-bearing contract and must continue to use opaque browser discovery handles.
 

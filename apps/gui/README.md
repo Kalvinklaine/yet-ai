@@ -40,7 +40,16 @@ The complete browser-first project boundary has a focused real-engine smoke:
 npm run smoke:browser-project-isolation
 ```
 
-It registers two temporary local projects, opens the built engine-served GUI in Playwright, and verifies the usable `/projects` landing page, safe project rows and Add Project action, direct/refreshable project routes, independent tabs, scoped chat/memory/progress UI, stale SSE retirement and controlled-state clearing on switch, archive/restore, legacy separation, and browser/log/storage leak resistance. It uses generated local credentials and Demo Mode only, with no hosted account, real provider credentials, cloud service, or non-loopback request.
+It registers isolated temporary local projects, opens the built engine-served GUI in Playwright, and verifies the usable `/projects` landing page, safe project rows and Add Project action, direct/refreshable project routes, independent tabs, scoped chat/memory/progress UI, stale SSE retirement and controlled-state clearing on switch, archive/restore, explicit hub and blocked-route reconnect, route and identity preservation, legacy separation, and browser/log/storage leak resistance. It uses generated local credentials and Demo Mode only, with no hosted account, real provider credentials, cloud service, or non-loopback request.
+
+Project-directory reconnect is a `live_host` browser flow backed by the local engine's explicit rebind endpoint. The Projects hub shows **Reconnect** for an unavailable non-archived project, and a blocked project route shows **Reconnect directory**. Both use the bounded directory browser and submit only `expectedRevision`, `directorySessionId`, and an opaque `directoryHandle`; the GUI does not submit, persist, or place a raw path in the URL. Success preserves the project id and saved project data. The hub updates the repaired row, while a blocked shell keeps its current `/p/:projectId/...` route and renders it in place. If the project state changed while the dialog was open, **Close and refresh Projects** reloads the hub and **Close and reload project** reloads the blocked route's safe summary so archived and not-found outcomes are not hidden behind stale state. No background scan or guessed replacement occurs.
+
+Focused GUI and real-engine/browser evidence for reconnect is:
+
+```sh
+npm --prefix apps/gui test -- projectClient.test.ts ProjectRegistrationDialog.test.tsx ProjectHub.test.tsx ProjectShell.test.tsx
+npm run smoke:browser-project-isolation
+```
 
 ## Project Command Center MVP
 
