@@ -3139,7 +3139,9 @@ mod tests {
             LoopbackResponse::InvalidRequest(
                 r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
             ),
-            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5.2"}]}"#.to_string()),
+            LoopbackResponse::Models(
+                r#"{"data":[{"id":"gpt-5-codex"},{"id":"gpt-5.2"}]}"#.to_string(),
+            ),
             LoopbackResponse::Sse("responses after model recovery".to_string()),
         ])
         .await;
@@ -3242,7 +3244,9 @@ mod tests {
             LoopbackResponse::InvalidRequest(
                 r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
             ),
-            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5.2"}]}"#.to_string()),
+            LoopbackResponse::Models(
+                r#"{"data":[{"id":"gpt-5-codex"},{"id":"gpt-5.2"}]}"#.to_string(),
+            ),
             LoopbackResponse::Unauthorized(r#"{"error":"unauthorized"}"#.to_string()),
             LoopbackResponse::Token {
                 access_token: "combined-new-access".to_string(),
@@ -3306,7 +3310,9 @@ mod tests {
             LoopbackResponse::InvalidRequest(
                 r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
             ),
-            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5.2"}]}"#.to_string()),
+            LoopbackResponse::Models(
+                r#"{"data":[{"id":"gpt-5-codex"},{"id":"gpt-5.2"}]}"#.to_string(),
+            ),
             LoopbackResponse::Sse("combined recovered".to_string()),
         ])
         .await;
@@ -3482,7 +3488,9 @@ mod tests {
             LoopbackResponse::InvalidRequest(
                 r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
             ),
-            LoopbackResponse::Models(r#"{"data":[{"id":"gpt-5.2"}]}"#.to_string()),
+            LoopbackResponse::Models(
+                r#"{"data":[{"id":"gpt-5-codex"},{"id":"gpt-5.2"}]}"#.to_string(),
+            ),
             LoopbackResponse::InvalidRequest(
                 r#"{"error":{"code":"unsupported_model"}}"#.to_string(),
             ),
