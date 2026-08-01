@@ -40,6 +40,7 @@ let demoModeEnabled = false;
 let providerTestHits = 0;
 const providerAuthStartBodies = [];
 const providerAuthStatusResponses = [];
+const providerAuthDisconnectResponses = [];
 const providerAuthUrls = [];
 const chats = new Map([[chatId, thread(chatId, "Login-shaped mock smoke chat", [])]]);
 const subscribers = new Map();
@@ -126,10 +127,12 @@ try {
   await navigateToSettings(page);
   await openSettingsSection(page, "Account login");
   await page.getByRole("button", { name: "Disconnect account" }).click();
-  await expectVisibleText(page, "login_available", "post-disconnect login availability");
+  await expectVisibleText(page, "revoked", "post-disconnect revoked state");
+  await page.getByRole("button", { name: "Reconnect account", exact: true }).waitFor({ state: "visible", timeout: 10_000 });
+  assert(await page.getByRole("button", { name: "Disconnect account", exact: true }).count() === 0, "revoked state exposed an untruthful disconnect action");
   assert(chatCommandCount === 1, `disconnect state sent an unexpected command, observed ${chatCommandCount}`);
 
-  await page.getByRole("button", { name: "Start account login", exact: true }).click();
+  await page.getByRole("button", { name: "Reconnect account", exact: true }).click();
   await expectVisibleText(page, "Authorization code", "manual code exchange after reconnect");
   await page.getByLabel("Authorization code").fill(fakeAuthCode);
   await page.getByRole("button", { name: "Exchange code" }).click();
@@ -161,6 +164,8 @@ try {
   assert(providerTestHits === 0, `mock login smoke unexpectedly tested a provider ${providerTestHits} time(s)`);
   assert(providerAuthStartBodies.length === 2, `expected two experimental provider-auth start requests, observed ${providerAuthStartBodies.length}`);
   assert(providerAuthStartBodies.every((body) => JSON.stringify(body) === JSON.stringify({ experimentalCodexLike: true })), "provider-auth start request body changed from explicit experimentalCodexLike true");
+  assert(providerAuthDisconnectResponses.length === 1, `expected one provider-auth disconnect response, observed ${providerAuthDisconnectResponses.length}`);
+  assertEngineLikeDisconnectResponse(providerAuthDisconnectResponses[0]);
   assert(providerAuthUrls.length >= 2, `expected auth URLs to be recorded for experimental starts, observed ${providerAuthUrls.length}`);
   for (const authUrl of providerAuthUrls) assertSafeRecordedAuthUrl(authUrl);
   assert(runtimeApiRequests.length > 0, "expected runtime API requests to be observed");
@@ -175,7 +180,7 @@ try {
   const evidence = await saveVisualEvidence(page, preLoginEvidence);
   if (failures.length > 0) throw new Error(`Login first-message smoke failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   console.log("Login first-message smoke passed.");
-  console.log("Verified the dedicated /settings route showed Runtime, Providers & models, Account login, and Diagnostics without mounting chat workbench/composer/thread/drawer/Send surfaces; runtime connected and default-like login_unavailable (supportsLogin:false/authSource:none/configured:false) refreshed to mock-only login availability; experimental/non-default provider-auth moved pending -> connected via fake local authorization-code exchange; the owned Back to Projects -> project -> Chat transition opened the same existing chat with zero replacement creation, sent exactly one first message, and rendered one mock assistant response; disconnect/reconnect remained settings-owned; API-key fallback and Demo Mode each took precedence over experimental connected; and no real provider/hosted service/IDE/JCEF/signing/publishing path was used.");
+  console.log("Verified the dedicated /settings route showed Runtime, Providers & models, Account login, and Diagnostics without mounting chat workbench/composer/thread/drawer/Send surfaces; runtime connected and default-like login_unavailable (supportsLogin:false/authSource:none/configured:false) refreshed to mock-only login availability; experimental/non-default provider-auth moved pending -> connected via fake local authorization-code exchange; the owned Back to Projects -> project -> Chat transition opened the same existing chat with zero replacement creation, sent exactly one first message, and rendered one mock assistant response; disconnect returned engine-like revoked/configured:false/authSource:none and reconnect used the revoked-state Settings control; API-key fallback and Demo Mode each took precedence over experimental connected; and no real provider/hosted service/IDE/JCEF/signing/publishing path was used.");
   console.log("Limit: this is bounded mock-only login-shaped coverage; it does not prove official production OpenAI/ChatGPT account login or model quality.");
   console.log(`Saved sanitized visual evidence under ${path.relative(root, evidence.dir)}/ (${path.basename(evidence.screenshotPath)}, ${path.basename(evidence.domPath)}).`);
 } finally {
@@ -285,11 +290,13 @@ async function startRuntimeServer() {
       const body = await readJsonBody(request, response);
       if (body === undefined) return;
       if (Object.keys(body).length !== 0) return json(response, 400, { error: "disconnect request body must be an empty JSON object" });
-      loginStatus = "login_available";
+      loginStatus = "revoked";
       sessionId = undefined;
       authState = undefined;
       internalProviderSecrets = undefined;
-      return json(response, 200, providerAuthResponse());
+      const payload = providerAuthResponse();
+      providerAuthDisconnectResponses.push(payload);
+      return json(response, 200, payload);
     }
     if (request.method === "GET" && apiPath === "/v1/chats") return json(response, 200, { chats: Array.from(chats.values()).map(toSummary) });
     if (request.method === "POST" && apiPath === "/v1/chats") {
@@ -330,6 +337,7 @@ function providerAuthResponse() {
     return { ...common, supportsLogin: true, configured: false, status: "pending", authSource: "oauth", authorizationUrl, sessionId, expiresAt: "2026-05-24T01:00:00Z", scopes: ["openid", "profile", "email"] };
   }
   if (loginStatus === "connected") return { ...common, supportsLogin: true, configured: true, status: "connected", authSource: "oauth", accountLabel: "mock login smoke account", scopes: ["openid", "profile", "email"], expiresAt: "2026-05-24T02:00:00Z", redacted: "mock-oauth-token-redacted" };
+  if (loginStatus === "revoked") return { ...common, supportsLogin: true, configured: false, status: "revoked", authSource: "none", success: true, message: "Provider login credentials were disconnected and removed from local engine storage. API-key provider configuration was left unchanged." };
   if (loginStatus === "login_available") return { ...common, supportsLogin: true, configured: false, status: "login_available", authSource: "none" };
   return { ...common, supportsLogin: false, configured: false, status: "login_unavailable", authSource: "none" };
 }
@@ -504,6 +512,7 @@ async function assertAssistantAnswerCount(page, text, expected, label) { await p
 function secretMarkers() { return [...staticSecretMarkers, sessionId, authState].filter(Boolean); }
 function rawSecretMarkers() { return staticSecretMarkers.filter(Boolean); }
 function assertDefaultLikeInitialProviderAuthStatus(response) { assert(JSON.stringify(response) === JSON.stringify({ provider: "openai", supportsApiKey: true, cloudRequired: false, message: "Mock-only experimental/non-default account login state from loopback smoke runtime. Not production official login.", supportsLogin: false, configured: false, status: "login_unavailable", authSource: "none" }), "expected first provider-auth status response to be exactly default-like login_unavailable/supportsLogin:false/authSource:none/configured:false"); }
+function assertEngineLikeDisconnectResponse(response) { assert(JSON.stringify(response) === JSON.stringify({ provider: "openai", supportsApiKey: true, cloudRequired: false, message: "Provider login credentials were disconnected and removed from local engine storage. API-key provider configuration was left unchanged.", supportsLogin: true, configured: false, status: "revoked", authSource: "none", success: true }), "expected disconnect response to match engine revoked/configured:false/authSource:none/supportsLogin:true/success:true semantics"); }
 function assertNoSecretLeak(text, source) { assertNoRawSecretLeak(text, source); assertNoHostedAuthUrlLeak(text, source); const value = String(text); const lower = value.toLowerCase(); for (const marker of secretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Secret marker leaked through ${source}.`); } if (/mock-(session|state)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); if (/(?:codex|provider-login)-(?:session|state)-[A-Za-z0-9-]+/i.test(value)) throw new Error(`Provider auth session/state marker leaked through ${source}.`); }
 function assertNoRawSecretLeak(text, source) { const value = String(text); const lower = value.toLowerCase(); for (const marker of rawSecretMarkers()) { if (marker && lower.includes(marker.toLowerCase())) throw new Error(`Raw secret marker leaked through ${source}.`); } if (/sk-(?:proj-|live-|test-|login-smoke-)[A-Za-z0-9][A-Za-z0-9._-]{20,}/.test(value)) throw new Error(`API-key-like marker leaked through ${source}.`); if (/mock-(auth-code|access-token|refresh-token|cookie|pkce-verifier)-[A-Za-z0-9-]+/.test(value)) throw new Error(`Provider auth secret marker leaked through ${source}.`); if (/(?:access_token|refresh_token|id_token|openai_api_key|api[_-]?key|auth[_-]?code|authorization_code|pkce|code_verifier|code_challenge|cookie|set-cookie)\s*[=:]/i.test(value)) throw new Error(`Raw auth marker leaked through ${source}.`); if (/\/(?:Users|home)\/[^\s"'<>]+\/(?:\.codex\/)?auth\.json/i.test(value)) throw new Error(`Private auth path leaked through ${source}.`); }
 function assertNoRuntimeRequestUrlSecretFragments(value, source) { try { const url = new URL(value); if (!url.pathname.startsWith("/v1/")) return; assertNoUrlSecretFragments(url, source); } catch { assertNoRawSecretLeak(value, source); } }
