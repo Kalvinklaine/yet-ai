@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { BridgeAdapter, BridgeHost, HostRuntimeStatusPayload } from "../bridge/bridgeAdapter";
+import type { ProviderAuthResponse, ProviderAuthStatus } from "../services/providerAuthClient";
 import { saveProvider, type ProviderKind, type ProviderSummary, type ProviderWriteRequest } from "../services/providersClient";
 import { sanitizeDisplayText } from "../services/redaction";
 import { isLoopbackRuntimeUrl, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
@@ -117,8 +118,8 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
   const navigateSections = (event: KeyboardEvent<HTMLButtonElement>, section: SettingsSectionId) => {
     const currentIndex = settingsSections.findIndex((item) => item.id === section);
     let nextIndex: number | undefined;
-    if (event.key === "ArrowDown" || event.key === "ArrowRight") nextIndex = (currentIndex + 1) % settingsSections.length;
-    if (event.key === "ArrowUp" || event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + settingsSections.length) % settingsSections.length;
+    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % settingsSections.length;
+    if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + settingsSections.length) % settingsSections.length;
     if (event.key === "Home") nextIndex = 0;
     if (event.key === "End") nextIndex = settingsSections.length - 1;
     if (nextIndex === undefined) return;
@@ -159,14 +160,16 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
     setLocalProviderError(null);
     controller.setProviderError(null);
     const request: ProviderWriteRequest = {
-      id: selectedProviderId ? undefined : providerForm.id.trim(),
       kind: providerForm.kind,
       displayName: providerForm.displayName.trim(),
       enabled: providerForm.enabled,
       baseUrl: providerForm.baseUrl.trim(),
       auth: { type: providerForm.authType, apiKey: providerForm.apiKey.trim() || undefined },
-      models: providerForm.modelId.trim() ? [{ id: providerForm.modelId.trim(), displayName: providerForm.modelId.trim() }] : [],
-      capabilities: { chat: true, completion: false, embeddings: false },
+      ...(selectedProviderId ? {} : {
+        id: providerForm.id.trim(),
+        models: providerForm.modelId.trim() ? [{ id: providerForm.modelId.trim(), displayName: providerForm.modelId.trim() }] : [],
+        capabilities: { chat: true, completion: false, embeddings: false },
+      }),
     };
     setProviderForm((current) => ({ ...current, apiKey: "" }));
     const result = await saveProvider(settingsRef.current, selectedProviderId, request);
@@ -300,7 +303,7 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
           <label>Provider URL<input value={providerForm.baseUrl} onChange={(event) => setProviderForm((current) => ({ ...current, baseUrl: event.target.value }))} /></label>
           <label>Authentication<select value={providerForm.authType} onChange={(event) => setProviderForm((current) => ({ ...current, authType: event.target.value as ProviderForm["authType"], apiKey: "" }))}><option value="api_key">API key</option><option value="none">None</option></select></label>
           {providerForm.authType === "api_key" && <label>Provider API key<input type="password" value={providerForm.apiKey} onChange={(event) => setProviderForm((current) => ({ ...current, apiKey: event.target.value }))} autoComplete="off" /></label>}
-          <label>Model id<input value={providerForm.modelId} onChange={(event) => setProviderForm((current) => ({ ...current, modelId: event.target.value }))} /></label>
+          {!selectedProviderId && <label>Model id<input value={providerForm.modelId} onChange={(event) => setProviderForm((current) => ({ ...current, modelId: event.target.value }))} /></label>}
           <label><input type="checkbox" checked={providerForm.enabled} onChange={(event) => setProviderForm((current) => ({ ...current, enabled: event.target.checked }))} /> Enabled</label>
           <div className="row"><button type="submit" disabled={providerSaving}>{providerSaving ? "Saving…" : selectedProviderId ? "Update provider" : "Save provider"}</button>{selectedProviderId && <button type="button" className="secondary-button" onClick={() => { setSelectedProviderId(undefined); setProviderForm(emptyProviderForm); }}>New provider</button>}</div>
         </form>
@@ -313,11 +316,13 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
         {activeAuth?.message && <span>{sanitizeDisplayText(activeAuth.message)}</span>}
         <div className="settings-account-actions">
           <button type="button" onClick={() => void controller.refreshProviderAuthStatus()} disabled={controller.providerAuthMutation !== null}>Refresh login status</button>
-          {activeAuth?.status === "connected" ? <button type="button" className="danger-button settings-destructive-action" onClick={() => void controller.disconnectOpenAiLogin()} disabled={controller.providerAuthMutation !== null}>Disconnect account</button> : <button type="button" onClick={() => void startLogin()} disabled={controller.providerAuthMutation !== null || activeAuth?.supportsLogin === false}>Start account login</button>}
+          {activeAuth && accountAuthAction(activeAuth.status) === "start" && activeAuth.supportsLogin && <button type="button" onClick={() => void startLogin()} disabled={controller.providerAuthMutation !== null}>Start account login</button>}
+          {activeAuth && accountAuthAction(activeAuth.status) === "reconnect" && <button type="button" onClick={() => void startLogin()} disabled={controller.providerAuthMutation !== null}>Reconnect account</button>}
+          {activeAuth && shouldShowDisconnect(activeAuth) && <button type="button" className="danger-button settings-destructive-action" onClick={() => void controller.disconnectOpenAiLogin()} disabled={controller.providerAuthMutation !== null}>{activeAuth.status === "pending" ? "Cancel login" : "Disconnect account"}</button>}
         </div>
         {activeAuth?.status === "pending" && <form onSubmit={(event) => void exchangeCode(event)} className="form-grid" aria-label="Manual authorization exchange">
           <label>Authorization code<input type="password" value={controller.providerAuthExchangeCode} onChange={(event) => controller.setProviderAuthExchangeCode(event.target.value)} autoComplete="off" /></label>
-          <button type="submit" disabled={controller.providerAuthExchangeWorking || controller.providerAuthMutation === "exchange"}>{controller.providerAuthExchangeWorking ? "Exchanging…" : "Exchange code"}</button>
+          <button type="submit" disabled={controller.providerAuthExchangeWorking || controller.providerAuthMutation !== null}>{controller.providerAuthExchangeWorking ? "Exchanging…" : "Exchange code"}</button>
         </form>}
         {controller.providerAuthError && <ErrorBox error={controller.providerAuthError} />}
         {controller.providerAuthUrlWarning && <div className="error">{sanitizeDisplayText(controller.providerAuthUrlWarning)}</div>}
@@ -387,4 +392,15 @@ function providerTestAction(status: ProviderTestState["status"]): string {
     case "unreachable": return "Check that the provider is running and reachable.";
     default: return "Review the sanitized provider result.";
   }
+}
+
+function accountAuthAction(status: ProviderAuthStatus): "start" | "reconnect" | "none" {
+  if (status === "not_configured" || status === "login_available" || status === "login_unavailable" || status === "api_key_configured") return "start";
+  if (status === "connected" || status === "expired" || status === "revoked" || status === "error") return "reconnect";
+  return "none";
+}
+
+function shouldShowDisconnect(auth: ProviderAuthResponse): boolean {
+  if (auth.status === "pending") return true;
+  return auth.configured && auth.authSource !== "api_key" && (auth.status === "connected" || auth.status === "expired" || auth.status === "revoked" || auth.status === "error");
 }

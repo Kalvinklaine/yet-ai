@@ -338,9 +338,7 @@ textarea {
   .settings-readiness { grid-template-columns: minmax(0, 1fr); }
   .settings-layout { grid-template-columns: minmax(0, 1fr); }
   .settings-section-nav { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid #d8e1f0; background: rgba(245, 247, 251, 0.96); padding: 8px 0; }
-  .settings-section-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
-  .settings-section-tabs button { flex: 0 0 auto; width: auto; white-space: nowrap; }
-  .settings-section-tabs button span { display: none; }
+  .settings-section-tabs { display: grid; gap: 5px; }
   .settings-local-note { display: none; }
   .settings-section-heading { flex-direction: column; gap: 8px; }
   .settings-section-card { padding: 16px; }

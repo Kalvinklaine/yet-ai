@@ -33,7 +33,8 @@ function installFetch(options: { auth?: Record<string, unknown>; failPing?: bool
     if (url.endsWith("/v1/demo-mode") && init?.method === "POST") return json({ enabled: true, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "enabled" });
     if (url.endsWith("/v1/demo-mode")) return json({ enabled: false, providerId: "yet-demo", modelId: "yet-demo-chat", displayName: "Yet AI Demo Mode", cloudRequired: false, providerAccess: "direct", message: "disabled" });
     if (url.endsWith("/v1/providers") && init?.method === "POST") return json({ id: "saved", kind: "openai-compatible", displayName: "Saved", enabled: true, baseUrl: "https://example.com/v1", auth: { type: "api_key", configured: true, redacted: "must-not-render" }, models: [], capabilities: { chat: true, completion: false, embeddings: false } });
-    if (url.endsWith("/v1/providers")) return json({ providers: [{ id: "local", kind: "ollama", displayName: "Local provider", enabled: true, baseUrl: "http://127.0.0.1:11434", auth: { type: "none", configured: true }, models: [{ id: "llama", displayName: "Llama" }], capabilities: { chat: true, completion: false, embeddings: false } }], cloudRequired: false, providerAccess: "direct" });
+    if (url.endsWith("/v1/providers/local") && init?.method === "PATCH") return json({ id: "local", kind: "ollama", displayName: "Local provider", enabled: true, baseUrl: "http://127.0.0.1:11434", auth: { type: "none", configured: true }, models: [{ id: "llama", displayName: "Llama" }, { id: "coder", displayName: "Coder" }], capabilities: { chat: true, completion: true, embeddings: true } });
+    if (url.endsWith("/v1/providers")) return json({ providers: [{ id: "local", kind: "ollama", displayName: "Local provider", enabled: true, baseUrl: "http://127.0.0.1:11434", auth: { type: "none", configured: true }, models: [{ id: "llama", displayName: "Llama" }, { id: "coder", displayName: "Coder" }], capabilities: { chat: true, completion: true, embeddings: true } }], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith("/v1/providers/local/test")) return json({ ok: true, providerId: "local", status: "reachable", message: "Provider reached", cloudRequired: false });
     if (url.endsWith("/v1/provider-auth/openai/status")) return options.authResponse ?? json(options.auth ?? authBase);
     if (url.endsWith("/v1/provider-auth/openai/start")) return json({ ...authBase, success: true, status: "pending", authSource: "oauth", authorizationUrl: "https://login.example.test/authorize?state=safe-state", sessionId: "private-session" });
@@ -156,6 +157,8 @@ describe("SettingsPage", () => {
     await renderPage();
     const tabs = Array.from(container!.querySelectorAll<HTMLButtonElement>("[role='tab']"));
 
+    await act(async () => tabs[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })));
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     await act(async () => tabs[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
     expect(document.activeElement).toBe(tabs[1]);
     expect(tabs[1].getAttribute("aria-selected")).toBe("true");
@@ -201,6 +204,25 @@ describe("SettingsPage", () => {
     await act(async () => button("Try Demo Mode").click());
     await flush();
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).endsWith("/v1/demo-mode") && (init as RequestInit | undefined)?.method === "POST")).toBe(true);
+  });
+
+  it("patches an existing provider without replacing models, capabilities, or its saved secret", async () => {
+    const fetchMock = installFetch();
+    await renderPage();
+
+    await act(async () => button("Edit").click());
+    expect(Array.from(container!.querySelectorAll("label")).some((item) => item.textContent?.includes("Model id"))).toBe(false);
+    await change(input("Display name"), "Renamed local provider");
+    await act(async () => container!.querySelector<HTMLFormElement>("[aria-label='Provider editor']")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await flush();
+
+    const patchCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith("/v1/providers/local") && (init as RequestInit | undefined)?.method === "PATCH");
+    const body = JSON.parse(String((patchCall?.[1] as RequestInit).body)) as Record<string, unknown>;
+    expect(body).toMatchObject({ displayName: "Renamed local provider", auth: { type: "none" } });
+    expect(body).not.toHaveProperty("models");
+    expect(body).not.toHaveProperty("capabilities");
+    expect(body).not.toHaveProperty("id");
+    expect(body.auth as Record<string, unknown>).not.toHaveProperty("apiKey");
   });
 
   it("preserves host-managed restrictions and never renders its hidden token", async () => {
@@ -261,6 +283,9 @@ describe("SettingsPage", () => {
     await flush();
 
     expect(container?.textContent).toContain("pending");
+    expect(button("Start account login")).toBeUndefined();
+    expect(button("Reconnect account")).toBeUndefined();
+    expect(button("Cancel login")).not.toBeUndefined();
     expect(container?.textContent).not.toContain("private-session");
     expect(container?.textContent).not.toContain("safe-state");
     await change(input("Authorization code"), "one-time-code");
@@ -279,9 +304,27 @@ describe("SettingsPage", () => {
     expect(container?.textContent).toContain("connected");
     expect(container?.textContent).not.toContain("person@example.test");
     expect(container?.textContent).not.toContain("private-redaction");
+    expect(button("Reconnect account")).not.toBeUndefined();
     await act(async () => button("Disconnect account").click());
     await flush();
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/v1/provider-auth/openai/disconnect"))).toBe(true);
+  });
+
+  it.each([
+    ["not_configured", false, "none", true, false],
+    ["login_available", false, "none", true, false],
+    ["login_unavailable", false, "none", false, false],
+    ["api_key_configured", true, "api_key", true, false],
+    ["expired", true, "oauth", true, true],
+    ["revoked", true, "oauth", true, true],
+    ["error", true, "oauth", true, true],
+  ] as const)("renders truthful account actions for %s", async (status, configured, authSource, supportsLogin, canDisconnect) => {
+    installFetch({ auth: { ...authBase, status, configured, authSource, supportsLogin } });
+    await renderPage();
+
+    const action = ["expired", "revoked", "error"].includes(status) ? "Reconnect account" : "Start account login";
+    expect(button(action) !== undefined).toBe(supportsLogin || action === "Reconnect account");
+    expect(button("Disconnect account") !== undefined).toBe(canDisconnect);
   });
 
   it("sanitizes errors and keeps diagnostics aggregate-only", async () => {
