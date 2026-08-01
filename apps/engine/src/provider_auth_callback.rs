@@ -50,13 +50,12 @@ struct CallbackState {
 pub(crate) struct CallbackStartError;
 
 pub(crate) async fn ensure_started(
-    config_dir: &Path,
+    _config_dir: &Path,
     redirect_uri: &str,
 ) -> Result<(), CallbackStartError> {
     let port = callback_port(redirect_uri)?;
     {
-        let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
-        state.known_config_dirs.insert(config_dir.to_path_buf());
+        let state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
         if let Some(started_port) = state.started_port {
             return (started_port == port)
                 .then_some(())
@@ -87,7 +86,6 @@ pub(crate) async fn ensure_started(
         serve_listeners_in_owner_thread(listeners)?;
 
         let mut state = CALLBACK_STATE.lock().map_err(|_| CallbackStartError)?;
-        state.known_config_dirs.insert(config_dir.to_path_buf());
         state.started_port = Some(port);
         Ok(())
     }
@@ -384,17 +382,35 @@ fn callback_error_text(result: &Result<(), provider_auth::ProviderAuthError>) ->
 async fn registered_config_dir_for_state(
     state_value: &str,
 ) -> Result<Option<PathBuf>, provider_auth::ProviderAuthError> {
-    let config_dirs = {
+    let (direct_config_dir, known_config_dirs) = {
         let state = CALLBACK_STATE
             .lock()
             .map_err(|_| provider_auth::ProviderAuthError::Storage)?;
-        let mut config_dirs = state.known_config_dirs.iter().cloned().collect::<Vec<_>>();
-        if let Some(config_dir) = state.pending_states.get(state_value) {
-            config_dirs.push(config_dir.clone());
-        }
-        config_dirs
+        (
+            state.pending_states.get(state_value).cloned(),
+            state.known_config_dirs.iter().cloned().collect::<Vec<_>>(),
+        )
     };
-    match provider_auth::resolve_codex_callback_config_dir(state_value, config_dirs).await {
+    let resolved = if let Some(direct_config_dir) = direct_config_dir {
+        if provider_auth::codex_callback_state_is_pending(&direct_config_dir, state_value).await? {
+            for config_dir in known_config_dirs {
+                if config_dir == direct_config_dir {
+                    continue;
+                }
+                match provider_auth::codex_callback_state_is_pending(&config_dir, state_value).await
+                {
+                    Ok(true) => return callback_resolution_error(state_value),
+                    Ok(false) | Err(_) => {}
+                }
+            }
+            Ok(Some(direct_config_dir))
+        } else {
+            provider_auth::resolve_codex_callback_config_dir(state_value, known_config_dirs).await
+        }
+    } else {
+        provider_auth::resolve_codex_callback_config_dir(state_value, known_config_dirs).await
+    };
+    match resolved {
         Ok(Some(config_dir)) => {
             register_pending_state(state_value, &config_dir)
                 .map_err(|_| provider_auth::ProviderAuthError::CallbackUnavailable)?;
@@ -410,6 +426,11 @@ async fn registered_config_dir_for_state(
         }
         Err(error) => Err(error),
     }
+}
+
+fn callback_resolution_error<T>(state_value: &str) -> Result<T, provider_auth::ProviderAuthError> {
+    forget_pending_state(state_value);
+    Err(provider_auth::ProviderAuthError::SessionMismatch)
 }
 
 #[cfg(test)]
@@ -433,6 +454,13 @@ fn directly_registered_config_dir_for_test(state_value: &str) -> Option<PathBuf>
         .lock()
         .ok()
         .and_then(|state| state.pending_states.get(state_value).cloned())
+}
+
+#[cfg(test)]
+fn known_config_dir_for_test(config_dir: &Path) -> bool {
+    CALLBACK_STATE
+        .lock()
+        .is_ok_and(|state| state.known_config_dirs.contains(config_dir))
 }
 
 struct CallbackQuery {
@@ -1018,6 +1046,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_session_registry_persistence_does_not_register_known_config_dir() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_all_registered_state_for_test();
+        let dir = callback_test_dir("failed-registry-persistence");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("provider-auth-sessions"), "not-a-directory").unwrap();
+
+        let result = provider_auth::start(
+            &dir,
+            "openai",
+            provider_auth::ProviderAuthStartRequest {
+                experimental_codex_like: true,
+                token_endpoint_url: Some(codex_token_endpoint(StatusCode::OK).await),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            Err(provider_auth::ProviderAuthError::Storage)
+        ));
+        assert!(!known_config_dir_for_test(&dir));
+        assert!(CALLBACK_STATE
+            .lock()
+            .unwrap()
+            .pending_states
+            .values()
+            .all(|config_dir| config_dir != &dir));
+    }
+
+    #[tokio::test]
     async fn callback_fails_closed_when_multiple_config_dirs_match_state() {
         let _guard = CALLBACK_TEST_LOCK.lock().await;
         clear_all_registered_state_for_test();
@@ -1136,9 +1196,9 @@ mod tests {
         clear_all_registered_state_for_test();
         let stale = callback_test_dir("stale");
         let valid = callback_test_dir("valid");
-        let stale_path = stale.join("provider-auth-openai").join("openai.json");
+        let stale_path = stale.join("provider-auth-sessions").join("openai.json");
         std::fs::create_dir_all(stale_path.parent().unwrap()).unwrap();
-        std::fs::write(&stale_path, r#"{"pending":{"state":"broken""#).unwrap();
+        std::fs::write(&stale_path, r#"{"pending":[{"state":"broken""#).unwrap();
         register_pending_state("stale-state", &stale).unwrap();
         let token_endpoint_url = codex_token_endpoint(StatusCode::BAD_GATEWAY).await;
         let start = start_codex_pending(&valid, &token_endpoint_url).await;
@@ -1155,10 +1215,6 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(text, CALLBACK_RETRY_TEXT);
         assert!(!text.contains("502"));
-        assert!(registered_config_dir_for_state("stale-state")
-            .await
-            .unwrap()
-            .is_none());
         assert_eq!(
             registered_config_dir_for_state(&state).await.unwrap(),
             Some(valid)
