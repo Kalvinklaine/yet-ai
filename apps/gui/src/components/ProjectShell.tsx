@@ -34,7 +34,7 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
     setError(null);
     const result = await getProject(settings, route.projectId, controller.signal);
     if (request !== projectRequestRef.current) return;
-    if (result.ok) setProject(result.data); else setError(result.error);
+    if (result.ok) setProject(result.data); else { setProject(null); setError(result.error); }
     setLoading(false);
     return controller;
   }, [route.projectId, settings]);
@@ -101,7 +101,11 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
   if (project.status === "archived") return <ProjectBlockedState title="Project archived" detail="Restore this project from the Projects page before opening its local data." navigate={navigate} />;
   if (project.status === "missing" || !project.rootAvailable) {
     const generation = rebindGenerationRef.current;
-    return <><ProjectBlockedState title="Project directory unavailable" detail="The registered directory is missing, moved, inaccessible, or no longer matches this project. No replacement was guessed." navigate={navigate} actionLabel="Reconnect directory" onAction={() => { rebindGenerationRef.current += 1; setRebindOpen(true); }} />{rebindOpen && <ProjectRegistrationDialog settings={settings} mode="rebind" project={project} onClose={() => { rebindGenerationRef.current += 1; setRebindOpen(false); }} onRegistered={(repaired) => {
+    return <><ProjectBlockedState title="Project directory unavailable" detail="The registered directory is missing, moved, inaccessible, or no longer matches this project. No replacement was guessed." navigate={navigate} actionLabel="Reconnect directory" onAction={() => { rebindGenerationRef.current += 1; setRebindOpen(true); }} />{rebindOpen && <ProjectRegistrationDialog settings={settings} mode="rebind" project={project} projectStateChangedActionLabel="Close and reload project" onClose={() => { rebindGenerationRef.current += 1; setRebindOpen(false); }} onProjectStateChanged={() => {
+      rebindGenerationRef.current += 1;
+      setRebindOpen(false);
+      void load();
+    }} onRegistered={(repaired) => {
       if (!mountedRef.current || generation !== rebindGenerationRef.current || repaired.projectId !== route.projectId) return;
       rebindGenerationRef.current += 1;
       setRebindOpen(false);

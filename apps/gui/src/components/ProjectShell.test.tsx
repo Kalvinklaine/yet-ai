@@ -71,6 +71,38 @@ describe("ProjectShell", () => {
     expect(container.innerHTML).not.toContain("/Users/private");
   });
 
+  it.each([
+    { refreshed: "archived", expected: "Project archived" },
+    { refreshed: "not-found", expected: "This project could not be found." },
+  ] as const)("reloads the blocked route after a rebind conflict resolves to $refreshed", async ({ refreshed, expected }) => {
+    const navigate = vi.fn();
+    const missing = { ...project, status: "missing" as const, rootAvailable: false };
+    vi.mocked(client.getProject)
+      .mockResolvedValueOnce({ ok: true, data: missing })
+      .mockResolvedValueOnce(refreshed === "archived"
+        ? { ok: true, data: { ...project, status: "archived", revision: "2", rootAvailable: false } }
+        : { ok: false, error: { status: 404, message: "Project not found. /Users/private" } });
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "opaque-root", displayName: "Recovered", selectable: true }, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", directoryHandle: "opaque-root", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.rebindProject).mockResolvedValue({ ok: false, error: { status: 409, message: "revision conflict /Users/private" } });
+    const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectShell route={{ kind: "project", projectId, page: "chat" }} settings={settings} navigate={navigate}><div>Chat content</div></ProjectShell>); });
+    await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Reconnect directory") as HTMLButtonElement).click(); });
+    await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+
+    expect(container.textContent).toContain("Close and reload project");
+    expect(container.textContent).not.toContain("Close and refresh Projects");
+    expect(container.textContent).not.toContain("/Users/private");
+    await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Close and reload project") as HTMLButtonElement).click(); });
+
+    expect(client.getProject).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain(expected);
+    expect(container.textContent).not.toContain("Project directory unavailable");
+    expect(container.textContent).not.toContain("Chat content");
+    expect(container.textContent).not.toContain("/Users/private");
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it("loads project-scoped command-center data and renders safe section states", async () => {
     vi.mocked(client.getProject).mockResolvedValue({ ok: true, data: project });
     vi.mocked(runtimeClient.listChats).mockResolvedValue({ ok: true, data: { chats: [{ chatId: "chat-latest", title: "Latest chat", createdAt: "2026-07-28T10:00:00Z", updatedAt: "2026-07-28T11:00:00Z", messageCount: 2 }] } });

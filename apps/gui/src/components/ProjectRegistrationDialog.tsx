@@ -8,9 +8,9 @@ type ProjectRegistrationDialogProps = {
   settings: RuntimeSettings;
   onClose: () => void;
   onRegistered: (project: ProjectSummary) => void;
-} & ({ mode?: "register"; project?: never; onProjectStateChanged?: never } | { mode: "rebind"; project: ProjectSummary; onProjectStateChanged?: () => void });
+} & ({ mode?: "register"; project?: never; onProjectStateChanged?: never; projectStateChangedActionLabel?: never } | { mode: "rebind"; project: ProjectSummary; onProjectStateChanged?: () => void; projectStateChangedActionLabel?: string });
 
-export function ProjectRegistrationDialog({ settings, onClose, onRegistered, onProjectStateChanged, mode = "register", project }: ProjectRegistrationDialogProps) {
+export function ProjectRegistrationDialog({ settings, onClose, onRegistered, onProjectStateChanged, projectStateChangedActionLabel = "Close and refresh Projects", mode = "register", project }: ProjectRegistrationDialogProps) {
   const [sessionId, setSessionId] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [levels, setLevels] = useState<DirectoryLevel[]>([]);
@@ -190,7 +190,7 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered, onP
             </ul>
           ) : state !== "error" ? <p role="status">No child directories are available here. You may select this directory if allowed.</p> : null}
         </div>
-        {error && <div className="error" role="alert"><strong>{expired ? "Discovery session expired" : mode === "rebind" ? "Project could not be reconnected" : "Directory unavailable"}</strong><span>{mode === "rebind" ? safeRebindMessage(error) : safeDiscoveryMessage(error)}</span>{projectStateChanged ? <button type="button" onClick={() => { if (onProjectStateChanged) { invalidate(); onProjectStateChanged(); } else { handleClose(); } }}>Close and refresh Projects</button> : <button type="button" onClick={() => void begin()}>{expired ? "Start a new session" : "Retry discovery"}</button>}</div>}
+        {error && <div className="error" role="alert"><strong>{expired ? "Discovery session expired" : mode === "rebind" ? "Project could not be reconnected" : "Directory unavailable"}</strong><span>{mode === "rebind" ? safeRebindMessage(error) : safeDiscoveryMessage(error)}</span>{projectStateChanged ? <button type="button" onClick={() => { if (onProjectStateChanged) { invalidate(); onProjectStateChanged(); } else { handleClose(); } }}>{projectStateChangedActionLabel}</button> : <button type="button" onClick={() => void begin()}>{expired ? "Start a new session" : "Retry discovery"}</button>}</div>}
         <form className="stack" onSubmit={(event) => void submit(event)}>
           {mode === "register" && <label>Project display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={120} autoComplete="off" /></label>}
           <span className="subtle">Selected: {selected ? selected.displayName : "Choose a selectable directory"}. Session expires {expiresAt ? new Date(expiresAt).toLocaleTimeString() : "soon"}.</span>
@@ -214,7 +214,7 @@ function safeDiscoveryMessage(error: RuntimeError): string {
 }
 
 function safeRebindMessage(error: RuntimeError): string {
-  if (isProjectStateRebindError(error)) return "The saved project state changed before it could be reconnected. Refresh Projects before trying again.";
+  if (isProjectStateRebindError(error)) return "The saved project state changed before it could be reconnected. Reload the project state before trying again.";
   return safeDiscoveryMessage(error);
 }
 
