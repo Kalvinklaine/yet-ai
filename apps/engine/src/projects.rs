@@ -391,6 +391,57 @@ impl ProjectRegistryRuntime {
             .await
     }
 
+    pub async fn rebind(
+        &self,
+        project_id: &str,
+        expected_revision: &str,
+        root: impl AsRef<Path>,
+    ) -> Result<ProjectSummary, ProjectRegistryError> {
+        validate_project_id(project_id)?;
+        validate_revision(expected_revision).map_err(|_| ProjectRegistryError::InvalidRequest)?;
+        let canonical_root = canonical_directory(root.as_ref()).await?;
+        let root_binding = readable_root_binding(&canonical_root)?;
+        self.validate_registration_root(&canonical_root)?;
+        self.validate_registry_storage()?;
+        let _ordering = self.ordering.lock().await;
+        let project_id = project_id.to_string();
+        let expected_revision = expected_revision.to_string();
+        self.transaction(move |registry| {
+            let index = registry
+                .projects
+                .iter()
+                .position(|entry| entry.project_id == project_id)
+                .ok_or(ProjectRegistryError::NotFound)?;
+            if registry.projects[index].archived {
+                return Err(ProjectRegistryError::Archived);
+            }
+            if registry.projects[index].revision != expected_revision {
+                return Err(ProjectRegistryError::Conflict);
+            }
+            if registry
+                .projects
+                .iter()
+                .enumerate()
+                .any(|(other_index, entry)| {
+                    other_index != index && entry.canonical_root == canonical_root
+                })
+            {
+                return Err(ProjectRegistryError::Conflict);
+            }
+            if !root_is_available(&canonical_root, root_binding) {
+                return Err(ProjectRegistryError::RootUnavailable);
+            }
+            let entry = &mut registry.projects[index];
+            entry.canonical_root = canonical_root;
+            entry.root_binding = root_binding;
+            entry.revision = increment_revision(&entry.revision)?;
+            let summary = project_summary(entry);
+            registry.revision = increment_revision(&registry.revision)?;
+            Ok(summary)
+        })
+        .await
+    }
+
     async fn register_with_archived_policy(
         &self,
         root: impl AsRef<Path>,
@@ -1479,6 +1530,187 @@ mod tests {
             ProjectRegistryError::RootUnavailable
         );
         assert_eq!(runtime.list_summaries().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn projects_explicit_rebind_restores_missing_root_and_preserves_identity_and_storage() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_root = temp.path().join("old-root");
+        let new_root = temp.path().join("new-root");
+        std::fs::create_dir(&old_root).unwrap();
+        std::fs::create_dir(&new_root).unwrap();
+        let paths = storage_paths(&temp);
+        let runtime = ProjectRegistryRuntime::new(&paths);
+        let created = runtime.register(&old_root, Some("Stable")).await.unwrap();
+        let opened = runtime
+            .mark_opened(&created.project_id, &created.revision)
+            .await
+            .unwrap();
+        let before = runtime
+            .get_private_entry(&created.project_id)
+            .await
+            .unwrap();
+        let storage = paths.project_storage_paths(&created.project_id).unwrap();
+        std::fs::create_dir_all(&storage.config_root).unwrap();
+        let marker = storage.config_root.join("preserved.txt");
+        std::fs::write(&marker, b"owned by project id").unwrap();
+        std::fs::remove_dir(&old_root).unwrap();
+
+        assert_eq!(
+            runtime.list_summaries().await.unwrap()[0].status,
+            ProjectStatus::Missing
+        );
+        let rebound = runtime
+            .rebind(&created.project_id, &opened.revision, &new_root)
+            .await
+            .unwrap();
+        let after = runtime
+            .get_private_entry(&created.project_id)
+            .await
+            .unwrap();
+
+        assert_eq!(rebound.status, ProjectStatus::Available);
+        assert_eq!(rebound.revision, "3");
+        assert_eq!(after.project_id, before.project_id);
+        assert_eq!(after.display_name, before.display_name);
+        assert_eq!(after.created_at, before.created_at);
+        assert_eq!(after.last_opened_at, before.last_opened_at);
+        assert_eq!(after.archived, before.archived);
+        assert_eq!(
+            after.canonical_root(),
+            std::fs::canonicalize(&new_root).unwrap()
+        );
+        assert_eq!(std::fs::read(marker).unwrap(), b"owned by project id");
+        let context = runtime
+            .resolve_context(&paths, &created.project_id)
+            .await
+            .unwrap();
+        assert_eq!(context.storage().config_root, storage.config_root);
+        assert_eq!(context.storage().cache_root, storage.cache_root);
+        let registry: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(paths.project_registry_path()).unwrap()).unwrap();
+        assert_eq!(registry["revision"], "4");
+    }
+
+    #[tokio::test]
+    async fn projects_unbound_root_requires_explicit_rebind() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let runtime = ProjectRegistryRuntime::new(&storage_paths(&temp));
+        let created = runtime.register(&root, Some("Unbound")).await.unwrap();
+        let project_id = created.project_id.clone();
+        runtime
+            .transaction(move |registry| {
+                registry
+                    .projects
+                    .iter_mut()
+                    .find(|entry| entry.project_id == project_id)
+                    .unwrap()
+                    .root_binding = RootBinding::Unbound;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let missing = runtime.list_summaries().await.unwrap().pop().unwrap();
+        assert_eq!(missing.status, ProjectStatus::Missing);
+        assert_eq!(missing.revision, created.revision);
+        assert_eq!(
+            runtime.register(&root, Some("Silent")).await.unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
+        let rebound = runtime
+            .rebind(&created.project_id, &created.revision, &root)
+            .await
+            .unwrap();
+        assert_eq!(rebound.status, ProjectStatus::Available);
+        assert_eq!(rebound.revision, "2");
+    }
+
+    #[tokio::test]
+    async fn projects_rebind_rejects_stale_archived_unknown_conflicting_and_unsafe_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let first_root = temp.path().join("first");
+        let second_root = temp.path().join("second");
+        let candidate_root = temp.path().join("candidate");
+        let file = temp.path().join("not-a-directory");
+        std::fs::create_dir(&first_root).unwrap();
+        std::fs::create_dir(&second_root).unwrap();
+        std::fs::create_dir(&candidate_root).unwrap();
+        std::fs::write(&file, b"not a root").unwrap();
+        let paths = storage_paths(&temp);
+        let runtime = ProjectRegistryRuntime::new(&paths);
+        let first = runtime.register(&first_root, Some("First")).await.unwrap();
+        let second = runtime
+            .register(&second_root, Some("Second"))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            runtime
+                .rebind(&first.project_id, "999", &candidate_root)
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::Conflict
+        );
+        assert_eq!(
+            runtime
+                .rebind(&first.project_id, &first.revision, &second_root)
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::Conflict
+        );
+        assert_eq!(
+            runtime
+                .rebind(
+                    &new_project_id().unwrap(),
+                    INITIAL_REVISION,
+                    &candidate_root
+                )
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::NotFound
+        );
+        let archived = runtime
+            .archive(&first.project_id, &first.revision)
+            .await
+            .unwrap();
+        assert_eq!(
+            runtime
+                .rebind(&first.project_id, &archived.revision, &candidate_root)
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::Archived
+        );
+        assert_eq!(
+            runtime
+                .rebind(
+                    &second.project_id,
+                    &second.revision,
+                    temp.path().join("missing")
+                )
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
+        assert_eq!(
+            runtime
+                .rebind(&second.project_id, &second.revision, &file)
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::RootUnavailable
+        );
+        assert_eq!(
+            runtime
+                .rebind(&second.project_id, &second.revision, &paths.config_dir)
+                .await
+                .unwrap_err(),
+            ProjectRegistryError::InvalidRequest
+        );
+        let summaries = runtime.list_summaries().await.unwrap();
+        assert_eq!(summaries[0].revision, archived.revision);
+        assert_eq!(summaries[1].revision, second.revision);
     }
 
     #[tokio::test]
