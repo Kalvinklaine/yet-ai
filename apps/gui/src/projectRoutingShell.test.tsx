@@ -543,6 +543,30 @@ describe("ProjectRouterShell", () => {
     expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-selected");
   });
 
+  it("opens global settings for a current selection-required binding and returns to the dashboard", async () => {
+    window.history.replaceState(null, "", "/vscode/hosted-chat");
+    window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };
+    const container = document.createElement("div");
+    document.body.append(container);
+    await act(async () => {
+      root = ReactDOM.createRoot(container);
+      root.render(<ProjectRouterShell />);
+    });
+    await sendHostReady("ready-settings-selection");
+    await sendSelectionBinding("ready-settings-selection");
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Settings")?.click();
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='settings-page'] .settings-header h1")?.textContent).toBe("Settings");
+    expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+    expect(container.querySelector(".chat-workbench")).toBeNull();
+
+    act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Back to Projects")?.click());
+    expect(container.querySelector("[data-testid='workspace-dashboard']")).not.toBeNull();
+  });
+
   it("re-gates an explicitly selected route when the stable binding fingerprint changes", async () => {
     window.history.replaceState(null, "", "/panel/panel-test/hosted-chat");
     window.__yetAiInitialRuntimeConfig = { entryMode: "hosted_chat" };

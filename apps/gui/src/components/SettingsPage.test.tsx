@@ -3,6 +3,7 @@ import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsPage } from "./SettingsPage";
+import type { BridgeAdapter, HostMessageHandler, HostRuntimeStatusPayload } from "../bridge/bridgeAdapter";
 import type { RuntimeSettings } from "../services/runtimeClient";
 
 let root: ReactDOM.Root | undefined;
@@ -23,7 +24,7 @@ function json(data: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } }));
 }
 
-function installFetch(options: { auth?: Record<string, unknown>; failPing?: boolean } = {}) {
+function installFetch(options: { auth?: Record<string, unknown>; failPing?: boolean; authResponse?: Promise<Response> } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/ping")) return options.failPing ? json({ message: "private-token <script>" }, 503) : json({ productId: "yet-ai", displayName: "Yet AI", version: "1", ready: true, serverTime: "now" });
@@ -34,7 +35,7 @@ function installFetch(options: { auth?: Record<string, unknown>; failPing?: bool
     if (url.endsWith("/v1/providers") && init?.method === "POST") return json({ id: "saved", kind: "openai-compatible", displayName: "Saved", enabled: true, baseUrl: "https://example.com/v1", auth: { type: "api_key", configured: true, redacted: "must-not-render" }, models: [], capabilities: { chat: true, completion: false, embeddings: false } });
     if (url.endsWith("/v1/providers")) return json({ providers: [{ id: "local", kind: "ollama", displayName: "Local provider", enabled: true, baseUrl: "http://127.0.0.1:11434", auth: { type: "none", configured: true }, models: [{ id: "llama", displayName: "Llama" }], capabilities: { chat: true, completion: false, embeddings: false } }], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith("/v1/providers/local/test")) return json({ ok: true, providerId: "local", status: "reachable", message: "Provider reached", cloudRequired: false });
-    if (url.endsWith("/v1/provider-auth/openai/status")) return json(options.auth ?? authBase);
+    if (url.endsWith("/v1/provider-auth/openai/status")) return options.authResponse ?? json(options.auth ?? authBase);
     if (url.endsWith("/v1/provider-auth/openai/start")) return json({ ...authBase, success: true, status: "pending", authSource: "oauth", authorizationUrl: "https://login.example.test/authorize?state=safe-state", sessionId: "private-session" });
     if (url.endsWith("/v1/provider-auth/openai/exchange")) return json({ ...authBase, success: true, configured: true, status: "connected", authSource: "oauth", accountLabel: "person@example.test" });
     if (url.endsWith("/v1/provider-auth/openai/disconnect")) return json({ ...authBase, success: true, status: "not_configured" });
@@ -42,6 +43,34 @@ function installFetch(options: { auth?: Record<string, unknown>; failPing?: bool
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function runtimeStatus(surface: HostRuntimeStatusPayload["surface"]): HostRuntimeStatusPayload {
+  return {
+    protocolVersion: "2026-06-21",
+    surface,
+    lifecycle: "connected",
+    runtimeOwner: "ide_host",
+    launchMode: "auto",
+    tokenState: "present",
+    processState: "running",
+    diagnosis: "runtime connected",
+    nextAction: "Refresh account readiness.",
+    cloudRequired: false,
+    authority: "metadata_only",
+  };
+}
+
+function bridgeAdapter(host: BridgeAdapter["host"]) {
+  let handler: HostMessageHandler | undefined;
+  const adapter: BridgeAdapter = {
+    host,
+    log: [],
+    post: vi.fn(),
+    subscribe: vi.fn((next) => { handler = next; return () => { handler = undefined; }; }),
+    dispose: vi.fn(),
+  };
+  return { adapter, emit: (payload: HostRuntimeStatusPayload) => handler?.({ version: "2026-05-15", type: "host.runtimeStatus", payload }) };
 }
 
 async function renderPage(props: Partial<React.ComponentProps<typeof SettingsPage>> = {}) {
@@ -134,6 +163,43 @@ describe("SettingsPage", () => {
     expect(container?.textContent).not.toContain("host-secret");
     expect(container?.textContent).toContain("in-memory Session token is never displayed");
     expect(onSettingsChange).not.toHaveBeenCalled();
+  });
+
+  it.each(["vscode", "jetbrains"] as const)("keeps the heading and Back action visible for the %s host", async (host) => {
+    installFetch();
+    const onBackToProjects = vi.fn();
+    await renderPage({ host, onBackToProjects });
+
+    expect(container?.querySelector(".settings-header h1")?.textContent).toBe("Settings");
+    expect(container?.querySelector(".hero")).toBeNull();
+    await act(async () => button("Back to Projects").click());
+    expect(onBackToProjects).toHaveBeenCalledOnce();
+  });
+
+  it("accepts only current-authority lifecycle status and refreshes provider auth", async () => {
+    let resolveAuth!: (response: Response) => void;
+    const authResponse = new Promise<Response>((resolve) => { resolveAuth = resolve; });
+    const fetchMock = installFetch({ authResponse });
+    const bridge = bridgeAdapter("vscode");
+    let currentAuthority = "authority-current";
+    await renderPage({
+      host: "vscode",
+      bridgeAdapter: bridge.adapter,
+      runtimeAuthorityKey: "authority-current",
+      getCurrentRuntimeAuthorityKey: () => currentAuthority,
+    });
+    const authRequestsBeforeLifecycle = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status")).length;
+
+    await act(async () => bridge.emit(runtimeStatus("vscode")));
+    expect(container?.textContent).toContain("connected · VS Code reports runtime connected");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(authRequestsBeforeLifecycle + 1);
+
+    currentAuthority = "authority-next";
+    await act(async () => bridge.emit({ ...runtimeStatus("vscode"), lifecycle: "degraded", diagnosis: "runtime degraded" }));
+    expect(container?.textContent).not.toContain("degraded ·");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(authRequestsBeforeLifecycle + 1);
+    resolveAuth(await json(authBase));
+    await flush();
   });
 
   it("supports pending login manual exchange without exposing session, state, or code", async () => {

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { BridgeHost } from "../bridge/bridgeAdapter";
+import type { BridgeAdapter, BridgeHost, HostRuntimeStatusPayload } from "../bridge/bridgeAdapter";
 import { saveProvider, type ProviderKind, type ProviderSummary, type ProviderWriteRequest } from "../services/providersClient";
 import { sanitizeDisplayText } from "../services/redaction";
 import { isLoopbackRuntimeUrl, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
-import type { RuntimeLifecycleDiagnostics } from "../services/runtimeLifecycle";
+import { runtimeLifecycleDiagnostics, type RuntimeLifecycleDiagnostics } from "../services/runtimeLifecycle";
 import { useRuntimeController, type ProviderTestState } from "../services/useRuntimeController";
 
 type ProviderForm = {
@@ -24,6 +24,9 @@ export type SettingsPageProps = {
   onBackToProjects?: () => void;
   host?: BridgeHost;
   runtimeLifecycle?: RuntimeLifecycleDiagnostics | null;
+  bridgeAdapter?: BridgeAdapter;
+  runtimeAuthorityKey?: string | null;
+  getCurrentRuntimeAuthorityKey?: () => string | null;
 };
 
 const emptyProviderForm: ProviderForm = {
@@ -37,7 +40,7 @@ const emptyProviderForm: ProviderForm = {
   modelId: "gpt-4o-mini",
 };
 
-export function SettingsPage({ settings, settingsRevision, onSettingsChange, onBackToProjects, host = "browser", runtimeLifecycle = null }: SettingsPageProps) {
+export function SettingsPage({ settings, settingsRevision, onSettingsChange, onBackToProjects, host = "browser", runtimeLifecycle = null, bridgeAdapter, runtimeAuthorityKey = null, getCurrentRuntimeAuthorityKey }: SettingsPageProps) {
   const settingsRef = useRef(settings);
   const settingsRevisionRef = useRef(settingsRevision);
   const appendTraceRef = useRef(() => undefined);
@@ -60,6 +63,7 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
   const [selectedProviderId, setSelectedProviderId] = useState<string>();
   const [providerSaving, setProviderSaving] = useState(false);
   const [localProviderError, setLocalProviderError] = useState<RuntimeError | null>(null);
+  const [liveRuntimeLifecycle, setLiveRuntimeLifecycle] = useState<RuntimeLifecycleDiagnostics | null>(runtimeLifecycle);
   const hostManaged = settings.runtimeAccess === "same_origin_proxy" || host !== "browser";
 
   useEffect(() => {
@@ -69,6 +73,24 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
   useEffect(() => {
     setSessionTokenDraft("");
   }, [settingsRevision]);
+
+  useEffect(() => {
+    setLiveRuntimeLifecycle(runtimeLifecycle);
+  }, [runtimeLifecycle]);
+
+  useEffect(() => {
+    if (!bridgeAdapter) return;
+    return bridgeAdapter.subscribe((message) => {
+      if (message.type !== "host.runtimeStatus") return;
+      if (host !== "browser" && runtimeAuthorityKey === null) return;
+      if (getCurrentRuntimeAuthorityKey && getCurrentRuntimeAuthorityKey() !== runtimeAuthorityKey) return;
+      const payload = message.payload as HostRuntimeStatusPayload;
+      if (payload.surface !== host) return;
+      const diagnostics = runtimeLifecycleDiagnostics(payload, host);
+      setLiveRuntimeLifecycle(diagnostics);
+      controller.runtimeLifecycleChanged(diagnostics);
+    });
+  }, [bridgeAdapter, controller.runtimeLifecycleChanged, getCurrentRuntimeAuthorityKey, host, runtimeAuthorityKey]);
 
   const activePing = controller.runtimeDataRevision === settingsRevision ? controller.ping : null;
   const activeModels = controller.runtimeDataRevision === settingsRevision ? controller.models : [];
@@ -153,7 +175,7 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
 
   return (
     <main className={`app-shell host-${host}`} data-testid="settings-page">
-      <header className="hero">
+      <header className="settings-header">
         <div className="stack">
           <span className="badge ok">global settings</span>
           <h1>Settings</h1>
@@ -251,7 +273,7 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
           <dt>Providers</dt><dd>{activeProviders.length} configured</dd>
           <dt>Demo Mode</dt><dd>{activeDemoMode?.enabled ? "enabled" : "disabled"}</dd>
           <dt>Account login</dt><dd>{activeAuth?.status ?? "not checked"}</dd>
-          <dt>Host lifecycle</dt><dd>{runtimeLifecycle ? `${sanitizeDisplayText(runtimeLifecycle.lifecycle)} · ${sanitizeDisplayText(runtimeLifecycle.status)}` : "not reported"}</dd>
+          <dt>Host lifecycle</dt><dd>{liveRuntimeLifecycle ? `${sanitizeDisplayText(liveRuntimeLifecycle.lifecycle)} · ${sanitizeDisplayText(liveRuntimeLifecycle.status)}` : "not reported"}</dd>
         </dl>
       </section>
     </main>

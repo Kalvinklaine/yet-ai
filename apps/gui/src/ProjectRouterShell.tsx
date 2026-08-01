@@ -29,6 +29,7 @@ export function ProjectRouterShell() {
   const previousHostedAuthorityRef = useRef(hostedAuthorityFingerprint(runtimeSettingsRevision, hostReadyGeneration, workspaceBinding));
   hostedAuthorityRef.current = { runtimeSettingsRevision, hostReadyGeneration, workspaceBinding };
   const navigate = useCallback<ProjectNavigation>((nextRoute) => { navigateProjectRoute(window, nextRoute); }, []);
+  const getCurrentRuntimeAuthorityKey = useCallback(() => runtimeAuthorityKey(hostedAuthorityRef.current.runtimeSettingsRevision, hostedAuthorityRef.current.hostReadyGeneration, hostedAuthorityRef.current.workspaceBinding), []);
   const getHostedAuthorityToken = useCallback((selectedProjectId?: string): HostedAuthorityToken | null => {
     const { runtimeSettingsRevision: currentRevision, hostReadyGeneration: currentGeneration, workspaceBinding: currentBinding } = hostedAuthorityRef.current;
     if (currentGeneration === null || !currentBinding) return null;
@@ -84,7 +85,7 @@ export function ProjectRouterShell() {
   if (hostedChatEntry) {
     if (authorizedHostedRoute) {
       if (authorizedHostedRoute.kind === "settings") {
-        return <LazyApp><SettingsPage settings={settings} settingsRevision={runtimeSettingsRevision} onSettingsChange={updateSettings} host={bridgeAdapter.host} onBackToProjects={() => setOpenedHostedRoute(null)} /></LazyApp>;
+        return <LazyApp><SettingsPage settings={settings} settingsRevision={runtimeSettingsRevision} onSettingsChange={updateSettings} host={bridgeAdapter.host} bridgeAdapter={bridgeAdapter} runtimeAuthorityKey={getCurrentRuntimeAuthorityKey()} getCurrentRuntimeAuthorityKey={getCurrentRuntimeAuthorityKey} onBackToProjects={() => setOpenedHostedRoute(null)} /></LazyApp>;
       }
       return <LazyApp><App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostedAuthorityKey={openedHostedRoute?.authorityToken} hostReadyGeneration={hostReadyGeneration} acceptedHostReadySeed={acceptedHostReadySeed} /></LazyApp>;
     }
@@ -101,7 +102,7 @@ export function ProjectRouterShell() {
   }
   if (route.kind === "legacy") return <LegacyData settings={settings} navigate={navigate} />;
   if (route.kind === "settings") {
-    return <LazyApp><SettingsPage settings={settings} settingsRevision={runtimeSettingsRevision} onSettingsChange={updateSettings} host={bridgeAdapter.host} onBackToProjects={() => navigate({ kind: "projects" })} /></LazyApp>;
+    return <LazyApp><SettingsPage settings={settings} settingsRevision={runtimeSettingsRevision} onSettingsChange={updateSettings} host={bridgeAdapter.host} bridgeAdapter={bridgeAdapter} runtimeAuthorityKey={getCurrentRuntimeAuthorityKey()} getCurrentRuntimeAuthorityKey={getCurrentRuntimeAuthorityKey} onBackToProjects={() => navigate({ kind: "projects" })} /></LazyApp>;
   }
   return <LazyApp><App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostReadyGeneration={hostReadyGeneration} acceptedHostReadySeed={acceptedHostReadySeed} /></LazyApp>;
 }
@@ -118,9 +119,15 @@ type HostedRoute = Extract<AppRoute, { kind: "legacy" | "settings" | "project" }
 type OpenedHostedRoute = { route: HostedRoute; authorityToken: HostedAuthorityToken; bindingFingerprint: string; selectedProjectId: string | null };
 
 function isHostedRouteAllowed(route: HostedRoute, binding: WorkspaceBindingPayload, selectedProjectId: string | null): boolean {
-  if (route.kind !== "project") return binding.state === "auto_bound";
+  if (route.kind === "settings") return true;
+  if (route.kind === "legacy") return binding.state === "auto_bound";
   if (binding.state === "auto_bound") return selectedProjectId === null && route.projectId === binding.projectId;
   return selectedProjectId !== null && route.projectId === selectedProjectId;
+}
+
+function runtimeAuthorityKey(runtimeSettingsRevision: number, generation: string | null, binding: WorkspaceBindingPayload | null): string | null {
+  if (generation === null || binding === null) return null;
+  return `${runtimeSettingsRevision}\u0000${generation}\u0000${workspaceBindingFingerprint(binding)}`;
 }
 
 function workspaceBindingFingerprint(binding: WorkspaceBindingPayload): string {

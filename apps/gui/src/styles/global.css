@@ -92,6 +92,7 @@ textarea {
 }
 
 .hero,
+.settings-header,
 .card {
   border: 1px solid #dfe5f0;
   border-radius: 20px;
@@ -100,7 +101,8 @@ textarea {
   padding: 22px;
 }
 
-.hero {
+.hero,
+.settings-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -109,6 +111,7 @@ textarea {
 }
 
 .hero h1,
+.settings-header h1,
 .card h2,
 .card h3 {
   margin: 0;
