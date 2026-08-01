@@ -201,9 +201,12 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
         && providerAuthStatusRef.current?.status === "pending"
         && providerAuthStatusRef.current.authSource === "oauth"
         && result.data.status === "connected";
-      setProviderAuthStatus(result.ok ? result.data : null);
-      providerAuthStatusRef.current = result.ok ? result.data : null;
-      if (!result.ok) setProviderAuthError(result.error);
+      if (result.ok) {
+        setProviderAuthStatus(result.data);
+        providerAuthStatusRef.current = result.data;
+      } else {
+        setProviderAuthError(result.error);
+      }
       setProviderAuthDataRevision(revision);
       if (completedPendingLogin) await connect();
     } finally {

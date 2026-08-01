@@ -1234,9 +1234,8 @@ async fn discover_codex_models(
         .filter_map(|(response_order, entry)| entry.candidate(response_order))
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
-        right
-            .priority
-            .cmp(&left.priority)
+        left.priority
+            .cmp(&right.priority)
             .then_with(|| left.response_order.cmp(&right.response_order))
     });
     let mut seen = HashSet::new();
@@ -1925,7 +1924,12 @@ pub async fn rediscover_experimental_codex_chat_auth_after_model_rejection(
             _ => return Ok(None),
         };
     if metadata.chat_model != rejected_model {
-        return Ok(None);
+        return Ok(Some(ExperimentalCodexChatAuth {
+            access_token,
+            chatgpt_account_id: metadata.chatgpt_account_id,
+            base_url: metadata.chat_base_url,
+            model: metadata.chat_model,
+        }));
     }
     let session_id = match metadata.discovery_session_id.as_deref() {
         Some(session_id) => {
@@ -5311,7 +5315,42 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(models, vec!["gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.6-sol"]);
+        assert_eq!(models, vec!["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+    }
+
+    #[tokio::test]
+    async fn codex_exchange_model_discovery_stale_rejection_reuses_persisted_alternate_without_egress(
+    ) {
+        let dir = temp_dir();
+        let (endpoint, request_receiver) = recording_codex_models_endpoint(
+            r#"{"data":[{"id":"gpt-5.6-luna","visibility":"list","priority":1}]}"#,
+        )
+        .await;
+        create_codex_oauth_connection_with_expiry_and_metadata(
+            &dir,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+            |_, metadata| {
+                metadata.chat_base_url = endpoint;
+                metadata.chat_model = "gpt-5.6-terra".to_string();
+            },
+        )
+        .await;
+
+        let recovered = super::rediscover_experimental_codex_chat_auth_after_model_rejection(
+            &dir,
+            "gpt-5.6-sol",
+        )
+        .await
+        .unwrap()
+        .expect("persisted alternate should win the stale rejection race");
+
+        assert_eq!(recovered.model, "gpt-5.6-terra");
+        assert_eq!(recovered.access_token, "codex-access-token-secret");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), request_receiver)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

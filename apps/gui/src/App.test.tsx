@@ -3608,6 +3608,55 @@ describe("provider secret boundary", () => {
     expect(container?.querySelector(".chat-id-badge")?.textContent).toBe(chatId);
   });
 
+  it("existing chat becomes send-ready after manual exchange without recreation", async () => {
+    const chatId = "chat-001";
+    let connected = false;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/exchange") && init?.method === "POST") {
+        connected = true;
+        return Promise.resolve(jsonResponse(connectedExperimentalAuthResponse()));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        return Promise.resolve(jsonResponse(connected ? connectedExperimentalAuthResponse() : pendingExperimentalAuthResponse()));
+      }
+      return mockRuntimeResponse(input, init, {
+        chats: [chatSummary(chatId, "Existing before manual login", 1)],
+        chatThreads: { [chatId]: chatThread(chatId, "Existing before manual login", [chatMessage(chatId, "message-before-manual-login", "assistant", "Manual login keeps history")]) },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe(chatId);
+    expect(container?.textContent).toContain("Manual login keeps history");
+    expect(findButton("Send").disabled).toBe(true);
+    await act(async () => setInputValue(authCodeInput(), "manual-existing-chat-code"));
+    await act(async () => {
+      findButton("Exchange authorization code").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(findButton("Send").disabled).toBe(false);
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe(chatId);
+    expect(container?.textContent).toContain("Manual login keeps history");
+    await act(async () => setTextareaValue(chatInput(), "Continue after manual login"));
+    await act(async () => {
+      findButton("Send").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await flushAsync();
+
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith(`/v1/chats/${chatId}/commands`) && init?.method === "POST")).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats") && init?.method === "POST")).toHaveLength(0);
+    expect(container?.querySelector(".chat-id-badge")?.textContent).toBe(chatId);
+  });
+
   it("pending oauth updates connected UI after multiple pending polls", async () => {
     vi.useFakeTimers();
     let pollCount = 0;

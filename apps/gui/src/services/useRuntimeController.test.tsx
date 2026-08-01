@@ -108,6 +108,50 @@ describe("useRuntimeController", () => {
     expect(refreshChats).toHaveBeenCalledWith(expect.objectContaining({ baseUrl: "http://127.0.0.1:8001" }), 0);
   });
 
+  it("keeps pending auth through a transient poll failure and refreshes after connection", async () => {
+    vi.useFakeTimers();
+    let authCalls = 0;
+    const refreshChats = vi.fn(async () => undefined);
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        if (authCalls === 1) return Promise.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, pollIntervalSeconds: 1 }));
+        if (authCalls === 2) return Promise.resolve(new Response(JSON.stringify({ error: "temporary access_token=private" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+        return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false }));
+      }
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; }, undefined, 0, refreshChats);
+    await act(async () => { await controller.connect(); });
+    fetchMock.mockClear();
+    refreshChats.mockClear();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(controller.providerAuthStatus?.status).toBe("pending");
+    expect(controller.providerAuthError?.status).toBe(503);
+    expect(controller.providerAuthError?.message).not.toContain("private");
+    expect(refreshChats).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(controller.providerAuthStatus?.status).toBe("connected");
+    expect(refreshChats).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(3);
+  });
+
   it("keeps manual exchange on the shared refresh path at the current settings revision", async () => {
     const refreshChats = vi.fn(async () => undefined);
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
