@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectRouterShell } from "./ProjectRouterShell";
 import { navigateProjectRoute } from "./services/projectRouting";
 import type { RuntimeSettings } from "./services/runtimeClient";
@@ -11,6 +11,7 @@ import { consumeProjectChatLaunchIntent, createProjectChatLaunchIntent } from ".
 const appRenderCalls = vi.hoisted(() => [] as string[]);
 const appAuthorityCalls = vi.hoisted(() => [] as Array<{ hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings; acceptedHostReadySeed?: AcceptedHostReadySeed | null }>);
 const deferredHostedOpen = vi.hoisted(() => ({ run: null as null | (() => boolean) }));
+let routerFetchMock: ReturnType<typeof vi.fn>;
 vi.mock("./App", () => ({
   App: ({ route, hostedAuthorityKey, hostReadyGeneration, runtimeSettings, onRuntimeSettingsChange, acceptedHostReadySeed }: { route: { kind: string; page?: string; chatId?: string }; hostedAuthorityKey?: string; hostReadyGeneration?: string | null; runtimeSettings?: RuntimeSettings; onRuntimeSettingsChange?: (settings: RuntimeSettings) => void; acceptedHostReadySeed?: AcceptedHostReadySeed | null }) => {
     const [context, setContext] = React.useState("");
@@ -91,9 +92,17 @@ async function sendSelectionBinding(requestId: string, reason: "no_root" | "mult
 async function openHostedChat(container: HTMLElement, requestId = "ready-1") {
   await sendHostReady(requestId);
   await sendWorkspaceBinding(requestId);
-  act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click());
+  await act(async () => {
+    Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Start new chat")?.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
   expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("project:chat:chat-new");
 }
+
+beforeEach(() => {
+  routerFetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ message: "unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } })));
+  vi.stubGlobal("fetch", routerFetchMock);
+});
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -104,6 +113,7 @@ afterEach(() => {
   appAuthorityCalls.length = 0;
   deferredHostedOpen.run = null;
   delete window.__yetAiInitialRuntimeConfig;
+  vi.unstubAllGlobals();
 });
 
 describe("ProjectRouterShell", () => {
@@ -120,8 +130,19 @@ describe("ProjectRouterShell", () => {
     const loading = container.querySelector("[data-testid='route-loading'] [role='status']");
     expect(loading?.getAttribute("aria-live")).toBe("polite");
     expect(loading?.textContent).toContain("Loading workspace…");
-    await act(async () => undefined);
-    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("settings");
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 100)));
+    expect(container.querySelector("[data-testid='settings-page'] h1")?.textContent).toBe("Settings");
+    expect(container.textContent).toContain("Runtime");
+    expect(container.textContent).toContain("Providers & models");
+    expect(container.textContent).toContain("Account login");
+    expect(container.textContent).toContain("Diagnostics");
+    expect(container.querySelector(".chat-workbench")).toBeNull();
+    expect(container.querySelector("[data-testid='chat-composer']")).toBeNull();
+    expect(container.querySelector(".conversation-list")).toBeNull();
+    expect(container.querySelector("[aria-label='Current chat thread']")).toBeNull();
+    expect(Array.from(container.querySelectorAll("button")).some((button) => button.textContent === "Send")).toBe(false);
+    expect(appRenderCalls).toHaveLength(0);
+    expect(routerFetchMock.mock.calls.some(([url]) => /\/v1\/chats(?:\/|$)|subscribe/.test(String(url)))).toBe(false);
   });
 
   it("replaces the root URL with projects and renders the project hub route", async () => {
@@ -423,7 +444,7 @@ describe("ProjectRouterShell", () => {
     });
   });
 
-  it("invalidates readiness passed to a lazy non-hosted App when the generation changes", async () => {
+  it("keeps non-hosted settings isolated from App when the host generation changes", async () => {
     window.history.replaceState(null, "", "/settings");
     const container = document.createElement("div");
     document.body.append(container);
@@ -434,15 +455,13 @@ describe("ProjectRouterShell", () => {
     await sendHostReady("ready-settings", "/panel/panel-settings");
     await sendWorkspaceBinding("ready-settings");
     await act(async () => undefined);
-    expect(appAuthorityCalls[appAuthorityCalls.length - 1]?.acceptedHostReadySeed?.generation).toBe("ready-settings");
+    expect(container.querySelector("[data-testid='settings-page']")).not.toBeNull();
+    expect(appAuthorityCalls).toHaveLength(0);
 
     await sendHostReady("ready-settings-next", "/panel/panel-settings-next");
 
-    expect(appAuthorityCalls[appAuthorityCalls.length - 1]).toMatchObject({
-      hostedAuthorityKey: undefined,
-      hostReadyGeneration: "ready-settings-next",
-      acceptedHostReadySeed: null,
-    });
+    expect(container.querySelector("[data-testid='settings-page']")).not.toBeNull();
+    expect(appAuthorityCalls).toHaveLength(0);
   });
 
   it("rejects a deferred open from an older generation even when the project is unchanged", async () => {
@@ -582,7 +601,16 @@ describe("ProjectRouterShell", () => {
     await sendWorkspaceBinding("ready-1");
 
     act(() => Array.from(container.querySelectorAll("button")).find((button) => button.textContent === buttonText)?.click());
-    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe(expectedRoute);
+    if (expectedRoute === "settings") {
+      await act(async () => undefined);
+      expect(container.querySelector("[data-testid='settings-page'] h1")?.textContent).toBe("Settings");
+      expect(container.querySelector("[data-testid='app-route']")).toBeNull();
+      expect(container.querySelector(".chat-workbench")).toBeNull();
+      expect(container.querySelector("[data-testid='chat-composer']")).toBeNull();
+      expect(routerFetchMock.mock.calls.some(([url]) => /\/v1\/chats(?:\/|$)|subscribe/.test(String(url)))).toBe(false);
+    } else {
+      expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe(expectedRoute);
+    }
     const rendersBeforeRebind = appRenderCalls.length;
 
     await sendHostReady("ready-2", "/panel/panel-next");
@@ -666,7 +694,7 @@ describe("ProjectRouterShell", () => {
 
     act(() => navigateProjectRoute(window, { kind: "settings" }));
 
-    expect(container.querySelector("[data-testid='app-route']")?.textContent).toBe("settings");
+    expect(container.querySelector("[data-testid='settings-page'] h1")?.textContent).toBe("Settings");
   });
 
   it("follows real browser back and forward popstate changes across chat and page routes", () => {

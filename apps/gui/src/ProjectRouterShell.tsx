@@ -9,6 +9,7 @@ import { useLiveRuntimeSettings } from "./services/useLiveRuntimeSettings";
 import { clearProjectChatLaunchIntent } from "./services/projectChatLaunchIntent";
 
 const App = lazy(() => import("./App").then((module) => ({ default: module.App })));
+const SettingsPage = lazy(() => import("./components/SettingsPage").then((module) => ({ default: module.SettingsPage })));
 
 export function ProjectRouterShell() {
   const hostedChatEntry = isHostedChatEntry(window.location.pathname, window.__yetAiInitialRuntimeConfig?.entryMode);
@@ -82,6 +83,9 @@ export function ProjectRouterShell() {
 
   if (hostedChatEntry) {
     if (authorizedHostedRoute) {
+      if (authorizedHostedRoute.kind === "settings") {
+        return <LazyApp><SettingsPage settings={settings} settingsRevision={runtimeSettingsRevision} onSettingsChange={updateSettings} host={bridgeAdapter.host} onBackToProjects={() => setOpenedHostedRoute(null)} /></LazyApp>;
+      }
       return <LazyApp><App route={authorizedHostedRoute} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostedAuthorityKey={openedHostedRoute?.authorityToken} hostReadyGeneration={hostReadyGeneration} acceptedHostReadySeed={acceptedHostReadySeed} /></LazyApp>;
     }
     return <CurrentWorkspaceDashboard settings={settings} binding={workspaceBinding} hostReadyGeneration={hostReadyGeneration} getAuthorityToken={getHostedAuthorityToken} onOpen={openHostedRoute} />;
@@ -96,6 +100,9 @@ export function ProjectRouterShell() {
     return <ProjectShell route={route} settings={settings} navigate={navigate}>{route.page === "home" ? null : <LazyApp><App route={route} navigate={navigate} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostReadyGeneration={hostReadyGeneration} acceptedHostReadySeed={acceptedHostReadySeed} /></LazyApp>}</ProjectShell>;
   }
   if (route.kind === "legacy") return <LegacyData settings={settings} navigate={navigate} />;
+  if (route.kind === "settings") {
+    return <LazyApp><SettingsPage settings={settings} settingsRevision={runtimeSettingsRevision} onSettingsChange={updateSettings} host={bridgeAdapter.host} onBackToProjects={() => navigate({ kind: "projects" })} /></LazyApp>;
+  }
   return <LazyApp><App route={route} runtimeSettings={settings} onRuntimeSettingsChange={updateSettings} bridgeAdapter={bridgeAdapter} hostReadyGeneration={hostReadyGeneration} acceptedHostReadySeed={acceptedHostReadySeed} /></LazyApp>;
 }
 
