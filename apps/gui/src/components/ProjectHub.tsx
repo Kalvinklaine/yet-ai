@@ -10,7 +10,7 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
   const [state, setState] = useState<"loading" | "ready" | "refreshing" | "error">("loading");
   const [error, setError] = useState<RuntimeError | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [rebindProject, setRebindProject] = useState<ProjectSummary | null>(null);
+  const [rebindDialog, setRebindDialog] = useState<{ project: ProjectSummary; generation: number } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const lastRefreshRef = useRef(0);
   const addButtonRef = useRef<HTMLButtonElement>(null);
@@ -67,13 +67,13 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
   const closeDialog = () => {
     dialogGenerationRef.current += 1;
     setDialogOpen(false);
-    setRebindProject(null);
+    setRebindDialog(null);
     addButtonRef.current?.focus();
   };
 
   const openRebind = (project: ProjectSummary) => {
-    dialogGenerationRef.current += 1;
-    setRebindProject(project);
+    const generation = ++dialogGenerationRef.current;
+    setRebindDialog({ project, generation });
   };
 
   const completeRebind = (expected: ProjectSummary, generation: number, repaired: ProjectSummary) => {
@@ -84,6 +84,12 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
     setProjects((current) => current.map((project) => project.projectId === repaired.projectId ? repaired : project));
     setAnnouncement("Project directory reconnected.");
     closeDialog();
+  };
+
+  const recoverProjectState = (expected: ProjectSummary, generation: number) => {
+    if (!mountedRef.current || generation !== dialogGenerationRef.current || rebindDialog?.project.projectId !== expected.projectId) return;
+    closeDialog();
+    void refresh(true);
   };
 
   const mutate = async (project: ProjectSummary, action: "rename" | "archive" | "restore") => {
@@ -132,7 +138,7 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
       {legacyAvailable && <section className="legacy-project-entry"><div><span className="badge warn">compatibility</span><h2>Unscoped legacy data</h2><p>Older local data is kept separate from registered projects.</p></div><ProjectLink route={{ kind: "legacy" }} navigate={navigate}>Open legacy data</ProjectLink></section>}
       {archived.length > 0 && <ProjectList title="Archived projects" projects={archived} onMutate={mutate} onReconnect={openRebind} navigate={navigate} />}
       {dialogOpen && <ProjectRegistrationDialog settings={settings} onClose={closeDialog} onRegistered={(project) => { closeDialog(); navigate({ kind: "project", projectId: project.projectId, page: "home" }); }} />}
-      {rebindProject && <ProjectRegistrationDialog settings={settings} mode="rebind" project={rebindProject} onClose={closeDialog} onRegistered={(project) => completeRebind(rebindProject, dialogGenerationRef.current, project)} />}
+      {rebindDialog && <ProjectRegistrationDialog settings={settings} mode="rebind" project={rebindDialog.project} onClose={closeDialog} onProjectStateChanged={() => recoverProjectState(rebindDialog.project, rebindDialog.generation)} onRegistered={(project) => completeRebind(rebindDialog.project, rebindDialog.generation, project)} />}
     </main>
   );
 }

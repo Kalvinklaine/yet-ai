@@ -8,9 +8,9 @@ type ProjectRegistrationDialogProps = {
   settings: RuntimeSettings;
   onClose: () => void;
   onRegistered: (project: ProjectSummary) => void;
-} & ({ mode?: "register"; project?: never } | { mode: "rebind"; project: ProjectSummary });
+} & ({ mode?: "register"; project?: never; onProjectStateChanged?: never } | { mode: "rebind"; project: ProjectSummary; onProjectStateChanged?: () => void });
 
-export function ProjectRegistrationDialog({ settings, onClose, onRegistered, mode = "register", project }: ProjectRegistrationDialogProps) {
+export function ProjectRegistrationDialog({ settings, onClose, onRegistered, onProjectStateChanged, mode = "register", project }: ProjectRegistrationDialogProps) {
   const [sessionId, setSessionId] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [levels, setLevels] = useState<DirectoryLevel[]>([]);
@@ -164,6 +164,7 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered, mod
 
   const current = levels[levels.length - 1];
   const expired = error?.message.toLowerCase().includes("expired") || error?.status === 410;
+  const projectStateChanged = mode === "rebind" && error ? isProjectStateRebindError(error) : false;
   const title = mode === "rebind" ? "Reconnect project directory" : "Add local project";
   return (
     <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) handleClose(); }}>
@@ -189,7 +190,7 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered, mod
             </ul>
           ) : state !== "error" ? <p role="status">No child directories are available here. You may select this directory if allowed.</p> : null}
         </div>
-        {error && <div className="error" role="alert"><strong>{expired ? "Discovery session expired" : mode === "rebind" ? "Project could not be reconnected" : "Directory unavailable"}</strong><span>{mode === "rebind" ? safeRebindMessage(error) : safeDiscoveryMessage(error)}</span><button type="button" onClick={() => void begin()}>{expired ? "Start a new session" : "Retry discovery"}</button></div>}
+        {error && <div className="error" role="alert"><strong>{expired ? "Discovery session expired" : mode === "rebind" ? "Project could not be reconnected" : "Directory unavailable"}</strong><span>{mode === "rebind" ? safeRebindMessage(error) : safeDiscoveryMessage(error)}</span>{projectStateChanged ? <button type="button" onClick={() => { if (onProjectStateChanged) { invalidate(); onProjectStateChanged(); } else { handleClose(); } }}>Close and refresh Projects</button> : <button type="button" onClick={() => void begin()}>{expired ? "Start a new session" : "Retry discovery"}</button>}</div>}
         <form className="stack" onSubmit={(event) => void submit(event)}>
           {mode === "register" && <label>Project display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={120} autoComplete="off" /></label>}
           <span className="subtle">Selected: {selected ? selected.displayName : "Choose a selectable directory"}. Session expires {expiresAt ? new Date(expiresAt).toLocaleTimeString() : "soon"}.</span>
@@ -213,8 +214,16 @@ function safeDiscoveryMessage(error: RuntimeError): string {
 }
 
 function safeRebindMessage(error: RuntimeError): string {
-  const message = error.message.toLowerCase();
-  if (message.includes("expired") || error.status === 410) return "Start a fresh session and choose the directory again.";
-  if (message.includes("invalid") || message.includes("conflict") || error.status === 400 || error.status === 409) return "The project changed before it could be reconnected. Refresh Projects and try again.";
+  if (isProjectStateRebindError(error)) return "The saved project state changed before it could be reconnected. Refresh Projects before trying again.";
   return safeDiscoveryMessage(error);
+}
+
+function isProjectStateRebindError(error: RuntimeError): boolean {
+  const message = error.message.toLowerCase();
+  return error.status === 404
+    || error.status === 409
+    || message.includes("project not found")
+    || message.includes("project is archived")
+    || message.includes("revision conflict")
+    || message.includes("invalid project request");
 }

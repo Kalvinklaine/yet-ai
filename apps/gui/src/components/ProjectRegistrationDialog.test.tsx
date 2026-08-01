@@ -102,20 +102,43 @@ describe("ProjectRegistrationDialog", () => {
   });
 
   it.each([
-    [{ status: 410, message: "expired handle /Users/private" }, "Start a fresh session and choose the directory again."],
-    [{ status: 400, message: "revision conflict /Users/private" }, "The project changed before it could be reconnected. Refresh Projects and try again."],
-  ] as const)("keeps rebind open with sanitized recovery for %o", async (runtimeError, recovery) => {
+    { runtimeError: { status: 409, message: "revision conflict /Users/private" }, recovery: "The saved project state changed", action: "Close and refresh Projects" },
+    { runtimeError: { status: 404, message: "Project not found. /Users/private" }, recovery: "The saved project state changed", action: "Close and refresh Projects" },
+    { runtimeError: { status: 409, message: "Project is archived. /Users/private" }, recovery: "The saved project state changed", action: "Close and refresh Projects" },
+  ] as const)("uses explicit parent recovery for $runtimeError", async ({ runtimeError, recovery, action }) => {
     vi.mocked(client.startDirectoryDiscovery).mockResolvedValue(session);
     vi.mocked(client.listDirectoryDiscovery).mockResolvedValue(listing);
     vi.mocked(client.rebindProject).mockResolvedValue({ ok: false, error: runtimeError });
-    const onClose = vi.fn(); const onRegistered = vi.fn(); const container = document.createElement("div"); document.body.append(container);
-    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectRegistrationDialog mode="rebind" project={project} settings={settings} onClose={onClose} onRegistered={onRegistered} />); });
+    const onProjectStateChanged = vi.fn(); const onRegistered = vi.fn(); const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectRegistrationDialog mode="rebind" project={project} settings={settings} onClose={vi.fn()} onProjectStateChanged={onProjectStateChanged} onRegistered={onRegistered} />); });
     await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
 
     expect(container.textContent).toContain(recovery);
     expect(container.textContent).not.toContain("/Users/private");
+    expect(container.textContent).not.toContain("Retry discovery");
+    expect(container.textContent).not.toContain("Start a new session");
+    await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === action) as HTMLButtonElement).click(); });
+    expect(onProjectStateChanged).toHaveBeenCalledOnce();
     expect(onRegistered).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { runtimeError: { status: 410, message: "expired handle /Users/private" }, recovery: "Start a fresh session and choose the directory again.", action: "Start a new session" },
+    { runtimeError: { status: 403, message: "unsafe filesystem /Users/private" }, recovery: "cannot safely access that directory", action: "Retry discovery" },
+  ] as const)("retains discovery recovery for $runtimeError", async ({ runtimeError, recovery, action }) => {
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValueOnce(session).mockResolvedValueOnce(session);
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue(listing);
+    vi.mocked(client.rebindProject).mockResolvedValue({ ok: false, error: runtimeError });
+    const onProjectStateChanged = vi.fn(); const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectRegistrationDialog mode="rebind" project={project} settings={settings} onClose={vi.fn()} onProjectStateChanged={onProjectStateChanged} onRegistered={vi.fn()} />); });
+    await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+
+    expect(container.textContent).toContain(recovery);
+    expect(container.textContent).not.toContain("/Users/private");
+    expect(container.textContent).not.toContain("Close and refresh Projects");
+    await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === action) as HTMLButtonElement).click(); });
+    expect(client.startDirectoryDiscovery).toHaveBeenCalledTimes(2);
+    expect(onProjectStateChanged).not.toHaveBeenCalled();
   });
 
   it("ignores and aborts a late rebind success after cancel", async () => {

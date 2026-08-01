@@ -7,7 +7,12 @@ import type { ProjectNavigation } from "../services/projectRouting";
 
 vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), listProjects: vi.fn(), archiveProject: vi.fn(), restoreProject: vi.fn(), updateProject: vi.fn(), startDirectoryDiscovery: vi.fn(), listDirectoryDiscovery: vi.fn(), registerProject: vi.fn(), rebindProject: vi.fn() }));
 const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
-const summary = (name: string, status: "available" | "missing" | "archived" = "available") => ({ projectId: "prj_abcdefghijklmnopqrstuA" as client.ProjectSummary["projectId"], displayName: name, status, revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: status === "available", cloudRequired: false as const, providerAccess: "direct" as const });
+const projectIds = {
+  first: "prj_abcdefghijklmnopqrstuA" as client.ProjectSummary["projectId"],
+  second: "prj_abcdefghijklmnopqrstuB" as client.ProjectSummary["projectId"],
+  third: "prj_abcdefghijklmnopqrstuC" as client.ProjectSummary["projectId"],
+};
+const summary = (name: string, status: "available" | "missing" | "archived" = "available", projectId = projectIds.first) => ({ projectId, displayName: name, status, revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: status === "available", cloudRequired: false as const, providerAccess: "direct" as const });
 let root: ReactDOM.Root | undefined;
 afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ""; vi.restoreAllMocks(); });
 async function render(navigate: ProjectNavigation = () => undefined) { const container = document.createElement("div"); document.body.append(container); await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectHub settings={settings} navigate={navigate} />); }); return container; }
@@ -22,7 +27,7 @@ describe("ProjectHub", () => {
   });
 
   it("renders duplicate, missing, archived and legacy states using safe metadata only", async () => {
-    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [summary("Twin"), { ...summary("Twin", "missing"), projectId: "prj_123456789012345678901g" as client.ProjectSummary["projectId"] }, { ...summary("Old", "archived"), projectId: "prj_abcdefghijklmnopqrstuw" as client.ProjectSummary["projectId"] }], legacyUnscopedAvailable: true, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [summary("Twin"), summary("Twin", "missing", projectIds.second), summary("Old", "archived", projectIds.third)], legacyUnscopedAvailable: true, cloudRequired: false, providerAccess: "direct" } });
     const container = await render();
     expect(container.textContent?.match(/Twin/g)?.length).toBeGreaterThanOrEqual(2);
     expect(container.textContent).toContain("Directory unavailable");
@@ -83,9 +88,10 @@ describe("ProjectHub", () => {
   });
 
   it("reconnects a missing row under the same opaque project identity", async () => {
-    const missing = summary("Missing", "missing");
+    const ready = summary("Ready sibling", "available", projectIds.first);
+    const missing = summary("Missing", "missing", projectIds.second);
     const repaired = { ...missing, status: "available" as const, rootAvailable: true, revision: "2" };
-    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [missing], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [ready, missing], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
     vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "opaque-root", displayName: "Recovered", selectable: true }, cloudRequired: false, providerAccess: "direct" } });
     vi.mocked(client.listDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", directoryHandle: "opaque-root", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
     vi.mocked(client.rebindProject).mockResolvedValue({ ok: true, data: repaired });
@@ -97,12 +103,39 @@ describe("ProjectHub", () => {
     const row = Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.textContent?.includes("Missing"));
     expect(row?.textContent).toContain("Ready");
     expect(row?.querySelector(`a[href="/p/${missing.projectId}/"]`)).not.toBeNull();
+    const siblingRow = Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.textContent?.includes("Ready sibling"));
+    expect(siblingRow?.querySelector(`a[href="/p/${ready.projectId}/"]`)).not.toBeNull();
+    expect(siblingRow?.querySelector(`a[href="/p/${missing.projectId}/"]`)).toBeNull();
     expect(container.innerHTML).not.toContain("/Users/private");
   });
 
-  it("keeps reconnect failures sanitized and the missing row blocked", async () => {
+  it("ignores a frozen reconnect completion after the dialog identity changes", async () => {
+    const first = summary("First missing", "missing", projectIds.first);
+    const second = summary("Second missing", "missing", projectIds.second);
+    const pending = deferred<Awaited<ReturnType<typeof client.rebindProject>>>();
+    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [first, second], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "opaque-root", displayName: "Recovered", selectable: true }, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", directoryHandle: "opaque-root", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.rebindProject).mockReturnValue(pending.promise);
+    const container = await render();
+    await act(async () => { (container.querySelector('[aria-label="Reconnect project First missing"]') as HTMLButtonElement).click(); });
+    await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Cancel") as HTMLButtonElement).click(); });
+    await act(async () => { (container.querySelector('[aria-label="Reconnect project Second missing"]') as HTMLButtonElement).click(); });
+    await act(async () => { pending.resolve({ ok: true, data: { ...first, status: "available", rootAvailable: true, revision: "2" } }); await pending.promise; });
+
+    expect(container.textContent).toContain("Reconnect Second missing");
+    const firstRow = Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.textContent?.includes("First missing"));
+    expect(firstRow?.textContent).toContain("Directory unavailable");
+    expect(firstRow?.querySelector(`a[href="/p/${first.projectId}/"]`)).toBeNull();
+  });
+
+  it("refreshes project summaries after explicit reconnect state recovery", async () => {
     const missing = summary("Missing", "missing");
-    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [missing], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
+    const refreshed = { ...missing, displayName: "Missing refreshed", revision: "2" };
+    vi.mocked(client.listProjects)
+      .mockResolvedValueOnce({ ok: true, data: { projects: [missing], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } })
+      .mockResolvedValueOnce({ ok: true, data: { projects: [refreshed], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
     vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "opaque-root", displayName: "Recovered", selectable: true }, cloudRequired: false, providerAccess: "direct" } });
     vi.mocked(client.listDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", directoryHandle: "opaque-root", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
     vi.mocked(client.rebindProject).mockResolvedValue({ ok: false, error: { status: 409, message: "conflict at /Users/private/recovered" } });
@@ -110,7 +143,11 @@ describe("ProjectHub", () => {
     await act(async () => { (container.querySelector('[aria-label="Reconnect project Missing"]') as HTMLButtonElement).click(); });
     await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
     expect(container.textContent).toContain("Project could not be reconnected");
-    expect(container.textContent).toContain("Refresh Projects and try again.");
+    expect(container.textContent).toContain("Refresh Projects before trying again.");
+    expect(container.textContent).not.toContain("Retry discovery");
+    await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Close and refresh Projects") as HTMLButtonElement).click(); });
+    expect(client.listProjects).toHaveBeenCalledTimes(2);
+    expect(container.textContent).toContain("Missing refreshed");
     expect(container.textContent).toContain("Directory unavailable");
     expect(container.innerHTML).not.toContain("/Users/private");
   });
