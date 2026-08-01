@@ -11,6 +11,7 @@ use tokio::net::{TcpListener, TcpStream};
 use crate::provider_auth;
 
 const CALLBACK_READ_MAX_BYTES: usize = 8192;
+const CALLBACK_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const CALLBACK_SUCCESS_TEXT: &str = "Login received. Return to Yet AI.";
 const CALLBACK_FAILURE_TEXT: &str = "Login could not be completed. Return to Yet AI and try again.";
 const CALLBACK_NOT_FOUND_TEXT: &str =
@@ -133,21 +134,30 @@ pub(crate) fn forget_pending_state(state_value: &str) {
     }
 }
 
-#[cfg(not(test))]
 struct LoopbackListeners {
-    ipv4: TcpListener,
-    ipv6: TcpListener,
+    listeners: Vec<TcpListener>,
 }
 
 #[cfg(not(test))]
 async fn bind_loopback_listeners(port: u16) -> Result<LoopbackListeners, CallbackStartError> {
-    let ipv4 = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port)))
-        .await
-        .map_err(|_| CallbackStartError)?;
-    let ipv6 = TcpListener::bind(SocketAddr::from((Ipv6Addr::LOCALHOST, port)))
-        .await
-        .map_err(|_| CallbackStartError)?;
-    Ok(LoopbackListeners { ipv4, ipv6 })
+    let ipv4 = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, port))).await;
+    let ipv6 = TcpListener::bind(SocketAddr::from((Ipv6Addr::LOCALHOST, port))).await;
+    loopback_listeners_from_bind_results(ipv4, ipv6)
+}
+
+fn loopback_listeners_from_bind_results(
+    ipv4: std::io::Result<TcpListener>,
+    ipv6: std::io::Result<TcpListener>,
+) -> Result<LoopbackListeners, CallbackStartError> {
+    let listeners = [ipv4, ipv6]
+        .into_iter()
+        .filter_map(Result::ok)
+        .collect::<Vec<_>>();
+    if listeners.is_empty() {
+        Err(CallbackStartError)
+    } else {
+        Ok(LoopbackListeners { listeners })
+    }
 }
 
 #[cfg(not(test))]
@@ -168,9 +178,18 @@ fn serve_listeners_in_owner_thread(listeners: LoopbackListeners) -> Result<(), C
 
 #[cfg(not(test))]
 async fn serve_loopback_listeners(listeners: LoopbackListeners) {
-    let LoopbackListeners { ipv4, ipv6 } = listeners;
-    let port = ipv4.local_addr().map(|address| address.port()).unwrap_or(0);
-    tokio::join!(accept_loop(ipv4, port), accept_loop(ipv6, port));
+    let Some(port) = listeners
+        .listeners
+        .iter()
+        .find_map(|listener| listener.local_addr().ok().map(|address| address.port()))
+    else {
+        return;
+    };
+    let mut tasks = tokio::task::JoinSet::new();
+    for listener in listeners.listeners {
+        tasks.spawn(accept_loop(listener, port));
+    }
+    while tasks.join_next().await.is_some() {}
 }
 
 async fn accept_loop(listener: TcpListener, accepted_port: u16) {
@@ -183,21 +202,43 @@ async fn accept_loop(listener: TcpListener, accepted_port: u16) {
 }
 
 async fn handle_stream(mut stream: TcpStream, accepted_port: u16) {
-    let mut buffer = vec![0_u8; CALLBACK_READ_MAX_BYTES];
-    let Ok(read) =
-        tokio::time::timeout(std::time::Duration::from_secs(5), stream.read(&mut buffer)).await
-    else {
+    let Some(buffer) = read_callback_request(&mut stream, CALLBACK_READ_TIMEOUT).await else {
         return;
     };
-    let Ok(read) = read else {
-        return;
-    };
-    let request = String::from_utf8_lossy(&buffer[..read]);
+    let request = String::from_utf8_lossy(&buffer);
     let first_line = request.lines().next().unwrap_or_default();
     let method = first_line.split_whitespace().next().unwrap_or_default();
     let path_and_query = first_line.split_whitespace().nth(1).unwrap_or_default();
     let (status, text) = callback_response(accepted_port, method, path_and_query).await;
     write_response(&mut stream, status, text).await;
+}
+
+async fn read_callback_request<R>(reader: &mut R, timeout: std::time::Duration) -> Option<Vec<u8>>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    tokio::time::timeout(timeout, async {
+        let mut request = Vec::with_capacity(1024);
+        let mut chunk = [0_u8; 1024];
+        loop {
+            let remaining = CALLBACK_READ_MAX_BYTES.checked_sub(request.len())?;
+            if remaining == 0 {
+                return None;
+            }
+            let read_limit = remaining.min(chunk.len());
+            let read = reader.read(&mut chunk[..read_limit]).await.ok()?;
+            if read == 0 {
+                return None;
+            }
+            request.extend_from_slice(&chunk[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                return Some(request);
+            }
+        }
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 async fn callback_response(
@@ -1486,6 +1527,128 @@ mod tests {
             .and_then(|value| StatusCode::from_u16(value).ok())
             .unwrap();
         (status, body.to_string())
+    }
+
+    #[tokio::test]
+    async fn one_loopback_listener_family_is_sufficient() {
+        let first = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ipv4_only = loopback_listeners_from_bind_results(
+            Ok(first),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "unavailable",
+            )),
+        )
+        .unwrap();
+        assert_eq!(ipv4_only.listeners.len(), 1);
+
+        let second = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ipv6_only = loopback_listeners_from_bind_results(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "unavailable",
+            )),
+            Ok(second),
+        )
+        .unwrap();
+        assert_eq!(ipv6_only.listeners.len(), 1);
+
+        let both_failed = loopback_listeners_from_bind_results(
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                "unavailable",
+            )),
+            Err(std::io::Error::new(
+                std::io::ErrorKind::AddrNotAvailable,
+                "unavailable",
+            )),
+        );
+        assert!(both_failed.is_err());
+    }
+
+    #[tokio::test]
+    async fn callback_request_reader_accepts_split_headers() {
+        let (mut client, mut server) = tokio::io::duplex(256);
+        let writer = tokio::spawn(async move {
+            client
+                .write_all(b"GET /auth/callback?state=value&code=code HTTP/1.1\r\n")
+                .await
+                .unwrap();
+            tokio::task::yield_now().await;
+            client
+                .write_all(b"Host: localhost\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let request = read_callback_request(&mut server, std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
+        writer.await.unwrap();
+
+        assert!(request.ends_with(b"\r\n\r\n"));
+        assert!(String::from_utf8(request)
+            .unwrap()
+            .starts_with("GET /auth/callback?state=value&code=code HTTP/1.1"));
+    }
+
+    #[tokio::test]
+    async fn callback_request_reader_rejects_incomplete_oversized_and_timed_out_headers() {
+        let mut incomplete = std::io::Cursor::new(b"GET /auth/callback HTTP/1.1\r\n".to_vec());
+        assert!(
+            read_callback_request(&mut incomplete, std::time::Duration::from_secs(1))
+                .await
+                .is_none()
+        );
+
+        let mut oversized = std::io::Cursor::new(vec![b'x'; CALLBACK_READ_MAX_BYTES]);
+        assert!(
+            read_callback_request(&mut oversized, std::time::Duration::from_secs(1))
+                .await
+                .is_none()
+        );
+
+        let (_client, mut server) = tokio::io::duplex(64);
+        assert!(
+            read_callback_request(&mut server, std::time::Duration::from_millis(10))
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn real_loopback_callback_accepts_split_tcp_writes() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_all_registered_state_for_test();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(accept_loop(listener, address.port()));
+        let mut stream = TcpStream::connect(address).await.unwrap();
+
+        stream
+            .write_all(b"GET /auth/callback?code=split-code&state=split-state HTTP/1.1\r\n")
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        stream
+            .write_all(b"Host: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_end(&mut response),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        server.abort();
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.starts_with("HTTP/1.1 400 Bad Request\r\n"));
+        assert!(response.ends_with(CALLBACK_NOT_FOUND_TEXT));
+        assert!(!response.contains("split-code"));
+        assert!(!response.contains("split-state"));
     }
 
     #[tokio::test]
