@@ -4,6 +4,7 @@ import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useRuntimeController } from "./useRuntimeController";
 import type { RuntimeSettings } from "./runtimeClient";
+import type { RuntimeLifecycleDiagnostics } from "./runtimeLifecycle";
 
 let root: ReactDOM.Root | undefined;
 const fetchMock = vi.fn();
