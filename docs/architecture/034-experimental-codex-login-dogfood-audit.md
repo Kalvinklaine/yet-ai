@@ -62,10 +62,14 @@ Current refresh behavior:
 - When stored Codex-like auth is near expiry, the engine attempts refresh before chat.
 - If a chat call receives pre-stream unauthorized from the experimental bearer path, the engine attempts one refresh and retries only if the access token changed.
 - Refresh uses an in-process lock plus a file lock, validates refreshed scopes and expiry, stores a new secret bundle, and clears secrets on refresh-token reuse when no newer token is available.
+- Chat records do not capture provider credentials or a selected model at creation. Provider selection and experimental chat-auth state are resolved from current engine storage on each accepted send, so login completion or a persisted model change applies to an already-existing chat without replacing its id or history.
+- A pre-stream rejection classified specifically as an unsupported model may run one catalog rediscovery, exclude the exact rejected model, persist the first eligible alternate in returned catalog order, and retry once. Non-model invalid requests do not rediscover, and no eligible alternate fails closed with the sanitized model-invalid result.
 
 ### Chat behavior after connection
 
 When no API-key provider, Ollama provider, or Demo Mode is selected, the engine may use a locally stored, unexpired experimental Codex-like bearer token for chat. It sends a dedicated Codex-compatible Responses SSE request to the configured experimental Codex base at `/responses`, using the discovered model and engine-owned account metadata headers, then normalizes text deltas into the existing chat SSE flow and maps provider failures into stable sanitized chat errors.
+
+This selection happens per send rather than per chat creation. An engine-issued chat created before account login can remain selected and retain the same local history while a later send uses newly connected current auth state. The one alternate-model retry is bounded to the same send; it is not an unbounded model loop, does not recreate the chat, and does not imply that every listed model is usable.
 
 This route is fallback-like and non-default. API-key readiness wins over experimental account auth, and Demo Mode also wins over experimental account auth. The experimental Codex fallback must not be described as using `/chat/completions`; that path remains relevant only to safer OpenAI-compatible API-key providers and historical contrast.
 
@@ -83,8 +87,9 @@ Current GUI behavior:
 - Pending OAuth state shows a manual code exchange form. The GUI derives state from the current pending authorization URL and submits session id, code, and state back to the engine.
 - Connected experimental account auth can make chat send-ready only when no API-key chat provider is ready, no auth mutation is in flight, and the engine status is connected via OAuth.
 - Chat readiness copy explicitly says the Codex-like path is experimental, private-endpoint, not official public OAuth, and not production-ready.
+- Browser callback polling and manual exchange detect a current pending-to-connected transition and invoke the existing coalesced runtime refresh. That refresh re-queries shared runtime, model, provider, provider-auth, and chat-list/readiness state so an already-open chat can become ready without recreation; transient poll failures preserve pending state and stale settings-revision results are ignored.
 
-Current GUI gaps are mostly journey and resilience gaps rather than basic rendering gaps: the user must understand a dangerous separate action, finish browser authorization manually, paste a code manually, refresh status when needed, and infer whether first chat will use account auth or the safe/default API-key path.
+Current GUI gaps are mostly journey and resilience gaps rather than basic rendering gaps: the user must understand a dangerous separate action, complete browser authorization or use manual code exchange as a fallback, and infer whether first chat will use account auth or the safe/default API-key path. Polling and the shared refresh remove the need to recreate a chat, but they do not make the experimental provider path official or production-ready.
 
 ### VS Code plugin-visible flow
 
@@ -228,7 +233,7 @@ S136 closes with enough deterministic and checklist evidence to continue the man
 
 ### Deterministic smoke result
 
-S141 closure keeps `npm run smoke:experimental-codex-login` as mock-only loopback evidence for the implemented engine path. The smoke exercises start, pending status, form-urlencoded authorization-code token exchange through a mock token endpoint, safe account-id extraction from a mock token claim, Codex model discovery through a mock `/models?client_version=...` endpoint with bearer plus account metadata headers, connected status, first chat through a mock `/responses` SSE endpoint, disconnect, and post-disconnect cleared status. Its evidence is intentionally sanitized to lifecycle labels, local/mock contract labels, endpoint call counts, safe booleans, and no-secret assertions. It is useful evidence that the local engine lifecycle and first-chat fallback can work with fake credentials; it is not real-provider CI and not real-account evidence.
+S141 closure keeps `npm run smoke:experimental-codex-login` as mock-only loopback evidence for the implemented engine path. The smoke creates one engine-issued chat before login, exercises start, pending status, form-urlencoded authorization-code token exchange through a mock token endpoint, safe account-id extraction from a mock token claim, and Codex model discovery through a mock `/models?client_version=...` endpoint. It then proves the same chat id is reused, the first selected model is rejected once, one ordered eligible alternate is discovered and persisted, the retry streams through the mock `/responses` endpoint, and a later command uses the persisted alternate without another chat creation. Disconnect and post-disconnect cleared status remain covered. Evidence is intentionally sanitized to lifecycle labels, local/mock contract labels, endpoint call counts, safe booleans, and no-secret assertions. It does not expose the raw catalog or provider body and is not real-provider CI, real-account evidence, or proof that all models work.
 
 Current deterministic status: must be re-run by this closure card with `npm run smoke:experimental-codex-login`, `npm run smoke:experimental-codex-controlled-task`, `npm run check`, and `git diff --check`. If closure verification fails, treat the failure as a blocker instead of hiding it.
 
@@ -320,3 +325,14 @@ npm run smoke:experimental-codex-controlled-task && npm run dogfood:experimental
 ```
 
 This docs-only verification is not release evidence, not real-provider CI, not an official login approval, and not a production or marketplace readiness gate.
+
+For the focused account-login hot-refresh and fallback documentation convergence, the exact Tier 0 gate is:
+
+```sh
+npm run validate:docs
+npm run check:agent-architecture-contract
+npm run validate:hygiene
+git diff --check
+```
+
+These commands validate tracked documentation and publication boundaries only. Implementation evidence remains the lower-tier engine and GUI tests plus the two loopback/mock smokes; no completed sanitized real-account run is claimed.

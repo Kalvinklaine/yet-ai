@@ -91,6 +91,16 @@ This is dev-preview/manual recovery guidance only. It documents implemented GUI 
 
 The `provider_invalid_request` chat error code remains stable. Its SSE payload may add an optional `reason` field limited to `format`, `model`, `endpoint`, or `unknown`. The GUI uses only those values for matching manual recovery guidance; absent or invalid values retain the generic invalid-request fallback. The reason is classified from HTTP status and allowlisted normalized signals inside the engine's bounded provider error body. Raw response text, headers, URLs, account identifiers, request identifiers, HTML, tokens, and private paths are never part of this payload or its displayed recovery copy.
 
+### Existing-chat hot refresh and bounded model recovery
+
+The shipped account-login recovery path does not bind provider credentials or a model to a chat when the chat is created. The engine resolves the current configured provider, local runtime, Demo Mode, or experimental account-auth state for every accepted send. A chat created before login therefore keeps the same engine-issued chat id and local history after login; login completion must not create a replacement conversation.
+
+The GUI treats a pending-to-connected account-auth transition as a shared runtime-state change. Successful browser callback polling or manual authorization-code exchange runs the existing coalesced runtime refresh path so model metadata, provider summaries, provider-auth status, and chat readiness are refreshed together. Already-open chats become send-ready from current engine state without recreation. Transient non-OK polling responses keep the last pending projection and do not claim connection; stale completions from an older runtime/settings revision are ignored.
+
+For the experimental Codex-like route only, a provider rejection classified before streaming as a model rejection may trigger one bounded catalog rediscovery. The engine keeps the returned eligible catalog order, excludes the exact rejected model, persists the first remaining eligible alternate in engine-owned auth metadata, and retries that send at most once with the alternate. Later sends resolve the persisted alternate from current engine state. A non-model invalid request does not rediscover; an empty, invalid, failed, or unchanged catalog fails closed with the sanitized `provider_invalid_request` model result. This is recovery from one observed rejection, not a guarantee that any catalog model will work and not general production model synchronization.
+
+All catalog payloads, rejected-provider bodies, account metadata, auth/session values, and provider headers remain engine-internal. GUI-facing status, SSE errors, smoke output, and documentation evidence may contain only bounded sanitized categories and safe lifecycle facts; they must not expose a raw auth response, model catalog, provider response body, account id, token, authorization header, or private path.
+
 ## Engine, GUI, and IDE boundaries
 
 The engine owns:
@@ -188,11 +198,15 @@ Use this matrix when publishing or reviewing the current login-first milestone. 
 | GUI app | `cd apps/gui && npm test -- App && npm run build` | Login-first, Demo Mode, and API-key fallback UI behavior/build assets |
 | Login-first smoke | `npm run smoke:login-first-message` | Mock-only provider-auth lifecycle, API-key fallback precedence, and first canned message |
 | Experimental account-login engine smoke | `npm run smoke:experimental-codex-login` | Real local engine provider-auth, safe model discovery, exact first Responses request, and sanitized invalid-request SSE through loopback mocks only |
+| Account-login engine regressions | `export PATH="$HOME/.cargo/bin:$PATH"; cargo test -p yet-lsp experimental_codex_model_rejection && cargo test -p yet-lsp provider_auth` | Current-send provider resolution, exact rejected-model exclusion, one bounded retry, persisted alternate metadata, and fail-closed/no-secret cases with local fixtures and loopback mocks |
+| Existing-chat GUI regressions | `npm --prefix apps/gui test -- useRuntimeController App` | Pending-to-connected refresh, stale-result rejection, shared provider/model/auth/chat readiness refresh, and existing-chat preservation through mock runtime responses |
 | Demo/local smokes | `npm run smoke:gui-demo-mode` and `npm run smoke:local` | No-key Demo Mode and local loopback chat/history/SSE behavior |
 | IDE smokes | `npm run smoke:vscode-first-message` and `npm run smoke:jetbrains-first-message` | Dev-preview IDE first-message flows through local runtime paths |
 | Release-candidate smoke | `npm run smoke:ide-release-candidate` | Aggregated installed-plugin/IDE visual and Demo coverage without publishing |
 | Repository check | `npm run check` | Docs, identity, hygiene, and focused validators |
 | Docs diff hygiene | `git diff --check` | No whitespace errors |
+
+For a documentation-only convergence card, run exactly `npm run validate:docs`, `npm run check:agent-architecture-contract`, `npm run validate:hygiene`, and `git diff --check`. Those static gates verify documentation structure, architecture wording, publication hygiene, and diff hygiene only. They do not rerun the lower-tier implementation tests or smokes above and do not prove real-account behavior, universal model availability, official provider support, or production readiness.
 
 All listed commands are verification commands, not release or account-login enablement. They must not use real OpenAI/ChatGPT credentials in automation, publish marketplace artifacts, sign/notarize installers, or depend on hosted Yet AI services.
 
