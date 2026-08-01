@@ -10,11 +10,14 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
   const [state, setState] = useState<"loading" | "ready" | "refreshing" | "error">("loading");
   const [error, setError] = useState<RuntimeError | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [rebindProject, setRebindProject] = useState<ProjectSummary | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const lastRefreshRef = useRef(0);
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const requestRef = useRef(0);
   const requestControllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
+  const dialogGenerationRef = useRef(0);
 
   const refresh = useCallback(async (background = false) => {
     requestControllerRef.current?.abort();
@@ -39,8 +42,11 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
   }, [projects.length, settings]);
 
   useEffect(() => {
+    mountedRef.current = true;
     void refresh();
     return () => {
+      mountedRef.current = false;
+      dialogGenerationRef.current += 1;
       requestRef.current += 1;
       requestControllerRef.current?.abort();
       requestControllerRef.current = null;
@@ -59,8 +65,25 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
   }, [refresh]);
 
   const closeDialog = () => {
+    dialogGenerationRef.current += 1;
     setDialogOpen(false);
+    setRebindProject(null);
     addButtonRef.current?.focus();
+  };
+
+  const openRebind = (project: ProjectSummary) => {
+    dialogGenerationRef.current += 1;
+    setRebindProject(project);
+  };
+
+  const completeRebind = (expected: ProjectSummary, generation: number, repaired: ProjectSummary) => {
+    if (!mountedRef.current || generation !== dialogGenerationRef.current || repaired.projectId !== expected.projectId) return;
+    requestRef.current += 1;
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
+    setProjects((current) => current.map((project) => project.projectId === repaired.projectId ? repaired : project));
+    setAnnouncement("Project directory reconnected.");
+    closeDialog();
   };
 
   const mutate = async (project: ProjectSummary, action: "rename" | "archive" | "restore") => {
@@ -105,23 +128,24 @@ export function ProjectHub({ settings, navigate }: { settings: RuntimeSettings; 
       {state !== "loading" && active.length === 0 && !legacyAvailable ? (
         <section className="project-empty-state"><div className="project-empty-orbit" aria-hidden="true">Y</div><div className="stack"><h2>Give your work a clear home</h2><p>A project establishes the local boundary for conversations, memory, and controlled work. Nothing is scanned or started until you choose it.</p><button type="button" onClick={() => setDialogOpen(true)}>Add your first project</button></div></section>
       ) : null}
-      {active.length > 0 && <ProjectList title="Your projects" projects={active} onMutate={mutate} navigate={navigate} />}
+      {active.length > 0 && <ProjectList title="Your projects" projects={active} onMutate={mutate} onReconnect={openRebind} navigate={navigate} />}
       {legacyAvailable && <section className="legacy-project-entry"><div><span className="badge warn">compatibility</span><h2>Unscoped legacy data</h2><p>Older local data is kept separate from registered projects.</p></div><ProjectLink route={{ kind: "legacy" }} navigate={navigate}>Open legacy data</ProjectLink></section>}
-      {archived.length > 0 && <ProjectList title="Archived projects" projects={archived} onMutate={mutate} navigate={navigate} />}
+      {archived.length > 0 && <ProjectList title="Archived projects" projects={archived} onMutate={mutate} onReconnect={openRebind} navigate={navigate} />}
       {dialogOpen && <ProjectRegistrationDialog settings={settings} onClose={closeDialog} onRegistered={(project) => { closeDialog(); navigate({ kind: "project", projectId: project.projectId, page: "home" }); }} />}
+      {rebindProject && <ProjectRegistrationDialog settings={settings} mode="rebind" project={rebindProject} onClose={closeDialog} onRegistered={(project) => completeRebind(rebindProject, dialogGenerationRef.current, project)} />}
     </main>
   );
 }
 
-function ProjectList({ title, projects, onMutate, navigate }: { title: string; projects: ProjectSummary[]; onMutate: (project: ProjectSummary, action: "rename" | "archive" | "restore") => void; navigate: ProjectNavigation }) {
-  return <section className="project-list-section"><div className="project-list-heading"><h2>{title}</h2><span className="subtle">{projects.length} total</span></div><div className="project-table-wrap"><table className="project-table"><thead><tr><th scope="col">Project</th><th scope="col">Readiness</th><th scope="col">Recent activity</th><th scope="col">Last opened</th><th scope="col">Actions</th></tr></thead><tbody>{projects.map((project) => <ProjectRow key={project.projectId} project={project} onMutate={onMutate} navigate={navigate} />)}</tbody></table></div></section>;
+function ProjectList({ title, projects, onMutate, onReconnect, navigate }: { title: string; projects: ProjectSummary[]; onMutate: (project: ProjectSummary, action: "rename" | "archive" | "restore") => void; onReconnect: (project: ProjectSummary) => void; navigate: ProjectNavigation }) {
+  return <section className="project-list-section"><div className="project-list-heading"><h2>{title}</h2><span className="subtle">{projects.length} total</span></div><div className="project-table-wrap"><table className="project-table"><thead><tr><th scope="col">Project</th><th scope="col">Readiness</th><th scope="col">Recent activity</th><th scope="col">Last opened</th><th scope="col">Actions</th></tr></thead><tbody>{projects.map((project) => <ProjectRow key={project.projectId} project={project} onMutate={onMutate} onReconnect={onReconnect} navigate={navigate} />)}</tbody></table></div></section>;
 }
 
-function ProjectRow({ project, onMutate, navigate }: { project: ProjectSummary; onMutate: (project: ProjectSummary, action: "rename" | "archive" | "restore") => void; navigate: ProjectNavigation }) {
+function ProjectRow({ project, onMutate, onReconnect, navigate }: { project: ProjectSummary; onMutate: (project: ProjectSummary, action: "rename" | "archive" | "restore") => void; onReconnect: (project: ProjectSummary) => void; navigate: ProjectNavigation }) {
   const ready = project.status === "available" && project.rootAvailable;
   const label = project.status === "archived" ? "Archived" : ready ? "Ready" : "Directory unavailable";
   const projectRoute = { kind: "project", projectId: project.projectId, page: "home" } as const;
-  return <tr className="project-row"><td data-label="Project">{ready ? <ProjectLink className="project-name-link" route={projectRoute} navigate={navigate} aria-label={`Open project ${project.displayName}`}>{project.displayName}</ProjectLink> : <strong className="project-name-link">{project.displayName}</strong>}<span className="subtle">Local project</span></td><td data-label="Readiness"><span className={`status-label ${ready ? "ready" : "blocked"}`}><span aria-hidden="true">{ready ? "●" : "!"}</span>{label}</span></td><td data-label="Recent activity">{project.lastOpenedAt ? "Previously opened" : "No activity yet"}</td><td data-label="Last opened">{formatTime(project.lastOpenedAt)}</td><td data-label="Actions"><div className="project-row-actions">{ready && <><ProjectLink route={projectRoute} navigate={navigate} aria-label={`Open ${project.displayName}`}>Open</ProjectLink><ProjectLink route={projectRoute} navigate={navigate} target="_blank" rel="noopener noreferrer" aria-label={`Open ${project.displayName} in new tab`}>Open in new tab</ProjectLink></>}<button type="button" className="link-button" onClick={() => onMutate(project, "rename")} aria-label={`Rename project ${project.displayName}`}>Rename</button>{project.status === "archived" ? <button type="button" className="link-button" onClick={() => onMutate(project, "restore")} aria-label={`Restore project ${project.displayName}`}>Restore</button> : <button type="button" className="link-button" onClick={() => onMutate(project, "archive")} aria-label={`Archive project ${project.displayName}`}>Archive</button>}</div></td></tr>;
+  return <tr className="project-row"><td data-label="Project">{ready ? <ProjectLink className="project-name-link" route={projectRoute} navigate={navigate} aria-label={`Open project ${project.displayName}`}>{project.displayName}</ProjectLink> : <strong className="project-name-link">{project.displayName}</strong>}<span className="subtle">Local project</span></td><td data-label="Readiness"><span className={`status-label ${ready ? "ready" : "blocked"}`}><span aria-hidden="true">{ready ? "●" : "!"}</span>{label}</span></td><td data-label="Recent activity">{project.lastOpenedAt ? "Previously opened" : "No activity yet"}</td><td data-label="Last opened">{formatTime(project.lastOpenedAt)}</td><td data-label="Actions"><div className="project-row-actions">{ready && <><ProjectLink route={projectRoute} navigate={navigate} aria-label={`Open ${project.displayName}`}>Open</ProjectLink><ProjectLink route={projectRoute} navigate={navigate} target="_blank" rel="noopener noreferrer" aria-label={`Open ${project.displayName} in new tab`}>Open in new tab</ProjectLink></>}{!ready && project.status !== "archived" && <button type="button" className="link-button" onClick={() => onReconnect(project)} aria-label={`Reconnect project ${project.displayName}`}>Reconnect</button>}<button type="button" className="link-button" onClick={() => onMutate(project, "rename")} aria-label={`Rename project ${project.displayName}`}>Rename</button>{project.status === "archived" ? <button type="button" className="link-button" onClick={() => onMutate(project, "restore")} aria-label={`Restore project ${project.displayName}`}>Restore</button> : <button type="button" className="link-button" onClick={() => onMutate(project, "archive")} aria-label={`Archive project ${project.displayName}`}>Archive</button>}</div></td></tr>;
 }
 
 function ProjectHubLoading() { return <section className="project-list-section" role="status"><div className="project-list-heading"><h2>Loading projects</h2></div><div className="project-loading-lines"><span /><span /><span /></div></section>; }

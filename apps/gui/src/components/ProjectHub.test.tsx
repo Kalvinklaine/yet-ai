@@ -5,7 +5,7 @@ import { ProjectHub } from "./ProjectHub";
 import * as client from "../services/projectClient";
 import type { ProjectNavigation } from "../services/projectRouting";
 
-vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), listProjects: vi.fn(), archiveProject: vi.fn(), restoreProject: vi.fn(), updateProject: vi.fn(), startDirectoryDiscovery: vi.fn(), listDirectoryDiscovery: vi.fn(), registerProject: vi.fn() }));
+vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), listProjects: vi.fn(), archiveProject: vi.fn(), restoreProject: vi.fn(), updateProject: vi.fn(), startDirectoryDiscovery: vi.fn(), listDirectoryDiscovery: vi.fn(), registerProject: vi.fn(), rebindProject: vi.fn() }));
 const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
 const summary = (name: string, status: "available" | "missing" | "archived" = "available") => ({ projectId: "prj_abcdefghijklmnopqrstuA" as client.ProjectSummary["projectId"], displayName: name, status, revision: "1", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: status === "available", cloudRequired: false as const, providerAccess: "direct" as const });
 let root: ReactDOM.Root | undefined;
@@ -68,8 +68,10 @@ describe("ProjectHub", () => {
     expect(archivedRow.querySelector(`a[href="/p/${archived.projectId}/"]`)).toBeNull();
     expect(missingRow.querySelector('[aria-label="Rename project Missing"]')).not.toBeNull();
     expect(missingRow.querySelector('[aria-label="Archive project Missing"]')).not.toBeNull();
+    expect(missingRow.querySelector('[aria-label="Reconnect project Missing"]')).not.toBeNull();
     expect(archivedRow.querySelector('[aria-label="Rename project Archived"]')).not.toBeNull();
     expect(archivedRow.querySelector('[aria-label="Restore project Archived"]')).not.toBeNull();
+    expect(archivedRow.querySelector('[aria-label^="Reconnect project"]')).toBeNull();
     await act(async () => { (missingRow.querySelector('[aria-label="Rename project Missing"]') as HTMLButtonElement).click(); });
     expect(client.updateProject).toHaveBeenCalledWith(settings, missing.projectId, { displayName: "Missing renamed", expectedRevision: "1" });
     await act(async () => { (missingRow.querySelector('[aria-label="Archive project Missing"]') as HTMLButtonElement).click(); });
@@ -78,6 +80,39 @@ describe("ProjectHub", () => {
     expect(client.restoreProject).toHaveBeenCalledWith(settings, archived.projectId, "1");
     expect(container.innerHTML).not.toContain(missing.rootPath);
     expect(container.innerHTML).not.toContain(archived.providerToken);
+  });
+
+  it("reconnects a missing row under the same opaque project identity", async () => {
+    const missing = summary("Missing", "missing");
+    const repaired = { ...missing, status: "available" as const, rootAvailable: true, revision: "2" };
+    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [missing], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "opaque-root", displayName: "Recovered", selectable: true }, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", directoryHandle: "opaque-root", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.rebindProject).mockResolvedValue({ ok: true, data: repaired });
+    const container = await render();
+    await act(async () => { (container.querySelector('[aria-label="Reconnect project Missing"]') as HTMLButtonElement).click(); });
+    expect(container.textContent).toContain("Reconnect project directory");
+    await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(client.rebindProject).toHaveBeenCalledWith(settings, missing.projectId, { expectedRevision: "1", directorySessionId: "session", directoryHandle: "opaque-root" }, expect.any(AbortSignal));
+    const row = Array.from(container.querySelectorAll("tr")).find((candidate) => candidate.textContent?.includes("Missing"));
+    expect(row?.textContent).toContain("Ready");
+    expect(row?.querySelector(`a[href="/p/${missing.projectId}/"]`)).not.toBeNull();
+    expect(container.innerHTML).not.toContain("/Users/private");
+  });
+
+  it("keeps reconnect failures sanitized and the missing row blocked", async () => {
+    const missing = summary("Missing", "missing");
+    vi.mocked(client.listProjects).mockResolvedValue({ ok: true, data: { projects: [missing], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "opaque-root", displayName: "Recovered", selectable: true }, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", directoryHandle: "opaque-root", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.rebindProject).mockResolvedValue({ ok: false, error: { status: 409, message: "conflict at /Users/private/recovered" } });
+    const container = await render();
+    await act(async () => { (container.querySelector('[aria-label="Reconnect project Missing"]') as HTMLButtonElement).click(); });
+    await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(container.textContent).toContain("Project could not be reconnected");
+    expect(container.textContent).toContain("Refresh Projects and try again.");
+    expect(container.textContent).toContain("Directory unavailable");
+    expect(container.innerHTML).not.toContain("/Users/private");
   });
 
   it("shows loading without a false empty state", async () => {

@@ -8,7 +8,7 @@ import { parseProjectId } from "../services/projectRouting";
 import * as providersClient from "../services/providersClient";
 import * as runtimeClient from "../services/runtimeClient";
 
-vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), getProject: vi.fn() }));
+vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), getProject: vi.fn(), startDirectoryDiscovery: vi.fn(), listDirectoryDiscovery: vi.fn(), rebindProject: vi.fn() }));
 vi.mock("../services/projectMemoryClient", async (original) => ({ ...await original<typeof import("../services/projectMemoryClient")>(), listProjectMemory: vi.fn() }));
 vi.mock("../services/providersClient", async (original) => ({ ...await original<typeof import("../services/providersClient")>(), listProviders: vi.fn() }));
 vi.mock("../services/runtimeClient", async (original) => ({ ...await original<typeof import("../services/runtimeClient")>(), listChats: vi.fn(), getAgentProgress: vi.fn(), getPing: vi.fn(), getModels: vi.fn() }));
@@ -43,10 +43,32 @@ describe("ProjectShell", () => {
 
   it("blocks archived and missing projects", async () => {
     let container = await render("archived"); expect(container.textContent).toContain("Project archived");
+    expect(container.textContent).not.toContain("Reconnect directory");
     expect(runtimeClient.listChats).not.toHaveBeenCalled();
     act(() => root?.unmount()); root = undefined; document.body.innerHTML = "";
     container = await render("missing"); expect(container.textContent).toContain("Project directory unavailable");
+    expect(container.textContent).toContain("Reconnect directory");
     expect(container.textContent).not.toContain("/Users/");
+  });
+
+  it("reconnects a missing project without changing its route identity", async () => {
+    const navigate = vi.fn();
+    const missing = { ...project, status: "missing" as const, rootAvailable: false };
+    vi.mocked(client.getProject).mockResolvedValue({ ok: true, data: missing });
+    vi.mocked(client.startDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", expiresAt: "2027-01-01T00:00:00Z", root: { handle: "opaque-root", displayName: "Recovered", selectable: true }, cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.listDirectoryDiscovery).mockResolvedValue({ ok: true, data: { sessionId: "session", directoryHandle: "opaque-root", expiresAt: "2027-01-01T00:00:00Z", entries: [], cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(client.rebindProject).mockResolvedValue({ ok: true, data: { ...project, revision: "2" } });
+    vi.mocked(runtimeClient.listChats).mockResolvedValue({ ok: true, data: { chats: [] } });
+    vi.mocked(memoryClient.listProjectMemory).mockResolvedValue({ ok: true, data: { notes: [] } });
+    vi.mocked(runtimeClient.getAgentProgress).mockResolvedValue({ ok: true, data: { snapshots: [], cloudRequired: false, providerAccess: "direct" } });
+    const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectShell route={{ kind: "project", projectId, page: "chat" }} settings={settings} navigate={navigate}><div>Chat content</div></ProjectShell>); });
+    await act(async () => { (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Reconnect directory") as HTMLButtonElement).click(); });
+    await act(async () => { (container.querySelector("form") as HTMLFormElement).dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
+    expect(client.rebindProject).toHaveBeenCalledWith(settings, projectId, { expectedRevision: "1", directorySessionId: "session", directoryHandle: "opaque-root" }, expect.any(AbortSignal));
+    expect(container.textContent).toContain("Chat content");
+    expect(navigate).not.toHaveBeenCalled();
+    expect(container.innerHTML).not.toContain("/Users/private");
   });
 
   it("loads project-scoped command-center data and renders safe section states", async () => {

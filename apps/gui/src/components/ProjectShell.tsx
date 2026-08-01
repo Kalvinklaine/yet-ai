@@ -15,14 +15,18 @@ import { listProviders } from "../services/providersClient";
 import { countReadyProviderModels } from "../services/providerReadiness";
 import { getAgentProgress, getModels, getPing, listChats, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { ProjectHome } from "./ProjectHome";
+import { ProjectRegistrationDialog } from "./ProjectRegistrationDialog";
 
 export function ProjectShell({ route, settings, navigate, children }: { route: Extract<AppRoute, { kind: "project" }>; settings: RuntimeSettings; navigate: ProjectNavigation; children?: ReactNode }) {
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [error, setError] = useState<RuntimeError | null>(null);
   const [loading, setLoading] = useState(true);
   const [commandCenter, setCommandCenter] = useState<ProjectCommandCenterModel | null>(null);
+  const [rebindOpen, setRebindOpen] = useState(false);
   const projectRequestRef = useRef(0);
   const commandCenterRequestRef = useRef(0);
+  const mountedRef = useRef(true);
+  const rebindGenerationRef = useRef(0);
   const load = useCallback(async () => {
     const request = ++projectRequestRef.current;
     const controller = new AbortController();
@@ -35,6 +39,8 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
     return controller;
   }, [route.projectId, settings]);
   useEffect(() => {
+    mountedRef.current = true;
+    setRebindOpen(false);
     const request = ++projectRequestRef.current;
     const controller = new AbortController();
     setLoading(true);
@@ -44,8 +50,12 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
       if (result.ok) setProject(result.data); else setError(result.error);
       setLoading(false);
     });
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+      rebindGenerationRef.current += 1;
+    };
   }, [route.projectId, settings]);
+  useEffect(() => () => { mountedRef.current = false; }, []);
 
   useEffect(() => {
     if (route.page !== "home" || !project || project.projectId !== route.projectId || project.status !== "available" || !project.rootAvailable) {
@@ -89,7 +99,15 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
   if (loading) return <main className="project-page-shell"><section className="project-blocked-state" role="status"><h1>Loading project…</h1><p>Checking the local project boundary.</p></section></main>;
   if (error || !project) return <ProjectBlockedState title="Project unavailable" detail={error?.status === 404 ? "This project could not be found." : "Yet AI could not safely load this project."} navigate={navigate} onRetry={() => void load()} />;
   if (project.status === "archived") return <ProjectBlockedState title="Project archived" detail="Restore this project from the Projects page before opening its local data." navigate={navigate} />;
-  if (project.status === "missing" || !project.rootAvailable) return <ProjectBlockedState title="Project directory unavailable" detail="The registered directory is missing, moved, inaccessible, or no longer matches this project. No replacement was guessed." navigate={navigate} />;
+  if (project.status === "missing" || !project.rootAvailable) {
+    const generation = rebindGenerationRef.current;
+    return <><ProjectBlockedState title="Project directory unavailable" detail="The registered directory is missing, moved, inaccessible, or no longer matches this project. No replacement was guessed." navigate={navigate} actionLabel="Reconnect directory" onAction={() => { rebindGenerationRef.current += 1; setRebindOpen(true); }} />{rebindOpen && <ProjectRegistrationDialog settings={settings} mode="rebind" project={project} onClose={() => { rebindGenerationRef.current += 1; setRebindOpen(false); }} onRegistered={(repaired) => {
+      if (!mountedRef.current || generation !== rebindGenerationRef.current || repaired.projectId !== route.projectId) return;
+      rebindGenerationRef.current += 1;
+      setRebindOpen(false);
+      setProject(repaired);
+    }} />}</>;
+  }
 
   const nav: Array<{ page: "home" | "chat" | "memory" | "agent"; label: string }> = [{ page: "home", label: "Home" }, { page: "chat", label: "Chat" }, { page: "memory", label: "Memory" }, { page: "agent", label: "Agent" }];
   return (
@@ -104,6 +122,6 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
   );
 }
 
-function ProjectBlockedState({ title, detail, navigate, onRetry }: { title: string; detail: string; navigate: ProjectNavigation; onRetry?: () => void }) {
-  return <main className="project-page-shell"><section className="project-blocked-state" role="alert"><div className="project-empty-orbit" aria-hidden="true">!</div><h1>{title}</h1><p>{detail}</p><div className="row"><ProjectLink route={{ kind: "projects" }} navigate={navigate}>Back to Projects</ProjectLink>{onRetry && <button type="button" className="secondary-button" onClick={onRetry}>Retry</button>}</div></section></main>;
+function ProjectBlockedState({ title, detail, navigate, onRetry, actionLabel, onAction }: { title: string; detail: string; navigate: ProjectNavigation; onRetry?: () => void; actionLabel?: string; onAction?: () => void }) {
+  return <main className="project-page-shell"><section className="project-blocked-state" role="alert"><div className="project-empty-orbit" aria-hidden="true">!</div><h1>{title}</h1><p>{detail}</p><div className="row"><ProjectLink route={{ kind: "projects" }} navigate={navigate}>Back to Projects</ProjectLink>{actionLabel && onAction && <button type="button" onClick={onAction}>{actionLabel}</button>}{onRetry && <button type="button" className="secondary-button" onClick={onRetry}>Retry</button>}</div></section></main>;
 }
