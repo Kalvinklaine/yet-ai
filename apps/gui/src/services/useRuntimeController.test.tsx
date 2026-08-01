@@ -202,6 +202,47 @@ describe("useRuntimeController", () => {
     expect(controller.providerAuthStatus?.status).toBe("connected");
   });
 
+  it("invalidates an older lifecycle auth refresh when login start begins and allows a later authority refresh", async () => {
+    const staleLifecycleRefresh = deferred<Response>();
+    let authCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        if (authCalls === 2) return staleLifecycleRefresh.promise;
+        if (authCalls === 3) return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, accountLabel: "authority-a" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/start") && init?.method === "POST") return Promise.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, success: true, authorizationUrl: "https://login.example.test" }));
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; });
+    await act(async () => { await controller.connect(); });
+    const connected = { lifecycle: "connected" } as RuntimeLifecycleDiagnostics;
+
+    await act(async () => {
+      controller.runtimeLifecycleChanged(connected, "authority-a");
+      await Promise.resolve();
+    });
+    expect(authCalls).toBe(2);
+
+    await act(async () => { await controller.startOpenAiLogin(false, vi.fn()); });
+    expect(controller.providerAuthStatus?.status).toBe("pending");
+
+    staleLifecycleRefresh.resolve(response({ provider: "openai", configured: false, status: "expired", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(controller.providerAuthStatus?.status).toBe("pending");
+
+    await act(async () => {
+      controller.runtimeLifecycleChanged(connected, "authority-a");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(authCalls).toBe(3);
+    expect(controller.providerAuthStatus).toMatchObject({ status: "connected", accountLabel: "authority-a" });
+  });
+
   it("ignores a stale login start completion after runtime data is cleared", async () => {
     const staleStart = deferred<Response>();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {

@@ -326,6 +326,8 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
 
   const beginProviderAuthMutation = useCallback((mutation: "start" | "exchange" | "disconnect") => {
     cancelProviderAuthWork(true);
+    providerAuthRefreshRequestRef.current += 1;
+    providerAuthAuthorityRequestsRef.current.clear();
     const attempt = providerAuthMutationAttemptRef.current + 1;
     providerAuthMutationAttemptRef.current = attempt;
     setProviderAuthMutation(mutation);
