@@ -1082,7 +1082,7 @@ impl CodexModelEntry {
             })?;
         Some(CodexModelCandidate {
             model,
-            priority: self.priority.unwrap_or_default(),
+            priority: self.priority,
             response_order,
         })
     }
@@ -1135,7 +1135,7 @@ impl CodexModelEntry {
 #[derive(Debug)]
 struct CodexModelCandidate {
     model: String,
-    priority: i64,
+    priority: Option<i64>,
     response_order: usize,
 }
 
@@ -1234,9 +1234,13 @@ async fn discover_codex_models(
         .filter_map(|(response_order, entry)| entry.candidate(response_order))
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| {
-        left.priority
-            .cmp(&right.priority)
-            .then_with(|| left.response_order.cmp(&right.response_order))
+        match (left.priority, right.priority) {
+            (Some(left), Some(right)) => left.cmp(&right),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+        .then_with(|| left.response_order.cmp(&right.response_order))
     });
     let mut seen = HashSet::new();
     let models = candidates
@@ -5299,10 +5303,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn codex_exchange_model_discovery_explicit_priority_wins_over_missing_priority() {
+        let endpoint = codex_models_response_endpoint(
+            r#"{"models":[{"id":"gpt-5.6-luna","visibility":"list"},{"id":"gpt-5.6-terra","visibility":"list","priority":10}]}"#,
+        )
+        .await;
+
+        let model = super::discover_codex_model(
+            &endpoint,
+            "codex-access-token-secret",
+            "acct-test",
+            "codex-live-session",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(model, "gpt-5.6-terra");
+    }
+
+    #[tokio::test]
     async fn codex_exchange_model_discovery_orders_priority_then_catalog_and_accepts_current_variants(
     ) {
         let endpoint = codex_models_response_endpoint(
-            r#"{"models":[{"id":"gpt-5.6-sol","visibility":"list","priority":10},{"id":"gpt-5.6-terra","visibility":"list","priority":30},{"id":"gpt-5.6-luna","visibility":"list","priority":30}]}"#,
+            r#"{"models":[{"id":"gpt-5.6-luna","visibility":"list"},{"id":"gpt-5.6-terra","visibility":"list","priority":0},{"id":"gpt-5.6-sol","visibility":"list","priority":-10},{"id":"gpt-5.2","visibility":"list","priority":0},{"id":"gpt-5.3-mini","visibility":"list"}]}"#,
         )
         .await;
 
@@ -5315,7 +5338,16 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(models, vec!["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+        assert_eq!(
+            models,
+            vec![
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.2",
+                "gpt-5.6-luna",
+                "gpt-5.3-mini",
+            ]
+        );
     }
 
     #[tokio::test]
@@ -5358,7 +5390,7 @@ mod tests {
     {
         let dir = temp_dir();
         let endpoint = codex_models_response_endpoint(
-            r#"{"data":[{"id":"gpt-5.6-sol","visibility":"list","priority":20},{"id":"gpt-5.6-terra","visibility":"list","priority":10}]}"#,
+            r#"{"data":[{"id":"gpt-5.6-luna","visibility":"list"},{"id":"gpt-5.6-sol","visibility":"list","priority":-10},{"id":"gpt-5.6-terra","visibility":"list","priority":0}]}"#,
         )
         .await;
         create_codex_oauth_connection_with_expiry_and_metadata(
