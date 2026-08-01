@@ -145,8 +145,15 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
     setProviderAuthError(null); setProviderAuthUrlWarning(null); setProviderAuthExchangeError(null);
     const result = await getProviderAuthStatus(targetSettings, "openai");
     if (!isCurrentRefresh(revision)) return;
-    setProviderAuthStatus(result.ok ? result.data : null);
-    if (!result.ok) setProviderAuthError(result.error);
+    if (result.ok) {
+      setProviderAuthStatus(result.data);
+    } else {
+      const preservePendingLogin = providerAuthDataRevisionRef.current === revision
+        && providerAuthStatusRef.current?.status === "pending"
+        && providerAuthStatusRef.current.authSource === "oauth";
+      if (!preservePendingLogin) setProviderAuthStatus(null);
+      setProviderAuthError(result.error);
+    }
     setProviderAuthDataRevision(revision);
   }, [isCurrentRefresh, settingsRef, settingsRevisionRef]);
 
