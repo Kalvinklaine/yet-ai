@@ -97,6 +97,7 @@ pub fn router(state: AppState) -> Router {
                 )
                 .route("/projects/:project_id/archive", post(project::archive))
                 .route("/projects/:project_id/restore", post(project::restore))
+                .route("/projects/:project_id/rebind", post(project::rebind))
                 .route("/agent-progress", get(agent_progress_list))
                 .route("/agent-progress/events", post(agent_progress_event))
                 .route(
@@ -574,7 +575,7 @@ async fn project_register(
     }
 }
 
-fn project_browser_error(error: ProjectBrowserError) -> Response {
+pub(super) fn project_browser_error(error: ProjectBrowserError) -> Response {
     let (status, category) = match error {
         ProjectBrowserError::InvalidRequest | ProjectBrowserError::LimitReached => {
             (StatusCode::BAD_REQUEST, "invalid_request")
@@ -1646,6 +1647,296 @@ mod project_tests {
             .unwrap();
         assert_eq!(raw_path.status(), StatusCode::BAD_REQUEST);
         assert!(!response_text(raw_path).await.contains("/private"));
+    }
+
+    #[tokio::test]
+    async fn project_rebind_http_requires_auth_strict_opaque_input_and_supports_stale_retry() {
+        let home = tempfile::tempdir().unwrap();
+        let old_root = home.path().join("Old");
+        let new_root = home.path().join("New");
+        std::fs::create_dir(&old_root).unwrap();
+        std::fs::create_dir(&new_root).unwrap();
+        let identity = ProductIdentity::load().unwrap();
+        let mut state = AppState::with_storage_paths(
+            identity,
+            AuthToken::new("test-token").unwrap(),
+            temp_storage_paths(),
+        );
+        state.project_browser_runtime =
+            ProjectBrowserRuntime::with_home(Some(home.path().to_path_buf()));
+        let created = state
+            .project_registry_runtime
+            .register(&old_root, Some("Stable"))
+            .await
+            .unwrap();
+        std::fs::remove_dir(&old_root).unwrap();
+        let session = state
+            .project_browser_runtime
+            .create_session()
+            .await
+            .unwrap();
+        let new_handle = state
+            .project_browser_runtime
+            .list(&session.session_id, &session.root.handle)
+            .await
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.display_name == "New")
+            .unwrap()
+            .handle;
+        let app = super::router(state.clone());
+        let uri = format!("/v1/projects/{}/rebind", created.project_id);
+        let body = serde_json::json!({
+            "expectedRevision": created.revision,
+            "directorySessionId": session.session_id,
+            "directoryHandle": new_handle
+        });
+
+        let unauthenticated =
+            project_request(state.clone(), "POST", uri.clone(), &body.to_string(), false).await;
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let malformed = project_request(
+            state.clone(),
+            "POST",
+            uri.clone(),
+            r#"{"expectedRevision":"1""#,
+            true,
+        )
+        .await;
+        assert_eq!(malformed.status(), StatusCode::BAD_REQUEST);
+        assert!(!response_text(malformed)
+            .await
+            .contains(home.path().to_str().unwrap()));
+
+        for invalid in [
+            serde_json::json!({
+                "expectedRevision": "1",
+                "directorySessionId": body["directorySessionId"],
+                "directoryHandle": body["directoryHandle"],
+                "path": home.path()
+            }),
+            serde_json::json!({
+                "expected_revision": "1",
+                "directorySessionId": body["directorySessionId"],
+                "directoryHandle": body["directoryHandle"]
+            }),
+        ] {
+            let rejected = project_json_request(state.clone(), "POST", uri.clone(), invalid).await;
+            assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+            let text = response_text(rejected).await;
+            assert!(!text.contains(home.path().to_str().unwrap()));
+            assert!(!text.contains("directoryHandle"));
+        }
+
+        let stale_body = serde_json::json!({
+            "expectedRevision": "999",
+            "directorySessionId": body["directorySessionId"],
+            "directoryHandle": body["directoryHandle"]
+        });
+        let stale = project_json_request(state.clone(), "POST", uri.clone(), stale_body).await;
+        assert_eq!(stale.status(), StatusCode::BAD_REQUEST);
+        assert!(response_text(stale).await.contains("invalid_request"));
+        let unchanged = state
+            .project_registry_runtime
+            .list_summaries()
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(unchanged.project_id, created.project_id);
+        assert_eq!(unchanged.revision, created.revision);
+        assert!(!unchanged.root_available);
+
+        let rebound = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(&uri)
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(rebound.status(), StatusCode::OK);
+        let rebound_text = response_text(rebound).await;
+        let rebound: serde_json::Value = serde_json::from_str(&rebound_text).unwrap();
+        assert_eq!(rebound["projectId"], created.project_id);
+        assert_eq!(rebound["revision"], "2");
+        assert_eq!(rebound["rootAvailable"], true);
+        assert!(!rebound_text.contains(home.path().to_str().unwrap()));
+        assert!(!rebound_text.contains(&new_handle));
+
+        let replayed = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "expectedRevision": "2",
+                            "directorySessionId": session.session_id,
+                            "directoryHandle": new_handle
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(replayed.status(), StatusCode::GONE);
+        assert_eq!(
+            response_text(replayed).await,
+            r#"{"error":"discovery_expired"}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn project_rebind_http_sanitizes_registry_failures_without_mutation() {
+        let home = tempfile::tempdir().unwrap();
+        let first_root = home.path().join("First");
+        let owned_root = home.path().join("Owned");
+        let candidate_root = home.path().join("Candidate");
+        for root in [&first_root, &owned_root, &candidate_root] {
+            std::fs::create_dir(root).unwrap();
+        }
+        let identity = ProductIdentity::load().unwrap();
+        let mut state = AppState::with_storage_paths(
+            identity,
+            AuthToken::new("test-token").unwrap(),
+            temp_storage_paths(),
+        );
+        state.project_browser_runtime =
+            ProjectBrowserRuntime::with_home(Some(home.path().to_path_buf()));
+        let first = state
+            .project_registry_runtime
+            .register(&first_root, Some("First"))
+            .await
+            .unwrap();
+        let owned = state
+            .project_registry_runtime
+            .register(&owned_root, Some("Owned"))
+            .await
+            .unwrap();
+        let session = state
+            .project_browser_runtime
+            .create_session()
+            .await
+            .unwrap();
+        let listed = state
+            .project_browser_runtime
+            .list(&session.session_id, &session.root.handle)
+            .await
+            .unwrap();
+        let handle = |name: &str| {
+            listed
+                .entries
+                .iter()
+                .find(|entry| entry.display_name == name)
+                .unwrap()
+                .handle
+                .clone()
+        };
+        let candidate_handle = handle("Candidate");
+        let owned_handle = handle("Owned");
+
+        for (project_id, revision, directory_handle, expected_status, expected_category) in [
+            (
+                "prj_AAAAAAAAAAAAAAAAAAAAAA",
+                "1",
+                candidate_handle.as_str(),
+                StatusCode::NOT_FOUND,
+                "not_found",
+            ),
+            (
+                first.project_id.as_str(),
+                first.revision.as_str(),
+                owned_handle.as_str(),
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+            ),
+            (
+                first.project_id.as_str(),
+                first.revision.as_str(),
+                "dir_00000000000000000000000000000000",
+                StatusCode::GONE,
+                "discovery_expired",
+            ),
+        ] {
+            let response = project_json_request(
+                state.clone(),
+                "POST",
+                format!("/v1/projects/{project_id}/rebind"),
+                serde_json::json!({
+                    "expectedRevision": revision,
+                    "directorySessionId": session.session_id,
+                    "directoryHandle": directory_handle
+                }),
+            )
+            .await;
+            assert_eq!(response.status(), expected_status);
+            let text = response_text(response).await;
+            assert!(text.contains(expected_category));
+            assert!(!text.contains(home.path().to_str().unwrap()));
+            assert!(!text.contains(directory_handle));
+        }
+
+        let archived = state
+            .project_registry_runtime
+            .archive(&first.project_id, &first.revision)
+            .await
+            .unwrap();
+        let archived_response = project_json_request(
+            state.clone(),
+            "POST",
+            format!("/v1/projects/{}/rebind", first.project_id),
+            serde_json::json!({
+                "expectedRevision": archived.revision,
+                "directorySessionId": session.session_id,
+                "directoryHandle": candidate_handle
+            }),
+        )
+        .await;
+        assert_eq!(archived_response.status(), StatusCode::CONFLICT);
+        let archived_text = response_text(archived_response).await;
+        assert!(archived_text.contains("archived"));
+        assert!(!archived_text.contains(home.path().to_str().unwrap()));
+
+        let summaries = state
+            .project_registry_runtime
+            .list_summaries()
+            .await
+            .unwrap();
+        let first_after = summaries
+            .iter()
+            .find(|summary| summary.project_id == first.project_id)
+            .unwrap();
+        let owned_after = summaries
+            .iter()
+            .find(|summary| summary.project_id == owned.project_id)
+            .unwrap();
+        assert_eq!(first_after.revision, archived.revision);
+        assert_eq!(first_after.status, crate::projects::ProjectStatus::Archived);
+        assert_eq!(owned_after.revision, owned.revision);
+
+        let retry = project_json_request(
+            state,
+            "POST",
+            format!("/v1/projects/{}/rebind", owned.project_id),
+            serde_json::json!({
+                "expectedRevision": owned.revision,
+                "directorySessionId": session.session_id,
+                "directoryHandle": candidate_handle
+            }),
+        )
+        .await;
+        assert_eq!(retry.status(), StatusCode::OK);
     }
 
     fn browser_session_cookie_for_state(state: &AppState) -> String {

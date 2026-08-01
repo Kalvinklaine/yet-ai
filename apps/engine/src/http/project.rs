@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use crate::agent_progress;
 use crate::chat_history;
+use crate::project_browser::ProjectBrowserError;
 use crate::project_memory;
 use crate::projects::{
     is_valid_project_id, ProjectContext, ProjectContextError, ProjectRegistryError, ProjectStatus,
@@ -39,6 +40,14 @@ pub(super) struct ProjectUpdateRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct ProjectLifecycleRequest {
     expected_revision: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ProjectRebindRequest {
+    expected_revision: String,
+    directory_session_id: String,
+    directory_handle: String,
 }
 
 #[derive(Serialize)]
@@ -141,6 +150,33 @@ pub(super) async fn restore(
     request: Result<Json<ProjectLifecycleRequest>, JsonRejection>,
 ) -> Response {
     lifecycle(state, project_id, request, false).await
+}
+
+pub(super) async fn rebind(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    request: Result<Json<ProjectRebindRequest>, JsonRejection>,
+) -> Response {
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_project_json(rejection),
+    };
+    match state
+        .project_browser_runtime
+        .rebind(
+            &state.project_registry_runtime,
+            &project_id,
+            &request.expected_revision,
+            &request.directory_session_id,
+            &request.directory_handle,
+        )
+        .await
+    {
+        Ok(summary) => Json(summary).into_response(),
+        Err(ProjectBrowserError::Registry(error)) => registry_error(error),
+        Err(error) => super::project_browser_error(error),
+    }
 }
 
 async fn lifecycle(
