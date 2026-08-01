@@ -72,6 +72,68 @@ async function mount(onChange: (controller: Controller) => void, settings = { ba
 }
 
 describe("useRuntimeController", () => {
+  it.each([
+    ["start", "/v1/provider-auth/openai/start", "startOpenAiLogin"],
+    ["disconnect", "/v1/provider-auth/openai/disconnect", "disconnectOpenAiLogin"],
+  ] as const)("preserves connected auth when %s fails", async (_mutation, endpoint, action) => {
+    vi.useFakeTimers();
+    const refreshChats = vi.fn(async () => undefined);
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, accountLabel: "safe-account", redacted: "safe-redaction", message: "Engine-confirmed connection" }));
+      if (url.endsWith(endpoint) && init?.method === "POST") return Promise.resolve(new Response(JSON.stringify({ error: "failed access_token=private-token" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; }, undefined, 0, refreshChats);
+    await act(async () => { await controller.connect(); });
+    fetchMock.mockClear();
+    refreshChats.mockClear();
+
+    await act(async () => {
+      if (action === "startOpenAiLogin") await controller.startOpenAiLogin(false, vi.fn());
+      else await controller.disconnectOpenAiLogin();
+    });
+
+    expect(controller.providerAuthStatus).toMatchObject({ configured: true, status: "connected", authSource: "oauth", accountLabel: "safe-account", redacted: "safe-redaction", message: "Engine-confirmed connection" });
+    expect(controller.providerAuthMutation).toBeNull();
+    expect(controller.providerAuthError).toMatchObject({ status: 503 });
+    expect(controller.providerAuthError?.message).not.toContain("private-token");
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith(endpoint))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(0);
+    expect(refreshChats).not.toHaveBeenCalled();
+
+    await act(async () => { vi.advanceTimersByTime(30_000); await Promise.resolve(); });
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(0);
+  });
+
+  it("ignores a stale reconnect completion after the settings revision changes", async () => {
+    const staleStart = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "http://127.0.0.1:8001/v1/provider-auth/openai/status") return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false }));
+      if (url === "http://127.0.0.1:8001/v1/provider-auth/openai/start" && init?.method === "POST") return staleStart.promise;
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    const onChange = (next: Controller) => { controller = next; };
+    await mount(onChange);
+    await act(async () => { await controller.connect(); });
+    await act(async () => { void controller.startOpenAiLogin(false, vi.fn()); await Promise.resolve(); });
+
+    await act(async () => {
+      root?.render(<Probe settings={{ baseUrl: "http://127.0.0.1:8765", token: "latest", runtimeAccess: "direct" }} revision={1} onChange={onChange} />);
+      staleStart.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, success: true, authorizationUrl: "https://private.example.test" }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(controller.providerAuthStatus?.status).toBe("connected");
+    expect(controller.providerAuthDataRevision).toBe(0);
+  });
+
   it("preserves callback-connected auth when the shared status refresh fails once", async () => {
     vi.useFakeTimers();
     let authCalls = 0;

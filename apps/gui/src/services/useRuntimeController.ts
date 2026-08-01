@@ -258,12 +258,8 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
     const attempt = providerAuthMutationAttemptRef.current + 1;
     providerAuthMutationAttemptRef.current = attempt;
     setProviderAuthMutation(mutation);
-    if (activeProviderAuthStatus?.authSource === "oauth" && activeProviderAuthStatus.status === "connected") {
-      setProviderAuthStatus({ ...activeProviderAuthStatus, configured: false, status: mutation === "disconnect" ? "not_configured" : "pending", accountLabel: undefined, redacted: undefined, message: mutation === "disconnect" ? "Disconnecting provider account login." : "Updating provider account login." });
-      setProviderAuthDataRevision(settingsRevisionRef.current);
-    }
     return attempt;
-  }, [activeProviderAuthStatus, settingsRevisionRef]);
+  }, []);
 
   const startOpenAiLogin = useCallback(async (blocked: boolean, openAuthUrl: (url: string) => void) => {
     if (blocked) { setProviderAuthError(null); setProviderAuthUrlWarning(null); setProviderAuthExchangeError(null); setProviderAuthExchangeCode(""); return; }

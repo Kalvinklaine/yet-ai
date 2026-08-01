@@ -24,7 +24,7 @@ function json(data: unknown, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } }));
 }
 
-function installFetch(options: { auth?: Record<string, unknown>; failPing?: boolean; authResponse?: Promise<Response> } = {}) {
+function installFetch(options: { auth?: Record<string, unknown>; failPing?: boolean; authResponse?: Promise<Response>; startResponse?: Promise<Response>; disconnectResponse?: Promise<Response> } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/ping")) return options.failPing ? json({ message: "private-token <script>" }, 503) : json({ productId: "yet-ai", displayName: "Yet AI", version: "1", ready: true, serverTime: "now" });
@@ -37,9 +37,9 @@ function installFetch(options: { auth?: Record<string, unknown>; failPing?: bool
     if (url.endsWith("/v1/providers")) return json({ providers: [{ id: "local", kind: "ollama", displayName: "Local provider", enabled: true, baseUrl: "http://127.0.0.1:11434", auth: { type: "none", configured: true }, models: [{ id: "llama", displayName: "Llama" }, { id: "coder", displayName: "Coder" }], capabilities: { chat: true, completion: true, embeddings: true } }], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith("/v1/providers/local/test")) return json({ ok: true, providerId: "local", status: "reachable", message: "Provider reached", cloudRequired: false });
     if (url.endsWith("/v1/provider-auth/openai/status")) return options.authResponse ?? json(options.auth ?? authBase);
-    if (url.endsWith("/v1/provider-auth/openai/start")) return json({ ...authBase, success: true, status: "pending", authSource: "oauth", authorizationUrl: "https://login.example.test/authorize?state=safe-state", sessionId: "private-session" });
+    if (url.endsWith("/v1/provider-auth/openai/start")) return options.startResponse ?? json({ ...authBase, success: true, status: "pending", authSource: "oauth", authorizationUrl: "https://login.example.test/authorize?state=safe-state", sessionId: "private-session" });
     if (url.endsWith("/v1/provider-auth/openai/exchange")) return json({ ...authBase, success: true, configured: true, status: "connected", authSource: "oauth", accountLabel: "person@example.test" });
-    if (url.endsWith("/v1/provider-auth/openai/disconnect")) return json({ ...authBase, success: true, status: "not_configured" });
+    if (url.endsWith("/v1/provider-auth/openai/disconnect")) return options.disconnectResponse ?? json({ ...authBase, success: true, status: "not_configured" });
     return json({}, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -308,6 +308,31 @@ describe("SettingsPage", () => {
     await act(async () => button("Disconnect account").click());
     await flush();
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/v1/provider-auth/openai/disconnect"))).toBe(true);
+  });
+
+  it.each([
+    ["Reconnect account", "startResponse"],
+    ["Disconnect account", "disconnectResponse"],
+  ] as const)("keeps connected account status when %s fails", async (label, responseKey) => {
+    const failedResponse = json({ error: "failed access_token=private-token" }, 503);
+    const fetchMock = installFetch({
+      auth: { ...authBase, configured: true, status: "connected", authSource: "oauth", accountLabel: "private-account", redacted: "private-redaction" },
+      [responseKey]: failedResponse,
+    });
+    await renderPage();
+
+    await act(async () => button(label).click());
+    await flush();
+
+    expect(container?.textContent).toContain("connected");
+    expect(container?.textContent).not.toContain("pending");
+    expect(container?.textContent).not.toContain("not_configured");
+    expect(container?.textContent).not.toContain("private-token");
+    expect(container?.textContent).not.toContain("private-account");
+    expect(container?.textContent).not.toContain("private-redaction");
+    expect(button("Reconnect account")).not.toBeUndefined();
+    expect(button("Disconnect account")).not.toBeUndefined();
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith(responseKey === "startResponse" ? "/start" : "/disconnect"))).toHaveLength(1);
   });
 
   it.each([
