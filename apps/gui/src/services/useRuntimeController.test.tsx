@@ -72,6 +72,39 @@ async function mount(onChange: (controller: Controller) => void, settings = { ba
 }
 
 describe("useRuntimeController", () => {
+  it("refreshes auth once per accepted runtime authority at the same settings revision", async () => {
+    const authorityRefresh = deferred<Response>();
+    let authCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        if (authCalls === 2) return authorityRefresh.promise;
+      }
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; });
+    await act(async () => { await controller.connect(); });
+    const connected = { lifecycle: "connected" } as RuntimeLifecycleDiagnostics;
+
+    await act(async () => {
+      controller.runtimeLifecycleChanged(connected, "authority-a");
+      controller.runtimeLifecycleChanged(connected, "authority-a");
+      await Promise.resolve();
+    });
+    expect(authCalls).toBe(2);
+
+    authorityRefresh.resolve(runtimeReply("http://127.0.0.1:8001/v1/provider-auth/openai/status"));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => { controller.runtimeLifecycleChanged(connected, "authority-a"); await Promise.resolve(); });
+    expect(authCalls).toBe(2);
+
+    await act(async () => { controller.runtimeLifecycleChanged(connected, "authority-b"); await Promise.resolve(); });
+    expect(authCalls).toBe(3);
+  });
+
   it.each([
     ["start", "/v1/provider-auth/openai/start", "startOpenAiLogin"],
     ["disconnect", "/v1/provider-auth/openai/disconnect", "disconnectOpenAiLogin"],

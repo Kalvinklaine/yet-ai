@@ -1472,10 +1472,11 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         applyHostReady(message.payload as HostReadyPayload | undefined, message.requestId);
       } else if (message.type === "host.runtimeStatus") {
         const payload = message.payload as HostRuntimeStatusPayload;
+        if (projectId && !hasCurrentProjectHostAuthority()) return;
         const revision = settingsRevisionRef.current;
         const diagnostics = runtimeLifecycleDiagnostics(payload, adapter.host);
         setRuntimeLifecycle({ diagnostics, settingsRevision: revision });
-        runtimeLifecycleChanged(diagnostics);
+        runtimeLifecycleChanged(diagnostics, projectId ? projectHostAuthorityAcceptedRef.current?.hostedAuthorityKey ?? null : hostReadyGeneration ?? null);
         setTimeline((current) => [`Runtime lifecycle status received: ${payload.lifecycle}`, ...current].slice(0, 80));
         appendTrace({ family: "host.runtimeStatus", title: "Runtime lifecycle status received", status: payload.lifecycle === "connected" ? "succeeded" : payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch" ? "failed" : "info", summary: `Host reported runtime ${payload.lifecycle}.`, details: { lifecycle: payload.lifecycle, tokenState: payload.tokenState, authority: payload.authority } });
         if (payload.lifecycle === "disconnected" || payload.lifecycle === "stopped" || payload.lifecycle === "failed" || payload.lifecycle === "auth_mismatch") {
@@ -1921,7 +1922,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       unsubscribe();
       if (!bridgeAdapter) adapter.dispose();
     };
-  }, [appendTrace, applyHostReady, bridgeAdapter, clearRuntimeData, projectId, projectScopeController, publishControlledProgress, runtimeLifecycleChanged, stopPendingControlledCommandRunState]);
+  }, [appendTrace, applyHostReady, bridgeAdapter, clearRuntimeData, hostReadyGeneration, projectId, projectScopeController, publishControlledProgress, runtimeLifecycleChanged, stopPendingControlledCommandRunState]);
 
 
   const connect = useCallback(async (requestHostRefresh = false) => {

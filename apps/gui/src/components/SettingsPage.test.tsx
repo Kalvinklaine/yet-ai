@@ -265,6 +265,8 @@ describe("SettingsPage", () => {
     await act(async () => bridge.emit(runtimeStatus("vscode")));
     expect(container?.textContent).toContain("connected · VS Code reports runtime connected");
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(authRequestsBeforeLifecycle + 1);
+    await act(async () => bridge.emit(runtimeStatus("vscode")));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(authRequestsBeforeLifecycle + 1);
 
     currentAuthority = "authority-next";
     await act(async () => bridge.emit({ ...runtimeStatus("vscode"), lifecycle: "degraded", diagnosis: "runtime degraded" }));
@@ -272,6 +274,12 @@ describe("SettingsPage", () => {
     expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(authRequestsBeforeLifecycle + 1);
     resolveAuth(await json(authBase));
     await flush();
+
+    await act(async () => {
+      root?.render(<SettingsPage settings={settings} settingsRevision={0} onSettingsChange={vi.fn()} host="vscode" bridgeAdapter={bridge.adapter} runtimeAuthorityKey="authority-next" getCurrentRuntimeAuthorityKey={() => currentAuthority} />);
+    });
+    await act(async () => bridge.emit(runtimeStatus("vscode")));
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/v1/provider-auth/openai/status"))).toHaveLength(authRequestsBeforeLifecycle + 2);
   });
 
   it("supports pending login manual exchange without exposing session, state, or code", async () => {

@@ -75,8 +75,20 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
   const providerAuthPollRequestRef = useRef(0);
   const providerAuthDataRevisionRef = useRef<number | null>(null);
   const providerAuthStatusRef = useRef<ProviderAuthResponse | null>(null);
+  const providerAuthAuthorityRef = useRef<string | null>(null);
+  const providerAuthAuthorityRequestsRef = useRef(new Map<string, number>());
+  const providerAuthAuthorityAttemptRef = useRef(0);
+  const providerAuthAuthorityRevisionRef = useRef(settingsRevision);
   providerAuthDataRevisionRef.current = providerAuthDataRevision;
   providerAuthStatusRef.current = providerAuthStatus;
+
+  useEffect(() => {
+    if (providerAuthAuthorityRevisionRef.current === settingsRevision) return;
+    providerAuthAuthorityRevisionRef.current = settingsRevision;
+    providerAuthAuthorityRef.current = null;
+    providerAuthAuthorityRequestsRef.current.clear();
+    providerAuthAuthorityAttemptRef.current += 1;
+  }, [settingsRevision]);
 
   const isCurrentRefresh = useCallback((revision: number) => revision === settingsRevisionRef.current, [settingsRevisionRef]);
 
@@ -248,11 +260,29 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
     setProviderAuthExchangeWorking(false); setProviderAuthExchangeCode(""); setProviderAuthExchangeError(null);
   }, [activeProviderAuthStatus?.status]);
 
-  const runtimeLifecycleChanged = useCallback((diagnostics: RuntimeLifecycleDiagnostics) => {
-    if ((diagnostics.lifecycle === "connected" || diagnostics.lifecycle === "degraded") && providerAuthDataRevisionRef.current !== settingsRevisionRef.current) {
-      void refreshProviderAuthStatus();
+  const runtimeLifecycleChanged = useCallback((diagnostics: RuntimeLifecycleDiagnostics, authorityKey: string | null = null) => {
+    if (diagnostics.lifecycle !== "connected" && diagnostics.lifecycle !== "degraded") return;
+    const revisionIsStale = providerAuthDataRevisionRef.current !== settingsRevisionRef.current;
+    if (authorityKey === null) {
+      if (revisionIsStale) void refreshProviderAuthStatus();
+      return;
     }
-  }, [refreshProviderAuthStatus, settingsRevisionRef]);
+    if ((!revisionIsStale && providerAuthAuthorityRef.current === authorityKey) || providerAuthAuthorityRequestsRef.current.has(authorityKey)) return;
+    const authorityAttempt = providerAuthAuthorityAttemptRef.current + 1;
+    providerAuthAuthorityAttemptRef.current = authorityAttempt;
+    providerAuthAuthorityRequestsRef.current.set(authorityKey, authorityAttempt);
+    const targetSettings = settingsRef.current;
+    const targetRevision = settingsRevisionRef.current;
+    void refreshProviderAuthStatus(targetSettings, targetRevision).then(() => {
+      if (isCurrentRefresh(targetRevision) && providerAuthAuthorityAttemptRef.current === authorityAttempt) {
+        providerAuthAuthorityRef.current = authorityKey;
+      }
+    }).finally(() => {
+      if (providerAuthAuthorityRequestsRef.current.get(authorityKey) === authorityAttempt) {
+        providerAuthAuthorityRequestsRef.current.delete(authorityKey);
+      }
+    });
+  }, [isCurrentRefresh, refreshProviderAuthStatus, settingsRef, settingsRevisionRef]);
 
   const beginProviderAuthMutation = useCallback((mutation: "start" | "exchange" | "disconnect") => {
     const attempt = providerAuthMutationAttemptRef.current + 1;
@@ -341,6 +371,9 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
     providerAuthExchangeInFlightRef.current = false;
     providerAuthPollInFlightRef.current = false;
     providerAuthPollRequestRef.current += 1;
+    providerAuthAuthorityRef.current = null;
+    providerAuthAuthorityRequestsRef.current.clear();
+    providerAuthAuthorityAttemptRef.current += 1;
     setRuntimeDataRevision(null); setProviderDataRevision(null); setProviderAuthDataRevision(null); setDemoModeDataRevision(null);
     setDemoModeWorking(false); setProviderAuthMutation(null); setProviderAuthExchangeCode(""); setProviderAuthExchangeWorking(false); setProviderAuthExchangeError(null); setProviderTestState(null);
     setRuntimeRefreshStatus({ state: "checking", attempt: runtimeRefreshAttemptRef.current + 1, checkedAt: new Date().toLocaleTimeString(), detail: "Runtime settings changed; checking current runtime…" });
@@ -349,6 +382,7 @@ export function useRuntimeController({ settingsRef, settingsRevisionRef, setting
   const clearRuntimeData = useCallback(() => {
     setRuntimeDataRevision(null); setProviderDataRevision(null); setProviderAuthDataRevision(null); setDemoModeDataRevision(null);
     providerAuthExchangeInFlightRef.current = false; setProviderAuthExchangeWorking(false); setProviderAuthExchangeCode(""); setProviderAuthExchangeError(null);
+    providerAuthAuthorityRef.current = null; providerAuthAuthorityRequestsRef.current.clear(); providerAuthAuthorityAttemptRef.current += 1;
   }, []);
 
   return useMemo(() => ({

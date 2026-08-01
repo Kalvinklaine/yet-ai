@@ -100,7 +100,7 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
       if (payload.surface !== host) return;
       const diagnostics = runtimeLifecycleDiagnostics(payload, host);
       setLiveRuntimeLifecycle(diagnostics);
-      controller.runtimeLifecycleChanged(diagnostics);
+      controller.runtimeLifecycleChanged(diagnostics, runtimeAuthorityKey);
     });
   }, [bridgeAdapter, controller.runtimeLifecycleChanged, getCurrentRuntimeAuthorityKey, host, runtimeAuthorityKey]);
 
