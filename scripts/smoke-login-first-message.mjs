@@ -92,8 +92,10 @@ try {
   await expectVisibleText(page, "setup needed", "no-provider readiness");
   await assertNoDomSecretLeak(page, "DOM at login_unavailable");
   await expectSendDisabled(page, "no provider before login");
+  await openWorkbenchSurface(page, "Chat");
   await assertExistingChatIdentity(page, "before login");
   const preLoginEvidence = await sanitizedPageStateEvidence(page, "login_unavailable");
+  await openWorkbenchSurface(page, "Setup");
 
   const experimentalLoginButton = page.getByRole("button", { name: "Connect provider account", exact: true });
   await experimentalLoginButton.waitFor({ state: "visible", timeout: 10_000 });
@@ -444,10 +446,20 @@ async function openWorkbenchSurface(page, name) {
 }
 async function assertExistingChatIdentity(page, label) {
   assert(chatCreationCount === 0, `${label}: observed unexpected replacement chat creation`);
-  const currentConversation = page.locator('[aria-current="page"]', { hasText: "Login-shaped mock smoke chat" });
-  assert(await currentConversation.count() >= 1, `${label}: expected the existing conversation to remain selected`);
-  const chatIdBadge = page.locator(".chat-id-badge", { hasText: chatId });
-  assert(await chatIdBadge.count() === 1, `${label}: existing chat id ${chatId} was not retained`);
+  const activeWorkbench = page.locator(".chat-workbench").filter({ visible: true });
+  assert(await activeWorkbench.count() === 1, `${label}: expected one visible active chat workbench`);
+  const conversationsDrawer = activeWorkbench.getByRole("complementary", { name: "Local conversations drawer", exact: true });
+  if (!await conversationsDrawer.isVisible()) await activeWorkbench.getByRole("button", { name: "Chats", exact: true }).click();
+  await conversationsDrawer.waitFor({ state: "visible", timeout: 10_000 });
+  const currentConversation = activeWorkbench.getByRole("button", { name: /^Current conversation: Login-shaped mock smoke chat\./ }).filter({ visible: true });
+  assert(await currentConversation.count() === 1, `${label}: expected one visible current-conversation marker for the existing chat`);
+  assert(await currentConversation.getAttribute("aria-current") === "page", `${label}: existing conversation marker was not current`);
+  const currentThread = activeWorkbench.getByRole("region", { name: "Current chat thread", exact: true }).filter({ visible: true });
+  assert(await currentThread.count() === 1, `${label}: expected one visible current chat thread`);
+  const chatIdBadges = currentThread.locator(".chat-id-badge").filter({ visible: true });
+  assert(await chatIdBadges.count() === 1, `${label}: expected one visible active-chat id badge`);
+  assert(await chatIdBadges.first().textContent() === chatId, `${label}: visible active-chat id badge did not retain ${chatId}`);
+  await conversationsDrawer.getByRole("button", { name: "Close", exact: true }).click();
 }
 async function refreshRuntimeFromUi(page) {
   const runtimeDetails = page.locator('[data-testid="runtime-connection-details"]').first();
