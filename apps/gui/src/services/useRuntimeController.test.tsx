@@ -243,6 +243,124 @@ describe("useRuntimeController", () => {
     expect(controller.providerAuthStatus).toMatchObject({ status: "connected", accountLabel: "authority-a" });
   });
 
+  it("defers and coalesces lifecycle auth refreshes until an active login start finishes", async () => {
+    const delayedStart = deferred<Response>();
+    const deferredLifecycleRefresh = deferred<Response>();
+    let authCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        if (authCalls === 2) return deferredLifecycleRefresh.promise;
+      }
+      if (url.endsWith("/v1/provider-auth/openai/start") && init?.method === "POST") return delayedStart.promise;
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; });
+    await act(async () => { await controller.connect(); });
+    const connected = { lifecycle: "connected" } as RuntimeLifecycleDiagnostics;
+
+    await act(async () => {
+      void controller.startOpenAiLogin(false, vi.fn());
+      controller.runtimeLifecycleChanged(connected, "authority-a");
+      controller.runtimeLifecycleChanged(connected, "authority-a");
+      await Promise.resolve();
+    });
+
+    expect(authCalls).toBe(1);
+    expect(controller.providerAuthMutation).toBe("start");
+
+    delayedStart.resolve(response({ provider: "openai", configured: false, status: "pending", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, success: true, authorizationUrl: "https://login.example.test" }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(authCalls).toBe(2);
+    expect(controller.providerAuthStatus?.status).toBe("pending");
+    expect(controller.providerAuthMutation).toBeNull();
+
+    deferredLifecycleRefresh.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, accountLabel: "authority-a" }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(controller.providerAuthStatus).toMatchObject({ status: "connected", accountLabel: "authority-a" });
+    await act(async () => { controller.runtimeLifecycleChanged(connected, "authority-a"); await Promise.resolve(); });
+    expect(authCalls).toBe(2);
+  });
+
+  it("runs one deferred lifecycle refresh after a failed login start", async () => {
+    const delayedStart = deferred<Response>();
+    let authCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        if (authCalls === 1) return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, accountLabel: "safe-account" }));
+        return Promise.resolve(response({ provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, accountLabel: "refreshed-account" }));
+      }
+      if (url.endsWith("/v1/provider-auth/openai/start") && init?.method === "POST") return delayedStart.promise;
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; });
+    await act(async () => { await controller.connect(); });
+    const connected = { lifecycle: "connected" } as RuntimeLifecycleDiagnostics;
+
+    await act(async () => {
+      void controller.startOpenAiLogin(false, vi.fn());
+      controller.runtimeLifecycleChanged(connected, "authority-a");
+      await Promise.resolve();
+    });
+
+    expect(authCalls).toBe(1);
+    expect(controller.providerAuthStatus).toMatchObject({ accountLabel: "safe-account" });
+
+    delayedStart.resolve(new Response(JSON.stringify({ error: "temporary" }), { status: 503, headers: { "Content-Type": "application/json" } }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(authCalls).toBe(2);
+    expect(controller.providerAuthStatus).toMatchObject({ status: "connected", accountLabel: "refreshed-account" });
+    expect(controller.providerAuthError).toBeNull();
+  });
+
+  it.each(["exchange", "disconnect"] as const)("does not start a lifecycle auth refresh during delayed %s", async (mutation) => {
+    const delayedMutation = deferred<Response>();
+    let authCalls = 0;
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/v1/provider-auth/openai/status")) {
+        authCalls += 1;
+        return Promise.resolve(response({ provider: "openai", configured: mutation === "disconnect", status: mutation === "exchange" ? "pending" : "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, sessionId: "session-1" }));
+      }
+      if (url.endsWith(`/v1/provider-auth/openai/${mutation}`) && init?.method === "POST") return delayedMutation.promise;
+      return Promise.resolve(runtimeReply(url));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let controller!: Controller;
+    await mount((next) => { controller = next; });
+    await act(async () => { await controller.connect(); });
+    const connected = { lifecycle: "connected" } as RuntimeLifecycleDiagnostics;
+    if (mutation === "exchange") await act(async () => { controller.setProviderAuthExchangeCode("code"); });
+
+    await act(async () => {
+      if (mutation === "exchange") {
+        void controller.exchangeOpenAiLoginCode("session-1", "state-1");
+      } else {
+        void controller.disconnectOpenAiLogin();
+      }
+      controller.runtimeLifecycleChanged(connected, "authority-a");
+      await Promise.resolve();
+    });
+
+    expect(authCalls).toBe(1);
+
+    delayedMutation.resolve(response({ provider: "openai", configured: mutation === "exchange", status: mutation === "exchange" ? "connected" : "revoked", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false, success: true }));
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(authCalls).toBe(2);
+    expect(controller.providerAuthStatus?.status).toBe(mutation === "exchange" ? "connected" : "revoked");
+  });
+
   it("ignores a stale login start completion after runtime data is cleared", async () => {
     const staleStart = deferred<Response>();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
