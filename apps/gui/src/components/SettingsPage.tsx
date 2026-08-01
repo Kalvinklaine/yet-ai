@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { BridgeAdapter, BridgeHost, HostRuntimeStatusPayload } from "../bridge/bridgeAdapter";
 import { saveProvider, type ProviderKind, type ProviderSummary, type ProviderWriteRequest } from "../services/providersClient";
 import { sanitizeDisplayText } from "../services/redaction";
@@ -16,6 +16,15 @@ type ProviderForm = {
   apiKey: string;
   modelId: string;
 };
+
+type SettingsSectionId = "runtime" | "providers" | "account" | "diagnostics";
+
+const settingsSections: Array<{ id: SettingsSectionId; label: string }> = [
+  { id: "runtime", label: "Runtime" },
+  { id: "providers", label: "Providers & models" },
+  { id: "account", label: "Account login" },
+  { id: "diagnostics", label: "Diagnostics" },
+];
 
 export type SettingsPageProps = {
   settings: RuntimeSettings;
@@ -64,6 +73,8 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
   const [providerSaving, setProviderSaving] = useState(false);
   const [localProviderError, setLocalProviderError] = useState<RuntimeError | null>(null);
   const [liveRuntimeLifecycle, setLiveRuntimeLifecycle] = useState<RuntimeLifecycleDiagnostics | null>(runtimeLifecycle);
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>("runtime");
+  const sectionTabRefs = useRef<Record<SettingsSectionId, HTMLButtonElement | null>>({ runtime: null, providers: null, account: null, diagnostics: null });
   const hostManaged = settings.runtimeAccess === "same_origin_proxy" || host !== "browser";
 
   useEffect(() => {
@@ -98,6 +109,24 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
   const activeDemoMode = controller.demoModeDataRevision === settingsRevision ? controller.demoMode : null;
   const activeAuth = controller.providerAuthDataRevision === settingsRevision ? controller.providerAuthStatus : null;
   const authState = useMemo(() => providerAuthState(activeAuth?.authorizationUrl), [activeAuth?.authorizationUrl]);
+
+  const selectSection = (section: SettingsSectionId) => {
+    setActiveSection(section);
+  };
+
+  const navigateSections = (event: KeyboardEvent<HTMLButtonElement>, section: SettingsSectionId) => {
+    const currentIndex = settingsSections.findIndex((item) => item.id === section);
+    let nextIndex: number | undefined;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") nextIndex = (currentIndex + 1) % settingsSections.length;
+    if (event.key === "ArrowUp" || event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + settingsSections.length) % settingsSections.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = settingsSections.length - 1;
+    if (nextIndex === undefined) return;
+    event.preventDefault();
+    const nextSection = settingsSections[nextIndex].id;
+    setActiveSection(nextSection);
+    sectionTabRefs.current[nextSection]?.focus();
+  };
 
   const updateRuntimeUrl = (baseUrl: string) => {
     if (!hostManaged) onSettingsChange({ ...settings, baseUrl, runtimeAccess: "direct" });
@@ -174,25 +203,56 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
   };
 
   return (
-    <main className={`app-shell host-${host}`} data-testid="settings-page">
+    <main className={`settings-page-shell host-${host}`} data-testid="settings-page">
       <header className="settings-header">
-        <div className="stack">
-          <span className="badge ok">global settings</span>
-          <h1>Settings</h1>
-          <p className="subtle">Configure the local runtime and engine-owned providers without opening a chat.</p>
+        <div className="settings-product-heading">
+          <span className="settings-product-mark" aria-hidden="true">Y</span>
+          <div className="stack">
+            <span className="settings-eyebrow">Yet AI · global settings</span>
+            <h1>Settings</h1>
+            <p className="subtle">Configure your local runtime and providers. Credentials stay with the local engine.</p>
+          </div>
         </div>
         {onBackToProjects && <button type="button" className="secondary-button" onClick={onBackToProjects}>Back to Projects</button>}
       </header>
 
-      <nav aria-label="Settings sections" className="workbench-surface-toolbar">
-        <a href="#settings-runtime">Runtime</a>
-        <a href="#settings-providers">Providers &amp; models</a>
-        <a href="#settings-account">Account login</a>
-        <a href="#settings-diagnostics">Diagnostics</a>
-      </nav>
+      <section className={`settings-readiness ${activePing?.ready ? "ready" : "attention"}`} aria-labelledby="settings-readiness-title">
+        <div>
+          <span className="settings-eyebrow">Readiness</span>
+          <h2 id="settings-readiness-title">{activePing?.ready ? "Local assistant is connected" : "Runtime needs attention"}</h2>
+          <p>{activePing?.ready ? "Provider and account choices remain local to this runtime." : "Refresh the runtime, then configure a provider to get ready."}</p>
+        </div>
+        <div className="settings-readiness-statuses" aria-label="Settings status summary">
+          <span className={`settings-status-tile ${activePing?.ready ? "ok" : "warn"}`}><strong>Runtime</strong>{activePing?.ready ? "Connected" : "Not connected"}</span>
+          <span className={`settings-status-tile ${activeProviders.length > 0 ? "ok" : "warn"}`}><strong>Providers</strong>{activeProviders.length} configured</span>
+          <span className={`settings-status-tile ${activeAuth?.status === "connected" ? "ok" : "neutral"}`}><strong>Account</strong>{activeAuth?.status === "connected" ? "Connected" : "Optional"}</span>
+        </div>
+      </section>
 
-      <section id="settings-runtime" className="card stack" aria-labelledby="settings-runtime-title">
-        <h2 id="settings-runtime-title">Runtime</h2>
+      <div className="settings-layout">
+        <nav aria-label="Settings sections" className="settings-section-nav">
+          <div role="tablist" aria-orientation="vertical" className="settings-section-tabs">
+            {settingsSections.map((section) => <button
+              key={section.id}
+              ref={(element) => { sectionTabRefs.current[section.id] = element; }}
+              type="button"
+              role="tab"
+              id={`settings-${section.id}-tab`}
+              aria-controls={`settings-${section.id}`}
+              aria-selected={activeSection === section.id}
+              tabIndex={activeSection === section.id ? 0 : -1}
+              className={activeSection === section.id ? "active" : undefined}
+              onClick={() => selectSection(section.id)}
+              onKeyDown={(event) => navigateSections(event, section.id)}
+            >{section.label}<span aria-hidden="true">›</span></button>)}
+          </div>
+          <p className="settings-local-note">Settings and credentials stay on this device. Account login is optional and experimental.</p>
+        </nav>
+
+        <div className="settings-section-content">
+
+      <section id="settings-runtime" className="settings-section-card stack" role="tabpanel" aria-labelledby="settings-runtime-tab" tabIndex={0} hidden={activeSection !== "runtime"}>
+        <div className="settings-section-heading"><div><span className={`badge ${activePing?.ready ? "ok" : "warn"}`}>{activePing?.ready ? "connected" : "setup needed"}</span><h2>Runtime</h2></div><p>Connect the interface to the local Yet AI engine.</p></div>
         <label>
           Runtime base URL
           <input value={settings.baseUrl} onChange={(event) => updateRuntimeUrl(event.target.value)} readOnly={hostManaged} aria-readonly={hostManaged} />
@@ -212,8 +272,8 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
         {controller.identityWarnings.map((warning) => <div className="error" key={warning}>{sanitizeDisplayText(warning)}</div>)}
       </section>
 
-      <section id="settings-providers" className="card stack" aria-labelledby="settings-providers-title">
-        <h2 id="settings-providers-title">Providers &amp; models</h2>
+      <section id="settings-providers" className="settings-section-card stack" role="tabpanel" aria-labelledby="settings-providers-tab" tabIndex={0} hidden={activeSection !== "providers"}>
+        <div className="settings-section-heading"><div><span className={`badge ${activeProviders.length > 0 ? "ok" : "warn"}`}>{activeProviders.length} configured</span><h2>Providers &amp; models</h2></div><p>Choose direct BYOK or local model connections.</p></div>
         <p className="subtle">Provider credentials are submitted to the local engine only. Raw API keys are cleared immediately and are never browser-persisted or echoed.</p>
         <div className="row">
           <strong>Demo Mode</strong>
@@ -246,14 +306,14 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
         </form>
       </section>
 
-      <section id="settings-account" className="card stack" aria-labelledby="settings-account-title">
-        <h2 id="settings-account-title">Account login</h2>
+      <section id="settings-account" className="settings-section-card stack" role="tabpanel" aria-labelledby="settings-account-tab" tabIndex={0} hidden={activeSection !== "account"}>
+        <div className="settings-section-heading"><div><span className={`badge ${activeAuth?.status === "connected" ? "ok" : "warn"}`}>{activeAuth?.status ?? "optional"}</span><h2>Account login</h2></div><p>Experimental provider access, separate from local BYOK setup.</p></div>
         <p className="subtle">Optional, experimental, and runtime-owned. API-key and local providers remain available without an account.</p>
         <div className="row"><strong>Provider account status</strong><span className={`badge ${activeAuth?.status === "connected" ? "ok" : "warn"}`}>{activeAuth?.status ?? "not checked"}</span></div>
         {activeAuth?.message && <span>{sanitizeDisplayText(activeAuth.message)}</span>}
-        <div className="row">
+        <div className="settings-account-actions">
           <button type="button" onClick={() => void controller.refreshProviderAuthStatus()} disabled={controller.providerAuthMutation !== null}>Refresh login status</button>
-          {activeAuth?.status === "connected" ? <button type="button" onClick={() => void controller.disconnectOpenAiLogin()} disabled={controller.providerAuthMutation !== null}>Disconnect account</button> : <button type="button" onClick={() => void startLogin()} disabled={controller.providerAuthMutation !== null || activeAuth?.supportsLogin === false}>Start account login</button>}
+          {activeAuth?.status === "connected" ? <button type="button" className="danger-button settings-destructive-action" onClick={() => void controller.disconnectOpenAiLogin()} disabled={controller.providerAuthMutation !== null}>Disconnect account</button> : <button type="button" onClick={() => void startLogin()} disabled={controller.providerAuthMutation !== null || activeAuth?.supportsLogin === false}>Start account login</button>}
         </div>
         {activeAuth?.status === "pending" && <form onSubmit={(event) => void exchangeCode(event)} className="form-grid" aria-label="Manual authorization exchange">
           <label>Authorization code<input type="password" value={controller.providerAuthExchangeCode} onChange={(event) => controller.setProviderAuthExchangeCode(event.target.value)} autoComplete="off" /></label>
@@ -264,8 +324,8 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
         {controller.providerAuthExchangeError && <div className="error">{sanitizeDisplayText(controller.providerAuthExchangeError)}</div>}
       </section>
 
-      <section id="settings-diagnostics" className="card stack" aria-labelledby="settings-diagnostics-title">
-        <h2 id="settings-diagnostics-title">Diagnostics</h2>
+      <section id="settings-diagnostics" className="settings-section-card stack" role="tabpanel" aria-labelledby="settings-diagnostics-tab" tabIndex={0} hidden={activeSection !== "diagnostics"}>
+        <div className="settings-section-heading"><div><span className="badge ok">sanitized</span><h2>Diagnostics</h2></div><p>Safe summaries for local troubleshooting.</p></div>
         <p className="subtle">Sanitized, read-only summaries only. Raw response bodies, catalogs, tokens, credentials, authorization codes, and session identifiers are omitted.</p>
         <dl>
           <dt>Runtime</dt><dd>{activePing?.ready ? "ready" : controller.connectionError ? "error" : "not checked"}</dd>
@@ -276,6 +336,8 @@ export function SettingsPage({ settings, settingsRevision, onSettingsChange, onB
           <dt>Host lifecycle</dt><dd>{liveRuntimeLifecycle ? `${sanitizeDisplayText(liveRuntimeLifecycle.lifecycle)} · ${sanitizeDisplayText(liveRuntimeLifecycle.status)}` : "not reported"}</dd>
         </dl>
       </section>
+        </div>
+      </div>
     </main>
   );
 }

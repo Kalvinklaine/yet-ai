@@ -128,6 +128,56 @@ describe("SettingsPage", () => {
     expect(urls.some((url) => /\/v1\/chats(?:\/|$)|subscribe/.test(url))).toBe(false);
   });
 
+  it("uses an accessible local section tablist with status summaries", async () => {
+    installFetch();
+    await renderPage();
+
+    const tablist = container!.querySelector<HTMLElement>("[role='tablist']")!;
+    const tabs = Array.from(tablist.querySelectorAll<HTMLButtonElement>("[role='tab']"));
+    expect(tablist.getAttribute("aria-orientation")).toBe("vertical");
+    expect(tabs.map((tab) => tab.textContent?.replace("›", ""))).toEqual(["Runtime", "Providers & models", "Account login", "Diagnostics"]);
+    expect(tabs[0].getAttribute("aria-selected")).toBe("true");
+    expect(tabs[0].tabIndex).toBe(0);
+    expect(container!.querySelector<HTMLElement>("#settings-runtime")!.hidden).toBe(false);
+    expect(container!.querySelector<HTMLElement>("#settings-providers")!.hidden).toBe(true);
+    expect(container!.querySelector("[aria-label='Settings status summary']")?.textContent).toContain("RuntimeConnected");
+    expect(container!.querySelector("[aria-label='Settings status summary']")?.textContent).toContain("Providers1 configured");
+
+    await act(async () => tabs[1].click());
+    expect(tabs[1].getAttribute("aria-selected")).toBe("true");
+    expect(tabs[1].tabIndex).toBe(0);
+    expect(container!.querySelector<HTMLElement>("#settings-runtime")!.hidden).toBe(true);
+    expect(container!.querySelector<HTMLElement>("#settings-providers")!.hidden).toBe(false);
+    expect(window.location.hash).toBe("");
+  });
+
+  it("supports arrow, Home, and End keyboard navigation between sections", async () => {
+    installFetch();
+    await renderPage();
+    const tabs = Array.from(container!.querySelectorAll<HTMLButtonElement>("[role='tab']"));
+
+    await act(async () => tabs[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })));
+    expect(document.activeElement).toBe(tabs[1]);
+    expect(tabs[1].getAttribute("aria-selected")).toBe("true");
+    await act(async () => tabs[1].dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true })));
+    expect(document.activeElement).toBe(tabs[3]);
+    expect(container!.querySelector<HTMLElement>("#settings-diagnostics")!.hidden).toBe(false);
+    await act(async () => tabs[3].dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })));
+    expect(document.activeElement).toBe(tabs[0]);
+  });
+
+  it("exposes scoped shell, responsive layout, and card hierarchy classes", async () => {
+    installFetch();
+    await renderPage();
+
+    expect(container!.querySelector("main.settings-page-shell.host-browser")).not.toBeNull();
+    expect(container!.querySelector(".settings-readiness .settings-readiness-statuses")).not.toBeNull();
+    expect(container!.querySelector(".settings-layout > .settings-section-nav")).not.toBeNull();
+    expect(container!.querySelector(".settings-layout > .settings-section-content")).not.toBeNull();
+    expect(container!.querySelectorAll(".settings-section-card[role='tabpanel']")).toHaveLength(4);
+    expect(container!.querySelector(".workbench-surface-toolbar")).toBeNull();
+  });
+
   it("keeps runtime and provider secrets transient while runtime-owned controls work", async () => {
     const fetchMock = installFetch();
     const onSettingsChange = vi.fn();

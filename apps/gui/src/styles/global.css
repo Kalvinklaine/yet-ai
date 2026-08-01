@@ -101,6 +101,263 @@ textarea {
   padding: 22px;
 }
 
+.settings-page-shell {
+  min-height: 100vh;
+  overflow-x: hidden;
+  color: #172033;
+  background: radial-gradient(circle at 12% 0%, #e7eeff 0, transparent 34%), #f5f7fb;
+  padding: 24px max(16px, calc((100vw - 1180px) / 2));
+}
+
+.settings-page-shell .settings-header {
+  border: 0;
+  border-bottom: 1px solid #d8e1f0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 0 22px;
+}
+
+.settings-product-heading {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings-product-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #2f5bea, #6749d7);
+  color: white;
+  font-size: 19px;
+  font-weight: 900;
+  box-shadow: 0 12px 24px rgba(47, 91, 234, 0.24);
+}
+
+.settings-eyebrow {
+  color: #465775;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-page-shell h1 {
+  font-size: clamp(28px, 4vw, 40px);
+  letter-spacing: -0.035em;
+}
+
+.settings-page-shell p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.settings-readiness {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, auto);
+  gap: 24px;
+  align-items: center;
+  margin: 22px 0;
+  border: 1px solid #cdd8ff;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #f7f9ff, #eef3ff);
+  padding: 18px 20px;
+}
+
+.settings-readiness.ready {
+  border-color: #bce8cc;
+  background: linear-gradient(135deg, #f7fcf9, #eef9f2);
+}
+
+.settings-readiness h2 {
+  margin: 4px 0;
+  font-size: 19px;
+}
+
+.settings-readiness-statuses {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(100px, 1fr));
+  gap: 8px;
+}
+
+.settings-status-tile {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 1px solid #d8e1f6;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #526078;
+  font-size: 12px;
+  padding: 10px;
+}
+
+.settings-status-tile strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.settings-status-tile.ok { border-color: #a9ddbd; }
+.settings-status-tile.warn { border-color: #efd59a; }
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(190px, 230px) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.settings-section-nav {
+  position: sticky;
+  top: 18px;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings-section-tabs {
+  display: grid;
+  gap: 5px;
+}
+
+.settings-section-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #526078;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.settings-section-tabs button:not(:disabled):hover,
+.settings-section-tabs button.active {
+  border-color: #c5d3f7;
+  background: #eaf0ff;
+  color: #2441a1;
+  box-shadow: none;
+  transform: none;
+}
+
+.settings-section-tabs button:focus-visible,
+.settings-section-card:focus-visible {
+  outline: 3px solid #8fb0ff;
+  outline-offset: 2px;
+}
+
+.settings-local-note {
+  border-top: 1px solid #dfe5f0;
+  color: #65728a;
+  font-size: 12px;
+  padding: 14px 10px 0;
+}
+
+.settings-section-content {
+  min-width: 0;
+}
+
+.settings-section-card {
+  min-width: 0;
+  border: 1px solid #dfe5f0;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 50px rgba(28, 40, 72, 0.08);
+  padding: 22px;
+}
+
+.settings-section-card h2 {
+  margin: 5px 0 0;
+}
+
+.settings-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #e4e9f2;
+  padding-bottom: 16px;
+}
+
+.settings-section-heading > p {
+  max-width: 360px;
+  color: #65728a;
+}
+
+.settings-section-card label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: #34405a;
+  font-weight: 700;
+}
+
+.settings-section-card dl {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.4fr) minmax(0, 1fr);
+  margin: 0;
+}
+
+.settings-section-card dt,
+.settings-section-card dd {
+  margin: 0;
+  border-bottom: 1px solid #e7ebf2;
+  padding: 11px 8px;
+}
+
+.settings-section-card dt { font-weight: 800; }
+.settings-section-card dd { overflow-wrap: anywhere; }
+
+.settings-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.settings-destructive-action {
+  margin-left: auto;
+}
+
+.settings-page-shell.host-vscode,
+.settings-page-shell.host-jetbrains {
+  max-width: none;
+  padding: 18px;
+}
+
+@media (max-width: 760px) {
+  .settings-page-shell { padding: 14px; }
+  .settings-page-shell .settings-header { align-items: flex-start; }
+  .settings-page-shell .settings-header > button { width: 100%; }
+  .settings-readiness { grid-template-columns: minmax(0, 1fr); }
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-section-nav { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid #d8e1f0; background: rgba(245, 247, 251, 0.96); padding: 8px 0; }
+  .settings-section-tabs { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: thin; }
+  .settings-section-tabs button { flex: 0 0 auto; width: auto; white-space: nowrap; }
+  .settings-section-tabs button span { display: none; }
+  .settings-local-note { display: none; }
+  .settings-section-heading { flex-direction: column; gap: 8px; }
+  .settings-section-card { padding: 16px; }
+}
+
+@media (max-width: 420px) {
+  .settings-page-shell { padding: 10px; }
+  .settings-product-heading { align-items: flex-start; }
+  .settings-product-mark { width: 38px; height: 38px; }
+  .settings-readiness { margin: 14px 0; padding: 14px; }
+  .settings-readiness-statuses { grid-template-columns: minmax(0, 1fr); }
+  .settings-section-card .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .settings-section-card button { max-width: 100%; white-space: normal; }
+  .settings-account-actions { align-items: stretch; flex-direction: column; }
+  .settings-destructive-action { margin-left: 0; margin-top: 10px; }
+}
+
 .hero,
 .settings-header {
   display: flex;
