@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { archiveProject, createProjectRuntimeSettings, listDirectoryDiscovery, listProjects, registerProject, restoreProject, startDirectoryDiscovery } from "./projectClient";
+import { archiveProject, createProjectRuntimeSettings, listDirectoryDiscovery, listProjects, rebindProject, registerProject, restoreProject, startDirectoryDiscovery } from "./projectClient";
 
 const projectId = "prj_abcdefghijklmnopqrstuA";
 const fetchMock = vi.fn();
@@ -44,6 +44,30 @@ describe("projectClient", () => {
     await listDirectoryDiscovery({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, "session", "root", controller.signal);
 
     expect(fetchMock.mock.calls.map(([, init]) => init.signal)).toEqual([controller.signal, controller.signal, controller.signal]);
+  });
+
+  it("rebinds through the strict project route with only opaque request fields", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ projectId }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost:3000/projects"));
+    const controller = new AbortController();
+
+    await rebindProject(
+      { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" },
+      projectId,
+      { expectedRevision: "7", directorySessionId: "pds_safe", directoryHandle: "dir_safe", path: "/Users/private" } as { expectedRevision: string; directorySessionId: string; directoryHandle: string },
+      controller.signal,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(`/v1/projects/${projectId}/rebind`, expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ expectedRevision: "7", directorySessionId: "pds_safe", directoryHandle: "dir_safe" }),
+      signal: expect.any(AbortSignal),
+    }));
+    expect(fetchMock.mock.calls[0][1].signal).not.toBe(controller.signal);
+    expect(fetchMock.mock.calls[0][1].body).not.toContain("path");
+    expect(fetchMock.mock.calls[0][1].body).not.toContain("/Users/private");
+    expect(() => rebindProject({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, "../root", { expectedRevision: "7", directorySessionId: "pds_safe", directoryHandle: "dir_safe" })).toThrow("Invalid project id");
   });
 
   it("uses the dedicated lifecycle response contract for archive and restore", async () => {

@@ -79,6 +79,11 @@ export function registerProject(settings: RuntimeSettings, request: { displayNam
   return runtimeFetch<ProjectSummary>(settings, "/v1/projects", { method: "POST", body: JSON.stringify(request), signal });
 }
 
+export function rebindProject(settings: RuntimeSettings, projectId: string, request: { expectedRevision: string; directorySessionId: string; directoryHandle: string }, signal?: AbortSignal): Promise<RuntimeResult<ProjectSummary>> {
+  const body = { expectedRevision: request.expectedRevision, directorySessionId: request.directorySessionId, directoryHandle: request.directoryHandle };
+  return runtimeFetch<ProjectSummary>(settings, `/v1/projects/${requiredProjectId(projectId)}/rebind`, { method: "POST", body: JSON.stringify(body), signal });
+}
+
 export function updateProject(settings: RuntimeSettings, projectId: string, request: { displayName: string; expectedRevision: string }): Promise<RuntimeResult<ProjectSummary>> {
   return runtimeFetch<ProjectSummary>(settings, `/v1/projects/${requiredProjectId(projectId)}`, { method: "PATCH", body: JSON.stringify(request) });
 }

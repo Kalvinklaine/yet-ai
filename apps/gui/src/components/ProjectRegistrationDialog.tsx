@@ -1,11 +1,16 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { listDirectoryDiscovery, registerProject, startDirectoryDiscovery, type DirectoryEntry, type ProjectSummary } from "../services/projectClient";
+import { listDirectoryDiscovery, rebindProject, registerProject, startDirectoryDiscovery, type DirectoryEntry, type ProjectSummary } from "../services/projectClient";
 import type { RuntimeError, RuntimeSettings } from "../services/runtimeClient";
 
 type DirectoryLevel = { entry: DirectoryEntry; entries: DirectoryEntry[] };
 type ActiveAction = { key: string; generation: number; controller: AbortController };
+type ProjectRegistrationDialogProps = {
+  settings: RuntimeSettings;
+  onClose: () => void;
+  onRegistered: (project: ProjectSummary) => void;
+} & ({ mode?: "register"; project?: never } | { mode: "rebind"; project: ProjectSummary });
 
-export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: { settings: RuntimeSettings; onClose: () => void; onRegistered: (project: ProjectSummary) => void }) {
+export function ProjectRegistrationDialog({ settings, onClose, onRegistered, mode = "register", project }: ProjectRegistrationDialogProps) {
   const [sessionId, setSessionId] = useState("");
   const [expiresAt, setExpiresAt] = useState("");
   const [levels, setLevels] = useState<DirectoryLevel[]>([]);
@@ -138,12 +143,14 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selected || !displayName.trim()) return;
+    if (!selected || (mode === "register" && !displayName.trim())) return;
     const action = beginAttempt("submit");
     if (!action) return;
     setState("registering");
     setError(null);
-    const result = await registerProject(settings, { displayName: displayName.trim(), directorySessionId: sessionId, directoryHandle: selected.handle }, action.controller.signal);
+    const result = mode === "rebind" && project
+      ? await rebindProject(settings, project.projectId, { expectedRevision: project.revision, directorySessionId: sessionId, directoryHandle: selected.handle }, action.controller.signal)
+      : await registerProject(settings, { displayName: displayName.trim(), directorySessionId: sessionId, directoryHandle: selected.handle }, action.controller.signal);
     if (!isCurrent(action)) return;
     if (!result.ok) {
       setState("error");
@@ -157,17 +164,19 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
 
   const current = levels[levels.length - 1];
   const expired = error?.message.toLowerCase().includes("expired") || error?.status === 410;
+  const title = mode === "rebind" ? "Reconnect project directory" : "Add local project";
   return (
     <div className="project-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) handleClose(); }}>
       <section ref={dialogRef} className="project-dialog stack" role="dialog" aria-modal="true" aria-labelledby="add-project-title">
         <div className="project-dialog-header row">
           <div className="stack">
             <span className="badge ok">local directory</span>
-            <h2 id="add-project-title">Add local project</h2>
+            <h2 id="add-project-title">{title}</h2>
           </div>
-          <button ref={closeRef} type="button" className="secondary-button" onClick={handleClose} aria-label="Close Add local project dialog">Close</button>
+          <button ref={closeRef} type="button" className="secondary-button" onClick={handleClose} aria-label={`Close ${title} dialog`}>Close</button>
         </div>
         <p className="subtle">Choose one directory through the local runtime. Yet AI receives opaque navigation handles; no path is placed in the URL or saved by this page.</p>
+        {mode === "rebind" && project && <p>Reconnect <strong>{project.displayName}</strong> without changing its project identity or saved project data.</p>}
         {levels.length > 0 && (
           <nav className="directory-breadcrumbs" aria-label="Selected directory hierarchy">
             {levels.map((level, index) => <button key={level.entry.handle} type="button" className="link-button" onClick={() => returnToLevel(index)} aria-current={index === levels.length - 1 ? "location" : undefined}>{level.entry.displayName}</button>)}
@@ -180,12 +189,12 @@ export function ProjectRegistrationDialog({ settings, onClose, onRegistered }: {
             </ul>
           ) : state !== "error" ? <p role="status">No child directories are available here. You may select this directory if allowed.</p> : null}
         </div>
-        {error && <div className="error" role="alert"><strong>{expired ? "Discovery session expired" : "Directory unavailable"}</strong><span>{safeDiscoveryMessage(error)}</span><button type="button" onClick={() => void begin()}>{expired ? "Start a new session" : "Retry discovery"}</button></div>}
+        {error && <div className="error" role="alert"><strong>{expired ? "Discovery session expired" : mode === "rebind" ? "Project could not be reconnected" : "Directory unavailable"}</strong><span>{mode === "rebind" ? safeRebindMessage(error) : safeDiscoveryMessage(error)}</span><button type="button" onClick={() => void begin()}>{expired ? "Start a new session" : "Retry discovery"}</button></div>}
         <form className="stack" onSubmit={(event) => void submit(event)}>
-          <label>Project display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={120} autoComplete="off" /></label>
+          {mode === "register" && <label>Project display name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} maxLength={120} autoComplete="off" /></label>}
           <span className="subtle">Selected: {selected ? selected.displayName : "Choose a selectable directory"}. Session expires {expiresAt ? new Date(expiresAt).toLocaleTimeString() : "soon"}.</span>
           <div className="row">
-            <button type="submit" disabled={!selected || !displayName.trim() || state !== "ready"}>{state === "registering" ? "Adding project…" : "Add project"}</button>
+            <button type="submit" disabled={!selected || (mode === "register" && !displayName.trim()) || state !== "ready"}>{state === "registering" ? mode === "rebind" ? "Reconnecting project…" : "Adding project…" : mode === "rebind" ? "Reconnect project directory" : "Add project"}</button>
             <button type="button" className="secondary-button" onClick={handleClose}>Cancel</button>
           </div>
         </form>
@@ -201,4 +210,11 @@ function safeDiscoveryMessage(error: RuntimeError): string {
   if (message.includes("permission") || message.includes("unsafe")) return "The local runtime cannot safely access that directory. Choose another directory or adjust local permissions.";
   if (message.includes("missing") || error.status === 404) return "That directory is no longer available. Return to a parent directory and choose again.";
   return "Directory discovery is unavailable. Retry when the local runtime is ready.";
+}
+
+function safeRebindMessage(error: RuntimeError): string {
+  const message = error.message.toLowerCase();
+  if (message.includes("expired") || error.status === 410) return "Start a fresh session and choose the directory again.";
+  if (message.includes("invalid") || message.includes("conflict") || error.status === 400 || error.status === 409) return "The project changed before it could be reconnected. Refresh Projects and try again.";
+  return safeDiscoveryMessage(error);
 }
