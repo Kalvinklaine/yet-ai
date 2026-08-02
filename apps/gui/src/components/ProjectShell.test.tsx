@@ -5,11 +5,13 @@ import { ProjectShell } from "./ProjectShell";
 import * as client from "../services/projectClient";
 import * as memoryClient from "../services/projectMemoryClient";
 import { parseProjectId } from "../services/projectRouting";
+import * as providerAuthClient from "../services/providerAuthClient";
 import * as providersClient from "../services/providersClient";
 import * as runtimeClient from "../services/runtimeClient";
 
 vi.mock("../services/projectClient", async (original) => ({ ...await original<typeof import("../services/projectClient")>(), getProject: vi.fn(), startDirectoryDiscovery: vi.fn(), listDirectoryDiscovery: vi.fn(), rebindProject: vi.fn() }));
 vi.mock("../services/projectMemoryClient", async (original) => ({ ...await original<typeof import("../services/projectMemoryClient")>(), listProjectMemory: vi.fn() }));
+vi.mock("../services/providerAuthClient", async (original) => ({ ...await original<typeof import("../services/providerAuthClient")>(), getProviderAuthStatus: vi.fn() }));
 vi.mock("../services/providersClient", async (original) => ({ ...await original<typeof import("../services/providersClient")>(), listProviders: vi.fn() }));
 vi.mock("../services/runtimeClient", async (original) => ({ ...await original<typeof import("../services/runtimeClient")>(), listChats: vi.fn(), getAgentProgress: vi.fn(), getPing: vi.fn(), getModels: vi.fn() }));
 const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
@@ -21,6 +23,7 @@ beforeEach(() => {
   vi.mocked(runtimeClient.getPing).mockResolvedValue({ ok: true, data: ping(true) });
   vi.mocked(runtimeClient.getModels).mockResolvedValue({ ok: true, data: { models: [readyModel()] } });
   vi.mocked(providersClient.listProviders).mockResolvedValue({ ok: true, data: { providers: [readyProvider()], cloudRequired: false, providerAccess: "direct" } });
+  vi.mocked(providerAuthClient.getProviderAuthStatus).mockResolvedValue({ ok: true, data: providerAuth("not_configured") });
 });
 async function render(status: client.ProjectSummary["status"] = "available", page: "home" | "chat" = "home") {
   vi.mocked(client.getProject).mockResolvedValue({ ok: true, data: { ...project, status, rootAvailable: status === "available" } });
@@ -137,6 +140,49 @@ describe("ProjectShell", () => {
     expect(container.textContent).toContain("Set up a ready provider and model before starting chat.");
   });
 
+  it("enables Start for connected account-login fallback only", async () => {
+    vi.mocked(runtimeClient.getModels).mockResolvedValue({ ok: true, data: { models: [] } });
+    vi.mocked(providersClient.listProviders).mockResolvedValue({ ok: true, data: { providers: [], cloudRequired: false, providerAccess: "direct" } });
+    vi.mocked(providerAuthClient.getProviderAuthStatus).mockResolvedValue({ ok: true, data: providerAuth("connected") });
+
+    let container = await render();
+    expect(startButton(container).disabled).toBe(false);
+    expect(container.textContent).toContain("Provider account login fallback ready");
+    expect(container.textContent).not.toContain("ready provider-model pairing");
+
+    act(() => root?.unmount()); root = undefined; document.body.innerHTML = "";
+    vi.mocked(providerAuthClient.getProviderAuthStatus).mockResolvedValue({ ok: true, data: providerAuth("pending") });
+    container = await render();
+    expect(startButton(container).disabled).toBe(true);
+    expect(container.textContent).toContain("Provider setup required");
+  });
+
+  it("prefers normal pairing and fails closed on runtime or auth failure", async () => {
+    vi.mocked(providerAuthClient.getProviderAuthStatus).mockResolvedValue({ ok: false, error: { status: 503, message: "unavailable" } });
+    let container = await render();
+    expect(startButton(container).disabled).toBe(false);
+    expect(container.textContent).toContain("1 ready provider-model pairing");
+    expect(container.textContent).not.toContain("Provider account login fallback ready");
+    expect(providerAuthClient.getProviderAuthStatus).toHaveBeenCalledWith(settings, "openai");
+
+    act(() => root?.unmount()); root = undefined; document.body.innerHTML = "";
+    vi.mocked(runtimeClient.getPing).mockResolvedValue({ ok: true, data: ping(false) });
+    vi.mocked(runtimeClient.getModels).mockResolvedValue({ ok: true, data: { models: [] } });
+    vi.mocked(providersClient.listProviders).mockResolvedValue({ ok: true, data: { providers: [], cloudRequired: false, providerAccess: "direct" } });
+    container = await render();
+    expect(startButton(container).disabled).toBe(true);
+    expect(container.textContent).toContain("The local runtime is not ready.");
+
+    act(() => root?.unmount()); root = undefined; document.body.innerHTML = "";
+    vi.mocked(runtimeClient.getPing).mockResolvedValue({ ok: true, data: ping(true) });
+    vi.mocked(providerAuthClient.getProviderAuthStatus).mockResolvedValue({ ok: false, error: { status: 503, message: "/Users/private token=secret" } });
+    container = await render();
+    expect(startButton(container).disabled).toBe(true);
+    expect(container.textContent).toContain("Provider setup required");
+    expect(container.textContent).not.toContain("/Users/private");
+    expect(container.textContent).not.toContain("token=secret");
+  });
+
   it("rejects ready models without chat and streaming capabilities", async () => {
     vi.mocked(runtimeClient.getModels).mockResolvedValue({ ok: true, data: { models: [{ ...readyModel(), capabilities: { chat: true, streaming: false, tools: false, reasoning: false } }] } });
     const container = await render();
@@ -222,6 +268,10 @@ function ping(ready: boolean): runtimeClient.PingResponse {
 
 function readyProvider(): providersClient.ProviderSummary {
   return { id: "provider-1", kind: "openai-compatible", displayName: "Provider", enabled: true, baseUrl: "https://example.test", auth: { type: "api_key", configured: true }, models: [readyModel()], capabilities: { chat: true, completion: false, embeddings: false } };
+}
+
+function providerAuth(status: providerAuthClient.ProviderAuthStatus): providerAuthClient.ProviderAuthResponse {
+  return { provider: "openai", configured: status === "connected" || status === "pending", status, authSource: status === "connected" || status === "pending" ? "oauth" : "none", supportsLogin: true, supportsApiKey: true, cloudRequired: false };
 }
 
 function startButton(container: HTMLElement): HTMLButtonElement {

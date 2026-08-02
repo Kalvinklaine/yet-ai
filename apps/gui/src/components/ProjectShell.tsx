@@ -12,7 +12,8 @@ import {
 } from "../services/projectCommandCenterData";
 import { ProjectLink, type AppRoute, type ProjectNavigation } from "../services/projectRouting";
 import { listProviders } from "../services/providersClient";
-import { countReadyProviderModels } from "../services/providerReadiness";
+import { getProviderAuthStatus } from "../services/providerAuthClient";
+import { resolveProjectChatReadiness } from "../services/providerReadiness";
 import { getAgentProgress, getModels, getPing, listChats, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { ProjectHome } from "./ProjectHome";
 import { ProjectRegistrationDialog } from "./ProjectRegistrationDialog";
@@ -76,18 +77,21 @@ export function ProjectShell({ route, settings, navigate, children }: { route: E
       if (request !== commandCenterRequestRef.current || controller.signal.aborted) return;
       setCommandCenter((current) => current ? { ...current, ...patch } : current);
     };
-    void Promise.all([getPing(settings, controller.signal), getModels(settings, controller.signal), listProviders(settings, controller.signal)]).then(([ping, models, providers]) => {
+    void Promise.all([getPing(settings, controller.signal), getModels(settings, controller.signal), listProviders(settings, controller.signal), getProviderAuthStatus(settings, "openai")]).then(([ping, models, providers, providerAuth]) => {
       const runtimeReady = ping.ok && ping.data.ready;
-      const readyPairings = models.ok && providers.ok ? countReadyProviderModels(models.data.models, providers.data.providers) : 0;
+      const chatReadiness = resolveProjectChatReadiness({
+        runtimeReady,
+        models: models.ok ? models.data.models : [],
+        providers: providers.ok ? providers.data.providers : [],
+        providerAuthStatus: providerAuth.ok ? providerAuth.data : null,
+      });
       update({
         readiness: shapeReadiness([
           { id: "project", label: "Local project context", status: "ready" },
           { id: "runtime", label: runtimeReady ? "Local runtime" : "Runtime status unavailable", status: runtimeReady ? "ready" : "blocked" },
-          { id: "provider", label: readyPairings > 0 ? `${readyPairings} ready provider-model pairing${readyPairings === 1 ? "" : "s"}` : "Provider setup required", status: readyPairings > 0 ? "ready" : "attention" },
+          { id: "provider", label: chatReadiness.readinessLabel, status: chatReadiness.readinessStatus },
         ]),
-        start: runtimeReady && readyPairings > 0
-          ? { enabled: true }
-          : { enabled: false, blockedReason: !runtimeReady ? "The local runtime is not ready." : "Set up a ready provider and model before starting chat." },
+        start: chatReadiness.startEnabled ? { enabled: true } : { enabled: false, blockedReason: chatReadiness.blockedReason },
       });
     });
     void listChats(projectSettings).then((result) => update({ conversations: result.ok ? shapeRecentConversations(result.data.chats) : errorSection("Recent conversations could not be loaded.") }));

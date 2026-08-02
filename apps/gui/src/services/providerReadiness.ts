@@ -1,4 +1,5 @@
 import type { ProviderSummary } from "./providersClient";
+import type { ProviderAuthResponse } from "./providerAuthClient";
 import type { CapabilityProvenance, ModelSummary, ProviderFamily, ProviderTestStatus, RuntimeError } from "./runtimeClient";
 import { sanitizeDisplayText } from "./redaction";
 
@@ -10,6 +11,55 @@ export type ProviderModelReadiness = {
   message?: string;
   error?: RuntimeError;
 };
+
+export type ProjectChatReadiness = {
+  source: "provider_model" | "oauth_fallback" | "none";
+  readyPairingCount: number;
+  readinessLabel: string;
+  readinessStatus: "ready" | "attention";
+  startEnabled: boolean;
+  blockedReason?: string;
+};
+
+export function resolveProjectChatReadiness({
+  runtimeReady,
+  models,
+  providers,
+  providerAuthStatus,
+}: {
+  runtimeReady: boolean;
+  models: ModelSummary[];
+  providers: ProviderSummary[];
+  providerAuthStatus: ProviderAuthResponse | null;
+}): ProjectChatReadiness {
+  const readyPairingCount = countReadyProviderModels(models, providers);
+  const normalReady = readyPairingCount > 0;
+  const providerModelReadiness = resolveProviderModelReadiness(models, providers.filter((provider) => provider.enabled), null);
+  const oauthReady = providerAuthStatus?.configured === true
+    && providerAuthStatus.authSource === "oauth"
+    && providerAuthStatus.status === "connected"
+    && !providerModelReadiness.mismatch;
+  const source = !runtimeReady
+    ? "none"
+    : normalReady
+      ? "provider_model"
+      : oauthReady
+        ? "oauth_fallback"
+        : "none";
+  const readinessLabel = normalReady
+    ? `${readyPairingCount} ready provider-model pairing${readyPairingCount === 1 ? "" : "s"}`
+    : source === "oauth_fallback"
+      ? "Provider account login fallback ready"
+      : "Provider setup required";
+  return {
+    source,
+    readyPairingCount,
+    readinessLabel,
+    readinessStatus: normalReady || source === "oauth_fallback" ? "ready" : "attention",
+    startEnabled: source !== "none",
+    ...(source === "none" ? { blockedReason: runtimeReady ? "Set up a ready provider and model before starting chat." : "The local runtime is not ready." } : {}),
+  };
+}
 
 export type ProviderReadinessState = "runtime_unavailable" | "demo_mode_ready" | "openai_compatible_ready" | "local_provider_ready" | "model_provider_mismatch" | "missing_credentials" | "missing_model" | "unsupported_model" | "local_provider_unready" | "provider_error" | "model_not_ready" | "provider_required";
 

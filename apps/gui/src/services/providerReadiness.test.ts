@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { ProviderAuthResponse, ProviderAuthStatus } from "./providerAuthClient";
 import type { ProviderSummary } from "./providersClient";
 import type { ModelSummary } from "./runtimeClient";
-import { classifyProviderReadinessState, countReadyProviderModels, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelReadinessEvidenceText, modelStatusText, modelUnreadyMessage, providerFamilyLabel, readinessStatusLabel, resolveProviderModelReadiness, runtimeModelErrorMessage } from "./providerReadiness";
+import { classifyProviderReadinessState, countReadyProviderModels, missingModelMetadataMessage, modelCapabilitySummary, modelProviderMismatchMessage, modelReadinessEvidenceText, modelStatusText, modelUnreadyMessage, providerFamilyLabel, readinessStatusLabel, resolveProjectChatReadiness, resolveProviderModelReadiness, runtimeModelErrorMessage } from "./providerReadiness";
 
 function model(overrides: Partial<ModelSummary> = {}): ModelSummary {
   return {
@@ -24,6 +25,19 @@ function provider(overrides: Partial<ProviderSummary> = {}): ProviderSummary {
     auth: { type: "api_key", configured: true, redacted: "sk-...test" },
     models: [model({ providerId: undefined })],
     capabilities: { chat: true, completion: false, embeddings: false },
+    ...overrides,
+  };
+}
+
+function providerAuth(status: ProviderAuthStatus, overrides: Partial<ProviderAuthResponse> = {}): ProviderAuthResponse {
+  return {
+    provider: "openai",
+    configured: true,
+    status,
+    authSource: "oauth",
+    supportsLogin: true,
+    supportsApiKey: true,
+    cloudRequired: false,
     ...overrides,
   };
 }
@@ -53,6 +67,44 @@ function expectSanitizedMetadata(texts: string[]): void {
 }
 
 describe("provider readiness", () => {
+  it("resolves Project Home provider-model readiness before OAuth fallback", () => {
+    expect(resolveProjectChatReadiness({ runtimeReady: true, models: [model()], providers: [provider()], providerAuthStatus: providerAuth("connected") })).toEqual({
+      source: "provider_model",
+      readyPairingCount: 1,
+      readinessLabel: "1 ready provider-model pairing",
+      readinessStatus: "ready",
+      startEnabled: true,
+    });
+    expect(resolveProjectChatReadiness({ runtimeReady: true, models: [model()], providers: [provider()], providerAuthStatus: null }).source).toBe("provider_model");
+    expect(resolveProjectChatReadiness({ runtimeReady: true, models: [], providers: [], providerAuthStatus: providerAuth("connected") })).toEqual({
+      source: "oauth_fallback",
+      readyPairingCount: 0,
+      readinessLabel: "Provider account login fallback ready",
+      readinessStatus: "ready",
+      startEnabled: true,
+    });
+  });
+
+  it.each(["pending", "error", "expired", "revoked", "login_available", "login_unavailable", "not_configured", "api_key_configured"] as ProviderAuthStatus[])("keeps %s provider auth blocked for Project Home fallback", (status) => {
+    expect(resolveProjectChatReadiness({ runtimeReady: true, models: [], providers: [], providerAuthStatus: providerAuth(status) })).toEqual({
+      source: "none",
+      readyPairingCount: 0,
+      readinessLabel: "Provider setup required",
+      readinessStatus: "attention",
+      startEnabled: false,
+      blockedReason: "Set up a ready provider and model before starting chat.",
+    });
+  });
+
+  it("requires exact connected OAuth configuration and blocks runtime-unavailable or mismatched fallback", () => {
+    const inputs = { runtimeReady: true, models: [], providers: [] };
+    expect(resolveProjectChatReadiness({ ...inputs, providerAuthStatus: null }).source).toBe("none");
+    expect(resolveProjectChatReadiness({ ...inputs, providerAuthStatus: providerAuth("connected", { configured: false }) }).source).toBe("none");
+    expect(resolveProjectChatReadiness({ ...inputs, providerAuthStatus: providerAuth("connected", { authSource: "api_key" }) }).source).toBe("none");
+    expect(resolveProjectChatReadiness({ ...inputs, runtimeReady: false, providerAuthStatus: providerAuth("connected") })).toMatchObject({ source: "none", startEnabled: false, blockedReason: "The local runtime is not ready." });
+    expect(resolveProjectChatReadiness({ runtimeReady: true, models: [model({ providerId: "missing" })], providers: [provider()], providerAuthStatus: providerAuth("connected") }).source).toBe("none");
+  });
+
   it("resolves the selected runtime model when provider metadata matches", () => {
     const selected = model();
     const readiness = resolveProviderModelReadiness([selected], [provider()], null);
