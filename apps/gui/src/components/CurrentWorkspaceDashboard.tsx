@@ -16,7 +16,8 @@ import { createProjectRuntimeSettings, getProject, listProjects, type ProjectSum
 import { parseProjectId, type AppRoute, type ProjectId } from "../services/projectRouting";
 import { createChat, getAgentProgress, getModels, getPing, listChats, type AgentProgressSnapshot, type ChatSummary, type RuntimeError, type RuntimeSettings } from "../services/runtimeClient";
 import { listProviders } from "../services/providersClient";
-import { countReadyProviderModels } from "../services/providerReadiness";
+import { getProviderAuthStatus } from "../services/providerAuthClient";
+import { resolveProjectChatReadiness, type ProjectChatReadiness } from "../services/providerReadiness";
 import { clearProjectChatLaunchIntent, createProjectChatLaunchIntent } from "../services/projectChatLaunchIntent";
 import { ProjectCommandCenter } from "./ProjectCommandCenter";
 
@@ -51,7 +52,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
   const [selectedMemoryNoteIds, setSelectedMemoryNoteIds] = useState<string[]>([]);
   const [activeWork, setActiveWork] = useState<LoadState<AgentProgressSnapshot[]>>(loading);
   const [runtime, setRuntime] = useState<LoadState<boolean>>(loading);
-  const [providerModel, setProviderModel] = useState<LoadState<number>>(loading);
+  const [providerReadiness, setProviderReadiness] = useState<LoadState<ProjectChatReadiness>>(loading);
   const [starting, setStarting] = useState(false);
   const startingRef = useRef(false);
   const mountedRef = useRef(false);
@@ -81,7 +82,7 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     setMemory(loadingSection());
     setActiveWork(loading);
     setRuntime(loading);
-    setProviderModel(loading);
+    setProviderReadiness(loading);
     setStarting(false);
     startingRef.current = false;
     setStartError(null);
@@ -91,18 +92,17 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
     if (!trusted) return;
     const controller = new AbortController();
     setRuntime(loading);
-    setProviderModel(loading);
-    void getPing(settings, controller.signal).then((result) => {
+    setProviderReadiness(loading);
+    void Promise.all([getPing(settings, controller.signal), getModels(settings, controller.signal), listProviders(settings, controller.signal), getProviderAuthStatus(settings, "openai")]).then(([ping, models, providers, providerAuth]) => {
       if (controller.signal.aborted) return;
-      setRuntime(result.ok && result.data.ready ? { status: "ready", data: true } : { status: "error", message: runtimeMessage(result.ok ? null : result.error) });
-    });
-    void Promise.all([getModels(settings, controller.signal), listProviders(settings, controller.signal)]).then(([models, providers]) => {
-      if (controller.signal.aborted) return;
-      if (!models.ok || !providers.ok) {
-        setProviderModel({ status: "error", message: "Provider or model readiness could not be loaded." });
-        return;
-      }
-      setProviderModel({ status: "ready", data: countReadyProviderModels(models.data.models, providers.data.providers) });
+      const runtimeReady = ping.ok && ping.data.ready;
+      setRuntime(runtimeReady ? { status: "ready", data: true } : { status: "error", message: runtimeMessage(ping.ok ? null : ping.error) });
+      setProviderReadiness({ status: "ready", data: resolveProjectChatReadiness({
+        runtimeReady,
+        models: models.ok ? models.data.models : [],
+        providers: providers.ok ? providers.data.providers : [],
+        providerAuthStatus: providerAuth.ok ? providerAuth.data : null,
+      }) });
     });
     return () => controller.abort();
   }, [settings, trusted, hostReadyGeneration]);
@@ -150,14 +150,14 @@ export function CurrentWorkspaceDashboard({ settings, binding, hostReadyGenerati
 
   const projectName = selection?.displayName;
   const commandCenterModel = useMemo<ProjectCommandCenterModel>(() => ({
-    readiness: commandCenterReadiness(summary, runtime, providerModel),
+    readiness: commandCenterReadiness(summary, runtime, providerReadiness),
     conversations: conversations.status === "loading" ? loadingSection() : conversations.status === "error" ? errorSection(conversations.message) : shapeRecentConversations(conversations.data),
     memory,
     activeWork: activeWork.status === "loading" ? loadingSection() : activeWork.status === "error" ? errorSection(activeWork.message) : shapeActiveWork(activeWork.data),
     start: starting
       ? { enabled: false, blockedReason: "Starting…" }
-      : commandCenterStart(summary, runtime, providerModel),
-  }), [activeWork, conversations, memory, providerModel, runtime, starting, summary]);
+      : commandCenterStart(summary, runtime, providerReadiness),
+  }), [activeWork, conversations, memory, providerReadiness, runtime, starting, summary]);
 
   const startNew = async () => {
     if (!selection || startingRef.current) return;
@@ -281,17 +281,17 @@ function runtimeMessage(error: RuntimeError | null): string {
   return error?.status === "network" ? "The local runtime could not be reached." : "The local runtime is not ready.";
 }
 
-function commandCenterReadiness(summary: LoadState<ProjectSummary>, runtime: LoadState<boolean>, providerModel: LoadState<number>): ProjectCommandCenterModel["readiness"] {
-  if (summary.status === "loading" || runtime.status === "loading" || providerModel.status === "loading") return loadingSection();
+function commandCenterReadiness(summary: LoadState<ProjectSummary>, runtime: LoadState<boolean>, providerReadiness: LoadState<ProjectChatReadiness>): ProjectCommandCenterModel["readiness"] {
+  if (summary.status === "loading" || runtime.status === "loading" || providerReadiness.status === "loading") return loadingSection();
   return shapeReadiness([
     { id: "project", label: summary.status === "ready" ? "Local project context" : "Project status unavailable", status: summary.status === "ready" && summary.data.rootAvailable ? "ready" : "blocked" },
     { id: "runtime", label: runtime.status === "ready" ? "Local runtime" : "Runtime status unavailable", status: runtime.status === "ready" ? "ready" : "blocked" },
-    { id: "provider", label: providerModel.status === "ready" && providerModel.data > 0 ? `${providerModel.data} ready provider-model pairing${providerModel.data === 1 ? "" : "s"}` : "Provider setup required", status: providerModel.status === "ready" && providerModel.data > 0 ? "ready" : "attention" },
+    { id: "provider", label: providerReadiness.status === "ready" ? providerReadiness.data.readinessLabel : "Provider setup required", status: providerReadiness.status === "ready" ? providerReadiness.data.readinessStatus : "attention" },
   ]);
 }
 
-function commandCenterStart(summary: LoadState<ProjectSummary>, runtime: LoadState<boolean>, providerModel: LoadState<number>): ProjectCommandCenterModel["start"] {
-  if (summary.status === "loading" || runtime.status === "loading" || providerModel.status === "loading") {
+function commandCenterStart(summary: LoadState<ProjectSummary>, runtime: LoadState<boolean>, providerReadiness: LoadState<ProjectChatReadiness>): ProjectCommandCenterModel["start"] {
+  if (summary.status === "loading" || runtime.status === "loading" || providerReadiness.status === "loading") {
     return { enabled: false, blockedReason: "Checking project, runtime, and provider readiness…" };
   }
   if (summary.status !== "ready" || summary.data.status !== "available" || !summary.data.rootAvailable) {
@@ -300,8 +300,8 @@ function commandCenterStart(summary: LoadState<ProjectSummary>, runtime: LoadSta
   if (runtime.status !== "ready" || !runtime.data) {
     return { enabled: false, blockedReason: "The local runtime is not ready." };
   }
-  if (providerModel.status !== "ready" || providerModel.data < 1) {
-    return { enabled: false, blockedReason: "Set up a ready provider and model before starting chat." };
+  if (providerReadiness.status !== "ready" || !providerReadiness.data.startEnabled) {
+    return { enabled: false, blockedReason: providerReadiness.status === "ready" ? providerReadiness.data.blockedReason : "Set up a ready provider and model before starting chat." };
   }
   return { enabled: true };
 }

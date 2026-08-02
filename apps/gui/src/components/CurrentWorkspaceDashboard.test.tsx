@@ -22,13 +22,15 @@ function project(displayName = "Cozy Project") {
 
 const readyModel = { id: "demo", displayName: "Demo", providerId: "demo", readiness: { status: "ready" }, capabilities: { chat: true, streaming: true, tools: false, reasoning: false } };
 const readyProvider = { id: "demo", kind: "demo-local", displayName: "Demo", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [{ ...readyModel, providerId: undefined }], capabilities: { chat: true, completion: false, embeddings: false } };
+const connectedAuth = { provider: "openai", configured: true, status: "connected", authSource: "oauth", supportsLogin: true, supportsApiKey: true, cloudRequired: false };
 
-function installFetch(options: { chats?: unknown[]; failAgent?: boolean; projects?: unknown[]; memory?: unknown[]; models?: unknown[]; providers?: unknown[] } = {}) {
+function installFetch(options: { chats?: unknown[]; failAgent?: boolean; projects?: unknown[]; memory?: unknown[]; models?: unknown[]; providers?: unknown[]; providerAuth?: unknown; providerAuthStatus?: number } = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/ping")) return response({ ready: true });
     if (url.endsWith("/v1/models")) return response({ models: options.models ?? [readyModel] });
     if (url.endsWith("/v1/providers")) return response({ providers: options.providers ?? [readyProvider], cloudRequired: false, providerAccess: "direct" });
+    if (url.endsWith("/v1/provider-auth/openai/status")) return response(options.providerAuth ?? { ...connectedAuth, configured: false, status: "not_configured", authSource: "none" }, options.providerAuthStatus);
     if (url.endsWith(`/v1/projects/${projectId}`)) return response(project());
     if (url.endsWith(`/p/${projectId}/v1/agent-progress`)) return options.failAgent ? response({ error: "private data omitted" }, 503) : response({ snapshots: [], cloudRequired: false, providerAccess: "direct" });
     if (url.endsWith(`/p/${projectId}/v1/project-memory`)) return response({ notes: options.memory ?? [], cloudRequired: false, providerAccess: "direct" });
@@ -104,9 +106,9 @@ describe("CurrentWorkspaceDashboard", () => {
   });
 
   it("aborts old generation requests and hides stale dashboard data", async () => {
-    const signals: AbortSignal[] = [];
-    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.signal) signals.push(init.signal);
+    const requests: Array<{ url: string; signal: AbortSignal }> = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal) requests.push({ url: String(input), signal: init.signal });
       return new Promise<Response>(() => undefined);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -122,8 +124,8 @@ describe("CurrentWorkspaceDashboard", () => {
       root?.render(<CurrentWorkspaceDashboard settings={settings} binding={null} hostReadyGeneration={null} getAuthorityToken={() => null} onOpen={vi.fn()} />);
     });
 
-    expect(signals.length).toBeGreaterThan(0);
-    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(requests.length).toBeGreaterThan(0);
+    expect(requests.filter(({ url }) => !url.endsWith("/v1/provider-auth/openai/status")).every(({ signal }) => signal.aborted)).toBe(true);
     expect(container?.textContent).toContain("Waiting for the trusted IDE workspace binding.");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("127.0.0.1:8001"))).toBe(false);
   });
@@ -209,6 +211,59 @@ describe("CurrentWorkspaceDashboard", () => {
     await renderDashboard(binding("auto_bound"));
     await flush();
     expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(false);
+  });
+
+  it.each(["auto_bound", "selection_required"] as const)("enables %s Start through connected account-login fallback without creating a chat", async (bindingState) => {
+    const fetchMock = installFetch({ models: [], providers: [], providerAuth: connectedAuth });
+    await renderDashboard(binding(bindingState));
+    await flush();
+    if (bindingState === "selection_required") {
+      act(() => Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Cozy Project")?.click());
+      await flush();
+    }
+
+    expect(container?.textContent).toContain("Provider account login fallback ready");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(false);
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
+  });
+
+  it.each(["pending", "revoked", "error", "expired"] as const)("keeps Start blocked for %s account login without normal readiness", async (status) => {
+    installFetch({ models: [], providers: [], providerAuth: { ...connectedAuth, status } });
+    await renderDashboard(binding("auto_bound"));
+    await flush();
+
+    expect(container?.textContent).toContain("Provider setup required");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(true);
+  });
+
+  it("prefers normal provider-model readiness when account status fails", async () => {
+    installFetch({ providerAuth: { lastError: "/Users/private token secret" }, providerAuthStatus: 500 });
+    await renderDashboard(binding("auto_bound"));
+    await flush();
+
+    expect(container?.textContent).toContain("1 ready provider-model pairing");
+    expect(container?.textContent).not.toContain("private token secret");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(false);
+  });
+
+  it("prefers normal provider-model readiness over connected account fallback", async () => {
+    installFetch({ providerAuth: connectedAuth });
+    await renderDashboard(binding("auto_bound"));
+    await flush();
+
+    expect(container?.textContent).toContain("1 ready provider-model pairing");
+    expect(container?.textContent).not.toContain("Provider account login fallback ready");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(false);
+  });
+
+  it("fails closed and sanitizes account status failures without normal readiness", async () => {
+    installFetch({ models: [], providers: [], providerAuth: { lastError: "/Users/private token secret" }, providerAuthStatus: 500 });
+    await renderDashboard(binding("auto_bound"));
+    await flush();
+
+    expect(container?.textContent).toContain("Provider setup required");
+    expect(container?.textContent).not.toContain("private token secret");
+    expect(Array.from(container?.querySelectorAll("button") ?? []).find((item) => item.textContent === "Start new chat")?.disabled).toBe(true);
   });
 
   it("starts and resumes without minting an intent when memory selection is empty", async () => {
