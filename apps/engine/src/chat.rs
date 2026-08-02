@@ -1809,14 +1809,11 @@ async fn openai_compatible_stream(
         None
     };
     let url = chat_completions_url(&provider.base_url)?;
-    let mut request = client
-        .post(url)
-        .timeout(Duration::from_secs(10))
-        .json(&json!({
-            "model": model,
-            "stream": true,
-            "messages": [{ "role": "user", "content": content }]
-        }));
+    let mut request = client.post(url).json(&json!({
+        "model": model,
+        "stream": true,
+        "messages": [{ "role": "user", "content": content }]
+    }));
     if let Some(api_key) = api_key {
         request = request.bearer_auth(api_key);
     }
@@ -1837,14 +1834,11 @@ async fn ollama_stream(
         return Err(ChatError::ProviderConfig);
     }
     let url = ollama_chat_url(&provider.base_url)?;
-    let request = client
-        .post(url)
-        .timeout(Duration::from_secs(10))
-        .json(&json!({
-            "model": model,
-            "stream": true,
-            "messages": [{ "role": "user", "content": content }]
-        }));
+    let request = client.post(url).json(&json!({
+        "model": model,
+        "stream": true,
+        "messages": [{ "role": "user", "content": content }]
+    }));
     collect_ollama_stream(runtime, runtime_key, chat_id, stream_id, request).await
 }
 
@@ -1885,7 +1879,6 @@ async fn codex_responses_stream(
     let url = codex_responses_url(&auth.base_url)?;
     let request = client
         .post(url)
-        .timeout(Duration::from_secs(10))
         .bearer_auth(&auth.access_token)
         .header("chatgpt-account-id", &auth.chatgpt_account_id)
         .header("originator", "codex_cli_rs")
@@ -1952,13 +1945,7 @@ async fn collect_codex_responses_stream(
     stream_id: u64,
     request: reqwest::RequestBuilder,
 ) -> Result<String, ChatError> {
-    let response = request.send().await.map_err(|error| {
-        if error.is_timeout() {
-            ChatError::Timeout
-        } else {
-            ChatError::Request
-        }
-    })?;
+    let response = send_provider_stream_request(request).await?;
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ChatError::PreStreamUnauthorized);
@@ -1970,14 +1957,7 @@ async fn collect_codex_responses_stream(
     let mut parser = CodexResponsesSseParser::default();
     let mut utf8_buffer = Vec::new();
     let mut assistant_content = String::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| {
-            if error.is_timeout() {
-                ChatError::Timeout
-            } else {
-                ChatError::Request
-            }
-        })?;
+    while let Some(chunk) = next_provider_stream_chunk(&mut stream).await? {
         for text in decode_stream_utf8_chunk(&mut utf8_buffer, &chunk)? {
             let parse_error = parser.push(&text).err();
             for delta in parser.drain_deltas() {
@@ -2037,13 +2017,7 @@ async fn collect_openai_compatible_stream(
     stream_id: u64,
     request: reqwest::RequestBuilder,
 ) -> Result<String, ChatError> {
-    let response = request.send().await.map_err(|error| {
-        if error.is_timeout() {
-            ChatError::Timeout
-        } else {
-            ChatError::Request
-        }
-    })?;
+    let response = send_provider_stream_request(request).await?;
     if !response.status().is_success() {
         if response.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ChatError::PreStreamUnauthorized);
@@ -2054,14 +2028,7 @@ async fn collect_openai_compatible_stream(
     let mut parser = OpenAiSseParser::default();
     let mut utf8_buffer = Vec::new();
     let mut assistant_content = String::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| {
-            if error.is_timeout() {
-                ChatError::Timeout
-            } else {
-                ChatError::Request
-            }
-        })?;
+    while let Some(chunk) = next_provider_stream_chunk(&mut stream).await? {
         for text in decode_stream_utf8_chunk(&mut utf8_buffer, &chunk)? {
             parser.push(&text)?;
         }
@@ -2109,13 +2076,7 @@ async fn collect_ollama_stream(
     stream_id: u64,
     request: reqwest::RequestBuilder,
 ) -> Result<String, ChatError> {
-    let response = request.send().await.map_err(|error| {
-        if error.is_timeout() {
-            ChatError::Timeout
-        } else {
-            ChatError::Request
-        }
-    })?;
+    let response = send_provider_stream_request(request).await?;
     if !response.status().is_success() {
         return Err(classify_provider_http_error(response).await);
     }
@@ -2123,14 +2084,7 @@ async fn collect_ollama_stream(
     let mut parser = OllamaJsonLineParser::default();
     let mut utf8_buffer = Vec::new();
     let mut assistant_content = String::new();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| {
-            if error.is_timeout() {
-                ChatError::Timeout
-            } else {
-                ChatError::Request
-            }
-        })?;
+    while let Some(chunk) = next_provider_stream_chunk(&mut stream).await? {
         for text in decode_stream_utf8_chunk(&mut utf8_buffer, &chunk)? {
             parser.push(&text)?;
         }
@@ -2206,6 +2160,37 @@ const PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT: usize = 16 * 1024;
 const PROVIDER_STREAM_EVENT_DATA_LIMIT: usize = 16 * 1024;
 const PROVIDER_STREAM_LINE_BUFFER_LIMIT: usize = 16 * 1024;
 const PROVIDER_STREAM_EVENT_DATA_LINE_LIMIT: usize = 256;
+const PROVIDER_RESPONSE_START_TIMEOUT: Duration = Duration::from_secs(30);
+const PROVIDER_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+async fn send_provider_stream_request(
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, ChatError> {
+    tokio::time::timeout(PROVIDER_RESPONSE_START_TIMEOUT, request.send())
+        .await
+        .map_err(|_| ChatError::Timeout)?
+        .map_err(map_provider_request_error)
+}
+
+async fn next_provider_stream_chunk<S, B>(stream: &mut S) -> Result<Option<B>, ChatError>
+where
+    S: futures_util::Stream<Item = Result<B, reqwest::Error>> + Unpin,
+{
+    match tokio::time::timeout(PROVIDER_STREAM_IDLE_TIMEOUT, stream.next()).await {
+        Ok(Some(Ok(chunk))) => Ok(Some(chunk)),
+        Ok(Some(Err(error))) => Err(map_provider_request_error(error)),
+        Ok(None) => Ok(None),
+        Err(_) => Err(ChatError::Timeout),
+    }
+}
+
+fn map_provider_request_error(error: reqwest::Error) -> ChatError {
+    if error.is_timeout() {
+        ChatError::Timeout
+    } else {
+        ChatError::Request
+    }
+}
 
 async fn classify_provider_http_error(response: reqwest::Response) -> ChatError {
     let status = response.status();
@@ -2220,16 +2205,9 @@ async fn bounded_provider_error_body(response: reqwest::Response) -> Result<Vec<
     let mut stream = response.bytes_stream();
     let mut body = Vec::new();
     while body.len() < PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT {
-        let Some(chunk) = stream.next().await else {
+        let Some(chunk) = next_provider_stream_chunk(&mut stream).await? else {
             break;
         };
-        let chunk = chunk.map_err(|error| {
-            if error.is_timeout() {
-                ChatError::Timeout
-            } else {
-                ChatError::Request
-            }
-        })?;
         let remaining = PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT - body.len();
         body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
     }
