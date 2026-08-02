@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yet-ai.local/schemas/engine/project-context-plan.schema.json",
+  "title": "ContextPlan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "schemaVersion", "planId", "projectId", "mode", "queryLabel", "status", "manifest", "createdAt", "expiresAt", "cloudRequired"],
+  "properties": {
+    "protocolVersion": { "const": "2026-08-02" },
+    "schemaVersion": { "const": 1 },
+    "planId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/id" },
+    "mode": { "enum": ["manual_only", "balanced", "deep"] },
+    "queryLabel": { "$ref": "#/$defs/text" },
+    "status": { "enum": ["ready", "truncated", "blocked", "stale"] },
+    "manifest": { "$ref": "project-context-manifest.schema.json" },
+    "continuity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["turnId", "assistantMessageId", "generationId", "contentPrefixHash"],
+      "properties": {
+        "turnId": { "$ref": "#/$defs/id" },
+        "assistantMessageId": { "$ref": "#/$defs/id" },
+        "generationId": { "$ref": "#/$defs/id" },
+        "continuationOfGenerationId": { "$ref": "#/$defs/id" },
+        "contentPrefixHash": { "$ref": "#/$defs/hash" }
+      }
+    },
+    "createdAt": { "$ref": "#/$defs/time" },
+    "expiresAt": { "$ref": "#/$defs/time" },
+    "cloudRequired": { "const": false }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "text": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" },
+    "time": { "type": "string", "format": "date-time", "pattern": "Z$" }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yet-ai.local/schemas/engine/project-context-profile.schema.json",
+  "title": "ProjectContextProfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "schemaVersion", "profileId", "projectId", "inventoryGeneration", "profileHash", "summary", "facts", "createdAt", "cloudRequired"],
+  "properties": {
+    "protocolVersion": { "const": "2026-08-02" },
+    "schemaVersion": { "const": 1 },
+    "profileId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/id" },
+    "inventoryGeneration": { "type": "integer", "minimum": 1 },
+    "profileHash": { "$ref": "#/$defs/hash" },
+    "summary": { "$ref": "#/$defs/text" },
+    "facts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "label", "sourceRef", "contentHash", "provenance"],
+        "properties": {
+          "kind": { "enum": ["overview", "manifest", "language", "module", "entry_point", "workspace"] },
+          "label": { "$ref": "#/$defs/text" },
+          "sourceRef": { "$ref": "#/$defs/path" },
+          "contentHash": { "$ref": "#/$defs/hash" },
+          "provenance": { "const": "profile" }
+        }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "cloudRequired": { "const": false }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!~)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*://)[^\\u0000-\\u001F\\u007F]+$" },
+    "text": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" }
+  }
+}

@@ -10,6 +10,10 @@ function normalizeContractPath(path) {
 }
 
 const mappings = [
+  ["packages/contracts/examples/engine/project-context-status.json", "packages/contracts/schemas/engine/project-context-status.schema.json"],
+  ["packages/contracts/examples/engine/project-context-profile.json", "packages/contracts/schemas/engine/project-context-profile.schema.json"],
+  ["packages/contracts/examples/engine/project-context-manifest.json", "packages/contracts/schemas/engine/project-context-manifest.schema.json"],
+  ["packages/contracts/examples/engine/project-context-plan.json", "packages/contracts/schemas/engine/project-context-plan.schema.json"],
   ["packages/contracts/examples/engine/ping-response.json", "packages/contracts/schemas/engine/ping.schema.json"],
   ["packages/contracts/examples/engine/caps-response.json", "packages/contracts/schemas/engine/caps.schema.json"],
   ["packages/contracts/examples/engine/caps-response-v2-demo-local.json", "packages/contracts/schemas/engine/caps.schema.json"],

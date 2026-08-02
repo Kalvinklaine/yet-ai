@@ -20,6 +20,7 @@ Current schemas:
 - `schemas/engine/caps.schema.json` for `GET /v1/caps` responses.
 - `schemas/engine/chat-command.schema.json` for `POST /v1/chats/{chat_id}/commands` requests.
 - `schemas/engine/project-*.schema.json` and `schemas/engine/directory-discovery-*.schema.json` for strict local-first project summaries, listing, registration, display-name updates, archive/restore, sanitized errors, and bounded browser directory discovery using opaque engine-issued handles only.
+- `schemas/engine/project-context-status.schema.json`, `project-context-profile.schema.json`, `project-context-manifest.schema.json`, and `project-context-plan.schema.json` for planned project-scoped context status, deterministic profile evidence, provenance-rich budgeted manifests, and plan/continuity identifiers. These Wave 0 schemas and examples are `fixture_demo` only: the routes and runtime behavior are unsupported until later implementation cards add engine code and focused evidence.
 - `schemas/engine/chat-list-response.schema.json`, `schemas/engine/chat-thread.schema.json`, and `schemas/engine/chat-message.schema.json` for engine-owned local chat history list, thread, and message payloads.
 - `schemas/engine/project-memory-*.schema.json` for future engine-owned local project memory note create/list/search/delete/select-as-context payloads.
 - `schemas/engine/sse-event.schema.json` for chat SSE event payloads.
@@ -126,6 +127,14 @@ npm run check
 If implementation behavior changes with the contract, also run the affected GUI and VS Code checks, including `cd apps/plugins/vscode && npm run check:webview-safety` and root `npm run smoke:vscode-edit-proposal` for confirmed edit-proposal smoke coverage.
 
 `GET /v1/caps` includes a minimal local runtime signal: `runtime.mode = "local"`, `runtime.cloudRequired = false`, and `runtime.providerAccess = "direct"`. This records the product contract that Yet AI core runs through the local runtime and does not require a hosted Yet AI backend or managed model gateway.
+
+## Planned project context contracts
+
+Project context is a future engine-owned, project-scoped capability defined by ADR 042 and secured by ADR 043. The positive examples for status, profile, manifest, and plan are small contract fixtures, not endpoint responses captured from a live runtime. Planned routes are `/p/{projectId}/v1/context/status`, `/context/profile`, `/context/rebuild`, `/context/cache`, and `/context/plan`; none is currently reachable.
+
+The contracts use `protocolVersion: "2026-08-02"` and `schemaVersion: 1`. Public source refs are project-relative only. `ContextManifest` records hashes, inclusion and omission reasons, provenance, redaction, hard and used budgets, and truncation without canonical roots or raw omitted content. Modes `manual_only`, `balanced`, and `deep` vary breadth only. Future turn compatibility uses opaque plan, manifest, turn, assistant-message, generation, continuation-generation, and partial-prefix hash identifiers. Project memory is not folded into the index and remains explicit user-authored note selection.
+
+Breaking field or semantic changes require a new protocol or schema version, updated examples, migration design, and coordinated engine/GUI/host review. Additive optional fields must still preserve strict privacy and must not imply implementation. Run `npm run validate:contracts` after changing these fixtures.
 
 ## Provider endpoints
 

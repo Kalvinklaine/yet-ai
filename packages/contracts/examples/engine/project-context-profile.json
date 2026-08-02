@@ -1,0 +1,27 @@
+{
+  "protocolVersion": "2026-08-02",
+  "schemaVersion": 1,
+  "profileId": "profile-demo-1",
+  "projectId": "project-demo-1",
+  "inventoryGeneration": 3,
+  "profileHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "summary": "Local application with an engine, interface, and shared contracts.",
+  "facts": [
+    {
+      "kind": "overview",
+      "label": "Project overview",
+      "sourceRef": "README.md",
+      "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "provenance": "profile"
+    },
+    {
+      "kind": "module",
+      "label": "Local runtime module",
+      "sourceRef": "apps/engine/README.md",
+      "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "provenance": "profile"
+    }
+  ],
+  "createdAt": "2026-08-02T12:00:00Z",
+  "cloudRequired": false
+}

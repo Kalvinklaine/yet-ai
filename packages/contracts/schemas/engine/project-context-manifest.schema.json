@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yet-ai.local/schemas/engine/project-context-manifest.schema.json",
+  "title": "ContextManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "schemaVersion", "manifestId", "projectId", "profileId", "mode", "inventoryGeneration", "queryHash", "rankingVersion", "budget", "entries", "omissions", "redaction", "createdAt"],
+  "properties": {
+    "protocolVersion": { "const": "2026-08-02" },
+    "schemaVersion": { "const": 1 },
+    "manifestId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/id" },
+    "profileId": { "$ref": "#/$defs/id" },
+    "planId": { "$ref": "#/$defs/id" },
+    "mode": { "$ref": "#/$defs/mode" },
+    "inventoryGeneration": { "type": "integer", "minimum": 1 },
+    "queryHash": { "$ref": "#/$defs/hash" },
+    "rankingVersion": { "type": "string", "const": "lexical-v1" },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxFiles", "maxChunks", "maxBytes", "maxEstimatedTokens", "usedFiles", "usedChunks", "usedBytes", "usedEstimatedTokens", "truncated"],
+      "properties": {
+        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "maxChunks": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "maxBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "maxEstimatedTokens": { "type": "integer", "minimum": 1, "maximum": 200000 },
+        "usedFiles": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "usedChunks": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "usedBytes": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "usedEstimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sourceRef", "contentHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
+        "properties": {
+          "sourceRef": { "$ref": "#/$defs/path" },
+          "range": { "$ref": "#/$defs/range" },
+          "symbol": { "$ref": "#/$defs/text" },
+          "contentHash": { "$ref": "#/$defs/hash" },
+          "inclusionReason": { "enum": ["profile_candidate", "lexical_match", "symbol_match", "path_match", "explicit_user_selection", "continuity_context"] },
+          "provenance": { "$ref": "#/$defs/provenance" },
+          "redaction": { "enum": ["none", "metadata_only", "content_redacted"] },
+          "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+          "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
+          "rank": { "type": "integer", "minimum": 1, "maximum": 256 }
+        }
+      }
+    },
+    "omissions": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason", "provenance"],
+        "properties": {
+          "sourceRef": { "$ref": "#/$defs/path" },
+          "reason": { "enum": ["ignored", "secret_like", "binary", "generated", "dependency", "oversized", "symlink", "outside_root", "unsupported_type", "budget_exhausted", "stale_hash", "policy_denied"] },
+          "provenance": { "$ref": "#/$defs/provenance" },
+          "detail": { "$ref": "#/$defs/text" }
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metadataOnlyCount", "contentRedactedCount", "omittedCount"],
+      "properties": {
+        "metadataOnlyCount": { "type": "integer", "minimum": 0, "maximum": 10000000 },
+        "contentRedactedCount": { "type": "integer", "minimum": 0, "maximum": 10000000 },
+        "omittedCount": { "type": "integer", "minimum": 0, "maximum": 10000000 }
+      }
+    },
+    "createdAt": { "type": "string", "format": "date-time", "pattern": "Z$" }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "mode": { "enum": ["manual_only", "balanced", "deep"] },
+    "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!~)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*://)[^\\u0000-\\u001F\\u007F]+$" },
+    "text": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" },
+    "provenance": { "enum": ["inventory", "profile", "lexical", "symbol", "explicit_user", "continuation"] },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "character"],
+      "properties": { "line": { "type": "integer", "minimum": 0, "maximum": 10000000 }, "character": { "type": "integer", "minimum": 0, "maximum": 1000000 } }
+    },
+    "range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": { "start": { "$ref": "#/$defs/position" }, "end": { "$ref": "#/$defs/position" } }
+    }
+  }
+}

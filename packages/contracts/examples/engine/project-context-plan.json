@@ -1,0 +1,87 @@
+{
+  "protocolVersion": "2026-08-02",
+  "schemaVersion": 1,
+  "planId": "plan-demo-1",
+  "projectId": "project-demo-1",
+  "mode": "balanced",
+  "queryLabel": "Locate local runtime ownership",
+  "status": "ready",
+  "manifest": {
+    "protocolVersion": "2026-08-02",
+    "schemaVersion": 1,
+    "manifestId": "manifest-demo-1",
+    "projectId": "project-demo-1",
+    "profileId": "profile-demo-1",
+    "planId": "plan-demo-1",
+    "mode": "balanced",
+    "inventoryGeneration": 3,
+    "queryHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "rankingVersion": "lexical-v1",
+    "budget": {
+      "maxFiles": 12,
+      "maxChunks": 32,
+      "maxBytes": 131072,
+      "maxEstimatedTokens": 24000,
+      "usedFiles": 2,
+      "usedChunks": 3,
+      "usedBytes": 4800,
+      "usedEstimatedTokens": 1200,
+      "truncated": false
+    },
+    "entries": [
+      {
+        "sourceRef": "README.md",
+        "range": {
+          "start": {
+            "line": 0,
+            "character": 0
+          },
+          "end": {
+            "line": 24,
+            "character": 0
+          }
+        },
+        "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "inclusionReason": "profile_candidate",
+        "provenance": "profile",
+        "redaction": "none",
+        "byteCount": 2100,
+        "estimatedTokens": 525,
+        "rank": 1
+      },
+      {
+        "sourceRef": "apps/engine/src/lib.rs",
+        "symbol": "Runtime",
+        "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "inclusionReason": "symbol_match",
+        "provenance": "symbol",
+        "redaction": "none",
+        "byteCount": 2700,
+        "estimatedTokens": 675,
+        "rank": 2
+      }
+    ],
+    "omissions": [
+      {
+        "sourceRef": "build/output.txt",
+        "reason": "generated",
+        "provenance": "inventory",
+        "detail": "Generated output is excluded."
+      },
+      {
+        "reason": "secret_like",
+        "provenance": "inventory",
+        "detail": "One sensitive candidate was excluded."
+      }
+    ],
+    "redaction": {
+      "metadataOnlyCount": 0,
+      "contentRedactedCount": 0,
+      "omittedCount": 2
+    },
+    "createdAt": "2026-08-02T12:03:00Z"
+  },
+  "createdAt": "2026-08-02T12:03:00Z",
+  "expiresAt": "2026-08-02T12:08:00Z",
+  "cloudRequired": false
+}

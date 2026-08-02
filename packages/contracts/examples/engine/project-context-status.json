@@ -1,0 +1,23 @@
+{
+  "protocolVersion": "2026-08-02",
+  "schemaVersion": 1,
+  "projectId": "project-demo-1",
+  "state": "ready",
+  "inventoryGeneration": 3,
+  "profileId": "profile-demo-1",
+  "builtAt": "2026-08-02T12:00:00Z",
+  "updatedAt": "2026-08-02T12:02:00Z",
+  "counts": {
+    "eligibleFiles": 18,
+    "indexedFiles": 15,
+    "omittedFiles": 3,
+    "chunks": 42,
+    "symbols": 27
+  },
+  "freshness": {
+    "status": "current",
+    "pendingChanges": 0
+  },
+  "cloudRequired": false,
+  "providerAccess": "direct"
+}

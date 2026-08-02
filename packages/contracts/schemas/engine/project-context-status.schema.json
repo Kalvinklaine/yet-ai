@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yet-ai.local/schemas/engine/project-context-status.schema.json",
+  "title": "ProjectContextStatus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "schemaVersion", "projectId", "state", "inventoryGeneration", "cloudRequired", "providerAccess"],
+  "properties": {
+    "protocolVersion": { "const": "2026-08-02" },
+    "schemaVersion": { "const": 1 },
+    "projectId": { "$ref": "#/$defs/id" },
+    "state": { "enum": ["not_built", "building", "ready", "stale", "unavailable", "migration_required"] },
+    "inventoryGeneration": { "type": "integer", "minimum": 0 },
+    "profileId": { "$ref": "#/$defs/id" },
+    "builtAt": { "$ref": "#/$defs/time" },
+    "updatedAt": { "$ref": "#/$defs/time" },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eligibleFiles", "indexedFiles", "omittedFiles", "chunks", "symbols"],
+      "properties": {
+        "eligibleFiles": { "$ref": "#/$defs/count" },
+        "indexedFiles": { "$ref": "#/$defs/count" },
+        "omittedFiles": { "$ref": "#/$defs/count" },
+        "chunks": { "$ref": "#/$defs/count" },
+        "symbols": { "$ref": "#/$defs/count" }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "pendingChanges"],
+      "properties": {
+        "status": { "enum": ["current", "stale", "unknown"] },
+        "pendingChanges": { "$ref": "#/$defs/count" }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "enum": ["unavailable", "migration_required", "corrupt_cache", "policy_blocked", "resource_limit"] },
+        "message": { "$ref": "#/$defs/safeText" }
+      }
+    },
+    "cloudRequired": { "const": false },
+    "providerAccess": { "const": "direct" }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "time": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "count": { "type": "integer", "minimum": 0, "maximum": 10000000 },
+    "safeText": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" }
+  }
+}

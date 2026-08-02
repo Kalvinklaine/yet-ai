@@ -39,6 +39,12 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `POST /v1/projects/{project_id}/rebind`
 - `POST /v1/projects/resolve-local-workspace` (trusted IDE host only)
 
+## Planned project context platform
+
+`../../docs/architecture/042-project-context-platform.md` and `../../docs/architecture/043-project-context-threat-model.md` freeze the future engine-owned project-context boundary. The planned engine responsibilities are one rebuildable SQLite context cache per project, safe inventory, deterministic profiling, FTS5 lexical-first retrieval, lightweight symbol provenance, bounded planning, inspectable `ContextManifest` creation, cache deletion, and later turn/continuation persistence. Project memory remains the separate implemented store of explicit user-authored notes.
+
+No project-context endpoint, index, profile, manifest planner, partial-response persistence, Continue flow, or watcher is currently implemented. Wave 0 schemas/examples are `fixture_demo` contract evidence only and the capability remains `unsupported`. Planned GUI-facing contracts use opaque project IDs and project-relative source refs; canonical roots remain private. `manual_only`, `balanced`, and `deep` change retrieval breadth only and never change secret, ignore, symlink, root, budget, tool, write, provider, or cross-project authority.
+
 ## Browser project isolation smoke
 
 `npm run smoke:browser-project-isolation` builds the real engine and GUI, registers isolated temporary projects through the CLI, starts the authenticated loopback runtime with isolated config/cache/home directories, and drives the engine-served GUI in Playwright. It covers safe project summaries, scoped chat/memory/progress APIs, generic cross-project not-found responses, independent tabs and refreshed routes, stale SSE retirement after project navigation, archive/restore persistence, explicit hub and blocked-route reconnect with identity preservation, and separate legacy compatibility storage. The smoke uses Demo Mode and generated credentials only; it makes no non-loopback request and requires no provider credentials, hosted account, or cloud service.
