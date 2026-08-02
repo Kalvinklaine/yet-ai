@@ -2,7 +2,7 @@
   "protocolVersion": "2026-08-02",
   "schemaVersion": 1,
   "planId": "plan-demo-1",
-  "projectId": "project-demo-1",
+  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
   "mode": "balanced",
   "queryLabel": "Locate local runtime ownership",
   "status": "ready",
@@ -10,7 +10,7 @@
     "protocolVersion": "2026-08-02",
     "schemaVersion": 1,
     "manifestId": "manifest-demo-1",
-    "projectId": "project-demo-1",
+    "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
     "profileId": "profile-demo-1",
     "planId": "plan-demo-1",
     "mode": "balanced",
@@ -28,39 +28,7 @@
       "usedEstimatedTokens": 1200,
       "truncated": false
     },
-    "entries": [
-      {
-        "sourceRef": "README.md",
-        "range": {
-          "start": {
-            "line": 0,
-            "character": 0
-          },
-          "end": {
-            "line": 24,
-            "character": 0
-          }
-        },
-        "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "inclusionReason": "profile_candidate",
-        "provenance": "profile",
-        "redaction": "none",
-        "byteCount": 2100,
-        "estimatedTokens": 525,
-        "rank": 1
-      },
-      {
-        "sourceRef": "apps/engine/src/lib.rs",
-        "symbol": "Runtime",
-        "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        "inclusionReason": "symbol_match",
-        "provenance": "symbol",
-        "redaction": "none",
-        "byteCount": 2700,
-        "estimatedTokens": 675,
-        "rank": 2
-      }
-    ],
+    "entries": [],
     "omissions": [
       {
         "sourceRef": "build/output.txt",

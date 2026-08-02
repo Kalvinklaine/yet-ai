@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yet-ai.local/schemas/engine/project-context-cache-delete-response.schema.json",
+  "title": "ProjectContextCacheDeleteResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "schemaVersion", "projectId", "deleted", "state", "inventoryGeneration", "durableTurnEvidenceRetained", "cloudRequired"],
+  "properties": {
+    "protocolVersion": { "const": "2026-08-02" },
+    "schemaVersion": { "const": 1 },
+    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" },
+    "deleted": { "type": "boolean" },
+    "state": { "const": "not_built" },
+    "inventoryGeneration": { "const": 0 },
+    "durableTurnEvidenceRetained": { "const": true },
+    "cloudRequired": { "const": false }
+  }
+}

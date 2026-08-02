@@ -1,0 +1,16 @@
+{
+  "protocolVersion": "2026-08-02",
+  "schemaVersion": 1,
+  "manifestId": "manifest-invalid-1",
+  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
+  "profileId": "profile-demo-1",
+  "mode": "balanced",
+  "inventoryGeneration": 3,
+  "queryHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "rankingVersion": "lexical-v1",
+  "budget": { "maxFiles": 1, "maxChunks": 1, "maxBytes": 1000, "maxEstimatedTokens": 250, "usedFiles": 1, "usedChunks": 1, "usedBytes": 100, "usedEstimatedTokens": 25, "truncated": false },
+  "entries": [{ "kind": "file_chunk", "sourceRef": "README.md", "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "inclusionReason": "lexical_match", "provenance": "lexical", "redaction": "none", "byteCount": 100, "estimatedTokens": 25, "rank": 1 }],
+  "omissions": [],
+  "redaction": { "metadataOnlyCount": 0, "contentRedactedCount": 0, "omittedCount": 0 },
+  "createdAt": "2026-08-02T12:03:00Z"
+}

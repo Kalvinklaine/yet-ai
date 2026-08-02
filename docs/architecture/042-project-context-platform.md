@@ -20,7 +20,9 @@ The engine owns inventory policy, local reads, hashing, chunking, SQLite migrati
 
 Each registered `projectId` has one context-cache SQLite database in its engine cache namespace. The database is resolved from immutable request-scoped project context and is never selected by a client path. A connection opened for one project cannot query or attach another project's database. SQL `ATTACH` is forbidden in this subsystem. Tests must prove two-project isolation.
 
-The database is rebuildable derived state. Deleting context cache closes handles and removes the database plus its SQLite sidecars and context-owned temporary files. It does not delete the project registration, chats, project-memory notes, provider state, or source files. The next status is `not_built`; a later explicit rebuild recreates the cache. Project hard deletion, if separately approved, must delete the entire project context cache. Archive does not imply deletion.
+The cache namespace owns only rebuildable inventory facts, profiles, chunks, lexical/symbol indexes, ranking metadata, and ephemeral plans. Deleting context cache closes handles and removes that database, its SQLite sidecars, and context-owned temporary files. The next cache status is `not_built`; a later explicit rebuild recreates it.
+
+Immutable effective manifests, turn-to-manifest links, generation lineage, continuation prefix hashes, and persisted partial assistant text are durable chat/turn evidence. They belong in the engine's per-project config storage, not the cache database, and survive context-cache deletion and rebuild. Their retention and deletion follow the owning chat/turn policy: deleting a chat removes its turn evidence; deleting one cache never does. Project hard deletion, if separately approved, must independently remove both the rebuildable cache namespace and all durable project config records. Archive removes neither. Cache deletion does not delete project registration, chats, turn evidence, project-memory notes, provider state, source files, or provider-side data.
 
 ### Safe inventory policy
 
@@ -64,7 +66,7 @@ No mode grants filesystem mutation, shell, git, tool, provider-tool, background 
 - protocol and schema versions, `manifestId`, opaque `projectId`, `profileId`, optional `planId`, mode, creation time, and inventory generation;
 - query and ranking hashes rather than hidden raw planner state;
 - explicit hard budget, used budget, and truncation state;
-- ordered entries with project-relative source ref, optional bounded range/symbol, content hash, inclusion reason, provenance, redaction state, byte/token estimates, and effective rank;
+- ordered discriminated entries: `file_chunk` uses a project-relative source ref and range; `active_editor` uses an opaque editor snapshot ID plus project-relative source ref and range; `memory_note` uses only an opaque memory-note ID; `verification_output` uses an opaque result ID plus allowlisted command ID; and `continuation_prefix` uses opaque assistant-message/generation IDs plus the prefix hash. Every kind carries its required exact-content hash or prefix hash, inclusion reason, provenance, redaction state, byte/token estimates, and effective rank;
 - ordered omissions with project-relative source ref when safe, omission reason, provenance, and bounded safe detail;
 - aggregate redaction and omission counts.
 
@@ -78,9 +80,9 @@ All routes below are planned and currently unsupported. They will be authenticat
 | --- | --- | --- |
 | `GET /context/status` | none | `ContextStatus`: state, schema/generation, bounded counts, freshness and safe error category |
 | `GET /context/profile` | none | `ProjectContextProfile`; `not_found` until built |
-| `POST /context/rebuild` | `{ "mode": "full" | "incremental" }` | accepted operation metadata; no raw path or file list |
-| `DELETE /context/cache` | none | deletion result and resulting `not_built` state |
-| `POST /context/plan` | query, retrieval mode, bounded budget, optional explicit relative refs | `ContextPlan` plus complete preview `ContextManifest` |
+| `POST /context/rebuild` | strict `ProjectContextRebuildRequest`: mode plus expected inventory generation and project revision | `ProjectContextRebuildResponse`: accepted operation metadata; no raw path or file list |
+| `DELETE /context/cache` | none | `ProjectContextCacheDeleteResponse`: deletion result, resulting `not_built` state, and explicit durable-turn-evidence retention |
+| `POST /context/plan` | strict `ContextPlanRequest`: query, retrieval mode, hard budget, explicit relative refs, expected inventory generation, and project revision | `ContextPlan` plus complete preview `ContextManifest` |
 
 Rebuild and delete require explicit user or trusted-host initiation in the first implementation. Watcher-triggered incremental refresh is a later wave and must preserve the same policy. Status errors use sanitized categories such as `unavailable`, `migration_required`, `corrupt_cache`, `policy_blocked`, or `resource_limit`; parser, SQL, OS, and path details remain private.
 

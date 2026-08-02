@@ -9,48 +9,25 @@
     "protocolVersion": { "const": "2026-08-02" },
     "schemaVersion": { "const": 1 },
     "manifestId": { "$ref": "#/$defs/id" },
-    "projectId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/projectId" },
     "profileId": { "$ref": "#/$defs/id" },
     "planId": { "$ref": "#/$defs/id" },
     "mode": { "$ref": "#/$defs/mode" },
     "inventoryGeneration": { "type": "integer", "minimum": 1 },
     "queryHash": { "$ref": "#/$defs/hash" },
     "rankingVersion": { "type": "string", "const": "lexical-v1" },
-    "budget": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["maxFiles", "maxChunks", "maxBytes", "maxEstimatedTokens", "usedFiles", "usedChunks", "usedBytes", "usedEstimatedTokens", "truncated"],
-      "properties": {
-        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 64 },
-        "maxChunks": { "type": "integer", "minimum": 1, "maximum": 256 },
-        "maxBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
-        "maxEstimatedTokens": { "type": "integer", "minimum": 1, "maximum": 200000 },
-        "usedFiles": { "type": "integer", "minimum": 0, "maximum": 64 },
-        "usedChunks": { "type": "integer", "minimum": 0, "maximum": 256 },
-        "usedBytes": { "type": "integer", "minimum": 0, "maximum": 1048576 },
-        "usedEstimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
-        "truncated": { "type": "boolean" }
-      }
-    },
+    "budget": { "$ref": "#/$defs/effectiveBudget" },
     "entries": {
       "type": "array",
       "maxItems": 256,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["sourceRef", "contentHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
-        "properties": {
-          "sourceRef": { "$ref": "#/$defs/path" },
-          "range": { "$ref": "#/$defs/range" },
-          "symbol": { "$ref": "#/$defs/text" },
-          "contentHash": { "$ref": "#/$defs/hash" },
-          "inclusionReason": { "enum": ["profile_candidate", "lexical_match", "symbol_match", "path_match", "explicit_user_selection", "continuity_context"] },
-          "provenance": { "$ref": "#/$defs/provenance" },
-          "redaction": { "enum": ["none", "metadata_only", "content_redacted"] },
-          "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
-          "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
-          "rank": { "type": "integer", "minimum": 1, "maximum": 256 }
-        }
+        "oneOf": [
+          { "$ref": "#/$defs/fileChunkEntry" },
+          { "$ref": "#/$defs/activeEditorEntry" },
+          { "$ref": "#/$defs/memoryNoteEntry" },
+          { "$ref": "#/$defs/verificationOutputEntry" },
+          { "$ref": "#/$defs/continuationPrefixEntry" }
+        ]
       }
     },
     "omissions": {
@@ -73,31 +50,144 @@
       "additionalProperties": false,
       "required": ["metadataOnlyCount", "contentRedactedCount", "omittedCount"],
       "properties": {
-        "metadataOnlyCount": { "type": "integer", "minimum": 0, "maximum": 10000000 },
-        "contentRedactedCount": { "type": "integer", "minimum": 0, "maximum": 10000000 },
-        "omittedCount": { "type": "integer", "minimum": 0, "maximum": 10000000 }
+        "metadataOnlyCount": { "$ref": "#/$defs/count" },
+        "contentRedactedCount": { "$ref": "#/$defs/count" },
+        "omittedCount": { "$ref": "#/$defs/count" }
       }
     },
-    "createdAt": { "type": "string", "format": "date-time", "pattern": "Z$" }
+    "createdAt": { "$ref": "#/$defs/time" }
   },
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" },
     "mode": { "enum": ["manual_only", "balanced", "deep"] },
     "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
     "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!~)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*://)[^\\u0000-\\u001F\\u007F]+$" },
     "text": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" },
     "provenance": { "enum": ["inventory", "profile", "lexical", "symbol", "explicit_user", "continuation"] },
+    "inclusionReason": { "enum": ["profile_candidate", "lexical_match", "symbol_match", "path_match", "explicit_user_selection", "continuity_context"] },
+    "redactionState": { "enum": ["none", "metadata_only", "content_redacted"] },
+    "count": { "type": "integer", "minimum": 0, "maximum": 10000000 },
+    "time": { "type": "string", "format": "date-time", "pattern": "Z$" },
     "position": {
       "type": "object",
       "additionalProperties": false,
       "required": ["line", "character"],
-      "properties": { "line": { "type": "integer", "minimum": 0, "maximum": 10000000 }, "character": { "type": "integer", "minimum": 0, "maximum": 1000000 } }
+      "properties": {
+        "line": { "type": "integer", "minimum": 0, "maximum": 10000000 },
+        "character": { "type": "integer", "minimum": 0, "maximum": 1000000 }
+      }
     },
     "range": {
       "type": "object",
       "additionalProperties": false,
       "required": ["start", "end"],
-      "properties": { "start": { "$ref": "#/$defs/position" }, "end": { "$ref": "#/$defs/position" } }
+      "properties": {
+        "start": { "$ref": "#/$defs/position" },
+        "end": { "$ref": "#/$defs/position" }
+      }
+    },
+    "effectiveBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxFiles", "maxChunks", "maxBytes", "maxEstimatedTokens", "usedFiles", "usedChunks", "usedBytes", "usedEstimatedTokens", "truncated"],
+      "properties": {
+        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "maxChunks": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "maxBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "maxEstimatedTokens": { "type": "integer", "minimum": 1, "maximum": 200000 },
+        "usedFiles": { "type": "integer", "minimum": 0, "maximum": 64 },
+        "usedChunks": { "type": "integer", "minimum": 0, "maximum": 256 },
+        "usedBytes": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "usedEstimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "fileChunkEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "sourceRef", "range", "contentHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
+      "properties": {
+        "kind": { "const": "file_chunk" },
+        "sourceRef": { "$ref": "#/$defs/path" },
+        "range": { "$ref": "#/$defs/range" },
+        "symbol": { "$ref": "#/$defs/text" },
+        "contentHash": { "$ref": "#/$defs/hash" },
+        "inclusionReason": { "$ref": "#/$defs/inclusionReason" },
+        "provenance": { "enum": ["inventory", "profile", "lexical", "symbol", "explicit_user"] },
+        "redaction": { "$ref": "#/$defs/redactionState" },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 256 }
+      }
+    },
+    "activeEditorEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "editorSnapshotId", "sourceRef", "range", "contentHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
+      "properties": {
+        "kind": { "const": "active_editor" },
+        "editorSnapshotId": { "$ref": "#/$defs/id" },
+        "sourceRef": { "$ref": "#/$defs/path" },
+        "range": { "$ref": "#/$defs/range" },
+        "contentHash": { "$ref": "#/$defs/hash" },
+        "inclusionReason": { "const": "explicit_user_selection" },
+        "provenance": { "const": "explicit_user" },
+        "redaction": { "$ref": "#/$defs/redactionState" },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 256 }
+      }
+    },
+    "memoryNoteEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "memoryNoteId", "contentHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
+      "properties": {
+        "kind": { "const": "memory_note" },
+        "memoryNoteId": { "$ref": "#/$defs/id" },
+        "contentHash": { "$ref": "#/$defs/hash" },
+        "inclusionReason": { "const": "explicit_user_selection" },
+        "provenance": { "const": "explicit_user" },
+        "redaction": { "$ref": "#/$defs/redactionState" },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 256 }
+      }
+    },
+    "verificationOutputEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "verificationResultId", "commandId", "contentHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
+      "properties": {
+        "kind": { "const": "verification_output" },
+        "verificationResultId": { "$ref": "#/$defs/id" },
+        "commandId": { "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"] },
+        "contentHash": { "$ref": "#/$defs/hash" },
+        "inclusionReason": { "const": "explicit_user_selection" },
+        "provenance": { "const": "explicit_user" },
+        "redaction": { "$ref": "#/$defs/redactionState" },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 256 }
+      }
+    },
+    "continuationPrefixEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "assistantMessageId", "generationId", "contentPrefixHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
+      "properties": {
+        "kind": { "const": "continuation_prefix" },
+        "assistantMessageId": { "$ref": "#/$defs/id" },
+        "generationId": { "$ref": "#/$defs/id" },
+        "contentPrefixHash": { "$ref": "#/$defs/hash" },
+        "inclusionReason": { "const": "continuity_context" },
+        "provenance": { "const": "continuation" },
+        "redaction": { "$ref": "#/$defs/redactionState" },
+        "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 },
+        "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 },
+        "rank": { "type": "integer", "minimum": 1, "maximum": 256 }
+      }
     }
   }
 }

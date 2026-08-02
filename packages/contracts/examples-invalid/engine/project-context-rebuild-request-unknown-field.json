@@ -1,0 +1,6 @@
+{
+  "mode": "full",
+  "expectedInventoryGeneration": 3,
+  "expectedProjectRevision": "4",
+  "root": "private-root"
+}

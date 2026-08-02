@@ -14,6 +14,10 @@ const mappings = [
   ["packages/contracts/examples/engine/project-context-profile.json", "packages/contracts/schemas/engine/project-context-profile.schema.json"],
   ["packages/contracts/examples/engine/project-context-manifest.json", "packages/contracts/schemas/engine/project-context-manifest.schema.json"],
   ["packages/contracts/examples/engine/project-context-plan.json", "packages/contracts/schemas/engine/project-context-plan.schema.json"],
+  ["packages/contracts/examples/engine/project-context-plan-request.json", "packages/contracts/schemas/engine/project-context-plan-request.schema.json"],
+  ["packages/contracts/examples/engine/project-context-rebuild-request.json", "packages/contracts/schemas/engine/project-context-rebuild-request.schema.json"],
+  ["packages/contracts/examples/engine/project-context-rebuild-response.json", "packages/contracts/schemas/engine/project-context-rebuild-response.schema.json"],
+  ["packages/contracts/examples/engine/project-context-cache-delete-response.json", "packages/contracts/schemas/engine/project-context-cache-delete-response.schema.json"],
   ["packages/contracts/examples/engine/ping-response.json", "packages/contracts/schemas/engine/ping.schema.json"],
   ["packages/contracts/examples/engine/caps-response.json", "packages/contracts/schemas/engine/caps.schema.json"],
   ["packages/contracts/examples/engine/caps-response-v2-demo-local.json", "packages/contracts/schemas/engine/caps.schema.json"],
@@ -395,6 +399,18 @@ const mappings = [
 ].map(([examplePath, schemaPath]) => [normalizeContractPath(examplePath), normalizeContractPath(schemaPath)]);
 
 const invalidMappings = [
+  ...[
+    ["project-context-plan-request-unsafe-ref.json", "project-context-plan-request.schema.json"],
+    ["project-context-rebuild-request-unknown-field.json", "project-context-rebuild-request.schema.json"],
+    ["project-context-manifest-file-chunk-missing-range.json", "project-context-manifest.schema.json"],
+    ["project-context-manifest-active-editor-missing-snapshot.json", "project-context-manifest.schema.json"],
+    ["project-context-manifest-memory-note-path-ref.json", "project-context-manifest.schema.json"],
+    ["project-context-manifest-verification-output-command.json", "project-context-manifest.schema.json"],
+    ["project-context-manifest-continuation-prefix-missing-hash.json", "project-context-manifest.schema.json"]
+  ].map(([fileName, schemaName]) => [
+    `packages/contracts/examples-invalid/engine/${fileName}`,
+    `packages/contracts/schemas/engine/${schemaName}`
+  ]),
   ...[
     ["project-summary-private-root.json", "project-summary.schema.json"],
     ["project-summary-missing-revision.json", "project-summary.schema.json"],

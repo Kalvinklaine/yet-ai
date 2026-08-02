@@ -14,11 +14,12 @@ Trust boundaries are:
 
 1. registered root and local filesystem into engine inventory;
 2. engine-private canonical paths into project-relative public references;
-3. source bytes into the rebuildable per-project SQLite cache;
+3. source bytes into the rebuildable per-project SQLite cache under cache storage;
 4. cached facts into retrieval and planning;
 5. manifest preview into user-approved chat dispatch;
-6. effective manifest content into the configured provider or local runtime;
-7. engine responses into GUI and IDE hosts.
+6. immutable effective manifests, turn links, generation lineage, continuation hashes, and partial text into durable per-project config storage;
+7. effective manifest content into the configured provider or local runtime;
+8. engine responses into GUI and IDE hosts.
 
 The local filesystem and indexed text are untrusted input. GUI and IDE clients are not authorities for roots, policy, hashes, cache selection, or manifest contents. Configured providers are external recipients unless they are local runtimes.
 
@@ -29,6 +30,7 @@ The local filesystem and indexed text are untrusted input. GUI and IDE clients a
 - Symlinks are not followed, ignored and secret-like files are not indexed, and policy is identical across retrieval modes.
 - Context sent to a provider is a subset of an effective visible manifest and uses bytes matching its recorded hashes.
 - Cache data is derived, bounded, locally deletable, and never grants authority to source files.
+- Durable turn evidence is config-owned and cannot be erased by cache deletion or rebuild; chat deletion and separately approved project hard deletion own its removal.
 - Project memory remains explicit notes and cannot silently enter automatic retrieval.
 - Failure is closed and sanitized; it does not broaden scope or leak parser, SQL, OS, path, or content details.
 
@@ -50,7 +52,7 @@ The local filesystem and indexed text are untrusted input. GUI and IDE clients a
 | Manifest spoofing | Client submits entries, hashes, roots, or inflated authority | Engine mints IDs and effective manifests; client submits only strict plan inputs or a plan ID; re-resolve project and revalidate plan at dispatch | HTTP schema negatives and stale/foreign plan tests |
 | Hidden provider disclosure | Auto context is sent without clear preview or differs from preview | Complete preview manifest; explicit Send remains required; effective manifest persisted; visible delta if plan changes; configured provider is named elsewhere by existing chat readiness | Routed preview-to-captured-request smoke |
 | Memory/index confusion | User notes are silently indexed or automatic retrieval is described as memory | Separate storage, schemas, provenance, deletion, and UI labels; notes enter only through explicit selection | Cross-store deletion and attachment tests |
-| Deletion ambiguity | Cache delete is mistaken for source, note, chat, provider, backup, or provider-side deletion | Narrow endpoint semantics, post-delete `not_built`, explicit exclusions, sidecar cleanup, no source mutation | Deletion tests and GUI copy review |
+| Deletion ambiguity | Cache delete is mistaken for source, durable turn evidence, note, chat, provider, backup, or provider-side deletion | Separate cache/config ownership, post-delete `not_built`, response confirms durable evidence retention, explicit exclusions, sidecar cleanup, no source mutation | Cross-store deletion tests and GUI copy review |
 
 ## Prompt-injection handling
 

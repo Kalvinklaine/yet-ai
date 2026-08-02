@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yet-ai.local/schemas/engine/project-context-rebuild-response.schema.json",
+  "title": "ProjectContextRebuildResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocolVersion", "schemaVersion", "operationId", "projectId", "mode", "status", "expectedInventoryGeneration", "expectedProjectRevision", "cloudRequired"],
+  "properties": {
+    "protocolVersion": { "const": "2026-08-02" },
+    "schemaVersion": { "const": 1 },
+    "operationId": { "$ref": "#/$defs/id" },
+    "projectId": { "$ref": "#/$defs/projectId" },
+    "mode": { "enum": ["full", "incremental"] },
+    "status": { "const": "accepted" },
+    "expectedInventoryGeneration": { "type": "integer", "minimum": 0 },
+    "expectedProjectRevision": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "cloudRequired": { "const": false }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" }
+  }
+}

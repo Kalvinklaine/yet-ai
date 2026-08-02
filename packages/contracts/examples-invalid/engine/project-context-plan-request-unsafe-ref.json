@@ -1,0 +1,8 @@
+{
+  "query": "Locate runtime ownership",
+  "mode": "balanced",
+  "budget": { "maxFiles": 12, "maxChunks": 32, "maxBytes": 131072, "maxEstimatedTokens": 24000 },
+  "explicitRefs": ["../private.txt"],
+  "expectedInventoryGeneration": 3,
+  "expectedProjectRevision": "4"
+}

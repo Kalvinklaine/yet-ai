@@ -1,0 +1,11 @@
+{
+  "protocolVersion": "2026-08-02",
+  "schemaVersion": 1,
+  "operationId": "context-rebuild-1",
+  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
+  "mode": "incremental",
+  "status": "accepted",
+  "expectedInventoryGeneration": 3,
+  "expectedProjectRevision": "4",
+  "cloudRequired": false
+}

@@ -2,7 +2,7 @@
   "protocolVersion": "2026-08-02",
   "schemaVersion": 1,
   "manifestId": "manifest-demo-1",
-  "projectId": "project-demo-1",
+  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
   "profileId": "profile-demo-1",
   "planId": "plan-demo-1",
   "mode": "balanced",
@@ -15,24 +15,16 @@
     "maxBytes": 131072,
     "maxEstimatedTokens": 24000,
     "usedFiles": 2,
-    "usedChunks": 3,
-    "usedBytes": 4800,
-    "usedEstimatedTokens": 1200,
+    "usedChunks": 5,
+    "usedBytes": 5900,
+    "usedEstimatedTokens": 1475,
     "truncated": false
   },
   "entries": [
     {
+      "kind": "file_chunk",
       "sourceRef": "README.md",
-      "range": {
-        "start": {
-          "line": 0,
-          "character": 0
-        },
-        "end": {
-          "line": 24,
-          "character": 0
-        }
-      },
+      "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 24, "character": 0 } },
       "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "inclusionReason": "profile_candidate",
       "provenance": "profile",
@@ -42,34 +34,57 @@
       "rank": 1
     },
     {
+      "kind": "active_editor",
+      "editorSnapshotId": "editor-snapshot-1",
       "sourceRef": "apps/engine/src/lib.rs",
-      "symbol": "Runtime",
-      "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "inclusionReason": "symbol_match",
-      "provenance": "symbol",
+      "range": { "start": { "line": 10, "character": 0 }, "end": { "line": 22, "character": 0 } },
+      "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "inclusionReason": "explicit_user_selection",
+      "provenance": "explicit_user",
       "redaction": "none",
-      "byteCount": 2700,
-      "estimatedTokens": 675,
+      "byteCount": 1200,
+      "estimatedTokens": 300,
       "rank": 2
+    },
+    {
+      "kind": "memory_note",
+      "memoryNoteId": "memory-note-1",
+      "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "inclusionReason": "explicit_user_selection",
+      "provenance": "explicit_user",
+      "redaction": "none",
+      "byteCount": 400,
+      "estimatedTokens": 100,
+      "rank": 3
+    },
+    {
+      "kind": "verification_output",
+      "verificationResultId": "verification-result-1",
+      "commandId": "repository-check",
+      "contentHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "inclusionReason": "explicit_user_selection",
+      "provenance": "explicit_user",
+      "redaction": "none",
+      "byteCount": 800,
+      "estimatedTokens": 200,
+      "rank": 4
+    },
+    {
+      "kind": "continuation_prefix",
+      "assistantMessageId": "assistant-message-1",
+      "generationId": "generation-1",
+      "contentPrefixHash": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "inclusionReason": "continuity_context",
+      "provenance": "continuation",
+      "redaction": "none",
+      "byteCount": 1400,
+      "estimatedTokens": 350,
+      "rank": 5
     }
   ],
   "omissions": [
-    {
-      "sourceRef": "build/output.txt",
-      "reason": "generated",
-      "provenance": "inventory",
-      "detail": "Generated output is excluded."
-    },
-    {
-      "reason": "secret_like",
-      "provenance": "inventory",
-      "detail": "One sensitive candidate was excluded."
-    }
+    { "sourceRef": "build/output.txt", "reason": "generated", "provenance": "inventory", "detail": "Generated output is excluded." }
   ],
-  "redaction": {
-    "metadataOnlyCount": 0,
-    "contentRedactedCount": 0,
-    "omittedCount": 2
-  },
+  "redaction": { "metadataOnlyCount": 0, "contentRedactedCount": 0, "omittedCount": 1 },
   "createdAt": "2026-08-02T12:03:00Z"
 }

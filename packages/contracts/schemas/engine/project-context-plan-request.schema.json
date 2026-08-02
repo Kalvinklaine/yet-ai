@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yet-ai.local/schemas/engine/project-context-plan-request.schema.json",
+  "title": "ContextPlanRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["query", "mode", "budget", "explicitRefs", "expectedInventoryGeneration", "expectedProjectRevision"],
+  "properties": {
+    "query": { "$ref": "#/$defs/query" },
+    "mode": { "enum": ["manual_only", "balanced", "deep"] },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxFiles", "maxChunks", "maxBytes", "maxEstimatedTokens"],
+      "properties": {
+        "maxFiles": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "maxChunks": { "type": "integer", "minimum": 1, "maximum": 256 },
+        "maxBytes": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+        "maxEstimatedTokens": { "type": "integer", "minimum": 1, "maximum": 200000 }
+      }
+    },
+    "explicitRefs": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/path" }
+    },
+    "expectedInventoryGeneration": { "type": "integer", "minimum": 0 },
+    "expectedProjectRevision": { "$ref": "#/$defs/revision" }
+  },
+  "$defs": {
+    "query": { "type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!~)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*://)[^\\u0000-\\u001F\\u007F]+$" },
+    "revision": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" }
+  }
+}
