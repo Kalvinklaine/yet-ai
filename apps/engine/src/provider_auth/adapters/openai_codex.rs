@@ -107,21 +107,6 @@ impl OpenAiCodexOAuthAdapter {
         ))
     }
 
-    async fn discover_model(
-        &self,
-        session: &CodexOAuthSession,
-        access_token: &str,
-        account_id: &str,
-    ) -> Result<String, ProviderAuthError> {
-        crate::provider_auth::discover_codex_model(
-            &session.chat_base_url,
-            access_token,
-            account_id,
-            &session.session_id,
-        )
-        .await
-    }
-
     async fn store_connection(
         &self,
         token: &crate::provider_auth::types::CodexTokenResponse,
@@ -169,20 +154,7 @@ impl OpenAiCodexOAuthAdapter {
         token: crate::provider_auth::types::CodexTokenResponse,
     ) -> Result<ProviderAuthResponse, ProviderAuthError> {
         let account_id = crate::provider_auth::extract_codex_account_id(&token)?;
-        let chat_model = match self
-            .discover_model(&session, &token.access_token, &account_id)
-            .await
-        {
-            Ok(model) => model,
-            Err(ProviderAuthError::TokenExchange(
-                CodexTokenExchangeCategory::ModelDiscoveryFallback,
-                _,
-            )) => {
-                crate::provider_auth::validate_codex_chat_model(&session.chat_model)?;
-                session.chat_model.clone()
-            }
-            Err(error) => return Err(error),
-        };
+        crate::provider_auth::validate_codex_chat_model(crate::provider_auth::CODEX_CHAT_MODEL)?;
         let scopes =
             crate::provider_auth::codex_token_scopes(token.scope.as_deref(), &session.scopes)?;
         let expires_at =
@@ -197,9 +169,9 @@ impl OpenAiCodexOAuthAdapter {
             redacted: crate::secret_store::redact_secret(&token.access_token),
             chatgpt_account_id: account_id,
             chat_base_url: session.chat_base_url,
-            chat_model,
+            chat_model: crate::provider_auth::CODEX_CHAT_MODEL.to_string(),
             token_endpoint_url: session.token_endpoint_url,
-            discovery_session_id: Some(session.session_id.clone()),
+            discovery_session_id: None,
         };
         self.store_connection(&token, &metadata).await?;
         self.clear_pending_after_success(state, session_id).await?;
