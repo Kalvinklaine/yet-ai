@@ -2162,6 +2162,7 @@ const PROVIDER_STREAM_LINE_BUFFER_LIMIT: usize = 16 * 1024;
 const PROVIDER_STREAM_EVENT_DATA_LINE_LIMIT: usize = 256;
 const PROVIDER_RESPONSE_START_TIMEOUT: Duration = Duration::from_secs(30);
 const PROVIDER_STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+const PROVIDER_ERROR_BODY_CLASSIFICATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 async fn send_provider_stream_request(
     request: reqwest::RequestBuilder,
@@ -2202,16 +2203,21 @@ async fn classify_provider_http_error(response: reqwest::Response) -> ChatError 
 }
 
 async fn bounded_provider_error_body(response: reqwest::Response) -> Result<Vec<u8>, ChatError> {
-    let mut stream = response.bytes_stream();
-    let mut body = Vec::new();
-    while body.len() < PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT {
-        let Some(chunk) = next_provider_stream_chunk(&mut stream).await? else {
-            break;
-        };
-        let remaining = PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT - body.len();
-        body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
-    }
-    Ok(body)
+    let read = async move {
+        let mut stream = response.bytes_stream();
+        let mut body = Vec::new();
+        while body.len() < PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT {
+            let Some(chunk) = next_provider_stream_chunk(&mut stream).await? else {
+                break;
+            };
+            let remaining = PROVIDER_ERROR_BODY_CLASSIFICATION_LIMIT - body.len();
+            body.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+        }
+        Ok(body)
+    };
+    tokio::time::timeout(PROVIDER_ERROR_BODY_CLASSIFICATION_TIMEOUT, read)
+        .await
+        .map_err(|_| ChatError::Timeout)?
 }
 
 fn classify_provider_error(status: reqwest::StatusCode, body: &[u8]) -> ChatError {
