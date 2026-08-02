@@ -49,13 +49,27 @@ try {
   await page.waitForURL(new RegExp(`/p/${projectId}/?$`));
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page.waitForURL(/\/settings$/);
-  await page.getByRole("tab", { name: /^Setup/ }).click();
-  const demoToggle = page.locator("button").filter({ hasText: "Try Demo Mode" }).first();
-  await demoToggle.waitFor({ state: "attached" });
-  await demoToggle.evaluate((button) => button.click());
-  await page.getByRole("tab", { name: /^Chat/ }).click();
-  await page.locator(".chat-lifecycle-state").filter({ hasText: "Demo Mode ready — local canned responses" }).waitFor({ state: "visible" });
-  await page.goBack();
+  await page.getByTestId("settings-page").waitFor({ state: "visible" });
+  await page.getByRole("heading", { name: "Settings", exact: true }).waitFor({ state: "visible" });
+  assert(await page.locator(".chat-workbench").count() === 0, "Settings mounted a chat workbench.");
+  assert(await page.getByTestId("chat-composer").count() === 0, "Settings mounted a chat composer.");
+  assert(await page.getByRole("region", { name: "Current chat thread", exact: true }).count() === 0, "Settings mounted a current chat thread.");
+  assert(await page.getByRole("complementary", { name: "Local conversations drawer", exact: true }).count() === 0, "Settings mounted a conversations drawer.");
+  assert(await page.getByRole("button", { name: "Send", exact: true }).count() === 0, "Settings mounted a Send action.");
+  assert(chats.size === 0, "Settings created a chat before project Chat navigation.");
+  assert(chatCommandCount === 0, "Settings sent a chat command before project Chat navigation.");
+
+  await page.getByRole("tab", { name: /^Providers & models/ }).click();
+  const providersPanel = page.getByRole("tabpanel", { name: "Providers & models" });
+  await providersPanel.getByRole("heading", { name: "Providers & models", exact: true }).waitFor({ state: "visible" });
+  await providersPanel.getByRole("button", { name: "Try Demo Mode", exact: true }).click();
+  await providersPanel.getByRole("button", { name: "Disable Demo Mode", exact: true }).waitFor({ state: "visible" });
+  await providersPanel.getByText("enabled", { exact: true }).first().waitFor({ state: "visible" });
+  await providersPanel.getByText("Yet AI Demo Mode", { exact: true }).first().waitFor({ state: "visible" });
+
+  await page.getByRole("button", { name: "Back to Projects", exact: true }).click();
+  await page.waitForURL(/\/projects$/);
+  await page.getByRole("link", { name: `Open project ${projectName}`, exact: true }).click();
   await page.waitForURL(new RegExp(`/p/${projectId}/?$`));
   await page.getByRole("navigation", { name: `${projectName} navigation` }).getByRole("link", { name: "Chat", exact: true }).click();
   await page.waitForURL(new RegExp(`/p/${projectId}/chat$`));
