@@ -12,7 +12,12 @@ const jetbrainsRoot = path.join(root, "apps", "plugins", "jetbrains");
 const distributionsDir = path.join(jetbrainsRoot, "build", "distributions");
 const archiveInspectMaxBuffer = 128 * 1024 * 1024;
 const spaRoute = "/settings";
-const requiredVisibleText = ["Yet AI", "Local runtime connection", "Provider setup", "Chat with Yet AI"];
+const settingsSections = [
+  { id: "runtime", name: "Runtime" },
+  { id: "providers", name: "Providers & models" },
+  { id: "account", name: "Account login" },
+  { id: "diagnostics", name: "Diagnostics" },
+];
 const failures = [];
 
 let chromium;
@@ -84,21 +89,7 @@ try {
     reportFailures();
   }
 
-  const setupTab = page.getByRole("tab", { name: /^Setup/ }).first();
-  const chatTab = page.getByRole("tab", { name: "Chat", exact: true }).first();
-  for (const text of requiredVisibleText) {
-    if (text === "Local runtime connection" || text === "Provider setup") {
-      await setupTab.click();
-      await page.locator("#workbench-panel-setup").waitFor({ state: "visible", timeout: 5000 });
-    } else if (text === "Chat with Yet AI") {
-      await chatTab.click();
-      await page.locator("#workbench-panel-chat").waitFor({ state: "visible", timeout: 5000 });
-    }
-    const visible = await page.getByText(text, { exact: true }).first().isVisible().catch(() => false);
-    if (!visible) {
-      failures.push(`Missing visible GUI text: ${text}`);
-    }
-  }
+  await assertDedicatedSettingsSurface(page);
 
   await assertBridgeDiagnostics(page);
 
@@ -323,62 +314,58 @@ function isJsOrCssAssetUrl(value) {
 }
 
 async function assertBridgeDiagnostics(page) {
-  const bridgeDebugDetails = page.getByTestId("bridge-debug-details");
-  const bridgeDebugCount = await bridgeDebugDetails.count();
-  if (bridgeDebugCount === 0) {
-    const debugSurfaceAttached = await page.locator("#workbench-tab-debug, #workbench-panel-debug").count() > 0;
-    if (debugSurfaceAttached) {
-      failures.push("Bridge diagnostics phase: the Debug surface is attached, but its diagnostic disclosure is absent.");
+  const diagnosticsTab = page.locator("#settings-diagnostics-tab");
+  await diagnosticsTab.click();
+  const diagnosticsPanel = page.locator("#settings-diagnostics");
+  const visible = await diagnosticsPanel.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+  if (!visible) {
+    failures.push("Settings diagnostics phase: the Diagnostics tab did not reveal #settings-diagnostics.");
+    return;
+  }
+  const diagnosticsText = await diagnosticsPanel.innerText();
+  for (const label of ["Runtime", "Models", "Providers", "Demo Mode", "Account login", "Host lifecycle"]) {
+    if (!diagnosticsText.includes(label)) failures.push(`Settings diagnostics phase: missing sanitized summary label ${label}.`);
+  }
+  if (!diagnosticsText.includes("Sanitized, read-only summaries only.")) {
+    failures.push("Settings diagnostics phase: missing the diagnostics privacy boundary.");
+  }
+}
+
+async function assertDedicatedSettingsSurface(page) {
+  await page.getByTestId("settings-page").waitFor({ state: "visible", timeout: 5000 });
+  await page.getByRole("heading", { name: "Settings", exact: true, level: 1 }).waitFor({ state: "visible", timeout: 5000 });
+
+  for (const text of ["Yet AI · global settings", "Credentials stay with the local engine.", "Settings and credentials stay on this device. Account login is optional and experimental."]) {
+    const visible = await page.getByText(text, { exact: false }).first().isVisible().catch(() => false);
+    if (!visible) failures.push(`Missing visible Settings identity/privacy text: ${text}`);
+  }
+
+  for (const section of settingsSections) {
+    const tab = page.locator(`#settings-${section.id}-tab`);
+    const roleTab = page.getByRole("tab", { name: section.name, exact: true });
+    await roleTab.waitFor({ state: "visible", timeout: 5000 });
+    if (await tab.count() !== 1) {
+      failures.push(`Settings section ${section.name} is missing stable tab id #settings-${section.id}-tab.`);
+      continue;
     }
-    return;
-  }
-  const bridgeDebugState = await bridgeDebugDetails.evaluate((details) => ({ open: details.open, text: details.textContent ?? "" })).catch(() => null);
-  if (!bridgeDebugState) {
-    failures.push("Bridge diagnostics phase: the attached diagnostic disclosure could not be inspected.");
-    return;
-  }
-  if (bridgeDebugState.open) {
-    failures.push("Bridge diagnostics disclosure should be collapsed by default.");
-  }
-  if (!/Diagnostics\s*\/\s*bridge debug/i.test(bridgeDebugState.text)) {
-    return;
-  }
-  if (/token|secret|authorization|cookie|raw prompt|provider response/i.test(bridgeDebugState.text)) {
-    failures.push("Bridge diagnostics disclosure contains sensitive wording while collapsed.");
+    await tab.click();
+    const panel = page.locator(`#settings-${section.id}`);
+    const panelVisible = await panel.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
+    if (!panelVisible) failures.push(`Settings section ${section.name} did not reveal #settings-${section.id}.`);
+    if (await panel.getAttribute("role") !== "tabpanel") failures.push(`Settings section ${section.name} is not exposed as a tabpanel.`);
+    if (await tab.getAttribute("aria-selected") !== "true") failures.push(`Settings section ${section.name} tab was not selected after activation.`);
   }
 
-  const debugTab = page.getByRole("tab", { name: /^Debug \/ Trace(?: error)?$/ }).first();
-  const debugTabVisible = await debugTab.isVisible().catch(() => false);
-  if (!debugTabVisible) {
-    failures.push("Bridge diagnostics phase: the diagnostic disclosure is attached but the Debug / Trace tab is not visible.");
-    return;
-  }
-  await debugTab.click();
-
-  const debugPanel = page.locator("#workbench-panel-debug");
-  const debugPanelVisible = await debugPanel.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
-  if (!debugPanelVisible) {
-    failures.push("Bridge diagnostics phase: the Debug / Trace tab did not reveal its tabpanel.");
-    return;
-  }
-
-  const bridgeDebugSummary = bridgeDebugDetails.locator(":scope > summary");
-  const bridgeDebugSummaryVisible = await bridgeDebugSummary.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
-  if (!bridgeDebugSummaryVisible) {
-    failures.push("Bridge diagnostics phase: the Debug / Trace tabpanel did not reveal the diagnostic disclosure summary.");
-    return;
-  }
-  await bridgeDebugSummary.click();
-  const openedBridgeDebugState = await bridgeDebugDetails.evaluate((details) => ({ open: details.open, text: details.textContent ?? "" })).catch(() => null);
-  if (!openedBridgeDebugState?.open) {
-    failures.push("Bridge diagnostics disclosure did not open.");
-    return;
-  }
-  if (!openedBridgeDebugState.text.includes("Inspect bridge message log") || !/No bridge messages logged|bridge messages/i.test(openedBridgeDebugState.text)) {
-    failures.push("Bridge diagnostics disclosure does not expose bridge diagnostic evidence.");
-  }
-  if (/token|secret|authorization|cookie|raw prompt|provider response/i.test(openedBridgeDebugState.text)) {
-    failures.push("Bridge diagnostics disclosure contains sensitive wording after opening.");
+  const forbiddenSurfaces = [
+    [page.locator(".chat-workbench"), "chat workbench"],
+    [page.locator('[data-testid="chat-composer"]'), "chat composer"],
+    [page.getByRole("region", { name: "Current chat thread", exact: true }), "current chat thread"],
+    [page.getByRole("complementary", { name: "Local conversations drawer", exact: true }), "conversations drawer"],
+    [page.getByRole("button", { name: "Send", exact: true }), "Send action"],
+    [page.getByRole("tab", { name: "Chat", exact: true }), "Chat tab"],
+  ];
+  for (const [locator, label] of forbiddenSurfaces) {
+    if (await locator.count() > 0) failures.push(`Dedicated Settings mounted a ${label}.`);
   }
 }
 
