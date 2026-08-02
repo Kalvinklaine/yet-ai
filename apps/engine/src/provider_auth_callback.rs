@@ -405,10 +405,10 @@ async fn registered_config_dir_for_state(
             }
             Ok(Some(direct_config_dir))
         } else {
-            provider_auth::resolve_codex_callback_config_dir(state_value, known_config_dirs).await
+            resolve_known_config_dir_for_state(state_value, known_config_dirs).await
         }
     } else {
-        provider_auth::resolve_codex_callback_config_dir(state_value, known_config_dirs).await
+        resolve_known_config_dir_for_state(state_value, known_config_dirs).await
     };
     match resolved {
         Ok(Some(config_dir)) => {
@@ -425,6 +425,50 @@ async fn registered_config_dir_for_state(
             Err(provider_auth::ProviderAuthError::SessionMismatch)
         }
         Err(error) => Err(error),
+    }
+}
+
+async fn resolve_known_config_dir_for_state(
+    state_value: &str,
+    mut config_dirs: Vec<PathBuf>,
+) -> Result<Option<PathBuf>, provider_auth::ProviderAuthError> {
+    config_dirs.sort();
+    config_dirs.dedup();
+    let mut matched = None;
+    let mut lookup_error = None;
+    let mut failed_config_dirs = Vec::new();
+    for config_dir in config_dirs {
+        match provider_auth::resolve_codex_callback_config_dir(
+            state_value,
+            std::iter::once(config_dir.clone()),
+        )
+        .await
+        {
+            Ok(Some(_)) if matched.is_some() => {
+                return Err(provider_auth::ProviderAuthError::SessionMismatch)
+            }
+            Ok(Some(config_dir)) => matched = Some(config_dir),
+            Ok(None) => {}
+            Err(error) => {
+                failed_config_dirs.push(config_dir);
+                lookup_error = Some(error);
+            }
+        }
+    }
+    match matched {
+        Some(config_dir) => {
+            forget_known_config_dirs(&failed_config_dirs);
+            Ok(Some(config_dir))
+        }
+        None => lookup_error.map_or(Ok(None), Err),
+    }
+}
+
+fn forget_known_config_dirs(config_dirs: &[PathBuf]) {
+    if let Ok(mut state) = CALLBACK_STATE.lock() {
+        for config_dir in config_dirs {
+            state.known_config_dirs.remove(config_dir);
+        }
     }
 }
 
@@ -994,6 +1038,35 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn callback_rehydrates_known_registry_despite_unrelated_corrupt_registry() {
+        let _guard = CALLBACK_TEST_LOCK.lock().await;
+        clear_all_registered_state_for_test();
+        let corrupt = callback_test_dir("a-corrupt-rehydrate");
+        let corrupt_registry = corrupt.join("provider-auth-sessions").join("openai.json");
+        std::fs::create_dir_all(corrupt_registry.parent().unwrap()).unwrap();
+        std::fs::write(corrupt_registry, r#"{"pending":[{"state":"broken""#).unwrap();
+        register_pending_state("unrelated-state", &corrupt).unwrap();
+        let dir = callback_test_dir("z-valid-rehydrate");
+        let token_endpoint_url = codex_token_endpoint(StatusCode::OK).await;
+        let start = start_codex_pending(&dir, &token_endpoint_url).await;
+        let state = reqwest::Url::parse(start.authorization_url.as_deref().unwrap())
+            .unwrap()
+            .query_pairs()
+            .find(|(key, _)| key == "state")
+            .unwrap()
+            .1
+            .into_owned();
+        clear_registered_states_for_test();
+
+        let (status, text) = callback_response(1455, "GET", &callback_query(&state)).await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(text, CALLBACK_SUCCESS_TEXT);
+        assert!(directly_registered_config_dir_for_test(&state).is_none());
+        assert!(!known_config_dir_for_test(&corrupt));
     }
 
     #[tokio::test]
