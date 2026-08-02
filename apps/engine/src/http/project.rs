@@ -392,6 +392,21 @@ pub(super) async fn agent_progress_event(
     }
 }
 
+pub(super) async fn project_context_status(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match crate::project_context::load_status(&context).await {
+        Ok(status) => Json(status).into_response(),
+        Err(error) => Json(crate::project_context::error_status(&context, error)).into_response(),
+    }
+}
+
 pub(super) async fn resolve_context(
     state: &AppState,
     project_id: &str,
@@ -500,6 +515,10 @@ fn invalid_project_json(rejection: JsonRejection) -> Response {
 
 pub(super) fn scoped_router() -> Router<AppState> {
     Router::new()
+        .route(
+            "/context/status",
+            axum::routing::get(project_context_status),
+        )
         .route(
             "/chats",
             axum::routing::get(super::project_chats_list).post(super::project_chats_create),

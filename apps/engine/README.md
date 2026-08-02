@@ -39,11 +39,11 @@ The Rust crate and binary are named `yet-lsp`. The runtime currently exposes:
 - `POST /v1/projects/{project_id}/rebind`
 - `POST /v1/projects/resolve-local-workspace` (trusted IDE host only)
 
-## Planned project context platform
+## Project context platform
 
 `../../docs/architecture/042-project-context-platform.md` and `../../docs/architecture/043-project-context-threat-model.md` freeze the future engine-owned project-context boundary. The planned engine responsibilities are one rebuildable SQLite context cache per project under cache storage, safe inventory, deterministic profiling, FTS5 lexical-first retrieval, lightweight symbol provenance, bounded planning, and inspectable `ContextManifest` creation. Immutable effective manifests, turn links, generation lineage, continuation hashes, and partial assistant text are separate durable per-project config records. Cache deletion never removes that turn evidence or the separate implemented project-memory store of explicit user-authored notes.
 
-No project-context endpoint, index, profile, manifest planner, partial-response persistence, Continue flow, or watcher is currently implemented. Wave 0 schemas/examples are `fixture_demo` contract evidence only and the capability remains `unsupported`. Planned GUI-facing contracts use opaque project IDs and project-relative source refs; canonical roots remain private. `manual_only`, `balanced`, and `deep` change retrieval breadth only and never change secret, ignore, symlink, root, budget, tool, write, provider, or cross-project authority.
+The narrow bootstrap boundary is implemented: each immutable project context resolves one rebuildable SQLite cache under project cache storage plus a separate reserved durable turn-context path under project config storage. Authenticated `GET /p/{projectId}/v1/context/status` initializes and reads only bounded schema/status metadata; it does not scan the project root, create chat or memory data, or implement indexing. The index, profile, rebuild/delete operations, manifest planner, durable turn persistence, partial-response persistence, Continue flow, GUI, and watcher remain unsupported. GUI-facing contracts use opaque project IDs and project-relative source refs; canonical roots remain private. `manual_only`, `balanced`, and `deep` change future retrieval breadth only and never change secret, ignore, symlink, root, budget, tool, write, provider, or cross-project authority.
 
 ## Browser project isolation smoke
 

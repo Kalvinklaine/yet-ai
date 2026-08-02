@@ -3,12 +3,12 @@
 - Status: accepted
 - Plan traceability: project-context-master-plan, Wave 0, T-45
 - Scope: engine-owned project inventory, indexing, retrieval, manifests, continuity identifiers, and local cache contracts
-- Current implementation status: `planned`
-- Current provenance: `unsupported`
+- Current implementation status: `partial`
+- Current provenance: `live_engine` for SQLite bootstrap and authenticated status only
 
 ## Context
 
-Registered projects already have opaque identities and isolated engine-owned storage, while project memory is an implemented shelf of explicit user-authored notes. Yet AI does not yet inventory or index registered project files, build a project profile, retrieve indexed context, expose context planning endpoints, or persist turn context manifests. Schemas and examples in this wave freeze future boundaries; they are `fixture_demo` evidence and do not make an endpoint reachable.
+Registered projects already have opaque identities and isolated engine-owned storage, while project memory is an implemented shelf of explicit user-authored notes. The engine now bootstraps one isolated rebuildable SQLite context cache per project and exposes its authenticated project-scoped status without scanning project files. Yet AI does not yet inventory or index registered project files, build a project profile, retrieve indexed context, expose context planning endpoints, or persist turn context manifests. Schemas and examples beyond status remain `fixture_demo` evidence and do not make those endpoints reachable.
 
 The context platform must explain what it read and selected without exposing canonical roots, crossing projects, silently indexing secrets, or requiring a hosted service. It must remain useful before embeddings or compiler-accurate analysis exist.
 
@@ -72,13 +72,13 @@ No mode grants filesystem mutation, shell, git, tool, provider-tool, background 
 
 Allowed provenance is `inventory`, `profile`, `lexical`, `symbol`, `explicit_user`, or `continuation`. Redaction is `none`, `metadata_only`, or `content_redacted`. A manifest never contains a canonical root, absolute path, raw secret, ignored content, unbounded file body, embedding vector, provider credential, provider response, or command material. Manifest entry hashes identify the exact eligible bytes used. If a current hash differs before dispatch, the entry is omitted as `stale_hash` or the plan is rebuilt; stale bytes are never silently sent.
 
-### Planned HTTP contracts
+### HTTP contracts
 
-All routes below are planned and currently unsupported. They will be authenticated loopback, project-scoped routes under `/p/{projectId}/v1`; the path owns `projectId`, so request bodies do not carry a root or project selector.
+All routes are authenticated loopback, project-scoped routes under `/p/{projectId}/v1`; the path owns `projectId`, so request bodies do not carry a root or project selector. Only status is currently live; every other route remains planned and unsupported.
 
 | Route | Planned request | Planned response |
 | --- | --- | --- |
-| `GET /context/status` | none | `ContextStatus`: state, schema/generation, bounded counts, freshness and safe error category |
+| `GET /context/status` (live) | none | `ContextStatus`: state, schema/generation, bounded counts, freshness and safe error category |
 | `GET /context/profile` | none | `ProjectContextProfile`; `not_found` until built |
 | `POST /context/rebuild` | strict `ProjectContextRebuildRequest`: mode plus expected inventory generation and project revision | `ProjectContextRebuildResponse`: accepted operation metadata; no raw path or file list |
 | `DELETE /context/cache` | none | `ProjectContextCacheDeleteResponse`: deletion result, resulting `not_built` state, and explicit durable-turn-evidence retention |

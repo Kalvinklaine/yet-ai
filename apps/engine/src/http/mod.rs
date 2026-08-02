@@ -2477,6 +2477,140 @@ mod project_tests {
     }
 
     #[tokio::test]
+    async fn project_context_status_requires_auth_and_bootstraps_without_indexing_side_effects() {
+        let (state, project_id, root) = project_test_state().await;
+        std::fs::write(root.join("private-source-marker.txt"), "must not be read").unwrap();
+        let context = state
+            .project_registry_runtime
+            .resolve_context(&state.storage_paths, &project_id)
+            .await
+            .unwrap();
+        let uri = format!("/p/{project_id}/v1/context/status");
+
+        let unauthenticated = project_request(state.clone(), "GET", uri.clone(), "", false).await;
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+        assert!(!context.storage().context_cache.exists());
+
+        let response = project_request(state.clone(), "GET", uri, "", true).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_text(response).await;
+        let status: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(status["protocolVersion"], "2026-08-02");
+        assert_eq!(status["schemaVersion"], 1);
+        assert_eq!(status["projectId"], project_id);
+        assert_eq!(status["state"], "not_built");
+        assert_eq!(status["inventoryGeneration"], 0);
+        assert_eq!(status["cloudRequired"], false);
+        assert_eq!(status["providerAccess"], "direct");
+        assert!(!body.contains(root.to_str().unwrap()));
+        assert!(!body.contains("private-source-marker"));
+        assert!(crate::project_context::db::database_path(&context).is_file());
+        assert!(!context.storage().turn_context.exists());
+        assert!(!context.storage().chat_history.exists());
+        assert!(!context.storage().project_memory.exists());
+        let entries = std::fs::read_dir(&context.storage().context_cache)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(entries.iter().all(|name| name.starts_with("cache.sqlite3")));
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn project_context_status_isolates_projects_and_rejects_unavailable_root() {
+        let (state, first_id, first_root) = project_test_state().await;
+        let second_root = first_root
+            .parent()
+            .unwrap()
+            .join("context-status-second-root");
+        std::fs::create_dir(&second_root).unwrap();
+        let second_id = state
+            .project_registry_runtime
+            .register(&second_root, Some("Second context"))
+            .await
+            .unwrap()
+            .project_id;
+        let first_context = state
+            .project_registry_runtime
+            .resolve_context(&state.storage_paths, &first_id)
+            .await
+            .unwrap();
+        crate::project_context::load_status(&first_context)
+            .await
+            .unwrap();
+        let database =
+            rusqlite::Connection::open(crate::project_context::db::database_path(&first_context))
+                .unwrap();
+        database
+            .execute(
+                "UPDATE context_metadata SET build_state = 'ready', inventory_generation = 9, eligible_files = 4, indexed_files = 3, omitted_files = 1, chunks = 8, symbols = 2, pending_changes = 0 WHERE singleton = 1",
+                [],
+            )
+            .unwrap();
+        drop(database);
+
+        let (first, second) = tokio::join!(
+            project_request(
+                state.clone(),
+                "GET",
+                format!("/p/{first_id}/v1/context/status"),
+                "",
+                true
+            ),
+            project_request(
+                state.clone(),
+                "GET",
+                format!("/p/{second_id}/v1/context/status"),
+                "",
+                true
+            )
+        );
+        let first: serde_json::Value = serde_json::from_str(&response_text(first).await).unwrap();
+        let second: serde_json::Value = serde_json::from_str(&response_text(second).await).unwrap();
+        assert_eq!(first["state"], "ready");
+        assert_eq!(first["inventoryGeneration"], 9);
+        assert_eq!(first["counts"]["chunks"], 8);
+        assert_eq!(second["state"], "not_built");
+        assert_eq!(second["inventoryGeneration"], 0);
+
+        let database = rusqlite::Connection::open(
+            crate::project_context::db::database_path(&first_context),
+        )
+        .unwrap();
+        database.pragma_update(None, "user_version", 2).unwrap();
+        drop(database);
+        let migration_required = project_request(
+            state.clone(),
+            "GET",
+            format!("/p/{first_id}/v1/context/status"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(migration_required.status(), StatusCode::OK);
+        let migration_required = response_text(migration_required).await;
+        assert!(migration_required.contains("migration_required"));
+        assert!(!migration_required.contains(first_root.to_str().unwrap()));
+
+        std::fs::remove_dir_all(&second_root).unwrap();
+        let missing = project_request(
+            state,
+            "GET",
+            format!("/p/{second_id}/v1/context/status"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(missing.status(), StatusCode::CONFLICT);
+        let missing = response_text(missing).await;
+        assert!(missing.contains("root_missing"));
+        assert!(!missing.contains(first_root.to_str().unwrap()));
+        assert!(!missing.contains(second_root.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(first_root.parent().unwrap());
+    }
+
+    #[tokio::test]
     async fn project_chat_crud_isolates_same_id_and_legacy_history() {
         let (state, first_id, first_root) = project_test_state().await;
         let second_root = first_root

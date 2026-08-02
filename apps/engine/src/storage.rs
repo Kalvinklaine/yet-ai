@@ -249,6 +249,8 @@ pub struct StoragePaths {
 pub struct ProjectStoragePaths {
     pub config_root: PathBuf,
     pub cache_root: PathBuf,
+    pub context_cache: PathBuf,
+    pub turn_context: PathBuf,
     pub chat_history: PathBuf,
     pub project_memory: PathBuf,
     pub agent_progress: PathBuf,
@@ -286,6 +288,8 @@ impl StoragePaths {
         validate_namespace(&self.config_dir, &config_projects, &config_root)?;
         validate_namespace(&self.cache_dir, &cache_projects, &cache_root)?;
         Ok(ProjectStoragePaths {
+            context_cache: cache_root.join("context"),
+            turn_context: config_root.join("turn-context"),
             chat_history: config_root.join("chat-history"),
             project_memory: config_root.join("project-memory"),
             agent_progress: cache_root.join("agent-progress"),
@@ -352,7 +356,10 @@ pub(crate) async fn ensure_store_namespace(
         .map_err(|_| ProjectStorageError)?
 }
 
-fn ensure_store_namespace_sync(root: &Path, create: bool) -> Result<bool, ProjectStorageError> {
+pub(crate) fn ensure_store_namespace_sync(
+    root: &Path,
+    create: bool,
+) -> Result<bool, ProjectStorageError> {
     if !root.is_absolute() {
         return Err(ProjectStorageError);
     }
@@ -786,6 +793,8 @@ mod tests {
         assert_ne!(first.config_root, second.config_root);
         assert_ne!(first.cache_root, second.cache_root);
         assert_eq!(first.chat_history, first.config_root.join("chat-history"));
+        assert_eq!(first.context_cache, first.cache_root.join("context"));
+        assert_eq!(first.turn_context, first.config_root.join("turn-context"));
         assert_eq!(
             first.project_memory,
             first.config_root.join("project-memory")

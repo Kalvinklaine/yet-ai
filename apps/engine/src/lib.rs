@@ -8,6 +8,7 @@ pub mod logging;
 pub mod lsp;
 pub mod project_browser;
 pub mod project_cli;
+pub mod project_context;
 pub mod project_memory;
 pub mod projects;
 pub mod provider_auth;
