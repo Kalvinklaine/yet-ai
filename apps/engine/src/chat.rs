@@ -180,6 +180,8 @@ pub enum ChatError {
     ContextTooLarge,
     #[error("provider rejected the request")]
     InvalidRequest(ProviderInvalidRequestReason),
+    #[error("fixed experimental account model is temporarily unavailable")]
+    ExperimentalAccountModelUnavailable,
     #[error("provider service returned an error")]
     UpstreamError,
     #[error("provider request failed")]
@@ -1602,6 +1604,9 @@ impl ChatError {
             Self::RateLimited => "provider_rate_limited",
             Self::ContextTooLarge => "provider_context_too_large",
             Self::InvalidRequest(_) => "provider_invalid_request",
+            Self::ExperimentalAccountModelUnavailable => {
+                "experimental_account_model_unavailable"
+            }
             Self::UpstreamError => "provider_upstream_error",
             Self::Request => "provider_request_failed",
             Self::Timeout => "provider_timeout",
@@ -1622,6 +1627,9 @@ impl ChatError {
                 "The prompt or attached editor context is too large for this model. Reduce the prompt or active-file excerpt, then retry."
             }
             Self::InvalidRequest(_) => "Provider rejected the request. Check model id, endpoint, and provider settings.",
+            Self::ExperimentalAccountModelUnavailable => {
+                "The fixed experimental account model is temporarily unavailable. Retry later, reconnect the account login, or use the API-key fallback."
+            }
             Self::UpstreamError => "Provider service returned an error. Check provider status or local server, then retry.",
             Self::Request => {
                 "Provider request failed. Check local provider configuration/network and try again."
@@ -1928,6 +1936,9 @@ async fn codex_responses_stream_with_recovery(
                     return Err(ChatError::PreStreamUnauthorized);
                 }
                 current = refreshed;
+            }
+            Err(ChatError::InvalidRequest(ProviderInvalidRequestReason::Model)) => {
+                return Err(ChatError::ExperimentalAccountModelUnavailable);
             }
             other => return other,
         }
@@ -3208,7 +3219,7 @@ mod tests {
         assert_eq!(message.role, crate::chat_history::ChatMessageRole::Error);
         assert_eq!(
             message.content,
-            "Provider rejected the request. Check model id, endpoint, and provider settings."
+            "The fixed experimental account model is temporarily unavailable. Retry later, reconnect the account login, or use the API-key fallback."
         );
         let requests = server.requests.lock().unwrap().clone();
         assert_eq!(requests.len(), 1);

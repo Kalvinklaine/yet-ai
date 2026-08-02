@@ -23,6 +23,7 @@ export type ChatRecoveryCode =
   | "provider_rate_limited"
   | "provider_context_too_large"
   | "provider_invalid_request"
+  | "experimental_account_model_unavailable"
   | "provider_timeout"
   | "provider_upstream_error"
   | "provider_malformed_stream"
@@ -56,6 +57,7 @@ const chatRecoveryCopy: Record<ChatRecoveryCode, string> = {
   provider_rate_limited: "Recovery: wait before retrying, check provider quota or billing, or try another configured model/provider.",
   provider_context_too_large: "Recovery: reduce the prompt or attached active-file excerpt, then send again.",
   provider_invalid_request: "Recovery: check the model id, provider endpoint, and saved provider settings, then send again.",
+  experimental_account_model_unavailable: "Recovery: the fixed experimental account model is temporarily unavailable. Retry later, reconnect account login, or use the API-key fallback.",
   provider_timeout: "Recovery: check network connectivity or the local provider server, then send again.",
   provider_upstream_error: "Recovery: the provider or local server failed. Check provider/server status, then send again.",
   provider_malformed_stream: "Recovery: check provider streaming compatibility or the local server, then send again.",

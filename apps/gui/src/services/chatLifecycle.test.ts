@@ -18,6 +18,8 @@ describe("chatLifecycle", () => {
     expect(chatRecoveryCopyForCode("provider_unauthorized")).toContain("Provider API key");
     expect(chatRecoveryCopyForCode("provider_unauthorized")).toContain("Session token");
     expect(chatRecoveryCopyForCode("provider_context_too_large")).toContain("reduce the prompt or attached active-file excerpt");
+    expect(chatRecoveryCopyForCode("experimental_account_model_unavailable")).toContain("fixed experimental account model");
+    expect(chatRecoveryCopyForCode("experimental_account_model_unavailable")).toContain("API-key fallback");
     expect(chatRecoveryCopyForCode("user_stop")).toContain("stream stopped locally");
     expect(chatRecoveryCopyForCode("unknown_code")).toContain("No automatic retry");
   });

@@ -10,6 +10,7 @@ const rootDir = process.cwd();
 const runtimeToken = `smoke-runtime-${randomUUID()}`;
 const authCode = `codex-loopback-code-${randomUUID()}`;
 const accessToken = `codex-loopback-access-${randomUUID()}`;
+const refreshedAccessToken = `codex-loopback-refreshed-access-${randomUUID()}`;
 const refreshToken = `codex-loopback-refresh-${randomUUID()}`;
 const accountId = "acct-loopback-smoke";
 const idToken = jwtWithPayload({ chatgpt_account_id: accountId });
@@ -19,14 +20,7 @@ const requestId = `smoke-codex-request-${randomUUID()}`;
 const invalidRequestId = `smoke-codex-invalid-request-${randomUUID()}`;
 const firstChatSentinel = "SMOKE_CODEX_FIRST_CHAT";
 const invalidChatSentinel = "SMOKE_CODEX_INVALID_CHAT";
-const staleModel = "gpt-5.6-sol";
-const recoveredModel = "gpt-5.6-terra";
-const modelCatalog = {
-  data: [
-    { id: staleModel, visibility: "list", supportedInApi: true, priority: 10 },
-    { id: recoveredModel, visibility: "list", supportedInApi: true, priority: 20 }
-  ]
-};
+const fixedModel = "gpt-5.4";
 const invalidProviderFragment = `raw-mock-provider-fragment-${randomUUID()}`;
 const timeoutMs = 120_000;
 
@@ -38,13 +32,9 @@ let tokenRequestCount = 0;
 let chatRequestCount = 0;
 let modelDiscoveryRequestCount = 0;
 let chatCreateRequestCount = 0;
-let tokenRequestGrantType;
+const tokenRequestGrantTypes = [];
 let tokenRequestContentType;
-let modelDiscoveryAuthorizationHeader;
-let modelDiscoveryAccountHeaderSeen = false;
-let loginDiscoverySessionHeader;
-let recoveryDiscoverySessionHeader;
-let chatAuthorizationHeader;
+const chatAuthorizationHeaders = [];
 let chatAccountHeaderSeen = false;
 let chatOriginatorHeader;
 let chatSessionHeader;
@@ -104,13 +94,10 @@ try {
   assert(exchange.accountLabel === "loopback codex smoke account", "exchange returned unexpected account label");
   assert(exchange.sessionId === undefined, "connected exchange exposed session id");
   assert(exchange.authorizationUrl === undefined, "connected exchange exposed authorization URL");
-  assert(tokenRequestCount === 1, "mock token endpoint was not called exactly once");
+  assert(tokenRequestCount === 1, "mock token endpoint was not called exactly once during login");
   assert(tokenRequestContentType?.startsWith("application/x-www-form-urlencoded"), "mock token endpoint did not receive form-urlencoded exchange");
-  assert(tokenRequestGrantType === "authorization_code", "mock token endpoint did not receive authorization-code grant");
-  assert(modelDiscoveryRequestCount === 1, "mock model discovery endpoint was not called exactly once during login");
-  assert(modelDiscoveryAuthorizationHeader === `Bearer ${accessToken}`, "mock model discovery did not receive experimental bearer auth");
-  assert(modelDiscoveryAccountHeaderSeen === true, "mock model discovery did not receive account metadata header");
-  assert(loginDiscoverySessionHeader === start.sessionId, "login discovery did not use the OAuth session metadata");
+  assert(tokenRequestGrantTypes[0] === "authorization_code", "mock token endpoint did not receive authorization-code grant");
+  assert(modelDiscoveryRequestCount === 0, "login unexpectedly called model discovery");
 
   const connected = await requestJson(baseUrl, "/v1/provider-auth/openai/status");
   assert(connected.status === "connected", "status did not report connected state");
@@ -139,22 +126,22 @@ try {
   assert(events.some((event) => event.type === "stream_delta" && event.payload?.delta?.content === " connected"), "chat stream did not include connected delta");
   assert(events.some((event) => event.type === "stream_finished" && event.payload?.finishReason === "stop"), "chat stream did not finish cleanly");
   assertMonotonicSequence(events);
-  assert(chatRequestCount === 2, "mock responses endpoint did not retry once after stale-model rejection");
-  assert(modelDiscoveryRequestCount === 2, "mock model discovery endpoint was not called once for recovery");
-  assert(chatCreateRequestCount === 1, "model recovery created a replacement chat");
-  assert(recoveryDiscoverySessionHeader === loginDiscoverySessionHeader, "recovery discovery did not reuse stored session metadata");
-  assert(recoveryDiscoverySessionHeader !== chatId, "recovery discovery used the chat id as session metadata");
-  assert(chatAuthorizationHeader === `Bearer ${accessToken}`, "mock responses endpoint did not receive experimental bearer auth");
+  assert(chatRequestCount === 2, "mock responses endpoint did not perform exactly one bounded auth retry");
+  assert(tokenRequestCount === 2, "expired account auth did not refresh exactly once");
+  assert(tokenRequestGrantTypes[1] === "refresh_token", "mock token endpoint did not receive refresh-token grant");
+  assert(modelDiscoveryRequestCount === 0, "send or auth refresh unexpectedly called model discovery");
+  assert(chatCreateRequestCount === 1, "auth refresh created a replacement chat");
+  assert(chatAuthorizationHeaders[0] === `Bearer ${accessToken}`, "first responses request did not receive original bearer auth");
+  assert(chatAuthorizationHeaders[1] === `Bearer ${refreshedAccessToken}`, "retried responses request did not receive refreshed bearer auth");
   assert(chatAccountHeaderSeen === true, "mock responses endpoint did not receive account metadata header");
   assert(chatOriginatorHeader === "codex_cli_rs", "mock responses endpoint received unexpected originator header");
   assert(chatSessionHeader === chatId, "mock responses endpoint received unexpected session header");
   assert(chatBetaHeader === "responses=experimental", "mock responses endpoint received unexpected beta header");
   assert(chatAcceptHeader === "text/event-stream", "mock responses endpoint received unexpected accept header");
   assert(chatContentTypeHeader?.startsWith("application/json"), "mock responses endpoint did not receive JSON content type");
-  assertResponsesBody(chatRequestBodies[0], firstChatSentinel, staleModel);
-  assertResponsesBody(chatRequestBodies[1], firstChatSentinel, recoveredModel);
-  assert(chatRequestBodies.filter((body) => body.model === staleModel).length === 1, "rejected model was attempted more than once");
-  assert(chatRequestBodies.filter((body) => body.model === recoveredModel).length === 1, "alternate model was not attempted exactly once during recovery");
+  assertResponsesBody(chatRequestBodies[0], firstChatSentinel, fixedModel);
+  assertResponsesBody(chatRequestBodies[1], firstChatSentinel, fixedModel);
+  assert(chatRequestBodies.every((body) => body.model === fixedModel), "auth recovery changed the fixed account model");
 
   const invalidSubscription = subscribe(baseUrl, invalidChatId);
   const invalidCommand = await requestJson(baseUrl, `/v1/chats/${encodeURIComponent(invalidChatId)}/commands`, {
@@ -169,12 +156,14 @@ try {
 
   const invalidStream = await invalidSubscription;
   const invalidEvent = invalidStream.events.find((event) => event.type === "error");
-  assert(invalidEvent?.payload?.code === "provider_invalid_request", "invalid request did not produce the stable error code");
-  assert(["format", "model", "endpoint", "unknown"].includes(invalidEvent?.payload?.reason), "invalid request reason was not allowlisted");
-  assert(invalidEvent.payload.reason === "format", "invalid request did not preserve the expected bounded reason");
+  assert(invalidEvent?.payload?.code === "experimental_account_model_unavailable", "fixed-model rejection did not produce the stable account-model error code");
+  assert(invalidEvent?.payload?.message === "The fixed experimental account model is temporarily unavailable. Retry later, reconnect the account login, or use the API-key fallback.", "fixed-model rejection did not provide truthful sanitized recovery");
+  assert(invalidEvent?.payload?.reason === undefined, "fixed-model rejection exposed a generic model-selection reason");
   assertMonotonicSequence(invalidStream.events);
-  assert(chatRequestCount === 3, "mock responses endpoint was not called for recovery and invalid chat cases");
-  assertResponsesBody(chatRequestBodies[2], invalidChatSentinel, recoveredModel);
+  assert(chatRequestCount === 3, "mock responses endpoint was not called for auth retry and fixed-model rejection cases");
+  assertResponsesBody(chatRequestBodies[2], invalidChatSentinel, fixedModel);
+  assert(chatRequestBodies.filter((body) => body.input[0]?.content[0]?.text === invalidChatSentinel).length === 1, "fixed-model rejection was retried");
+  assert(modelDiscoveryRequestCount === 0, "fixed-model rejection unexpectedly called model discovery");
   assert(chatCreateRequestCount === 1, "later chat command created a replacement chat");
   assert(!invalidStream.raw.includes(invalidProviderFragment), "raw mock provider body leaked into live SSE");
 
@@ -194,16 +183,15 @@ try {
     mode: "local-loopback-mock-only",
     lifecycle: [initial.status, start.status, pending.status, exchange.status, connected.status, disconnect.status, afterDisconnect.status],
     tokenExchange: "form-urlencoded-authorization-code",
-    modelDiscovery: "unchanged-ordered-catalog-alternate-persisted",
-    discoverySession: "stored-and-reused-without-value-output",
+    fixedModel: "gpt-5.4-without-discovery-or-alternate-persistence",
     responsesSse: "dedicated-responses-endpoint",
     tokenEndpointCalls: tokenRequestCount,
     modelDiscoveryCalls: modelDiscoveryRequestCount,
     responsesEndpointCalls: chatRequestCount,
     existingChat: "created-before-login-and-reused-without-replacement",
-    firstChat: "rejected-first-model-recovered-once",
+    firstChat: "same-pre-login-chat-auth-refreshed-once-with-fixed-model",
     chatCreateCalls: chatCreateRequestCount,
-    invalidRequest: "allowlisted-format-reason-without-provider-body",
+    fixedModelUnavailable: "one-terminal-request-with-sanitized-manual-recovery",
     disconnected: afterDisconnect.status === "login_unavailable",
     cloudRequired: false
   };
@@ -300,13 +288,19 @@ async function startMockTokenEndpoint() {
     });
     request.on("end", () => {
       const parsed = new URLSearchParams(body);
-      tokenRequestGrantType = parsed.get("grant_type");
-      assert(parsed.get("code") === authCode, "mock token endpoint received unexpected auth code");
+      const grantType = parsed.get("grant_type");
+      tokenRequestGrantTypes.push(grantType);
       assert(typeof parsed.get("client_id") === "string" && parsed.get("client_id").length > 10, "mock token endpoint did not receive client id");
-      assert(typeof parsed.get("code_verifier") === "string" && parsed.get("code_verifier").length > 20, "mock token endpoint did not receive PKCE verifier");
+      if (grantType === "authorization_code") {
+        assert(parsed.get("code") === authCode, "mock token endpoint received unexpected auth code");
+        assert(typeof parsed.get("code_verifier") === "string" && parsed.get("code_verifier").length > 20, "mock token endpoint did not receive PKCE verifier");
+      } else {
+        assert(grantType === "refresh_token", "mock token endpoint received unexpected grant type");
+        assert(parsed.get("refresh_token") === refreshToken, "mock token endpoint received unexpected refresh token");
+      }
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
-        access_token: accessToken,
+        access_token: grantType === "refresh_token" ? refreshedAccessToken : accessToken,
         refresh_token: refreshToken,
         expires_in: 1800,
         scope: "openid profile email offline_access",
@@ -324,12 +318,8 @@ async function startMockChatEndpoint() {
   const server = http.createServer((request, response) => {
     if (request.method === "GET" && request.url?.startsWith("/models?")) {
       modelDiscoveryRequestCount += 1;
-      modelDiscoveryAuthorizationHeader = request.headers.authorization;
-      modelDiscoveryAccountHeaderSeen = request.headers["chatgpt-account-id"] === accountId;
-      if (modelDiscoveryRequestCount === 1) loginDiscoverySessionHeader = request.headers.session_id;
-      if (modelDiscoveryRequestCount === 2) recoveryDiscoverySessionHeader = request.headers.session_id;
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify(modelCatalog));
+      response.writeHead(500, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "model discovery is forbidden in this smoke" }));
       return;
     }
     if (request.method !== "POST" || request.url !== "/responses") {
@@ -337,7 +327,7 @@ async function startMockChatEndpoint() {
       return;
     }
     chatRequestCount += 1;
-    chatAuthorizationHeader = request.headers.authorization;
+    chatAuthorizationHeaders.push(request.headers.authorization);
     chatAccountHeaderSeen = request.headers["chatgpt-account-id"] === accountId;
     chatOriginatorHeader = request.headers.originator;
     chatSessionHeader = request.headers.session_id;
@@ -353,11 +343,11 @@ async function startMockChatEndpoint() {
       const parsed = JSON.parse(body);
       chatRequestBodies.push(parsed);
       if (chatRequestCount === 1) {
-        response.writeHead(400, { "content-type": "application/json" });
+        response.writeHead(401, { "content-type": "application/json" });
         response.end(JSON.stringify({
           error: {
-            code: "unsupported_model",
-            message: `model is not supported ${invalidProviderFragment}`
+            code: "expired_token",
+            message: `credential expired ${invalidProviderFragment}`
           }
         }));
         return;
@@ -366,8 +356,8 @@ async function startMockChatEndpoint() {
         response.writeHead(400, { "content-type": "application/json" });
         response.end(JSON.stringify({
           error: {
-            code: "invalid_request_body",
-            message: `invalid request body ${invalidProviderFragment}`
+            code: "unsupported_model",
+            message: `model is not supported ${invalidProviderFragment}`
           }
         }));
         return;
@@ -515,6 +505,7 @@ function assertNoUnsafeEvidence(text) {
     runtimeToken,
     authCode,
     accessToken,
+    refreshedAccessToken,
     refreshToken,
     idToken,
     accountId,
@@ -540,7 +531,7 @@ function assertNoUnsafeEvidence(text) {
 
 function redactUnsafe(text) {
   let value = String(text);
-  for (const marker of [runtimeToken, authCode, accessToken, refreshToken, idToken, accountId, firstChatSentinel, invalidChatSentinel, invalidProviderFragment]) {
+  for (const marker of [runtimeToken, authCode, accessToken, refreshedAccessToken, refreshToken, idToken, accountId, firstChatSentinel, invalidChatSentinel, invalidProviderFragment]) {
     value = value.split(marker).join("[redacted]");
   }
   return value
