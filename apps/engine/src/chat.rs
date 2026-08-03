@@ -57,6 +57,7 @@ enum TerminalReplayRetention {
 struct ActiveStream {
     id: u64,
     handle: JoinHandle<()>,
+    #[cfg(test)]
     effective_planned_context: Option<EffectivePlannedContext>,
     history_root: std::path::PathBuf,
     turn_evidence: Option<TurnEvidence>,
@@ -68,6 +69,14 @@ enum ActiveStreamPhase {
     AwaitingDurableBegin,
     Pending,
     Streaming,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeltaPersistenceOutcome {
+    Persisted,
+    Inactive,
+    BoundExceeded,
+    StorageFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -410,6 +419,7 @@ impl ChatRuntime {
             state.active_stream = Some(ActiveStream {
                 id: stream_id,
                 handle,
+                #[cfg(test)]
                 effective_planned_context: effective_planned_context.clone(),
                 history_root: history_root.clone(),
                 turn_evidence: None,
@@ -514,7 +524,7 @@ impl ChatRuntime {
             selected_provider = Ok(Some(provider));
             turn_evidence = Some(evidence);
         }
-        if chat_history::append_existing_message_in(&history_root, message)
+        if chat_history::append_existing_message_in(&history_root, message.clone())
             .await
             .is_err()
         {
@@ -564,6 +574,31 @@ impl ChatRuntime {
             .await
             .is_err()
         {
+            let user_removed =
+                chat_history::remove_message_in(&history_root, &chat_id, &message.id)
+                    .await
+                    .is_ok();
+            let evidence_removed = match &turn_evidence {
+                Some(evidence) => chat_turn_context::remove(
+                    &evidence.root,
+                    &evidence.project_id,
+                    &chat_id,
+                    &evidence.turn_id,
+                )
+                .await
+                .is_ok(),
+                None => true,
+            };
+            if !user_removed || !evidence_removed {
+                let _ = chat_history::append_message_in(
+                    &history_root,
+                    &chat_id,
+                    ChatMessageRole::Error,
+                    "Chat response could not be started because local storage failed.".into(),
+                    Some(ChatMessageStatus::Error),
+                )
+                .await;
+            }
             if self
                 .fail_before_stream_start(&runtime_key, &chat_id, stream_id)
                 .await
@@ -669,14 +704,14 @@ impl ChatRuntime {
         chat_id: String,
     ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
         let runtime_key = runtime_key(scope, &chat_id);
-        let needs_restart_repair = !self.inner.lock().await.contains_key(&runtime_key);
-        if needs_restart_repair {
-            let _ = chat_history::interrupt_streaming_messages_in(&history_root, &chat_id).await;
-        }
         let (snapshot, replay, receiver) = {
-            let mut snapshot = self
-                .snapshot_event(&runtime_key, &history_root, &chat_id)
-                .await;
+            let lock = self.history_lock(&runtime_key).await;
+            let _history_guard = lock.lock().await;
+            if !self.inner.lock().await.contains_key(&runtime_key) {
+                let _ =
+                    chat_history::interrupt_streaming_messages_in(&history_root, &chat_id).await;
+            }
+            let mut snapshot = self.snapshot_event_locked(&history_root, &chat_id).await;
             let mut guard = self.inner.lock().await;
             let state = guard
                 .entry(runtime_key)
@@ -686,7 +721,7 @@ impl ChatRuntime {
             {
                 snapshot = snapshot_event(&chat_id, None);
             }
-            let replay = state.replay_events_for_subscriber();
+            let replay = state.replay_events_for_subscriber(true);
             (snapshot, replay, state.sender.subscribe())
         };
         subscription_stream(snapshot, replay, receiver)
@@ -731,7 +766,7 @@ impl ChatRuntime {
             {
                 snapshot = snapshot_event(&chat_id, None);
             }
-            let replay = state.replay_events_for_subscriber();
+            let replay = state.replay_events_for_subscriber(true);
             (snapshot, replay, state.sender.subscribe())
         };
         Ok(subscription_stream(snapshot, replay, receiver))
@@ -749,11 +784,34 @@ impl ChatRuntime {
             let Some(content) = payload["delta"]["content"].as_str() else {
                 return false;
             };
-            if !self
+            match self
                 .persist_stream_delta(runtime_key, stream_id, content)
                 .await
             {
-                return false;
+                DeltaPersistenceOutcome::Persisted => {}
+                DeltaPersistenceOutcome::Inactive => return false,
+                DeltaPersistenceOutcome::BoundExceeded => {
+                    let _ = self
+                        .terminalize_delta_failure(
+                            runtime_key,
+                            chat_id,
+                            stream_id,
+                            "bound_exceeded",
+                        )
+                        .await;
+                    return false;
+                }
+                DeltaPersistenceOutcome::StorageFailed => {
+                    let _ = self
+                        .terminalize_delta_failure(
+                            runtime_key,
+                            chat_id,
+                            stream_id,
+                            "storage_failed",
+                        )
+                        .await;
+                    return false;
+                }
             }
         }
         let mut guard = self.inner.lock().await;
@@ -771,7 +829,14 @@ impl ChatRuntime {
         true
     }
 
-    async fn persist_stream_delta(&self, runtime_key: &str, stream_id: u64, delta: &str) -> bool {
+    async fn persist_stream_delta(
+        &self,
+        runtime_key: &str,
+        stream_id: u64,
+        delta: &str,
+    ) -> DeltaPersistenceOutcome {
+        let lock = self.history_lock(runtime_key).await;
+        let _history_guard = lock.lock().await;
         let history_root = {
             let guard = self.inner.lock().await;
             let Some(active) = guard
@@ -779,8 +844,11 @@ impl ChatRuntime {
                 .and_then(|state| state.active_stream.as_ref())
                 .filter(|active| active.id == stream_id)
             else {
-                return false;
+                return DeltaPersistenceOutcome::Inactive;
             };
+            if active.phase == ActiveStreamPhase::AwaitingDurableBegin {
+                return DeltaPersistenceOutcome::Inactive;
+            }
             active.history_root.clone()
         };
         let Some(mut message) = self
@@ -790,23 +858,101 @@ impl ChatRuntime {
             .get(&(runtime_key.to_string(), stream_id))
             .cloned()
         else {
-            return false;
+            return DeltaPersistenceOutcome::Inactive;
         };
+        if message.status != Some(ChatMessageStatus::Streaming) {
+            return DeltaPersistenceOutcome::Inactive;
+        }
         if message.content.chars().count() + delta.chars().count() > 20_000 {
-            return false;
+            return DeltaPersistenceOutcome::BoundExceeded;
         }
         message.content.push_str(delta);
         if chat_history::replace_existing_message_in(&history_root, message.clone())
             .await
             .is_err()
         {
-            return false;
+            return DeltaPersistenceOutcome::StorageFailed;
         }
         self.partials
             .lock()
             .await
             .insert((runtime_key.to_string(), stream_id), message);
-        true
+        DeltaPersistenceOutcome::Persisted
+    }
+
+    async fn terminalize_delta_failure(
+        &self,
+        runtime_key: &str,
+        chat_id: &str,
+        stream_id: u64,
+        reason: &str,
+    ) -> bool {
+        let lock = self.history_lock(runtime_key).await;
+        let _history_guard = lock.lock().await;
+        let active = {
+            let mut guard = self.inner.lock().await;
+            let Some(state) = guard.get_mut(runtime_key) else {
+                return false;
+            };
+            if !state
+                .active_stream
+                .as_ref()
+                .is_some_and(|active| active.id == stream_id)
+            {
+                return false;
+            }
+            state.active_stream.take().unwrap()
+        };
+        active.handle.abort();
+        let Some(mut message) = self
+            .partials
+            .lock()
+            .await
+            .remove(&(runtime_key.to_string(), stream_id))
+        else {
+            return false;
+        };
+        message.status = Some(ChatMessageStatus::Interrupted);
+        let persisted =
+            chat_history::replace_existing_message_in(&active.history_root, message.clone())
+                .await
+                .is_ok();
+        if persisted {
+            if let Some(evidence) = &active.turn_evidence {
+                let _ = chat_turn_context::mark_terminal(
+                    &evidence.root,
+                    &evidence.project_id,
+                    chat_id,
+                    &evidence.turn_id,
+                    &message.id,
+                    TurnContextStatus::Interrupted,
+                    Some(reason),
+                    Some(reason),
+                )
+                .await;
+            }
+        }
+        let mut guard = self.inner.lock().await;
+        let state = guard
+            .entry(runtime_key.to_string())
+            .or_insert_with(|| ChatState::new(chat_id));
+        if persisted {
+            state.push_event(chat_id, "message_added", json!({ "message": message }));
+            state.push_event(
+                chat_id,
+                "stream_finished",
+                json!({ "finishReason": "interrupted", "errorCode": reason }),
+            );
+            state.mark_terminal_replay_persisted();
+        } else {
+            state.known_terminal_append_failure = true;
+            state.push_event(
+                chat_id,
+                "error",
+                json!({ "code": "chat_history_storage_error", "message": "Chat partial response could not be saved to local storage." }),
+            );
+        }
+        persisted
     }
 
     async fn fail_before_stream_start(
@@ -1492,20 +1638,17 @@ impl ChatRuntime {
                     .await
                     .is_err()
                     {
-                        let repair = self.repair_terminal_commit(
-                            history_root,
-                            chat_id,
-                            &message.id,
-                            evidence,
-                            "turn_context_storage_error",
-                        )
-                        .await;
-                        self.publish_terminal_commit_repair(
-                            runtime_key,
-                            chat_id,
-                            repair,
-                        )
-                        .await;
+                        let repair = self
+                            .repair_terminal_commit(
+                                history_root,
+                                chat_id,
+                                &message.id,
+                                evidence,
+                                "turn_context_storage_error",
+                            )
+                            .await;
+                        self.publish_terminal_commit_repair(runtime_key, chat_id, repair)
+                            .await;
                         return Some(false);
                     }
                     let evidence_status = if message.role == ChatMessageRole::Assistant {
@@ -1526,20 +1669,17 @@ impl ChatRuntime {
                     .await
                     .is_err()
                     {
-                        let repair = self.repair_terminal_commit(
-                            history_root,
-                            chat_id,
-                            &message.id,
-                            evidence,
-                            "turn_context_storage_error",
-                        )
-                        .await;
-                        self.publish_terminal_commit_repair(
-                            runtime_key,
-                            chat_id,
-                            repair,
-                        )
-                        .await;
+                        let repair = self
+                            .repair_terminal_commit(
+                                history_root,
+                                chat_id,
+                                &message.id,
+                                evidence,
+                                "turn_context_storage_error",
+                            )
+                            .await;
+                        self.publish_terminal_commit_repair(runtime_key, chat_id, repair)
+                            .await;
                         return Some(false);
                     }
                 }
@@ -1647,13 +1787,10 @@ impl ChatRuntime {
         )
         .await
         .is_ok();
-        let terminal_removed = chat_history::remove_message_in(
-            history_root,
-            chat_id,
-            terminal_message_id,
-        )
-        .await
-        .is_ok();
+        let terminal_removed =
+            chat_history::remove_message_in(history_root, chat_id, terminal_message_id)
+                .await
+                .is_ok();
         let repaired_message = chat_history::append_message_in(
             history_root,
             chat_id,
@@ -1710,6 +1847,7 @@ impl ChatRuntime {
         }
     }
 
+    #[cfg(test)]
     async fn snapshot_event(
         &self,
         runtime_key: &str,
@@ -2610,14 +2748,19 @@ impl ChatState {
         };
     }
 
-    fn replay_events_for_subscriber(&mut self) -> Vec<ChatEvent> {
+    fn replay_events_for_subscriber(&mut self, snapshot_includes_history: bool) -> Vec<ChatEvent> {
         if matches!(
             (self.active_stream.is_none(), self.terminal_replay),
             (true, TerminalReplayRetention::SnapshotBackedPrunable)
         ) {
             self.events.clear();
         }
-        let replay = self.events.clone();
+        let replay = self
+            .events
+            .iter()
+            .filter(|event| !snapshot_includes_history || event.event_type != "stream_delta")
+            .cloned()
+            .collect();
         if self.active_stream.is_none()
             && self.terminal_replay == TerminalReplayRetention::ActiveOrUnpersisted
             && !self.events.iter().any(is_unpersisted_terminal_evidence)
@@ -4023,7 +4166,8 @@ mod tests {
                         message.role,
                         crate::chat_history::ChatMessageRole::Assistant
                             | crate::chat_history::ChatMessageRole::Error
-                    ) && message.status != Some(crate::chat_history::ChatMessageStatus::Streaming)
+                    ) && message.status
+                        != Some(crate::chat_history::ChatMessageStatus::Streaming)
                     {
                         return message.clone();
                     }
@@ -4032,6 +4176,397 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         panic!("chat did not reach terminal message");
+    }
+
+    async fn install_partial_stream(
+        runtime: &super::ChatRuntime,
+        history_root: &std::path::Path,
+        chat_id: &str,
+        content: &str,
+    ) -> String {
+        install_scoped_partial_stream(runtime, "legacy", history_root, chat_id, content).await
+    }
+
+    async fn install_scoped_partial_stream(
+        runtime: &super::ChatRuntime,
+        scope: &str,
+        history_root: &std::path::Path,
+        chat_id: &str,
+        content: &str,
+    ) -> String {
+        let key = super::runtime_key(scope, chat_id);
+        let message = crate::chat_history::append_message_in(
+            history_root,
+            chat_id,
+            crate::chat_history::ChatMessageRole::Assistant,
+            content.into(),
+            Some(crate::chat_history::ChatMessageStatus::Streaming),
+        )
+        .await
+        .unwrap();
+        runtime
+            .partials
+            .lock()
+            .await
+            .insert((key.clone(), 1), message);
+        runtime.inner.lock().await.insert(
+            key.clone(),
+            super::ChatState {
+                events: Vec::new(),
+                terminal_replay: super::TerminalReplayRetention::ActiveOrUnpersisted,
+                known_terminal_append_failure: false,
+                next_seq: 1,
+                sender: tokio::sync::broadcast::channel(64).0,
+                active_stream: Some(super::ActiveStream {
+                    id: 1,
+                    handle: tokio::spawn(std::future::pending::<()>()),
+                    effective_planned_context: None,
+                    history_root: history_root.to_path_buf(),
+                    turn_evidence: None,
+                    phase: super::ActiveStreamPhase::Streaming,
+                }),
+                next_stream_id: 2,
+            },
+        );
+        key
+    }
+
+    #[tokio::test]
+    async fn partial_placeholder_failure_rolls_back_user_message() {
+        let dir = temp_dir();
+        let history_root = dir.join("chat-history");
+        crate::demo_mode::set(&dir, true).await.unwrap();
+        crate::chat_history::inject_append_failure_after(&history_root, 1);
+        let runtime = super::ChatRuntime::new();
+
+        runtime
+            .accept_user_message(
+                dir.clone(),
+                "chat_partial_begin_failure".into(),
+                "hello".into(),
+                None,
+            )
+            .await;
+
+        assert!(
+            crate::chat_history::get_thread(&dir, "chat_partial_begin_failure")
+                .await
+                .unwrap()
+                .messages
+                .is_empty()
+        );
+        assert!(runtime.inner.lock().await
+            [&super::runtime_key("legacy", "chat_partial_begin_failure")]
+            .active_stream
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn partial_project_placeholder_failure_rolls_back_user_and_evidence() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        crate::demo_mode::set(&dir, true).await.unwrap();
+        crate::chat_history::inject_append_failure_after(&history_root, 1);
+        let runtime = super::ChatRuntime::new();
+
+        runtime
+            .accept_project_user_message(
+                "project-a",
+                dir,
+                history_root.clone(),
+                turn_root.clone(),
+                "revision-1".into(),
+                "chat_partial_project_begin_failure".into(),
+                "hello".into(),
+                None,
+                Some(provider_selection_error_context()),
+                crate::agent_progress::AgentProgressRuntime::new(),
+            )
+            .await;
+
+        assert!(crate::chat_history::get_thread_in(
+            &history_root,
+            "chat_partial_project_begin_failure"
+        )
+        .await
+        .unwrap()
+        .messages
+        .is_empty());
+        assert!(crate::chat_turn_context::read(
+            &turn_root,
+            "project-a",
+            "chat_partial_project_begin_failure"
+        )
+        .await
+        .unwrap()
+        .records
+        .is_empty());
+    }
+
+    #[tokio::test]
+    async fn partial_bound_overflow_interrupts_exact_twenty_thousand_character_snapshot() {
+        let dir = temp_dir();
+        let root = dir.join("chat-history");
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "chat_partial_bound";
+        let key = install_partial_stream(&runtime, &root, chat_id, &"a".repeat(19_999)).await;
+
+        assert_eq!(
+            runtime.persist_stream_delta(&key, 1, "b").await,
+            super::DeltaPersistenceOutcome::Persisted
+        );
+        assert!(
+            !runtime
+                .push_stream_event(
+                    &key,
+                    chat_id,
+                    1,
+                    "stream_delta",
+                    serde_json::json!({ "delta": { "content": "c" } })
+                )
+                .await
+        );
+
+        let message = crate::chat_history::get_thread_in(&root, chat_id)
+            .await
+            .unwrap()
+            .messages
+            .pop()
+            .unwrap();
+        assert_eq!(message.content.chars().count(), 20_000);
+        assert_eq!(
+            message.status,
+            Some(crate::chat_history::ChatMessageStatus::Interrupted)
+        );
+        assert!(runtime.inner.lock().await[&key].active_stream.is_none());
+    }
+
+    #[tokio::test]
+    async fn partial_delta_storage_failure_interrupts_without_completing() {
+        let dir = temp_dir();
+        let root = dir.join("chat-history");
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "chat_partial_storage_failure";
+        let key = install_partial_stream(&runtime, &root, chat_id, "kept").await;
+        crate::chat_history::inject_replace_failures(&root, 1);
+
+        assert!(
+            !runtime
+                .push_stream_event(
+                    &key,
+                    chat_id,
+                    1,
+                    "stream_delta",
+                    serde_json::json!({ "delta": { "content": "lost" } })
+                )
+                .await
+        );
+
+        let message = crate::chat_history::get_thread_in(&root, chat_id)
+            .await
+            .unwrap()
+            .messages
+            .pop()
+            .unwrap();
+        assert_eq!(message.content, "kept");
+        assert_eq!(
+            message.status,
+            Some(crate::chat_history::ChatMessageStatus::Interrupted)
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_then_late_partial_delta_cannot_resurrect_terminal_message() {
+        let dir = temp_dir();
+        let root = dir.join("chat-history");
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "chat_abort_late_partial";
+        let key = install_partial_stream(&runtime, &root, chat_id, "kept").await;
+
+        runtime.accept_abort(chat_id).await;
+        assert_eq!(
+            runtime.persist_stream_delta(&key, 1, "late").await,
+            super::DeltaPersistenceOutcome::Inactive
+        );
+        let message = crate::chat_history::get_thread_in(&root, chat_id)
+            .await
+            .unwrap()
+            .messages
+            .pop()
+            .unwrap();
+        assert_eq!(message.content, "kept");
+        assert_eq!(
+            message.status,
+            Some(crate::chat_history::ChatMessageStatus::Interrupted)
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_then_late_partial_delta_cannot_resurrect_terminal_message() {
+        let dir = temp_dir();
+        let root = dir.join("chat-history");
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "chat_finalize_late_partial";
+        let key = install_partial_stream(&runtime, &root, chat_id, "answer").await;
+
+        assert_eq!(
+            runtime
+                .persist_terminal_history_and_event(
+                    &root,
+                    &key,
+                    chat_id,
+                    1,
+                    crate::chat_history::ChatMessageRole::Assistant,
+                    "answer".into(),
+                    crate::chat_history::ChatMessageStatus::Complete,
+                    "stream_finished",
+                    serde_json::json!({ "finishReason": "stop" }),
+                    None,
+                    Some("stop"),
+                    None,
+                )
+                .await,
+            Some(true)
+        );
+        assert_eq!(
+            runtime.persist_stream_delta(&key, 1, "late").await,
+            super::DeltaPersistenceOutcome::Inactive
+        );
+        let message = crate::chat_history::get_thread_in(&root, chat_id)
+            .await
+            .unwrap()
+            .messages
+            .pop()
+            .unwrap();
+        assert_eq!(message.content, "answer");
+        assert_eq!(
+            message.status,
+            Some(crate::chat_history::ChatMessageStatus::Complete)
+        );
+    }
+
+    #[tokio::test]
+    async fn subscribe_legacy_active_partial_delivers_snapshot_content_and_new_delta_once() {
+        use futures_util::StreamExt;
+
+        let dir = temp_dir();
+        let root = dir.join("chat-history");
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "chat_subscribe_legacy_partial";
+        let key = install_partial_stream(&runtime, &root, chat_id, "persisted").await;
+        {
+            let mut states = runtime.inner.lock().await;
+            let state = states.get_mut(&key).unwrap();
+            state.push_event(
+                chat_id,
+                "stream_started",
+                serde_json::json!({ "role": "assistant" }),
+            );
+            state.push_event(
+                chat_id,
+                "stream_delta",
+                serde_json::json!({ "delta": { "content": "persisted" } }),
+            );
+        }
+        let stream = runtime.subscribe_in("legacy", root, chat_id.into()).await;
+        futures_util::pin_mut!(stream);
+        let snapshot = format!("{:?}", stream.next().await.unwrap().unwrap());
+        let started = format!("{:?}", stream.next().await.unwrap().unwrap());
+        assert!(
+            runtime
+                .push_stream_event(
+                    &key,
+                    chat_id,
+                    1,
+                    "stream_delta",
+                    serde_json::json!({ "delta": { "content": "live" } })
+                )
+                .await
+        );
+        let live = format!("{:?}", stream.next().await.unwrap().unwrap());
+
+        assert!(snapshot.contains("persisted"));
+        assert!(!started.contains("persisted"));
+        assert!(live.contains("live"));
+        assert!(!live.contains("persisted"));
+    }
+
+    #[tokio::test]
+    async fn subscribe_project_active_partial_delivers_snapshot_content_and_new_delta_once() {
+        use futures_util::StreamExt;
+
+        let dir = temp_dir();
+        let root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        let runtime = super::ChatRuntime::new();
+        let chat_id = "chat_subscribe_project_partial";
+        let key =
+            install_scoped_partial_stream(&runtime, "project-a", &root, chat_id, "persisted").await;
+        {
+            let mut states = runtime.inner.lock().await;
+            let state = states.get_mut(&key).unwrap();
+            state.push_event(
+                chat_id,
+                "stream_started",
+                serde_json::json!({ "role": "assistant" }),
+            );
+            state.push_event(
+                chat_id,
+                "stream_delta",
+                serde_json::json!({ "delta": { "content": "persisted" } }),
+            );
+        }
+        let stream = runtime
+            .subscribe_project("project-a", root, turn_root, chat_id.into())
+            .await
+            .unwrap();
+        futures_util::pin_mut!(stream);
+        let snapshot = format!("{:?}", stream.next().await.unwrap().unwrap());
+        let started = format!("{:?}", stream.next().await.unwrap().unwrap());
+        assert!(
+            runtime
+                .push_stream_event(
+                    &key,
+                    chat_id,
+                    1,
+                    "stream_delta",
+                    serde_json::json!({ "delta": { "content": "live" } })
+                )
+                .await
+        );
+        let live = format!("{:?}", stream.next().await.unwrap().unwrap());
+
+        assert!(snapshot.contains("persisted"));
+        assert!(!started.contains("persisted"));
+        assert!(live.contains("live"));
+        assert!(!live.contains("persisted"));
+    }
+
+    #[test]
+    fn subscribe_active_partial_snapshot_filters_persisted_delta_replay_but_keeps_later_events() {
+        let mut state = super::ChatState::new("chat_subscribe_partial");
+        state.push_event(
+            "chat_subscribe_partial",
+            "stream_started",
+            serde_json::json!({ "role": "assistant" }),
+        );
+        state.push_event(
+            "chat_subscribe_partial",
+            "stream_delta",
+            serde_json::json!({ "delta": { "content": "persisted" } }),
+        );
+        state.push_event(
+            "chat_subscribe_partial",
+            "error",
+            serde_json::json!({ "code": "live_after_snapshot" }),
+        );
+
+        let replay = state.replay_events_for_subscriber(true);
+
+        assert_eq!(replay.len(), 2);
+        assert_eq!(replay[0].event_type, "stream_started");
+        assert_eq!(replay[1].payload["code"], "live_after_snapshot");
     }
 
     fn request_body(request: &str) -> serde_json::Value {
@@ -6620,7 +7155,7 @@ mod tests {
             assert!(!state.known_terminal_append_failure, "{code}");
             assert_eq!(state.events.len(), 1, "{code}");
             assert_eq!(state.events[0].event_type, "stream_started", "{code}");
-            assert_eq!(state.replay_events_for_subscriber().len(), 1, "{code}");
+            assert_eq!(state.replay_events_for_subscriber(false).len(), 1, "{code}");
         }
     }
 
@@ -6898,12 +7433,11 @@ mod tests {
             assert_eq!(added.payload["message"]["role"], "error");
             assert_eq!(finished.event_type, "stream_finished");
             assert_eq!(finished.payload["finishReason"], "error");
-            assert!(tokio::time::timeout(
-                std::time::Duration::from_millis(20),
-                receiver.recv()
-            )
-            .await
-            .is_err());
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), receiver.recv())
+                    .await
+                    .is_err()
+            );
             assert_eq!(
                 runtime
                     .persist_terminal_history_and_event(

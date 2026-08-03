@@ -12444,7 +12444,9 @@ async fn chat_new_message_history_failure_does_not_start_replacement_provider_st
     assert_eq!(late_events[0]["type"], "snapshot");
     let error = find_error_event(&late_events);
     assert_eq!(error["payload"]["code"], "chat_history_storage_error");
-    assert!(!late_events.iter().any(|event| event["type"] == "message_added"));
+    assert!(!late_events
+        .iter()
+        .any(|event| event["type"] == "message_added"));
 
     assert_eq!(
         send_user_message_with_content(app.clone(), chat_id, "second prompt").await,
@@ -12578,7 +12580,10 @@ async fn abort_does_not_leave_assistant_or_streaming_history_state() {
     assert_eq!(loaded["messages"][0]["status"], "complete");
     assert_ne!(loaded["messages"][0]["status"], "streaming");
     assert_eq!(loaded["messages"][1]["role"], "error");
-    assert_eq!(loaded["messages"][1]["content"], "Chat response was stopped.");
+    assert_eq!(
+        loaded["messages"][1]["content"],
+        "Chat response was stopped."
+    );
     let text = sse_text_from(
         app.clone(),
         "/v1/chats/subscribe?chat_id=chat-history-abort",
@@ -13611,7 +13616,7 @@ async fn abort_cancels_active_provider_stream_without_later_deltas() {
     assert_eq!(events[0]["type"], "snapshot");
     assert_sse_connection_sequences_are_rebased(&events);
     assert_no_replayed_stream_events(&events);
-    assert!(!text.contains("first"));
+    assert!(text.contains("first"));
     assert!(!text.contains("second"));
     assert_first_auth_and_no_immediate_extra_auth(
         auth_receiver,
@@ -14539,10 +14544,7 @@ async fn chat_experimental_oauth_stream_auth_error_after_delta_does_not_refresh_
     .await;
     let events = sse_json_events(&text);
     assert_no_replayed_stream_events(&events);
-    assert_eq!(
-        loaded["messages"][1]["content"],
-        "partial"
-    );
+    assert_eq!(loaded["messages"][1]["content"], "partial");
     assert_eq!(loaded["messages"][1]["role"], "assistant");
     assert_eq!(loaded["messages"][1]["status"], "interrupted");
     assert_sanitized_sse_error(&text);

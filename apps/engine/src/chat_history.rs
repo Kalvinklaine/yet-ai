@@ -285,7 +285,7 @@ pub async fn append_existing_message_in(
         };
     }
     #[cfg(test)]
-    if consume_append_failure(root) {
+    if consume_append_failure(root) || consume_delayed_append_failure(root) {
         return Err(ChatHistoryError::Storage);
     }
     thread.updated_at = now;
@@ -299,6 +299,10 @@ pub async fn replace_existing_message_in(
     message: ChatMessage,
 ) -> Result<ChatMessage, ChatHistoryError> {
     validate_message(&message.chat_id, &message)?;
+    #[cfg(test)]
+    if consume_replace_failure(root) {
+        return Err(ChatHistoryError::Storage);
+    }
     let path = chat_history_path_in(root, &message.chat_id)?;
     let mut thread = get_thread_in(root, &message.chat_id).await?;
     let stored = thread
@@ -358,8 +362,52 @@ fn append_failures() -> &'static std::sync::Mutex<std::collections::HashMap<Path
 }
 
 #[cfg(test)]
+fn delayed_append_failures() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>
+{
+    static FAILURES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
+    > = std::sync::OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+#[cfg(test)]
+fn replace_failures() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, usize>> {
+    static FAILURES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
+    > = std::sync::OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+#[cfg(test)]
 fn consume_append_failure(root: &Path) -> bool {
     let mut failures = append_failures().lock().unwrap();
+    let Some(remaining) = failures.get_mut(root) else {
+        return false;
+    };
+    *remaining -= 1;
+    if *remaining == 0 {
+        failures.remove(root);
+    }
+    true
+}
+
+#[cfg(test)]
+fn consume_delayed_append_failure(root: &Path) -> bool {
+    let mut failures = delayed_append_failures().lock().unwrap();
+    let Some(remaining) = failures.get_mut(root) else {
+        return false;
+    };
+    if *remaining > 0 {
+        *remaining -= 1;
+        return false;
+    }
+    failures.remove(root);
+    true
+}
+
+#[cfg(test)]
+fn consume_replace_failure(root: &Path) -> bool {
+    let mut failures = replace_failures().lock().unwrap();
     let Some(remaining) = failures.get_mut(root) else {
         return false;
     };
@@ -378,6 +426,22 @@ pub fn inject_next_append_failure(root: &Path) {
 #[cfg(test)]
 pub fn inject_append_failures(root: &Path, count: usize) {
     append_failures()
+        .lock()
+        .unwrap()
+        .insert(root.to_path_buf(), count);
+}
+
+#[cfg(test)]
+pub fn inject_append_failure_after(root: &Path, successful_appends: usize) {
+    delayed_append_failures()
+        .lock()
+        .unwrap()
+        .insert(root.to_path_buf(), successful_appends);
+}
+
+#[cfg(test)]
+pub fn inject_replace_failures(root: &Path, count: usize) {
+    replace_failures()
         .lock()
         .unwrap()
         .insert(root.to_path_buf(), count);
