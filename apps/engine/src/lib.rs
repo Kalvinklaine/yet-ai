@@ -43,6 +43,7 @@ pub struct AppState {
     pub agent_progress_runtime: AgentProgressRuntime,
     pub project_browser_runtime: ProjectBrowserRuntime,
     pub project_registry_runtime: ProjectRegistryRuntime,
+    pub project_context_watch_runtime: project_context::ProjectContextWatchRuntime,
     pub provider_auth_callback_port: u16,
 }
 
@@ -68,6 +69,7 @@ impl AppState {
             agent_progress_runtime: AgentProgressRuntime::new(),
             project_browser_runtime: ProjectBrowserRuntime::new(),
             project_registry_runtime,
+            project_context_watch_runtime: project_context::ProjectContextWatchRuntime::new(),
             provider_auth_callback_port,
         }
     }
@@ -87,6 +89,7 @@ impl AppState {
             agent_progress_runtime: AgentProgressRuntime::new(),
             project_browser_runtime: ProjectBrowserRuntime::new(),
             project_registry_runtime,
+            project_context_watch_runtime: project_context::ProjectContextWatchRuntime::new(),
             provider_auth_callback_port: 1455,
         }
     }

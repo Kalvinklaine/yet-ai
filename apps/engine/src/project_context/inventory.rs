@@ -147,6 +147,25 @@ fn rebuild_sync(
     })
 }
 
+pub(super) async fn fingerprint(root: &Path) -> Result<String, InventoryError> {
+    let root = root.to_path_buf();
+    let entries = tokio::task::spawn_blocking(move || collect(&root))
+        .await
+        .map_err(|_| InventoryError::Unavailable)??;
+    let mut digest = Sha256::new();
+    for entry in entries {
+        digest.update(entry.path.as_bytes());
+        digest.update([0]);
+        digest.update(entry.disposition.as_bytes());
+        digest.update([0]);
+        if let Some(hash) = entry.hash {
+            digest.update(hash.as_bytes());
+        }
+        digest.update([0]);
+    }
+    Ok(format!("sha256:{:x}", digest.finalize()))
+}
+
 fn collect(root: &Path) -> Result<Vec<Entry>, InventoryError> {
     let started = Instant::now();
     let mut builder = WalkBuilder::new(root);
@@ -321,14 +340,14 @@ type RootIdentity = (u64, u64);
 type RootIdentity = (u64, Option<SystemTime>);
 
 #[cfg(unix)]
-fn root_identity(root: &Path) -> Result<RootIdentity, InventoryError> {
+pub(super) fn root_identity(root: &Path) -> Result<RootIdentity, InventoryError> {
     use std::os::unix::fs::MetadataExt;
     let metadata = std::fs::metadata(root).map_err(|_| InventoryError::Unavailable)?;
     Ok((metadata.dev(), metadata.ino()))
 }
 
 #[cfg(not(unix))]
-fn root_identity(root: &Path) -> Result<RootIdentity, InventoryError> {
+pub(super) fn root_identity(root: &Path) -> Result<RootIdentity, InventoryError> {
     let metadata = std::fs::metadata(root).map_err(|_| InventoryError::Unavailable)?;
     Ok((metadata.len(), metadata.modified().ok()))
 }

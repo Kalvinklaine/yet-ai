@@ -30,6 +30,7 @@ export function ProjectContextStatusCard({ model, rebuilding, rebuildError, onRe
       <p>{state.detail}</p>
       <p className="subtle">The local engine inventories safe relative paths and derives structural and manifest-convention facts. File bodies are not shown here. This evidence is not semantic indexing and is not automatically attached to chat.</p>
       {context.counts && <dl className="project-context-counts"><div><dt>Generation</dt><dd>{context.inventoryGeneration}</dd></div><div><dt>Eligible files</dt><dd>{context.counts.eligibleFiles}</dd></div><div><dt>Indexed inventory entries</dt><dd>{context.counts.indexedFiles}</dd></div><div><dt>Omitted files</dt><dd>{context.counts.omittedFiles}</dd></div></dl>}
+      {context.progress && <p role="status" className="subtle">{context.progress.phase === "idle" ? "Watching for local changes" : context.progress.phase === "reconciling" ? "Reconciling local changes" : "Indexing local changes"} · {context.progress.completedFiles} of {context.progress.totalFiles} files</p>}
       {profile ? <>
         <p>{profile.summary}</p>
         <div className="project-context-facts">{groups.map(([title, items]) => <section key={title}><h3>{title}</h3>{items.length ? <ul>{items.map((item) => <li key={`${item.kind}:${item.sourceRef}`}><strong>{item.label}</strong><code>{item.sourceRef}</code><span>{item.provenance === "structural_inventory" ? "Structural inventory" : "Manifest convention"}</span></li>)}</ul> : <p className="subtle">None detected.</p>}</section>)}</div>

@@ -20,6 +20,7 @@ export type ProjectContextStatus = {
   updatedAt?: string;
   counts?: ProjectContextCounts;
   freshness?: { status: "current" | "stale" | "unknown"; pendingChanges: number };
+  progress?: { phase: "idle" | "reconciling" | "indexing"; completedFiles: number; totalFiles: number };
   error?: { code: "unavailable" | "migration_required" | "corrupt_cache" | "policy_blocked" | "resource_limit"; message: string };
   cloudRequired: false;
   providerAccess: "direct";
@@ -128,13 +129,14 @@ function scopedValidated<T extends { projectId: string }>(result: RuntimeResult<
 }
 
 function parseStatus(value: unknown): ProjectContextStatus | null {
-  if (!record(value) || !exact(value, ["protocolVersion", "schemaVersion", "projectId", "state", "inventoryGeneration", "profileId", "builtAt", "updatedAt", "counts", "freshness", "error", "cloudRequired", "providerAccess"])) return null;
+  if (!record(value) || !exact(value, ["protocolVersion", "schemaVersion", "projectId", "state", "inventoryGeneration", "profileId", "builtAt", "updatedAt", "counts", "freshness", "progress", "error", "cloudRequired", "providerAccess"])) return null;
   if (value.protocolVersion !== protocolVersion || value.schemaVersion !== 1 || !projectId(value.projectId) || !oneOf(value.state, ["not_built", "building", "ready", "stale", "unavailable", "migration_required"]) || !count(value.inventoryGeneration) || value.cloudRequired !== false || value.providerAccess !== "direct") return null;
   if (value.profileId !== undefined && (!string(value.profileId) || !idPattern.test(value.profileId))) return null;
   if (value.builtAt !== undefined && !time(value.builtAt)) return null;
   if (value.updatedAt !== undefined && !time(value.updatedAt)) return null;
   if (value.counts !== undefined && !counts(value.counts)) return null;
   if (value.freshness !== undefined && (!record(value.freshness) || !exact(value.freshness, ["status", "pendingChanges"]) || !oneOf(value.freshness.status, ["current", "stale", "unknown"]) || !count(value.freshness.pendingChanges))) return null;
+  if (value.progress !== undefined && (!record(value.progress) || !exact(value.progress, ["phase", "completedFiles", "totalFiles"]) || !oneOf(value.progress.phase, ["idle", "reconciling", "indexing"]) || !count(value.progress.completedFiles) || !count(value.progress.totalFiles) || value.progress.completedFiles > value.progress.totalFiles)) return null;
   if (value.error !== undefined && (!record(value.error) || !exact(value.error, ["code", "message"]) || !oneOf(value.error.code, ["unavailable", "migration_required", "corrupt_cache", "policy_blocked", "resource_limit"]) || !safeText(value.error.message, 240))) return null;
   return value as ProjectContextStatus;
 }

@@ -202,7 +202,10 @@ pub(super) async fn rebind(
         )
         .await
     {
-        Ok(summary) => Json(summary).into_response(),
+        Ok(summary) => {
+            state.project_context_watch_runtime.stop(&project_id).await;
+            Json(summary).into_response()
+        }
         Err(ProjectBrowserError::Registry(error)) => registry_error(error),
         Err(error) => super::project_browser_error(error),
     }
@@ -230,7 +233,12 @@ async fn lifecycle(
             .await
     };
     match result {
-        Ok(summary) => Json(ProjectLifecycleResponse::from(summary)).into_response(),
+        Ok(summary) => {
+            if archive {
+                state.project_context_watch_runtime.stop(&project_id).await;
+            }
+            Json(ProjectLifecycleResponse::from(summary)).into_response()
+        }
         Err(error) => registry_error(error),
     }
 }
@@ -431,7 +439,15 @@ pub(super) async fn project_context_status(
         Err(response) => return response,
     };
     match crate::project_context::load_status(&context).await {
-        Ok(status) => Json(status).into_response(),
+        Ok(status) => {
+            if status.inventory_generation > 0 {
+                state
+                    .project_context_watch_runtime
+                    .ensure(context, status.inventory_generation)
+                    .await;
+            }
+            Json(status).into_response()
+        }
         Err(error) => Json(crate::project_context::error_status(&context, error)).into_response(),
     }
 }
@@ -486,18 +502,24 @@ pub(super) async fn project_context_rebuild(
     )
     .await
     {
-        Ok(result) => Json(ProjectContextRebuildResponse {
-            protocol_version: crate::project_context::schema::PROTOCOL_VERSION,
-            schema_version: crate::project_context::schema::SCHEMA_VERSION,
-            operation_id: format!("context-rebuild-{}", result.generation),
-            project_id,
-            mode: request.mode,
-            status: "accepted",
-            expected_inventory_generation: request.expected_inventory_generation,
-            expected_project_revision: request.expected_project_revision,
-            cloud_required: false,
-        })
-        .into_response(),
+        Ok(result) => {
+            state
+                .project_context_watch_runtime
+                .ensure(context, result.generation)
+                .await;
+            Json(ProjectContextRebuildResponse {
+                protocol_version: crate::project_context::schema::PROTOCOL_VERSION,
+                schema_version: crate::project_context::schema::SCHEMA_VERSION,
+                operation_id: format!("context-rebuild-{}", result.generation),
+                project_id,
+                mode: request.mode,
+                status: "accepted",
+                expected_inventory_generation: request.expected_inventory_generation,
+                expected_project_revision: request.expected_project_revision,
+                cloud_required: false,
+            })
+            .into_response()
+        }
         Err(crate::project_context::InventoryError::Conflict) => project_error(
             StatusCode::CONFLICT,
             "conflict",

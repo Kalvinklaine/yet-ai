@@ -28,6 +28,7 @@ describe("ProjectContextStatusCard", () => {
     expect(container.textContent).toContain("not automatically attached to chat");
     expect(container.textContent).toContain("Primary languages");
     expect(container.textContent).toContain("src/main.rs");
+    expect(container.textContent).toContain("Watching for local changes");
     expect(container.textContent).not.toContain("/Users/");
     expect(container.textContent).not.toContain("secret-value");
   });
@@ -49,5 +50,5 @@ function render(model: ProjectContextCardModel, overrides: Partial<React.Compone
   act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectContextStatusCard model={model} rebuilding={false} rebuildError={null} onRebuild={() => undefined} {...overrides} />); });
   return container;
 }
-function ready(state: "not_built" | "building" | "ready" | "stale" | "unavailable", value: ReturnType<typeof profile> | null): ProjectContextCardModel { return { status: "ready", context: { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state, inventoryGeneration: state === "not_built" ? 0 : 1, counts: { eligibleFiles: 3, indexedFiles: 2, omittedFiles: 1, chunks: 0, symbols: 0 }, cloudRequired: false, providerAccess: "direct" }, profile: value }; }
+function ready(state: "not_built" | "building" | "ready" | "stale" | "unavailable", value: ReturnType<typeof profile> | null): ProjectContextCardModel { return { status: "ready", context: { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state, inventoryGeneration: state === "not_built" ? 0 : 1, counts: { eligibleFiles: 3, indexedFiles: 2, omittedFiles: 1, chunks: 0, symbols: 0 }, progress: state === "not_built" ? undefined : { phase: "idle", completedFiles: 2, totalFiles: 3 }, cloudRequired: false, providerAccess: "direct" }, profile: value }; }
 function profile() { return { protocolVersion: "2026-08-02" as const, schemaVersion: 1 as const, profileId: "profile-1", projectId, inventoryGeneration: 1, profileHash: hash, summary: "Local structural profile.", summaryProvenance: [{ sourceRef: "src/main.rs", contentHash: hash }], facts: [{ kind: "language" as const, label: "Rust source files", sourceRef: "src/main.rs", contentHash: hash, provenance: "structural_inventory" as const }], createdAt: "2026-08-02T12:00:00Z", cloudRequired: false as const }; }

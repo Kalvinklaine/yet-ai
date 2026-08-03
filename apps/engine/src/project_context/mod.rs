@@ -9,8 +9,13 @@ pub mod profile;
 pub mod schema;
 pub mod status;
 pub mod symbols;
+pub mod watch;
 
 pub use inventory::{rebuild, InventoryError, RebuildResult};
-pub use planner::{plan, rehydrate_for_chat, ContextPlanRequest, ContextPlanSelection, EffectivePlannedContext, PlannerError};
+pub use planner::{
+    plan, rehydrate_for_chat, ContextPlanRequest, ContextPlanSelection, EffectivePlannedContext,
+    PlannerError,
+};
 pub use profile::{load_profile, ProfileError, ProjectContextProfile};
 pub use status::{error_status, load_status, ContextStatusError, ProjectContextStatus};
+pub use watch::ProjectContextWatchRuntime;

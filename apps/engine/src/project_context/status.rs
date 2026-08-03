@@ -26,6 +26,8 @@ pub struct ProjectContextStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub freshness: Option<ContextFreshness>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ContextProgress>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<ContextStatusProblem>,
     pub cloud_required: bool,
     pub provider_access: &'static str,
@@ -57,6 +59,14 @@ pub struct ContextCounts {
 pub struct ContextFreshness {
     pub status: FreshnessState,
     pub pending_changes: u64,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextProgress {
+    pub phase: &'static str,
+    pub completed_files: u64,
+    pub total_files: u64,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -139,6 +149,17 @@ pub async fn load_status(
             },
             pending_changes: row.10,
         }),
+        progress: has_build_metadata.then_some(ContextProgress {
+            phase: if state == ContextState::Building {
+                "indexing"
+            } else if row.10 > 0 {
+                "reconciling"
+            } else {
+                "idle"
+            },
+            completed_files: row.6,
+            total_files: row.5,
+        }),
         error: None,
         cloud_required: false,
         provider_access: "direct",
@@ -179,6 +200,7 @@ pub fn error_status(context: &ProjectContext, error: ContextStatusError) -> Proj
         updated_at: None,
         counts: None,
         freshness: None,
+        progress: None,
         error: Some(ContextStatusProblem { code, message }),
         cloud_required: false,
         provider_access: "direct",
