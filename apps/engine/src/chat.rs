@@ -49,6 +49,31 @@ struct ActiveStream {
     id: u64,
     handle: JoinHandle<()>,
     effective_planned_context: Option<EffectivePlannedContext>,
+    history_root: std::path::PathBuf,
+    turn_evidence: Option<TurnEvidence>,
+    phase: ActiveStreamPhase,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ActiveStreamPhase {
+    AwaitingDurableBegin,
+    Pending,
+    Streaming,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StreamInterruption {
+    Abort,
+    Superseded,
+}
+
+impl StreamInterruption {
+    fn finish_reason(self) -> &'static str {
+        match self {
+            Self::Abort => "abort",
+            Self::Superseded => "superseded",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -316,6 +341,9 @@ impl ChatRuntime {
         progress: Option<ProjectProgressObserver>,
     ) {
         let runtime_key = runtime_key(scope, &chat_id);
+        let superseded_stream_id = self
+            .reconcile_active_stream(&runtime_key, &chat_id, StreamInterruption::Superseded)
+            .await;
         let lock = self.history_lock(&runtime_key).await;
         let _history_guard = lock.lock().await;
         let runtime = self.clone();
@@ -327,25 +355,13 @@ impl ChatRuntime {
         let task_progress = progress.clone();
         let task_effective_planned_context = effective_planned_context.clone();
         let (start_sender, start_receiver) = oneshot::channel();
-        let mut superseded_stream_id = None;
         let stream_id;
         {
             let mut guard = self.inner.lock().await;
             let state = guard
                 .entry(runtime_key.clone())
                 .or_insert_with(|| ChatState::new(&chat_id));
-            if let Some(active) = state.active_stream.take() {
-                superseded_stream_id = Some(active.id);
-                active.handle.abort();
-                state.push_event(
-                    &chat_id,
-                    "stream_finished",
-                    json!({ "finishReason": "abort" }),
-                );
-                state.mark_terminal_replay_persisted();
-            } else {
-                state.supersede_unpersisted_terminal_replay();
-            }
+            state.supersede_unpersisted_terminal_replay();
             stream_id = state.next_stream_id;
             state.next_stream_id += 1;
             let handle = tokio::spawn(async move {
@@ -371,6 +387,9 @@ impl ChatRuntime {
                 id: stream_id,
                 handle,
                 effective_planned_context: effective_planned_context.clone(),
+                history_root: history_root.clone(),
+                turn_evidence: None,
+                phase: ActiveStreamPhase::AwaitingDurableBegin,
             });
         }
         if let Some(progress) = &progress {
@@ -395,17 +414,17 @@ impl ChatRuntime {
         ) {
             Ok(message) => message,
             Err(_) => {
-            let terminal_owned = self
-                .fail_before_stream_start(&runtime_key, &chat_id, stream_id)
-                .await;
-            if terminal_owned {
-                if let Some(progress) = &progress {
-                    progress
-                        .publish(&chat_id, stream_id, ChatProgressLifecycle::HistoryFailed)
-                        .await;
+                let terminal_owned = self
+                    .fail_before_stream_start(&runtime_key, &chat_id, stream_id)
+                    .await;
+                if terminal_owned {
+                    if let Some(progress) = &progress {
+                        progress
+                            .publish(&chat_id, stream_id, ChatProgressLifecycle::HistoryFailed)
+                            .await;
+                    }
                 }
-            }
-            return;
+                return;
             }
         };
         let mut selected_provider = Ok(None);
@@ -459,8 +478,8 @@ impl ChatRuntime {
                         progress.as_ref(),
                     )
                     .await;
-                return;
-            }
+                    return;
+                }
             };
             selected_provider = Ok(Some(provider));
             turn_evidence = Some(evidence);
@@ -482,6 +501,8 @@ impl ChatRuntime {
                 .await;
             return;
         }
+        self.set_active_turn_evidence(&runtime_key, stream_id, turn_evidence.clone())
+            .await;
         let _ = start_sender.send((selected_provider, turn_evidence));
     }
 
@@ -516,8 +537,12 @@ impl ChatRuntime {
     }
 
     pub async fn accept_abort_in(&self, scope: &str, chat_id: &str) {
-        self.abort_active_stream(&runtime_key(scope, chat_id), chat_id)
-            .await;
+        self.reconcile_active_stream(
+            &runtime_key(scope, chat_id),
+            chat_id,
+            StreamInterruption::Abort,
+        )
+        .await;
     }
 
     pub async fn accept_project_abort(
@@ -527,7 +552,11 @@ impl ChatRuntime {
         progress_runtime: AgentProgressRuntime,
     ) {
         if let Some(stream_id) = self
-            .abort_active_stream(&runtime_key(project_id, chat_id), chat_id)
+            .reconcile_active_stream(
+                &runtime_key(project_id, chat_id),
+                chat_id,
+                StreamInterruption::Abort,
+            )
             .await
         {
             progress_runtime
@@ -696,25 +725,84 @@ impl ChatRuntime {
         state.mark_terminal_replay_persisted();
     }
 
-    async fn abort_active_stream(&self, runtime_key: &str, chat_id: &str) -> Option<u64> {
-        let lock = self.history_lock(runtime_key).await;
-        let _history_guard = lock.lock().await;
+    async fn reconcile_active_stream(
+        &self,
+        runtime_key: &str,
+        chat_id: &str,
+        interruption: StreamInterruption,
+    ) -> Option<u64> {
+        let runtime = self.clone();
+        let runtime_key = runtime_key.to_string();
+        let chat_id = chat_id.to_string();
+        tokio::spawn(async move {
+            let lock = runtime.history_lock(&runtime_key).await;
+            let _history_guard = lock.lock().await;
+            let active = {
+                let mut guard = runtime.inner.lock().await;
+                guard
+                    .entry(runtime_key.clone())
+                    .or_insert_with(|| ChatState::new(&chat_id))
+                    .active_stream
+                    .take()
+            }?;
+            let stream_id = active.id;
+            active.handle.abort();
+            if let Some(evidence) = &active.turn_evidence {
+                let _ = chat_turn_context::mark_interrupted_with_reason(
+                    &evidence.root,
+                    &evidence.project_id,
+                    &chat_id,
+                    &evidence.turn_id,
+                    interruption.finish_reason(),
+                )
+                .await;
+                let _ = chat_history::append_message_in(
+                    &active.history_root,
+                    &chat_id,
+                    ChatMessageRole::Error,
+                    match interruption {
+                        StreamInterruption::Abort => "Chat response was stopped.",
+                        StreamInterruption::Superseded => {
+                            "Chat response was superseded by a newer message."
+                        }
+                    }
+                    .into(),
+                    Some(ChatMessageStatus::Error),
+                )
+                .await;
+            }
+            let mut guard = runtime.inner.lock().await;
+            let state = guard
+                .entry(runtime_key)
+                .or_insert_with(|| ChatState::new(&chat_id));
+            state.push_event(
+                &chat_id,
+                "stream_finished",
+                json!({ "finishReason": interruption.finish_reason() }),
+            );
+            state.mark_terminal_replay_persisted();
+            Some(stream_id)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    async fn set_active_turn_evidence(
+        &self,
+        runtime_key: &str,
+        stream_id: u64,
+        evidence: Option<TurnEvidence>,
+    ) {
         let mut guard = self.inner.lock().await;
-        let state = guard
-            .entry(runtime_key.to_string())
-            .or_insert_with(|| ChatState::new(chat_id));
-        let Some(active) = state.active_stream.take() else {
-            return None;
-        };
-        let stream_id = active.id;
-        active.handle.abort();
-        state.push_event(
-            chat_id,
-            "stream_finished",
-            json!({ "finishReason": "abort" }),
-        );
-        state.mark_terminal_replay_persisted();
-        Some(stream_id)
+        if let Some(active) = guard
+            .get_mut(runtime_key)
+            .and_then(|state| state.active_stream.as_mut())
+            .filter(|active| active.id == stream_id)
+        {
+            active.turn_evidence = evidence;
+            active.phase = ActiveStreamPhase::Pending;
+        }
     }
 
     async fn run_stream(
@@ -749,14 +837,10 @@ impl ChatRuntime {
                 .await;
         }
         if let Some(evidence) = &turn_evidence {
-            if chat_turn_context::mark_streaming(
-                &evidence.root,
-                &evidence.project_id,
-                &chat_id,
-                &evidence.turn_id,
-            )
-            .await
-            .is_err()
+            if self
+                .mark_active_streaming(&runtime_key, &chat_id, stream_id, evidence)
+                .await
+                .is_err()
             {
                 if self
                     .claim_stream_terminal_ownership(&runtime_key, stream_id)
@@ -808,14 +892,14 @@ impl ChatRuntime {
             Err(error) => Err(error),
             Ok(selected_provider) => {
                 self.stream_provider(
-                &config_dir,
-                &runtime_key,
-                &chat_id,
-                stream_id,
-                &prompt,
-                context.as_ref(),
-                selected_provider,
-            )
+                    &config_dir,
+                    &runtime_key,
+                    &chat_id,
+                    stream_id,
+                    &prompt,
+                    context.as_ref(),
+                    selected_provider,
+                )
                 .await
             }
         };
@@ -882,6 +966,36 @@ impl ChatRuntime {
                 }
             }
         }
+    }
+
+    async fn mark_active_streaming(
+        &self,
+        runtime_key: &str,
+        chat_id: &str,
+        stream_id: u64,
+        evidence: &TurnEvidence,
+    ) -> Result<(), chat_turn_context::TurnContextError> {
+        let lock = self.history_lock(runtime_key).await;
+        let _history_guard = lock.lock().await;
+        if !self.is_active_stream(runtime_key, stream_id).await {
+            return Ok(());
+        }
+        chat_turn_context::mark_streaming(
+            &evidence.root,
+            &evidence.project_id,
+            chat_id,
+            &evidence.turn_id,
+        )
+        .await?;
+        let mut guard = self.inner.lock().await;
+        if let Some(active) = guard
+            .get_mut(runtime_key)
+            .and_then(|state| state.active_stream.as_mut())
+            .filter(|active| active.id == stream_id)
+        {
+            active.phase = ActiveStreamPhase::Streaming;
+        }
+        Ok(())
     }
 
     /// `pending -> streaming -> history terminal -> linked -> complete|error`.
@@ -1543,7 +1657,7 @@ fn assemble_effective_provider_prompt(
     match repository {
         Some(repository) if context.is_some() => {
             explicit.rsplit_once("\n\nUser request\n").map_or_else(
-            || format!("{explicit}\n\n{repository}"),
+                || format!("{explicit}\n\n{repository}"),
                 |(explicit_context, user)| {
                     format!("{explicit_context}\n\n{repository}\n\nUser request\n{user}")
                 },
@@ -4623,6 +4737,9 @@ mod tests {
                 id: 1,
                 handle: first_handle,
                 effective_planned_context: None,
+                history_root: std::path::PathBuf::new(),
+                turn_evidence: None,
+                phase: super::ActiveStreamPhase::AwaitingDurableBegin,
             });
             let second = states
                 .entry(second_key.clone())
@@ -4631,6 +4748,9 @@ mod tests {
                 id: 1,
                 handle: second_handle,
                 effective_planned_context: None,
+                history_root: std::path::PathBuf::new(),
+                turn_evidence: None,
+                phase: super::ActiveStreamPhase::AwaitingDurableBegin,
             });
         }
 
@@ -4656,6 +4776,9 @@ mod tests {
                 id: 3,
                 handle,
                 effective_planned_context: None,
+                history_root: std::path::PathBuf::new(),
+                turn_evidence: None,
+                phase: super::ActiveStreamPhase::AwaitingDurableBegin,
             });
         }
 
@@ -4674,6 +4797,182 @@ mod tests {
         assert!(!serde_json::to_string(&snapshot)
             .unwrap()
             .contains("chat_abort"));
+    }
+
+    #[tokio::test]
+    async fn project_chat_abort_reconciles_original_durable_turn_once() {
+        let dir = temp_dir();
+        let original_history = dir.join("projects/project-a/chat-history");
+        let other_history = dir.join("projects/project-b/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        let chat_id = "chat_abort_durable";
+        let user = crate::chat_history::append_message_in(
+            &original_history,
+            chat_id,
+            crate::chat_history::ChatMessageRole::User,
+            "hello".into(),
+            Some(crate::chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        let record = crate::chat_turn_context::record(
+            "project-a",
+            "revision-1",
+            chat_id,
+            &user.id,
+            test_manifest("project-a", "manifest-1", 3),
+            crate::chat_turn_context::EffectiveModel {
+                provider_id: "demo-local".into(),
+                provider_kind: "demo_local".into(),
+                model_id: "demo-local".into(),
+            },
+        )
+        .unwrap();
+        let evidence = super::TurnEvidence {
+            root: turn_root.clone(),
+            project_id: "project-a".into(),
+            turn_id: record.turn_id.clone(),
+        };
+        crate::chat_turn_context::append(&turn_root, "project-a", record)
+            .await
+            .unwrap();
+        let runtime = super::ChatRuntime::new();
+        let key = super::runtime_key("project-a", chat_id);
+        runtime.inner.lock().await.insert(
+            key,
+            super::ChatState {
+                events: Vec::new(),
+                terminal_replay: super::TerminalReplayRetention::ActiveOrUnpersisted,
+                known_terminal_append_failure: false,
+                next_seq: 1,
+                sender: tokio::sync::broadcast::channel(64).0,
+                active_stream: Some(super::ActiveStream {
+                    id: 1,
+                    handle: tokio::spawn(std::future::pending::<()>()),
+                    effective_planned_context: None,
+                    history_root: original_history.clone(),
+                    turn_evidence: Some(evidence),
+                    phase: super::ActiveStreamPhase::Pending,
+                }),
+                next_stream_id: 2,
+            },
+        );
+
+        runtime.accept_abort_in("project-a", chat_id).await;
+        runtime.accept_abort_in("project-a", chat_id).await;
+
+        let stored = crate::chat_turn_context::read(&turn_root, "project-a", chat_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored.records[0].status,
+            crate::chat_turn_context::TurnContextStatus::Interrupted
+        );
+        assert_eq!(stored.records[0].finish_reason.as_deref(), Some("abort"));
+        assert!(stored.records[0].assistant_message_id.is_none());
+        let history = crate::chat_history::get_thread_in(&original_history, chat_id)
+            .await
+            .unwrap();
+        assert_eq!(history.messages.len(), 2);
+        assert_eq!(history.messages[1].content, "Chat response was stopped.");
+        assert!(matches!(
+            crate::chat_history::get_thread_in(&other_history, chat_id).await,
+            Err(crate::chat_history::ChatHistoryError::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn project_chat_supersede_reconciles_streaming_durable_turn() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        let chat_id = "chat_superseded_durable";
+        let user = crate::chat_history::append_message_in(
+            &history_root,
+            chat_id,
+            crate::chat_history::ChatMessageRole::User,
+            "first".into(),
+            Some(crate::chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        let record = crate::chat_turn_context::record(
+            "project-a",
+            "revision-1",
+            chat_id,
+            &user.id,
+            test_manifest("project-a", "manifest-1", 3),
+            crate::chat_turn_context::EffectiveModel {
+                provider_id: "demo-local".into(),
+                provider_kind: "demo_local".into(),
+                model_id: "demo-local".into(),
+            },
+        )
+        .unwrap();
+        let evidence = super::TurnEvidence {
+            root: turn_root.clone(),
+            project_id: "project-a".into(),
+            turn_id: record.turn_id.clone(),
+        };
+        crate::chat_turn_context::append(&turn_root, "project-a", record)
+            .await
+            .unwrap();
+        crate::chat_turn_context::mark_streaming(
+            &turn_root,
+            "project-a",
+            chat_id,
+            &evidence.turn_id,
+        )
+        .await
+        .unwrap();
+        let runtime = super::ChatRuntime::new();
+        let key = super::runtime_key("project-a", chat_id);
+        runtime.inner.lock().await.insert(
+            key.clone(),
+            super::ChatState {
+                events: Vec::new(),
+                terminal_replay: super::TerminalReplayRetention::ActiveOrUnpersisted,
+                known_terminal_append_failure: false,
+                next_seq: 1,
+                sender: tokio::sync::broadcast::channel(64).0,
+                active_stream: Some(super::ActiveStream {
+                    id: 1,
+                    handle: tokio::spawn(std::future::pending::<()>()),
+                    effective_planned_context: None,
+                    history_root: history_root.clone(),
+                    turn_evidence: Some(evidence),
+                    phase: super::ActiveStreamPhase::Streaming,
+                }),
+                next_stream_id: 2,
+            },
+        );
+
+        assert_eq!(
+            runtime
+                .reconcile_active_stream(&key, chat_id, super::StreamInterruption::Superseded,)
+                .await,
+            Some(1)
+        );
+
+        let stored = crate::chat_turn_context::read(&turn_root, "project-a", chat_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            stored.records[0].status,
+            crate::chat_turn_context::TurnContextStatus::Interrupted
+        );
+        assert_eq!(
+            stored.records[0].finish_reason.as_deref(),
+            Some("superseded")
+        );
+        assert!(stored.records[0].assistant_message_id.is_none());
+        let history = crate::chat_history::get_thread_in(&history_root, chat_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            history.messages.last().unwrap().content,
+            "Chat response was superseded by a newer message."
+        );
     }
 
     #[tokio::test]
@@ -5033,6 +5332,9 @@ mod tests {
                         id: 1,
                         handle,
                         effective_planned_context: None,
+                        history_root: history_root.clone(),
+                        turn_evidence: Some(evidence.clone()),
+                        phase: super::ActiveStreamPhase::Streaming,
                     }),
                     next_stream_id: 2,
                 },

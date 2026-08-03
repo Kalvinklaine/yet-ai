@@ -370,6 +370,26 @@ pub async fn mark_interrupted(
     .await
 }
 
+pub async fn mark_interrupted_with_reason(
+    root: &Path,
+    project_id: &str,
+    chat_id: &str,
+    turn_id: &str,
+    finish_reason: &str,
+) -> Result<(), TurnContextError> {
+    if !matches!(finish_reason, "abort" | "superseded") {
+        return Err(TurnContextError::Invalid);
+    }
+    update(root, project_id, chat_id, turn_id, |record| {
+        record.assistant_message_id = None;
+        record.status = TurnContextStatus::Interrupted;
+        record.finish_reason = Some(finish_reason.into());
+        record.error_code = None;
+        record.updated_at = timestamp_now();
+    })
+    .await
+}
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FailureStage {
@@ -767,6 +787,27 @@ mod tests {
         let repaired = read(&root, "project-a", "chat_1").await.unwrap();
         assert_eq!(repaired.records[0].status, TurnContextStatus::Interrupted);
         assert!(repaired.records[0].assistant_message_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn chat_turn_context_abort_reason_survives_restart_read() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("config/projects/project-a/turn-context");
+        let pending = item("project-a", "chat_1", "msg_user", "manifest-1");
+        let turn_id = pending.turn_id.clone();
+        append(&root, "project-a", pending).await.unwrap();
+
+        mark_interrupted_with_reason(&root, "project-a", "chat_1", &turn_id, "abort")
+            .await
+            .unwrap();
+        mark_interrupted_with_reason(&root, "project-a", "chat_1", &turn_id, "abort")
+            .await
+            .unwrap();
+
+        let restarted = read(&root, "project-a", "chat_1").await.unwrap();
+        assert_eq!(restarted.records[0].status, TurnContextStatus::Interrupted);
+        assert_eq!(restarted.records[0].finish_reason.as_deref(), Some("abort"));
+        assert!(restarted.records[0].assistant_message_id.is_none());
     }
 
     #[tokio::test]
