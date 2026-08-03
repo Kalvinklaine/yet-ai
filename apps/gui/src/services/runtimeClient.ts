@@ -174,6 +174,13 @@ export type ExplicitContextBundle = {
 
 export type ChatContext = ActiveEditorChatContext | ExplicitContextBundle;
 
+export type ProjectContextSourceIdentity =
+  | { kind: "file_chunk"; chunkId: string; contentHash: string }
+  | { kind: "active_editor"; editorSnapshotId: string }
+  | { kind: "memory_note"; memoryNoteId: string }
+  | { kind: "verification_output"; verificationResultId: string }
+  | { kind: "continuation_prefix"; assistantMessageId: string; generationId: string };
+
 export type ProjectContextPlanningSelection = {
   planId: string;
   manifestId: string;
@@ -184,8 +191,7 @@ export type ProjectContextPlanningSelection = {
   rankingVersion: "lexical-symbol-ranking-1";
   budget: { maxFiles: number; maxChunks: number; maxBytes: number; maxEstimatedTokens: number };
   explicitRefs: unknown[];
-  includedRanks: number[];
-  excludedRanks: number[];
+  excludedSources: ProjectContextSourceIdentity[];
   correlation: { projectId: string; chatId: string | null; settingsGeneration: string; controlFingerprint: string };
 };
 

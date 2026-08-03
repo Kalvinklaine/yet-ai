@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createProjectRuntimeSettings, getProject } from "../services/projectClient";
 import { getProjectContextStatus, planProjectContext, type ProjectContextExplicitRef, type ProjectContextMode, type ProjectContextPlan } from "../services/projectContextClient";
-import { buildContextManifestView, contextManifestEntryKey, manifestEntryToExplicitRef, manifestMatchesCorrelation } from "../services/contextManifestView";
+import { buildContextManifestView, contextManifestEntryIdentity, contextManifestEntryKey, manifestEntryToExplicitRef, manifestMatchesCorrelation } from "../services/contextManifestView";
 import type { ProjectContextPlanningSelection, RuntimeSettings } from "../services/runtimeClient";
 
 const budget = { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 };
@@ -16,9 +16,8 @@ export function ChatContextDrawer({ projectId, chatId, draft, settings, generati
   const requestRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const revisionRef = useRef("");
-  const includedRanks = plan?.manifest.entries.filter((entry) => !excluded.has(contextManifestEntryKey(entry))).map((entry) => entry.rank) ?? [];
-  const excludedRanks = plan?.manifest.entries.filter((entry) => excluded.has(contextManifestEntryKey(entry))).map((entry) => entry.rank) ?? [];
-  const controlFingerprint = JSON.stringify({ excludedRanks, explicitRefs: pinned, includedRanks, mode });
+  const excludedSources = plan?.manifest.entries.filter((entry) => excluded.has(contextManifestEntryKey(entry))).map(contextManifestEntryIdentity) ?? [];
+  const controlFingerprint = JSON.stringify({ excludedSources, explicitRefs: pinned, mode });
   const controlIdentity = JSON.stringify({ mode, explicitRefs: pinned, excludedKeys: Array.from(excluded).sort() });
   const correlation = `${projectId}:${chatId ?? "draft"}:${draft}:${generationKey}:${controlIdentity}`;
   const correlationRef = useRef(correlation);
@@ -42,6 +41,8 @@ export function ChatContextDrawer({ projectId, chatId, draft, settings, generati
     const result = await planProjectContext(scoped, { query, mode, budget, explicitRefs: pinned, expectedInventoryGeneration: statusResult.data.inventoryGeneration, expectedProjectRevision: projectResult.data.revision });
     if (request !== requestRef.current || expectedCorrelation !== correlationRef.current) return;
     if (!result.ok || !manifestMatchesCorrelation(result.data.manifest, projectId, statusResult.data.inventoryGeneration)) { setPlan(null); setState("error"); onSelectionChange?.(null); onReadyChange?.(true); return; }
+    const currentKeys = new Set(result.data.manifest.entries.map(contextManifestEntryKey));
+    setExcluded((current) => new Set(Array.from(current).filter((key) => currentKeys.has(key))));
     setPlan(result.data);
     setState("idle");
   }, [draft, mode, onReadyChange, onSelectionChange, pinned, projectId, settings]);
@@ -51,7 +52,7 @@ export function ChatContextDrawer({ projectId, chatId, draft, settings, generati
     return () => { window.clearTimeout(timer); requestRef.current += 1; abortRef.current?.abort(); };
   }, [chatId, draft, generationKey, mode, projectId, refresh]);
 
-  useEffect(() => { setPlan(null); setExcluded(new Set()); setPinned([]); }, [chatId, generationKey, projectId]);
+  useEffect(() => { setPlan(null); setExcluded(new Set()); setPinned([]); }, [chatId, draft, generationKey, projectId]);
 
   const view = useMemo(() => plan ? buildContextManifestView(plan, excluded) : null, [excluded, plan]);
   useEffect(() => {
@@ -66,8 +67,7 @@ export function ChatContextDrawer({ projectId, chatId, draft, settings, generati
       rankingVersion: plan.manifest.rankingVersion,
       budget,
       explicitRefs: pinned,
-      includedRanks,
-      excludedRanks,
+      excludedSources,
       correlation: { projectId, chatId, settingsGeneration: generationKey, controlFingerprint },
     });
     onReadyChange?.(true);

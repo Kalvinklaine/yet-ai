@@ -1,4 +1,5 @@
 import type { ProjectContextManifest, ProjectContextManifestEntry, ProjectContextPlan } from "./projectContextClient";
+import type { ProjectContextSourceIdentity } from "./runtimeClient";
 
 export type ContextManifestEntryView = {
   key: string;
@@ -20,7 +21,16 @@ export type ContextManifestView = {
 };
 
 export function contextManifestEntryKey(entry: ProjectContextManifestEntry): string {
-  return [entry.kind, entry.sourceRef, entry.memoryNoteId, entry.verificationResultId, entry.assistantMessageId, entry.rank].filter((value) => value !== undefined).join(":");
+  return JSON.stringify(contextManifestEntryIdentity(entry));
+}
+
+export function contextManifestEntryIdentity(entry: ProjectContextManifestEntry): ProjectContextSourceIdentity {
+  if (entry.kind === "file_chunk" && entry.chunkId && entry.contentHash) return { kind: "file_chunk", chunkId: entry.chunkId, contentHash: entry.contentHash };
+  if (entry.kind === "active_editor" && entry.editorSnapshotId) return { kind: "active_editor", editorSnapshotId: entry.editorSnapshotId };
+  if (entry.kind === "memory_note" && entry.memoryNoteId) return { kind: "memory_note", memoryNoteId: entry.memoryNoteId };
+  if (entry.kind === "verification_output" && entry.verificationResultId) return { kind: "verification_output", verificationResultId: entry.verificationResultId };
+  if (entry.kind === "continuation_prefix" && entry.assistantMessageId && entry.generationId) return { kind: "continuation_prefix", assistantMessageId: entry.assistantMessageId, generationId: entry.generationId };
+  throw new Error("Project context manifest entry has no stable source identity.");
 }
 
 export function buildContextManifestView(plan: ProjectContextPlan, excludedKeys: ReadonlySet<string> = new Set()): ContextManifestView {
