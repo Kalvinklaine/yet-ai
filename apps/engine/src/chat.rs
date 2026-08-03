@@ -97,6 +97,12 @@ struct TurnEvidence {
     turn_id: String,
 }
 
+#[derive(Debug)]
+enum TerminalCommitRepair {
+    Persisted(chat_history::ChatMessage),
+    Uncertain,
+}
+
 #[derive(Clone, Debug)]
 struct ProjectProgressObserver {
     runtime: AgentProgressRuntime,
@@ -1194,12 +1200,18 @@ impl ChatRuntime {
                     .await
                     .is_err()
                     {
-                        self.repair_terminal_commit(
+                        let repair = self.repair_terminal_commit(
                             history_root,
                             chat_id,
                             &message.id,
                             evidence,
                             "turn_context_storage_error",
+                        )
+                        .await;
+                        self.publish_terminal_commit_repair(
+                            runtime_key,
+                            chat_id,
+                            repair,
                         )
                         .await;
                         return Some(false);
@@ -1222,12 +1234,18 @@ impl ChatRuntime {
                     .await
                     .is_err()
                     {
-                        self.repair_terminal_commit(
+                        let repair = self.repair_terminal_commit(
                             history_root,
                             chat_id,
                             &message.id,
                             evidence,
                             "turn_context_storage_error",
+                        )
+                        .await;
+                        self.publish_terminal_commit_repair(
+                            runtime_key,
+                            chat_id,
+                            repair,
                         )
                         .await;
                         return Some(false);
@@ -1327,24 +1345,77 @@ impl ChatRuntime {
         terminal_message_id: &str,
         evidence: &TurnEvidence,
         error_code: &str,
-    ) {
-        let _ = chat_turn_context::mark_interrupted(
+    ) -> TerminalCommitRepair {
+        let evidence_repaired = chat_turn_context::mark_interrupted(
             &evidence.root,
             &evidence.project_id,
             chat_id,
             &evidence.turn_id,
             error_code,
         )
-        .await;
-        let _ = chat_history::remove_message_in(history_root, chat_id, terminal_message_id).await;
-        let _ = chat_history::append_message_in(
+        .await
+        .is_ok();
+        let terminal_removed = chat_history::remove_message_in(
+            history_root,
+            chat_id,
+            terminal_message_id,
+        )
+        .await
+        .is_ok();
+        let repaired_message = chat_history::append_message_in(
             history_root,
             chat_id,
             ChatMessageRole::Error,
             "Chat response persistence was interrupted. Retry the request.".into(),
             Some(ChatMessageStatus::Error),
         )
-        .await;
+        .await
+        .ok();
+        match (evidence_repaired, terminal_removed, repaired_message) {
+            (true, true, Some(message)) => TerminalCommitRepair::Persisted(message),
+            _ => TerminalCommitRepair::Uncertain,
+        }
+    }
+
+    async fn publish_terminal_commit_repair(
+        &self,
+        runtime_key: &str,
+        chat_id: &str,
+        repair: TerminalCommitRepair,
+    ) {
+        match repair {
+            TerminalCommitRepair::Persisted(message) => {
+                self.push_terminal_event(
+                    runtime_key,
+                    chat_id,
+                    "message_added",
+                    json!({ "message": message }),
+                )
+                .await;
+                self.push_persisted_terminal_event(
+                    runtime_key,
+                    chat_id,
+                    "stream_finished",
+                    json!({ "finishReason": "error" }),
+                )
+                .await;
+            }
+            TerminalCommitRepair::Uncertain => {
+                let mut guard = self.inner.lock().await;
+                let state = guard
+                    .entry(runtime_key.to_string())
+                    .or_insert_with(|| ChatState::new(chat_id));
+                state.known_terminal_append_failure = true;
+                state.push_event(
+                    chat_id,
+                    "error",
+                    json!({
+                        "code": "turn_context_storage_error",
+                        "message": "Chat response persistence could not be confirmed. Retry the request."
+                    }),
+                );
+            }
+        }
     }
 
     async fn snapshot_event(
@@ -2267,7 +2338,15 @@ impl ChatState {
 }
 
 fn is_unpersisted_terminal_evidence(event: &ChatEvent) -> bool {
-    event.event_type == "error" && event.payload["code"] == "chat_history_storage_error"
+    event.event_type == "error"
+        && matches!(
+            event.payload["code"].as_str(),
+            Some(
+                "chat_history_storage_error"
+                    | "turn_context_storage_error"
+                    | "chat_reconciliation_storage_error"
+            )
+        )
 }
 
 impl ChatError {
@@ -6211,6 +6290,40 @@ mod tests {
         assert_eq!(states[&other_key].events.len(), 1);
     }
 
+    #[test]
+    fn terminal_replay_prunes_each_repairable_storage_error_boundary() {
+        for code in [
+            "chat_history_storage_error",
+            "turn_context_storage_error",
+            "chat_reconciliation_storage_error",
+        ] {
+            let mut state = super::ChatState::new("chat_terminal_replay_codes");
+            state.known_terminal_append_failure = true;
+            state.push_event(
+                "chat_terminal_replay_codes",
+                "stream_delta",
+                serde_json::json!({ "delta": { "content": "old" } }),
+            );
+            state.push_event(
+                "chat_terminal_replay_codes",
+                "error",
+                serde_json::json!({ "code": code }),
+            );
+            state.push_event(
+                "chat_terminal_replay_codes",
+                "stream_started",
+                serde_json::json!({ "role": "assistant" }),
+            );
+
+            state.accept_durable_repair();
+
+            assert!(!state.known_terminal_append_failure, "{code}");
+            assert_eq!(state.events.len(), 1, "{code}");
+            assert_eq!(state.events[0].event_type, "stream_started", "{code}");
+            assert_eq!(state.replay_events_for_subscriber().len(), 1, "{code}");
+        }
+    }
+
     #[tokio::test]
     async fn project_chat_reload_subscription_fails_closed_for_corrupt_turn_store() {
         let dir = temp_dir();
@@ -6382,6 +6495,135 @@ mod tests {
                 crate::chat_turn_context::TurnContextStatus::Interrupted
             );
             assert!(repaired.records[0].assistant_message_id.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_evidence_finalize_repair_emits_message_and_single_finished_event() {
+        for stage in [
+            crate::chat_turn_context::FailureStage::LinkTerminal,
+            crate::chat_turn_context::FailureStage::MarkTerminal,
+        ] {
+            let dir = temp_dir();
+            let history_root = dir.join("projects/project-a/chat-history");
+            let turn_root = dir.join("projects/project-a/turn-context");
+            let chat_id = match stage {
+                crate::chat_turn_context::FailureStage::LinkTerminal => {
+                    "chat_terminal_evidence_link"
+                }
+                crate::chat_turn_context::FailureStage::MarkTerminal => {
+                    "chat_terminal_evidence_mark"
+                }
+                _ => unreachable!(),
+            };
+            let user = crate::chat_history::append_message_in(
+                &history_root,
+                chat_id,
+                crate::chat_history::ChatMessageRole::User,
+                "hello".into(),
+                Some(crate::chat_history::ChatMessageStatus::Complete),
+            )
+            .await
+            .unwrap();
+            let record = crate::chat_turn_context::record(
+                "project-a",
+                "revision-1",
+                chat_id,
+                &user.id,
+                test_manifest("project-a", "manifest-1", 3),
+                crate::chat_turn_context::EffectiveModel {
+                    provider_id: "demo-local".into(),
+                    provider_kind: "demo_local".into(),
+                    model_id: "demo-local".into(),
+                },
+            )
+            .unwrap();
+            let evidence = super::TurnEvidence {
+                root: turn_root.clone(),
+                project_id: "project-a".into(),
+                turn_id: record.turn_id.clone(),
+            };
+            crate::chat_turn_context::append(&turn_root, "project-a", record)
+                .await
+                .unwrap();
+            crate::chat_turn_context::mark_streaming(
+                &turn_root,
+                "project-a",
+                chat_id,
+                &evidence.turn_id,
+            )
+            .await
+            .unwrap();
+            crate::chat_turn_context::inject_failure(&turn_root, stage);
+            let runtime = super::ChatRuntime::new();
+            let key = super::runtime_key("project-a", chat_id);
+            let mut receiver = {
+                let mut states = runtime.inner.lock().await;
+                let state = states
+                    .entry(key.clone())
+                    .or_insert_with(|| super::ChatState::new(chat_id));
+                state.active_stream = Some(super::ActiveStream {
+                    id: 1,
+                    handle: tokio::spawn(std::future::pending::<()>()),
+                    effective_planned_context: None,
+                    history_root: history_root.clone(),
+                    turn_evidence: Some(evidence.clone()),
+                    phase: super::ActiveStreamPhase::Streaming,
+                });
+                state.sender.subscribe()
+            };
+
+            assert_eq!(
+                runtime
+                    .persist_terminal_history_and_event(
+                        &history_root,
+                        &key,
+                        chat_id,
+                        1,
+                        crate::chat_history::ChatMessageRole::Assistant,
+                        "answer".into(),
+                        crate::chat_history::ChatMessageStatus::Complete,
+                        "stream_finished",
+                        serde_json::json!({ "finishReason": "stop" }),
+                        Some(&evidence),
+                        Some("stop"),
+                        None,
+                    )
+                    .await,
+                Some(false)
+            );
+            let added = receiver.recv().await.unwrap();
+            let finished = receiver.recv().await.unwrap();
+            assert_eq!(added.event_type, "message_added");
+            assert_eq!(added.payload["message"]["role"], "error");
+            assert_eq!(finished.event_type, "stream_finished");
+            assert_eq!(finished.payload["finishReason"], "error");
+            assert!(tokio::time::timeout(
+                std::time::Duration::from_millis(20),
+                receiver.recv()
+            )
+            .await
+            .is_err());
+            assert_eq!(
+                runtime
+                    .persist_terminal_history_and_event(
+                        &history_root,
+                        &key,
+                        chat_id,
+                        1,
+                        crate::chat_history::ChatMessageRole::Assistant,
+                        "answer".into(),
+                        crate::chat_history::ChatMessageStatus::Complete,
+                        "stream_finished",
+                        serde_json::json!({ "finishReason": "stop" }),
+                        Some(&evidence),
+                        Some("stop"),
+                        None,
+                    )
+                    .await,
+                None
+            );
+            assert!(runtime.inner.lock().await[&key].events.is_empty());
         }
     }
 
