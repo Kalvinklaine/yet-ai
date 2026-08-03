@@ -1,0 +1,53 @@
+import React, { act } from "react";
+import ReactDOM from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProjectContextStatusCard, type ProjectContextCardModel } from "./ProjectContextStatusCard";
+
+const projectId = "prj_abcdefghijklmnopqrstuA";
+const hash = `sha256:${"a".repeat(64)}`;
+let root: ReactDOM.Root | undefined;
+afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ""; });
+
+describe("ProjectContextStatusCard", () => {
+  it.each([
+    [{ status: "loading" }, "Loading local structural evidence"],
+    [{ status: "error", message: "Project context status could not be loaded safely." }, "could not be loaded safely"],
+    [ready("not_built", null), "Not initialized"],
+    [ready("building", null), "Building"],
+    [ready("stale", null), "Stale"],
+    [ready("unavailable", null), "Error"],
+  ] as Array<[ProjectContextCardModel, string]>)("renders an accessible state", (model, text) => {
+    const container = render(model);
+    expect(container.textContent).toContain(text);
+    expect(container.querySelector("h2")?.textContent).toBe("Project Context");
+  });
+
+  it("explains bounded evidence and renders safe relative provenance", () => {
+    const container = render(ready("ready", profile()));
+    expect(container.textContent).toContain("not semantic indexing");
+    expect(container.textContent).toContain("not automatically attached to chat");
+    expect(container.textContent).toContain("Primary languages");
+    expect(container.textContent).toContain("src/main.rs");
+    expect(container.textContent).not.toContain("/Users/");
+    expect(container.textContent).not.toContain("secret-value");
+  });
+
+  it("rebuilds only after an explicit click and shows sanitized progress and errors", () => {
+    const rebuild = vi.fn();
+    const container = render(ready("ready", profile()), { onRebuild: rebuild, rebuilding: true, rebuildError: "Project context could not be rebuilt." });
+    expect(rebuild).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Rebuilding…");
+    expect(container.textContent).toContain("could not be rebuilt");
+    act(() => { root?.render(<ProjectContextStatusCard model={ready("ready", profile())} rebuilding={false} rebuildError={null} onRebuild={rebuild} />); });
+    act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Rebuild project context") as HTMLButtonElement).click());
+    expect(rebuild).toHaveBeenCalledOnce();
+  });
+});
+
+function render(model: ProjectContextCardModel, overrides: Partial<React.ComponentProps<typeof ProjectContextStatusCard>> = {}) {
+  const container = document.createElement("div"); document.body.append(container);
+  act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectContextStatusCard model={model} rebuilding={false} rebuildError={null} onRebuild={() => undefined} {...overrides} />); });
+  return container;
+}
+function ready(state: "not_built" | "building" | "ready" | "stale" | "unavailable", value: ReturnType<typeof profile> | null): ProjectContextCardModel { return { status: "ready", context: { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state, inventoryGeneration: state === "not_built" ? 0 : 1, counts: { eligibleFiles: 3, indexedFiles: 2, omittedFiles: 1, chunks: 0, symbols: 0 }, cloudRequired: false, providerAccess: "direct" }, profile: value }; }
+function profile() { return { protocolVersion: "2026-08-02" as const, schemaVersion: 1 as const, profileId: "profile-1", projectId, inventoryGeneration: 1, profileHash: hash, summary: "Local structural profile.", summaryProvenance: [{ sourceRef: "src/main.rs", contentHash: hash }], facts: [{ kind: "language" as const, label: "Rust source files", sourceRef: "src/main.rs", contentHash: hash, provenance: "structural_inventory" as const }], createdAt: "2026-08-02T12:00:00Z", cloudRequired: false as const }; }

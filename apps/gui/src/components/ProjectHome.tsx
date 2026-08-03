@@ -4,8 +4,9 @@ import type { ProjectCommandCenterModel } from "../services/projectCommandCenter
 import { ProjectLink, type ProjectNavigation } from "../services/projectRouting";
 import { createProjectChatLaunchIntent, getBrowserProjectChatLifecycleGeneration } from "../services/projectChatLaunchIntent";
 import { ProjectCommandCenter } from "./ProjectCommandCenter";
+import { ProjectContextStatusCard, type ProjectContextCardModel } from "./ProjectContextStatusCard";
 
-export function ProjectHome({ project, model, navigate }: { project: ProjectSummary; model: ProjectCommandCenterModel; navigate: ProjectNavigation }) {
+export function ProjectHome({ project, model, context, contextRebuilding, contextRebuildError, onRebuildContext, navigate }: { project: ProjectSummary; model: ProjectCommandCenterModel; context?: ProjectContextCardModel; contextRebuilding?: boolean; contextRebuildError?: string | null; onRebuildContext?: () => void; navigate: ProjectNavigation }) {
   const [selectedMemoryNoteIds, setSelectedMemoryNoteIds] = useState<string[]>([]);
   const projectRoute = (page: "chat" | "memory" | "agent") => ({ kind: "project" as const, projectId: project.projectId, page });
   const openChat = (chatId?: string) => {
@@ -32,6 +33,7 @@ export function ProjectHome({ project, model, navigate }: { project: ProjectSumm
         onMemorySelectionChange={setSelectedMemoryNoteIds}
         onNavigateActiveWork={() => navigate(projectRoute("agent"))}
       />
+      {context && onRebuildContext && <ProjectContextStatusCard model={context} rebuilding={contextRebuilding ?? false} rebuildError={contextRebuildError ?? null} onRebuild={onRebuildContext} />}
       <nav className="project-home-actions" aria-label="Project command center destinations">
         <ProjectLink className="project-action-card" route={projectRoute("chat")} navigate={navigate}><strong>Chat</strong><span>Open the project chat without sending anything</span></ProjectLink>
         <ProjectLink className="project-action-card" route={projectRoute("memory")} navigate={navigate}><strong>Memory</strong><span>Review or select curated local notes</span></ProjectLink>

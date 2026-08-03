@@ -30,6 +30,17 @@ describe("ProjectHome", () => {
     expect(container.textContent).not.toContain("/Users/");
   });
 
+  it("wires the inspectable context surface without implying chat attachment", () => {
+    const rebuild = vi.fn();
+    const container = document.createElement("div"); document.body.append(container);
+    act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectHome project={project} model={model} context={{ status: "ready", context: { protocolVersion: "2026-08-02", schemaVersion: 1, projectId: project.projectId, state: "not_built", inventoryGeneration: 0, cloudRequired: false, providerAccess: "direct" }, profile: null }} contextRebuilding={false} contextRebuildError={null} onRebuildContext={rebuild} navigate={() => undefined} />); });
+    expect(container.textContent).toContain("Build the local structural inventory");
+    expect(container.textContent).toContain("not automatically attached to chat");
+    expect(rebuild).not.toHaveBeenCalled();
+    act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Rebuild project context") as HTMLButtonElement).click());
+    expect(rebuild).toHaveBeenCalledOnce();
+  });
+
   it("uses SPA navigation for ordinary clicks and leaves modified clicks native", () => {
     const navigate = vi.fn();
     const container = document.createElement("div"); document.body.append(container);
