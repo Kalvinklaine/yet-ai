@@ -4,13 +4,14 @@
   "title": "ProjectContextProfile",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocolVersion", "schemaVersion", "profileId", "projectId", "inventoryGeneration", "profileHash", "summary", "facts", "createdAt", "cloudRequired"],
+  "required": ["protocolVersion", "schemaVersion", "profileId", "projectId", "inventoryGeneration", "projectRevision", "profileHash", "summary", "facts", "createdAt", "cloudRequired"],
   "properties": {
     "protocolVersion": { "const": "2026-08-02" },
     "schemaVersion": { "const": 1 },
     "profileId": { "$ref": "#/$defs/id" },
     "projectId": { "$ref": "#/$defs/projectId" },
     "inventoryGeneration": { "type": "integer", "minimum": 1 },
+    "projectRevision": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[0-9]+$" },
     "profileHash": { "$ref": "#/$defs/hash" },
     "summary": { "$ref": "#/$defs/text" },
     "facts": {
@@ -22,7 +23,7 @@
         "additionalProperties": false,
         "required": ["kind", "label", "sourceRef", "contentHash", "provenance"],
         "properties": {
-          "kind": { "enum": ["overview", "manifest", "language", "module", "entry_point", "workspace"] },
+          "kind": { "enum": ["overview", "manifest", "language", "documentation", "module", "entry_point", "build_command", "test_command"] },
           "label": { "$ref": "#/$defs/text" },
           "sourceRef": { "$ref": "#/$defs/path" },
           "contentHash": { "$ref": "#/$defs/hash" },

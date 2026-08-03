@@ -34,6 +34,14 @@ CREATE TABLE inventory_entries (
     PRIMARY KEY (generation, relative_path)
 );
 CREATE INDEX inventory_entries_generation ON inventory_entries(generation, disposition);
+CREATE TABLE project_profiles (
+    inventory_generation INTEGER PRIMARY KEY CHECK (inventory_generation > 0),
+    project_revision TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    profile_hash TEXT NOT NULL,
+    profile_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 "#;
 
 pub const CREATE_INVENTORY_SCHEMA: &str = r#"
@@ -49,4 +57,12 @@ CREATE TABLE IF NOT EXISTS inventory_entries (
     PRIMARY KEY (generation, relative_path)
 );
 CREATE INDEX IF NOT EXISTS inventory_entries_generation ON inventory_entries(generation, disposition);
+CREATE TABLE IF NOT EXISTS project_profiles (
+    inventory_generation INTEGER PRIMARY KEY CHECK (inventory_generation > 0),
+    project_revision TEXT NOT NULL,
+    profile_id TEXT NOT NULL,
+    profile_hash TEXT NOT NULL,
+    profile_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 "#;

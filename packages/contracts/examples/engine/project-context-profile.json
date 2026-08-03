@@ -4,6 +4,7 @@
   "profileId": "profile-demo-1",
   "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
   "inventoryGeneration": 3,
+  "projectRevision": "1",
   "profileHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "summary": "Local application with an engine, interface, and shared contracts.",
   "facts": [

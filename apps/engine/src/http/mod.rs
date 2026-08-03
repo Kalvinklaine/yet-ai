@@ -2688,6 +2688,55 @@ mod project_tests {
     }
 
     #[tokio::test]
+    async fn project_context_profile_http_requires_auth_and_returns_isolated_built_profile() {
+        let (state, project_id, root) = project_test_state().await;
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname='http'\n").unwrap();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let uri = format!("/p/{project_id}/v1/context/profile");
+        let unauthenticated = project_request(state.clone(), "GET", uri.clone(), "", false).await;
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+        let missing = project_request(state.clone(), "GET", uri.clone(), "", true).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+        let context = state
+            .project_registry_runtime
+            .resolve_context(&state.storage_paths, &project_id)
+            .await
+            .unwrap();
+        crate::project_context::rebuild(&context, 0, context.revision())
+            .await
+            .unwrap();
+        let response = project_request(state.clone(), "GET", uri, "", true).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let value: serde_json::Value =
+            serde_json::from_str(&response_text(response).await).unwrap();
+        assert_eq!(value["projectId"], project_id);
+        assert_eq!(value["inventoryGeneration"], 1);
+        assert!(value["summary"].as_str().unwrap().contains("rust"));
+        assert!(!value.to_string().contains(root.to_str().unwrap()));
+
+        let other_root = root.parent().unwrap().join("profile-http-other");
+        std::fs::create_dir(&other_root).unwrap();
+        std::fs::write(other_root.join("package.json"), "{}").unwrap();
+        let other_id = state
+            .project_registry_runtime
+            .register(&other_root, Some("Other"))
+            .await
+            .unwrap()
+            .project_id;
+        let other_missing = project_request(
+            state,
+            "GET",
+            format!("/p/{other_id}/v1/context/profile"),
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(other_missing.status(), StatusCode::NOT_FOUND);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[tokio::test]
     async fn project_chat_crud_isolates_same_id_and_legacy_history() {
         let (state, first_id, first_root) = project_test_state().await;
         let second_root = first_root

@@ -436,6 +436,35 @@ pub(super) async fn project_context_status(
     }
 }
 
+pub(super) async fn project_context_profile(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match crate::project_context::load_profile(&context).await {
+        Ok(profile) => Json(profile).into_response(),
+        Err(crate::project_context::ProfileError::NotFound) => project_error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project context profile is not built.",
+        ),
+        Err(crate::project_context::ProfileError::Stale) => project_error(
+            StatusCode::CONFLICT,
+            "stale",
+            "Project context profile is stale.",
+        ),
+        Err(crate::project_context::ProfileError::Unavailable) => project_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "Project context profile is unavailable.",
+        ),
+    }
+}
+
 pub(super) async fn project_context_rebuild(
     _auth: Authenticated,
     State(state): State<AppState>,
@@ -598,6 +627,10 @@ pub(super) fn scoped_router() -> Router<AppState> {
         .route(
             "/context/status",
             axum::routing::get(project_context_status),
+        )
+        .route(
+            "/context/profile",
+            axum::routing::get(project_context_profile),
         )
         .route(
             "/context/rebuild",

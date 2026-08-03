@@ -12,6 +12,7 @@ use crate::projects::ProjectContext;
 
 use super::db::{self, ContextDatabaseError};
 use super::policy;
+use super::profile;
 
 #[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum InventoryError {
@@ -31,13 +32,13 @@ pub struct RebuildResult {
 }
 
 #[derive(Debug)]
-struct Entry {
-    path: String,
+pub(super) struct Entry {
+    pub(super) path: String,
     bytes: u64,
     modified_ms: Option<u64>,
-    language: Option<&'static str>,
-    hash: Option<String>,
-    disposition: &'static str,
+    pub(super) language: Option<&'static str>,
+    pub(super) hash: Option<String>,
+    pub(super) disposition: &'static str,
     reason: &'static str,
 }
 
@@ -110,10 +111,18 @@ fn rebuild_sync(
             .map_err(|_| InventoryError::Unavailable)?;
     }
     let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    let profile = profile::derive(context, generation, &entries, &now)?;
+    let profile_json = serde_json::to_string(&profile).map_err(|_| InventoryError::Unavailable)?;
     transaction
         .execute(
-            "UPDATE context_metadata SET inventory_generation = ?1, build_state = 'ready', built_at = ?2, updated_at = ?2, eligible_files = ?3, indexed_files = ?3, omitted_files = ?4, chunks = 0, symbols = 0, pending_changes = 0 WHERE singleton = 1 AND inventory_generation = ?5",
-            (generation, now, eligible, omitted, current),
+            "INSERT INTO project_profiles (inventory_generation, project_revision, profile_id, profile_hash, profile_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (generation, context.revision(), &profile.profile_id, &profile.profile_hash, profile_json, &now),
+        )
+        .map_err(|_| InventoryError::Unavailable)?;
+    transaction
+        .execute(
+            "UPDATE context_metadata SET inventory_generation = ?1, build_state = 'ready', profile_id = ?2, built_at = ?3, updated_at = ?3, eligible_files = ?4, indexed_files = ?4, omitted_files = ?5, chunks = 0, symbols = 0, pending_changes = 0 WHERE singleton = 1 AND inventory_generation = ?6",
+            (generation, &profile.profile_id, now, eligible, omitted, current),
         )
         .map_err(|_| InventoryError::Unavailable)?;
     transaction

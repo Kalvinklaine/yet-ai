@@ -4,11 +4,11 @@
 - Plan traceability: project-context-master-plan, Wave 0, T-45
 - Scope: engine-owned project inventory, indexing, retrieval, manifests, continuity identifiers, and local cache contracts
 - Current implementation status: `partial`
-- Current provenance: `live_engine` for SQLite bootstrap, authenticated status, and explicit safe inventory rebuild
+- Current provenance: `live_engine` for SQLite bootstrap, authenticated status, explicit safe inventory rebuild, and deterministic profile
 
 ## Context
 
-Registered projects already have opaque identities and isolated engine-owned storage, while project memory is an implemented shelf of explicit user-authored notes. The engine bootstraps one isolated rebuildable SQLite context cache per project, exposes authenticated project-scoped status, and supports explicit bounded safe inventory rebuild. Yet AI does not yet index file content, build a project profile, retrieve indexed context, expose context planning endpoints, or persist turn context manifests. Schemas and examples beyond status and rebuild remain `fixture_demo` evidence and do not make those endpoints reachable.
+Registered projects already have opaque identities and isolated engine-owned storage, while project memory is an implemented shelf of explicit user-authored notes. The engine bootstraps one isolated rebuildable SQLite context cache per project, exposes authenticated project-scoped status, supports explicit bounded safe inventory rebuild, and serves a deterministic profile for the completed generation. Yet AI does not yet index file content, retrieve indexed context, expose context planning endpoints, or persist turn context manifests. Schemas and examples beyond status, rebuild, and profile remain `fixture_demo` evidence and do not make those endpoints reachable.
 
 The context platform must explain what it read and selected without exposing canonical roots, crossing projects, silently indexing secrets, or requiring a hosted service. It must remain useful before embeddings or compiler-accurate analysis exist.
 
@@ -79,7 +79,7 @@ All routes are authenticated loopback, project-scoped routes under `/p/{projectI
 | Route | Planned request | Planned response |
 | --- | --- | --- |
 | `GET /context/status` (live) | none | `ContextStatus`: state, schema/generation, bounded counts, freshness and safe error category |
-| `GET /context/profile` | none | `ProjectContextProfile`; `not_found` until built |
+| `GET /context/profile` (live) | none | `ProjectContextProfile`; `not_found` until built and `stale` when generation or project revision no longer matches |
 | `POST /context/rebuild` (live) | strict `ProjectContextRebuildRequest`: mode plus expected inventory generation and project revision | `ProjectContextRebuildResponse`: accepted operation metadata; no raw path or file list |
 | `DELETE /context/cache` | none | `ProjectContextCacheDeleteResponse`: deletion result, resulting `not_built` state, and explicit durable-turn-evidence retention |
 | `POST /context/plan` | strict `ContextPlanRequest`: query, retrieval mode, hard budget, explicit relative refs, expected inventory generation, and project revision | `ContextPlan` plus complete preview `ContextManifest` |
