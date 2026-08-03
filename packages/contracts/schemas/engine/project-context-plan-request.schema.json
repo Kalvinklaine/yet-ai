@@ -9,8 +9,7 @@
     "query": { "$ref": "#/$defs/query" },
     "mode": { "enum": ["manual_only", "balanced", "deep"] },
     "budget": {
-      "type": "object",
-      "additionalProperties": false,
+      "type": "object", "additionalProperties": false,
       "required": ["maxFiles", "maxChunks", "maxBytes", "maxEstimatedTokens"],
       "properties": {
         "maxFiles": { "type": "integer", "minimum": 1, "maximum": 64 },
@@ -19,18 +18,28 @@
         "maxEstimatedTokens": { "type": "integer", "minimum": 1, "maximum": 200000 }
       }
     },
-    "explicitRefs": {
-      "type": "array",
-      "maxItems": 64,
-      "uniqueItems": true,
-      "items": { "$ref": "#/$defs/path" }
-    },
+    "explicitRefs": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "$ref": "#/$defs/explicitRef" } },
     "expectedInventoryGeneration": { "type": "integer", "minimum": 0 },
     "expectedProjectRevision": { "$ref": "#/$defs/revision" }
   },
   "$defs": {
     "query": { "type": "string", "minLength": 1, "maxLength": 1000, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" },
     "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!~)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*://)[^\\u0000-\\u001F\\u007F]+$" },
-    "revision": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" }
+    "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+    "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+    "revision": { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+    "count": { "type": "integer", "minimum": 0 },
+    "position": { "type": "object", "additionalProperties": false, "required": ["line", "character"], "properties": { "line": { "$ref": "#/$defs/count" }, "character": { "$ref": "#/$defs/count" } } },
+    "range": { "type": "object", "additionalProperties": false, "required": ["start", "end"], "properties": { "start": { "$ref": "#/$defs/position" }, "end": { "$ref": "#/$defs/position" } } },
+    "cost": { "type": "object", "required": ["byteCount", "estimatedTokens"], "properties": { "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 }, "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 } } },
+    "explicitRef": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["kind", "sourceRef"], "properties": { "kind": { "const": "file_chunk" }, "sourceRef": { "$ref": "#/$defs/path" } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "editorSnapshotId", "sourceRef", "range", "contentHash", "byteCount", "estimatedTokens"], "properties": { "kind": { "const": "active_editor" }, "editorSnapshotId": { "$ref": "#/$defs/id" }, "sourceRef": { "$ref": "#/$defs/path" }, "range": { "$ref": "#/$defs/range" }, "contentHash": { "$ref": "#/$defs/hash" }, "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 }, "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "memoryNoteId", "contentHash", "byteCount", "estimatedTokens"], "properties": { "kind": { "const": "memory_note" }, "memoryNoteId": { "$ref": "#/$defs/id" }, "contentHash": { "$ref": "#/$defs/hash" }, "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 }, "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "verificationResultId", "commandId", "contentHash", "byteCount", "estimatedTokens"], "properties": { "kind": { "const": "verification_output" }, "verificationResultId": { "$ref": "#/$defs/id" }, "commandId": { "enum": ["repository-check", "gui-app-tests", "engine-chat-tests"] }, "contentHash": { "$ref": "#/$defs/hash" }, "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 }, "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 } } },
+        { "type": "object", "additionalProperties": false, "required": ["kind", "assistantMessageId", "generationId", "contentPrefixHash", "byteCount", "estimatedTokens"], "properties": { "kind": { "const": "continuation_prefix" }, "assistantMessageId": { "$ref": "#/$defs/id" }, "generationId": { "$ref": "#/$defs/id" }, "contentPrefixHash": { "$ref": "#/$defs/hash" }, "byteCount": { "type": "integer", "minimum": 0, "maximum": 1048576 }, "estimatedTokens": { "type": "integer", "minimum": 0, "maximum": 200000 } } }
+      ]
+    }
   }
 }

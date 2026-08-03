@@ -1,9 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use super::schema::PROTOCOL_VERSION;
+use super::schema::{PROTOCOL_VERSION, RANKING_VERSION};
 
 pub const MANIFEST_SCHEMA_VERSION: i64 = 1;
-pub const MANIFEST_RANKING_VERSION: &str = "lexical-v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -126,6 +125,81 @@ pub enum ManifestEntry {
         estimated_tokens: u64,
         rank: u64,
     },
+    ActiveEditor {
+        #[serde(rename = "editorSnapshotId")]
+        editor_snapshot_id: String,
+        #[serde(rename = "sourceRef")]
+        source_ref: String,
+        range: TextRange,
+        #[serde(rename = "contentHash")]
+        content_hash: String,
+        #[serde(rename = "inclusionReason")]
+        inclusion_reason: InclusionReason,
+        provenance: Provenance,
+        redaction: RedactionState,
+        #[serde(rename = "byteCount")]
+        byte_count: u64,
+        #[serde(rename = "estimatedTokens")]
+        estimated_tokens: u64,
+        rank: u64,
+    },
+    MemoryNote {
+        #[serde(rename = "memoryNoteId")]
+        memory_note_id: String,
+        #[serde(rename = "contentHash")]
+        content_hash: String,
+        #[serde(rename = "inclusionReason")]
+        inclusion_reason: InclusionReason,
+        provenance: Provenance,
+        redaction: RedactionState,
+        #[serde(rename = "byteCount")]
+        byte_count: u64,
+        #[serde(rename = "estimatedTokens")]
+        estimated_tokens: u64,
+        rank: u64,
+    },
+    VerificationOutput {
+        #[serde(rename = "verificationResultId")]
+        verification_result_id: String,
+        #[serde(rename = "commandId")]
+        command_id: VerificationCommandId,
+        #[serde(rename = "contentHash")]
+        content_hash: String,
+        #[serde(rename = "inclusionReason")]
+        inclusion_reason: InclusionReason,
+        provenance: Provenance,
+        redaction: RedactionState,
+        #[serde(rename = "byteCount")]
+        byte_count: u64,
+        #[serde(rename = "estimatedTokens")]
+        estimated_tokens: u64,
+        rank: u64,
+    },
+    ContinuationPrefix {
+        #[serde(rename = "assistantMessageId")]
+        assistant_message_id: String,
+        #[serde(rename = "generationId")]
+        generation_id: String,
+        #[serde(rename = "contentPrefixHash")]
+        content_prefix_hash: String,
+        #[serde(rename = "inclusionReason")]
+        inclusion_reason: InclusionReason,
+        provenance: Provenance,
+        redaction: RedactionState,
+        #[serde(rename = "byteCount")]
+        byte_count: u64,
+        #[serde(rename = "estimatedTokens")]
+        estimated_tokens: u64,
+        rank: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum VerificationCommandId {
+    RepositoryCheck,
+    GuiAppTests,
+    EngineChatTests,
 }
 
 impl ManifestEntry {
@@ -164,10 +238,96 @@ impl ManifestEntry {
         }
     }
 
+    pub(crate) fn active_editor(
+        editor_snapshot_id: String,
+        source_ref: String,
+        range: TextRange,
+        content_hash: String,
+        byte_count: u64,
+        estimated_tokens: u64,
+        rank: u64,
+    ) -> Self {
+        Self::ActiveEditor {
+            editor_snapshot_id,
+            source_ref,
+            range,
+            content_hash,
+            inclusion_reason: InclusionReason::ExplicitUserSelection,
+            provenance: Provenance::ExplicitUser,
+            redaction: RedactionState::MetadataOnly,
+            byte_count,
+            estimated_tokens,
+            rank,
+        }
+    }
+
+    pub(crate) fn memory_note(
+        memory_note_id: String,
+        content_hash: String,
+        byte_count: u64,
+        estimated_tokens: u64,
+        rank: u64,
+    ) -> Self {
+        Self::MemoryNote {
+            memory_note_id,
+            content_hash,
+            inclusion_reason: InclusionReason::ExplicitUserSelection,
+            provenance: Provenance::ExplicitUser,
+            redaction: RedactionState::MetadataOnly,
+            byte_count,
+            estimated_tokens,
+            rank,
+        }
+    }
+
+    pub(crate) fn verification_output(
+        verification_result_id: String,
+        command_id: VerificationCommandId,
+        content_hash: String,
+        byte_count: u64,
+        estimated_tokens: u64,
+        rank: u64,
+    ) -> Self {
+        Self::VerificationOutput {
+            verification_result_id,
+            command_id,
+            content_hash,
+            inclusion_reason: InclusionReason::ExplicitUserSelection,
+            provenance: Provenance::ExplicitUser,
+            redaction: RedactionState::MetadataOnly,
+            byte_count,
+            estimated_tokens,
+            rank,
+        }
+    }
+
+    pub(crate) fn continuation_prefix(
+        assistant_message_id: String,
+        generation_id: String,
+        content_prefix_hash: String,
+        byte_count: u64,
+        estimated_tokens: u64,
+        rank: u64,
+    ) -> Self {
+        Self::ContinuationPrefix {
+            assistant_message_id,
+            generation_id,
+            content_prefix_hash,
+            inclusion_reason: InclusionReason::ContinuityContext,
+            provenance: Provenance::Continuation,
+            redaction: RedactionState::MetadataOnly,
+            byte_count,
+            estimated_tokens,
+            rank,
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn source_ref(&self) -> &str {
         match self {
             Self::FileChunk { source_ref, .. } => source_ref,
+            Self::ActiveEditor { source_ref, .. } => source_ref,
+            _ => "",
         }
     }
 }
@@ -215,7 +375,8 @@ pub struct ContextManifest {
     pub schema_version: i64,
     pub manifest_id: String,
     pub project_id: String,
-    pub profile_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<String>,
     pub plan_id: String,
     pub mode: ContextMode,
     pub inventory_generation: u64,
@@ -232,7 +393,7 @@ impl ContextManifest {
     pub(crate) fn base(
         manifest_id: String,
         project_id: String,
-        profile_id: String,
+        profile_id: Option<String>,
         plan_id: String,
         mode: ContextMode,
         inventory_generation: u64,
@@ -250,7 +411,7 @@ impl ContextManifest {
             mode,
             inventory_generation,
             query_hash,
-            ranking_version: MANIFEST_RANKING_VERSION,
+            ranking_version: RANKING_VERSION,
             budget,
             entries: Vec::new(),
             omissions: Vec::new(),
@@ -273,7 +434,7 @@ mod tests {
         let mut manifest = ContextManifest::base(
             "manifest-abc".into(),
             "prj_abcdefghijklmnopqrstuv".into(),
-            "profile-abc".into(),
+            Some("profile-abc".into()),
             "plan-abc".into(),
             ContextMode::Balanced,
             1,
@@ -301,9 +462,27 @@ mod tests {
         let value = serde_json::to_value(manifest).unwrap();
         assert_eq!(value["protocolVersion"], "2026-08-02");
         assert_eq!(value["schemaVersion"], 1);
-        assert_eq!(value["rankingVersion"], "lexical-v1");
+        assert_eq!(value["rankingVersion"], RANKING_VERSION);
         assert_eq!(value["entries"][0]["kind"], "file_chunk");
         assert_eq!(value["entries"][0]["range"]["start"]["line"], 0);
         assert!(value["entries"][0].get("content").is_none());
+    }
+
+    #[test]
+    fn project_context_manifest_serializes_all_source_kinds_without_bodies() {
+        let hash = format!("sha256:{}", "a".repeat(64));
+        let range = TextRange { start: Position { line: 0, character: 0 }, end: Position { line: 1, character: 0 } };
+        let entries = vec![
+            ManifestEntry::active_editor("snapshot-1".into(), "src/lib.rs".into(), range, hash.clone(), 4, 1, 1),
+            ManifestEntry::memory_note("memory-1".into(), hash.clone(), 4, 1, 2),
+            ManifestEntry::verification_output("result-1".into(), VerificationCommandId::RepositoryCheck, hash.clone(), 4, 1, 3),
+            ManifestEntry::continuation_prefix("message-1".into(), "generation-1".into(), hash, 4, 1, 4),
+        ];
+        let value = serde_json::to_value(entries).unwrap();
+        assert_eq!(value[0]["kind"], "active_editor");
+        assert_eq!(value[1]["kind"], "memory_note");
+        assert_eq!(value[2]["commandId"], "repository-check");
+        assert_eq!(value[3]["kind"], "continuation_prefix");
+        assert!(!value.to_string().contains("content\""));
     }
 }

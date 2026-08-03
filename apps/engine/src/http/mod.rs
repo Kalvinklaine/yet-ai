@@ -2749,7 +2749,7 @@ mod project_tests {
         let context = state.project_registry_runtime.resolve_context(&state.storage_paths, &project_id).await.unwrap();
         crate::project_context::rebuild(&context, 0, context.revision()).await.unwrap();
         let uri = format!("/p/{project_id}/v1/context/plan");
-        let body = r#"{"query":"where is authentication","mode":"balanced","budget":{"maxFiles":8,"maxChunks":16,"maxBytes":32000,"maxEstimatedTokens":8000},"explicitRefs":["src/auth.rs"],"expectedInventoryGeneration":1,"expectedProjectRevision":"1"}"#;
+        let body = r#"{"query":"where is authentication","mode":"balanced","budget":{"maxFiles":8,"maxChunks":16,"maxBytes":32000,"maxEstimatedTokens":8000},"explicitRefs":[{"kind":"file_chunk","sourceRef":"src/auth.rs"}],"expectedInventoryGeneration":1,"expectedProjectRevision":"1"}"#;
         assert_eq!(project_request(state.clone(), "POST", uri.clone(), body, false).await.status(), StatusCode::UNAUTHORIZED);
         let response = project_request(state.clone(), "POST", uri.clone(), body, true).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -2757,6 +2757,11 @@ mod project_tests {
         assert_eq!(value["manifest"]["entries"][0]["provenance"], "explicit_user");
         assert_eq!(value["cloudRequired"], false);
         assert!(!value.to_string().contains(root.to_str().unwrap()));
+        let metadata_body = format!(r#"{{"query":"selected context","mode":"manual_only","budget":{{"maxFiles":8,"maxChunks":16,"maxBytes":32000,"maxEstimatedTokens":8000}},"explicitRefs":[{{"kind":"active_editor","editorSnapshotId":"snapshot-1","sourceRef":"src/auth.rs","range":{{"start":{{"line":0,"character":0}},"end":{{"line":1,"character":0}}}},"contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"memory_note","memoryNoteId":"memory-1","contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"verification_output","verificationResultId":"result-1","commandId":"repository-check","contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"continuation_prefix","assistantMessageId":"message-1","generationId":"generation-1","contentPrefixHash":"sha256:{}","byteCount":8,"estimatedTokens":2}}],"expectedInventoryGeneration":0,"expectedProjectRevision":"1"}}"#, "a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64));
+        let metadata_response = project_request(state.clone(), "POST", uri.clone(), &metadata_body, true).await;
+        assert_eq!(metadata_response.status(), StatusCode::OK);
+        let metadata: serde_json::Value = serde_json::from_str(&response_text(metadata_response).await).unwrap();
+        assert_eq!(metadata["manifest"]["entries"].as_array().unwrap().len(), 4);
         let stale = body.replace("\"expectedInventoryGeneration\":1", "\"expectedInventoryGeneration\":2");
         assert_eq!(project_request(state, "POST", uri, &stale, true).await.status(), StatusCode::CONFLICT);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());

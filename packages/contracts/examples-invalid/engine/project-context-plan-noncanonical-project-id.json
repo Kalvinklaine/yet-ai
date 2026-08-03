@@ -1,0 +1,28 @@
+{
+  "protocolVersion": "2026-08-02",
+  "schemaVersion": 1,
+  "planId": "plan-invalid-project",
+  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
+  "mode": "manual_only",
+  "queryLabel": "Selected context",
+  "status": "ready",
+  "manifest": {
+    "protocolVersion": "2026-08-02",
+    "schemaVersion": 1,
+    "manifestId": "manifest-invalid-project",
+    "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
+    "planId": "plan-invalid-project",
+    "mode": "manual_only",
+    "inventoryGeneration": 0,
+    "queryHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "rankingVersion": "lexical-symbol-ranking-1",
+    "budget": { "maxFiles": 1, "maxChunks": 1, "maxBytes": 1, "maxEstimatedTokens": 1, "usedFiles": 0, "usedChunks": 0, "usedBytes": 0, "usedEstimatedTokens": 0, "truncated": false },
+    "entries": [],
+    "omissions": [],
+    "redaction": { "metadataOnlyCount": 0, "contentRedactedCount": 0, "omittedCount": 0 },
+    "createdAt": "2026-08-02T12:03:00Z"
+  },
+  "createdAt": "2026-08-02T12:03:00Z",
+  "expiresAt": "2026-08-02T12:08:00Z",
+  "cloudRequired": false
+}

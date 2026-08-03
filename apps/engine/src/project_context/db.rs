@@ -306,6 +306,17 @@ fn migrate(
     transaction
         .execute_batch(CREATE_INVENTORY_SCHEMA)
         .map_err(|_| ContextDatabaseError::Corrupt)?;
+    let stored_ranking: String = transaction
+        .query_row("SELECT ranking_version FROM context_metadata WHERE singleton = 1", [], |row| row.get(0))
+        .map_err(|_| ContextDatabaseError::Corrupt)?;
+    if stored_ranking != RANKING_VERSION {
+        transaction
+            .execute("DELETE FROM context_plans", [])
+            .map_err(|_| ContextDatabaseError::Corrupt)?;
+        transaction
+            .execute("UPDATE context_metadata SET ranking_version = ?1 WHERE singleton = 1", [RANKING_VERSION])
+            .map_err(|_| ContextDatabaseError::Corrupt)?;
+    }
     validate_metadata(&transaction, project_id, root)?;
     transaction
         .commit()
@@ -589,6 +600,19 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn project_context_db_ranking_change_invalidates_cached_plans() {
+        let (_temp, first, _) = contexts().await;
+        drop(open(&first).await.unwrap());
+        let raw = Connection::open(database_path(&first)).unwrap();
+        raw.execute("UPDATE context_metadata SET ranking_version = 'old-ranking'", []).unwrap();
+        raw.execute("INSERT INTO context_plans (plan_id, project_id, inventory_generation, plan_json, created_at) VALUES ('plan-old', 'project', 1, '{}', 'now')", []).unwrap();
+        drop(raw);
+        let database = open(&first).await.unwrap();
+        assert_eq!(database.connection.query_row("SELECT ranking_version FROM context_metadata", [], |row| row.get::<_, String>(0)).unwrap(), RANKING_VERSION);
+        assert_eq!(database.connection.query_row("SELECT COUNT(*) FROM context_plans", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
     }
 
     #[tokio::test]

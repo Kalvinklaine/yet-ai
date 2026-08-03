@@ -2,7 +2,7 @@
   "protocolVersion": "2026-08-02",
   "schemaVersion": 1,
   "operationId": "context-rebuild-1",
-  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
+  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUA",
   "mode": "incremental",
   "status": "accepted",
   "expectedInventoryGeneration": 3,

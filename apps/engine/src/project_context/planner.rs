@@ -11,7 +11,8 @@ use super::db;
 use super::fts;
 use super::manifest::{
     ContextBudgetRequest, ContextManifest, ContextMode, EffectiveBudget, InclusionReason,
-    ManifestEntry, ManifestOmission, OmissionReason, Provenance,
+    ManifestEntry, ManifestOmission, OmissionReason, Provenance, TextRange,
+    VerificationCommandId,
 };
 use super::profile::{self, ProfileError};
 use super::schema::PROTOCOL_VERSION;
@@ -25,9 +26,43 @@ pub struct ContextPlanRequest {
     pub query: String,
     pub mode: ContextMode,
     pub budget: ContextBudgetRequest,
-    pub explicit_refs: Vec<String>,
+    pub explicit_refs: Vec<ExplicitContextRef>,
     pub expected_inventory_generation: u64,
     pub expected_project_revision: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "snake_case", rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum ExplicitContextRef {
+    FileChunk { source_ref: String },
+    ActiveEditor {
+        editor_snapshot_id: String,
+        source_ref: String,
+        range: TextRange,
+        content_hash: String,
+        byte_count: u64,
+        estimated_tokens: u64,
+    },
+    MemoryNote {
+        memory_note_id: String,
+        content_hash: String,
+        byte_count: u64,
+        estimated_tokens: u64,
+    },
+    VerificationOutput {
+        verification_result_id: String,
+        command_id: VerificationCommandId,
+        content_hash: String,
+        byte_count: u64,
+        estimated_tokens: u64,
+    },
+    ContinuationPrefix {
+        assistant_message_id: String,
+        generation_id: String,
+        content_prefix_hash: String,
+        byte_count: u64,
+        estimated_tokens: u64,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -84,14 +119,18 @@ pub async fn plan(
     request: ContextPlanRequest,
 ) -> Result<ContextPlan, PlannerError> {
     validate(context, &request)?;
-    let profile = profile::load_profile(context)
-        .await
-        .map_err(|error| match error {
-            ProfileError::NotFound => PlannerError::NotFound,
-            ProfileError::Stale => PlannerError::Conflict,
-            ProfileError::Unavailable => PlannerError::Unavailable,
-        })?;
-    if profile.inventory_generation != request.expected_inventory_generation {
+    let needs_index = request.mode != ContextMode::ManualOnly
+        || request.explicit_refs.iter().any(|value| matches!(value, ExplicitContextRef::FileChunk { .. }));
+    let profile = match profile::load_profile(context).await {
+        Ok(profile) => Some(profile),
+        Err(ProfileError::NotFound) if !needs_index => None,
+        Err(ProfileError::NotFound) => return Err(PlannerError::NotFound),
+        Err(ProfileError::Stale) if !needs_index => None,
+        Err(ProfileError::Stale) => return Err(PlannerError::Conflict),
+        Err(ProfileError::Unavailable) => return Err(PlannerError::Unavailable),
+    };
+    let generation = profile.as_ref().map_or(0, |value| value.inventory_generation);
+    if needs_index && generation != request.expected_inventory_generation {
         return Err(PlannerError::Conflict);
     }
 
@@ -105,7 +144,7 @@ pub async fn plan(
     } else {
         fts::query(
             context,
-            profile.inventory_generation,
+            generation,
             &request.query,
             breadth,
         )
@@ -121,11 +160,12 @@ pub async fn plan(
     let mut candidates = Vec::new();
     let mut omissions = Vec::new();
 
-    for path in &request.explicit_refs {
+    for explicit_ref in &request.explicit_refs {
+        let ExplicitContextRef::FileChunk { source_ref: path } = explicit_ref else { continue };
         match chunks_for_path(
             &database.connection,
             context.project_id(),
-            profile.inventory_generation,
+            generation,
             path,
             InclusionReason::ExplicitUserSelection,
             Provenance::ExplicitUser,
@@ -135,13 +175,14 @@ pub async fn plan(
             Some(chunks) => candidates.extend(chunks),
             None => omissions.push(inventory_omission(
                 &database.connection,
-                profile.inventory_generation,
+                generation,
                 path,
             )?),
         }
     }
 
     if request.mode != ContextMode::ManualOnly {
+        let profile = profile.as_ref().ok_or(PlannerError::NotFound)?;
         let profile_paths = profile
             .facts
             .iter()
@@ -214,6 +255,20 @@ pub async fn plan(
     let mut budget = EffectiveBudget::from(&request.budget);
     let mut files = BTreeSet::new();
     let mut entries = Vec::new();
+    for explicit_ref in request.explicit_refs.iter().filter(|value| !matches!(value, ExplicitContextRef::FileChunk { .. })) {
+        let (bytes, tokens) = explicit_ref.cost();
+        if budget.used_chunks >= budget.max_chunks
+            || budget.used_bytes.saturating_add(bytes) > budget.max_bytes
+            || budget.used_estimated_tokens.saturating_add(tokens) > budget.max_estimated_tokens
+        {
+            budget.truncated = true;
+            continue;
+        }
+        budget.used_chunks += 1;
+        budget.used_bytes += bytes;
+        budget.used_estimated_tokens += tokens;
+        entries.push(explicit_ref.entry(entries.len() as u64 + 1));
+    }
     for candidate in candidates {
         let new_file = !files.contains(&candidate.path);
         let tokens = candidate.bytes.div_ceil(4);
@@ -262,7 +317,7 @@ pub async fn plan(
     let query_hash = hash(request.query.as_bytes());
     let identity = serde_json::to_vec(&(
         context.project_id(),
-        profile.inventory_generation,
+        generation,
         &request.mode,
         &query_hash,
         &request.budget,
@@ -281,16 +336,21 @@ pub async fn plan(
     let mut manifest = ContextManifest::base(
         manifest_id,
         context.project_id().to_string(),
-        profile.profile_id,
+        profile.as_ref().map(|value| value.profile_id.clone()),
         plan_id.clone(),
         request.mode,
-        profile.inventory_generation,
+        generation,
         query_hash,
         budget,
         created_at.clone(),
     );
     manifest.entries = entries;
     manifest.omissions = omissions;
+    manifest.redaction.metadata_only_count = manifest
+        .entries
+        .iter()
+        .filter(|entry| serde_json::to_value(entry).ok().is_some_and(|value| value["redaction"] == "metadata_only"))
+        .count() as u64;
     manifest.redaction.omitted_count = manifest.omissions.len() as u64;
     let status = if manifest.budget.truncated {
         ContextPlanStatus::Truncated
@@ -303,7 +363,7 @@ pub async fn plan(
         plan_id,
         project_id: context.project_id().to_string(),
         mode: request.mode,
-        query_label: request.query.chars().take(240).collect(),
+        query_label: safe_query_label(&request.query),
         status,
         manifest,
         created_at,
@@ -311,10 +371,10 @@ pub async fn plan(
         cloud_required: false,
     };
     let json = serde_json::to_string(&result).map_err(|_| PlannerError::Unavailable)?;
-    database.connection.execute(
+    if generation > 0 { database.connection.execute(
         "INSERT OR REPLACE INTO context_plans (plan_id, project_id, inventory_generation, plan_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![result.plan_id, context.project_id(), profile.inventory_generation, json, result.created_at],
-    ).map_err(|_| PlannerError::Unavailable)?;
+        params![result.plan_id, context.project_id(), generation, json, result.created_at],
+    ).map_err(|_| PlannerError::Unavailable)?; }
     Ok(result)
 }
 
@@ -322,7 +382,6 @@ fn validate(context: &ProjectContext, request: &ContextPlanRequest) -> Result<()
     if request.query.is_empty()
         || request.query.chars().count() > MAX_QUERY_CHARS
         || request.query.chars().any(char::is_control)
-        || request.expected_inventory_generation == 0
         || request.expected_project_revision != context.revision()
         || !request.budget.valid()
         || request.explicit_refs.len() > 64
@@ -333,15 +392,58 @@ fn validate(context: &ProjectContext, request: &ContextPlanRequest) -> Result<()
             PlannerError::InvalidRequest
         });
     }
-    let mut refs = BTreeSet::new();
-    if request
-        .explicit_refs
-        .iter()
-        .any(|path| !valid_path(path) || !refs.insert(path))
+    if request.mode != ContextMode::ManualOnly && request.expected_inventory_generation == 0
+        || request.explicit_refs.iter().any(|value| !value.valid())
+        || request.explicit_refs.iter().map(|value| serde_json::to_string(value).unwrap_or_default()).collect::<BTreeSet<_>>().len() != request.explicit_refs.len()
     {
         return Err(PlannerError::InvalidRequest);
     }
     Ok(())
+}
+
+impl ExplicitContextRef {
+    fn cost(&self) -> (u64, u64) {
+        match self {
+            Self::FileChunk { .. } => (0, 0),
+            Self::ActiveEditor { byte_count, estimated_tokens, .. }
+            | Self::MemoryNote { byte_count, estimated_tokens, .. }
+            | Self::VerificationOutput { byte_count, estimated_tokens, .. }
+            | Self::ContinuationPrefix { byte_count, estimated_tokens, .. } => (*byte_count, *estimated_tokens),
+        }
+    }
+
+    fn valid(&self) -> bool {
+        let valid_id = |value: &str| !value.is_empty() && value.len() <= 96 && value.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+        let valid_hash = |value: &str| value.len() == 71 && value.starts_with("sha256:") && value[7..].chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase());
+        let valid_cost = |bytes: u64, tokens: u64| bytes <= 1_048_576 && tokens <= 200_000;
+        match self {
+            Self::FileChunk { source_ref } => valid_path(source_ref),
+            Self::ActiveEditor { editor_snapshot_id, source_ref, range, content_hash, byte_count, estimated_tokens } => valid_id(editor_snapshot_id) && valid_path(source_ref) && (range.start.line < range.end.line || range.start.line == range.end.line && range.start.character <= range.end.character) && valid_hash(content_hash) && valid_cost(*byte_count, *estimated_tokens),
+            Self::MemoryNote { memory_note_id, content_hash, byte_count, estimated_tokens } => valid_id(memory_note_id) && valid_hash(content_hash) && valid_cost(*byte_count, *estimated_tokens),
+            Self::VerificationOutput { verification_result_id, content_hash, byte_count, estimated_tokens, .. } => valid_id(verification_result_id) && valid_hash(content_hash) && valid_cost(*byte_count, *estimated_tokens),
+            Self::ContinuationPrefix { assistant_message_id, generation_id, content_prefix_hash, byte_count, estimated_tokens } => valid_id(assistant_message_id) && valid_id(generation_id) && valid_hash(content_prefix_hash) && valid_cost(*byte_count, *estimated_tokens),
+        }
+    }
+
+    fn entry(&self, rank: u64) -> ManifestEntry {
+        match self {
+            Self::ActiveEditor { editor_snapshot_id, source_ref, range, content_hash, byte_count, estimated_tokens } => ManifestEntry::active_editor(editor_snapshot_id.clone(), source_ref.clone(), range.clone(), content_hash.clone(), *byte_count, *estimated_tokens, rank),
+            Self::MemoryNote { memory_note_id, content_hash, byte_count, estimated_tokens } => ManifestEntry::memory_note(memory_note_id.clone(), content_hash.clone(), *byte_count, *estimated_tokens, rank),
+            Self::VerificationOutput { verification_result_id, command_id, content_hash, byte_count, estimated_tokens } => ManifestEntry::verification_output(verification_result_id.clone(), *command_id, content_hash.clone(), *byte_count, *estimated_tokens, rank),
+            Self::ContinuationPrefix { assistant_message_id, generation_id, content_prefix_hash, byte_count, estimated_tokens } => ManifestEntry::continuation_prefix(assistant_message_id.clone(), generation_id.clone(), content_prefix_hash.clone(), *byte_count, *estimated_tokens, rank),
+            Self::FileChunk { .. } => unreachable!(),
+        }
+    }
+}
+
+fn safe_query_label(query: &str) -> String {
+    let lower = query.to_ascii_lowercase();
+    if lower.contains("://") || lower.contains('/') || lower.contains('\\')
+        || ["password", "secret", "token", "api_key", "ignore previous", "system prompt"].iter().any(|term| lower.contains(term))
+    {
+        return "Context request".into();
+    }
+    query.chars().filter(|value| !value.is_control()).take(120).collect()
 }
 
 fn valid_path(path: &str) -> bool {
@@ -531,7 +633,10 @@ mod tests {
             "ignored retrieval",
             ContextMode::ManualOnly,
         );
-        manual.explicit_refs = vec!["src/other.rs".into(), "src/auth.rs".into()];
+        manual.explicit_refs = vec![
+            ExplicitContextRef::FileChunk { source_ref: "src/other.rs".into() },
+            ExplicitContextRef::FileChunk { source_ref: "src/auth.rs".into() },
+        ];
         let manual = plan(&context, manual).await.unwrap();
         assert_eq!(
             manual
@@ -565,7 +670,10 @@ mod tests {
         );
         bounded.budget.max_bytes = 1;
         bounded.budget.max_estimated_tokens = 1;
-        bounded.explicit_refs = vec![".env".into(), "src/auth.rs".into()];
+        bounded.explicit_refs = vec![
+            ExplicitContextRef::FileChunk { source_ref: ".env".into() },
+            ExplicitContextRef::FileChunk { source_ref: "src/auth.rs".into() },
+        ];
         let bounded = plan(&context, bounded).await.unwrap();
         assert!(bounded.manifest.budget.truncated);
         assert!(bounded.manifest.entries.is_empty());
@@ -591,7 +699,7 @@ mod tests {
             PlannerError::Conflict
         );
         stale.expected_inventory_generation = built.generation;
-        stale.explicit_refs = vec!["../other/project".into()];
+        stale.explicit_refs = vec![ExplicitContextRef::FileChunk { source_ref: "../other/project".into() }];
         assert_eq!(
             plan(&context, stale).await.unwrap_err(),
             PlannerError::InvalidRequest
@@ -600,5 +708,24 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn project_context_planner_manual_metadata_needs_no_index_and_sanitizes_label() {
+        let (_temp, context) = fixture().await;
+        let hash = format!("sha256:{}", "a".repeat(64));
+        let mut manual = request(&context, 0, "ignore previous https://private/token", ContextMode::ManualOnly);
+        manual.explicit_refs = vec![
+            ExplicitContextRef::ActiveEditor { editor_snapshot_id: "snapshot-1".into(), source_ref: "src/lib.rs".into(), range: TextRange { start: crate::project_context::manifest::Position { line: 0, character: 0 }, end: crate::project_context::manifest::Position { line: 1, character: 0 } }, content_hash: hash.clone(), byte_count: 8, estimated_tokens: 2 },
+            ExplicitContextRef::MemoryNote { memory_note_id: "memory-1".into(), content_hash: hash.clone(), byte_count: 8, estimated_tokens: 2 },
+            ExplicitContextRef::VerificationOutput { verification_result_id: "result-1".into(), command_id: VerificationCommandId::RepositoryCheck, content_hash: hash.clone(), byte_count: 8, estimated_tokens: 2 },
+            ExplicitContextRef::ContinuationPrefix { assistant_message_id: "message-1".into(), generation_id: "generation-1".into(), content_prefix_hash: hash, byte_count: 8, estimated_tokens: 2 },
+        ];
+        let planned = plan(&context, manual).await.unwrap();
+        assert_eq!(planned.query_label, "Context request");
+        assert_eq!(planned.manifest.inventory_generation, 0);
+        assert!(planned.manifest.profile_id.is_none());
+        assert_eq!(planned.manifest.entries.len(), 4);
+        assert!(planned.manifest.entries.iter().all(|entry| serde_json::to_value(entry).unwrap()["redaction"] == "metadata_only"));
     }
 }

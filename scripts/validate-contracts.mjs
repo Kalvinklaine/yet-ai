@@ -403,6 +403,7 @@ const invalidMappings = [
     ["project-context-profile-missing-summary-provenance.json", "project-context-profile.schema.json"],
     ["project-context-profile-hostile-label.json", "project-context-profile.schema.json"],
     ["project-context-plan-request-unsafe-ref.json", "project-context-plan-request.schema.json"],
+    ["project-context-plan-noncanonical-project-id.json", "project-context-plan.schema.json"],
     ["project-context-rebuild-request-unknown-field.json", "project-context-rebuild-request.schema.json"],
     ["project-context-manifest-file-chunk-missing-range.json", "project-context-manifest.schema.json"],
     ["project-context-manifest-active-editor-missing-snapshot.json", "project-context-manifest.schema.json"],

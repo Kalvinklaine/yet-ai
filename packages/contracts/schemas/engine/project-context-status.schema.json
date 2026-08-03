@@ -49,7 +49,7 @@
   },
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" },
+    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{21}[AQgw]$" },
     "time": { "type": "string", "format": "date-time", "pattern": "Z$" },
     "count": { "type": "integer", "minimum": 0, "maximum": 10000000 },
     "safeText": { "type": "string", "minLength": 1, "maxLength": 240, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" }

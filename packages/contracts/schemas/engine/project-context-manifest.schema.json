@@ -4,7 +4,7 @@
   "title": "ContextManifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocolVersion", "schemaVersion", "manifestId", "projectId", "profileId", "mode", "inventoryGeneration", "queryHash", "rankingVersion", "budget", "entries", "omissions", "redaction", "createdAt"],
+  "required": ["protocolVersion", "schemaVersion", "manifestId", "projectId", "planId", "mode", "inventoryGeneration", "queryHash", "rankingVersion", "budget", "entries", "omissions", "redaction", "createdAt"],
   "properties": {
     "protocolVersion": { "const": "2026-08-02" },
     "schemaVersion": { "const": 1 },
@@ -13,9 +13,9 @@
     "profileId": { "$ref": "#/$defs/id" },
     "planId": { "$ref": "#/$defs/id" },
     "mode": { "$ref": "#/$defs/mode" },
-    "inventoryGeneration": { "type": "integer", "minimum": 1 },
+    "inventoryGeneration": { "type": "integer", "minimum": 0 },
     "queryHash": { "$ref": "#/$defs/hash" },
-    "rankingVersion": { "type": "string", "const": "lexical-v1" },
+    "rankingVersion": { "type": "string", "const": "lexical-symbol-ranking-1" },
     "budget": { "$ref": "#/$defs/effectiveBudget" },
     "entries": {
       "type": "array",
@@ -59,7 +59,7 @@
   },
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" },
+    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{21}[AQgw]$" },
     "mode": { "enum": ["manual_only", "balanced", "deep"] },
     "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
     "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!~)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*://)[^\\u0000-\\u001F\\u007F]+$" },
