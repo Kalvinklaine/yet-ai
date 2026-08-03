@@ -235,7 +235,34 @@ pub async fn append_message_in(
     content: String,
     status: Option<ChatMessageStatus>,
 ) -> Result<ChatMessage, ChatHistoryError> {
+    let message = new_message(chat_id, role, content, status)?;
+    append_existing_message_in(root, message).await
+}
+
+pub fn new_message(
+    chat_id: &str,
+    role: ChatMessageRole,
+    content: String,
+    status: Option<ChatMessageStatus>,
+) -> Result<ChatMessage, ChatHistoryError> {
     validate_chat_id(chat_id)?;
+    let now = timestamp_now();
+    Ok(ChatMessage {
+        id: new_message_id()?,
+        chat_id: chat_id.to_string(),
+        role,
+        content,
+        created_at: now,
+        status,
+    })
+}
+
+pub async fn append_existing_message_in(
+    root: &Path,
+    message: ChatMessage,
+) -> Result<ChatMessage, ChatHistoryError> {
+    validate_message(&message.chat_id, &message)?;
+    let chat_id = &message.chat_id;
     let path = chat_history_path_in(root, chat_id)?;
     let now = timestamp_now();
     let mut thread = match get_thread_in(root, chat_id).await {
@@ -249,18 +276,30 @@ pub async fn append_message_in(
         },
         Err(error) => return Err(error),
     };
-    let message = ChatMessage {
-        id: new_message_id()?,
-        chat_id: chat_id.to_string(),
-        role,
-        content,
-        created_at: now.clone(),
-        status,
-    };
     thread.updated_at = now;
     thread.messages.push(message.clone());
     write_thread_path(&path, &thread).await?;
     Ok(message)
+}
+
+pub async fn remove_message_in(
+    root: &Path,
+    chat_id: &str,
+    message_id: &str,
+) -> Result<(), ChatHistoryError> {
+    validate_chat_id(message_id)?;
+    let path = chat_history_path_in(root, chat_id)?;
+    let mut thread = get_thread_in(root, chat_id).await?;
+    let Some(index) = thread
+        .messages
+        .iter()
+        .position(|message| message.id == message_id)
+    else {
+        return Err(ChatHistoryError::InvalidRecord);
+    };
+    thread.messages.remove(index);
+    thread.updated_at = timestamp_now();
+    write_thread_path(&path, &thread).await
 }
 
 pub fn chat_history_path(config_dir: &Path, chat_id: &str) -> Result<PathBuf, ChatHistoryError> {
@@ -583,6 +622,37 @@ mod tests {
         ));
         assert!(super::get_thread_in(&second, "chat_same").await.is_ok());
         assert!(!dir.join("chat-history").exists());
+    }
+
+    #[tokio::test]
+    async fn chat_history_remove_message_rolls_back_exact_message() {
+        let dir = temp_dir();
+        let root = dir.join("projects/first/chat-history");
+        let first = super::append_message_in(
+            &root,
+            "chat_rollback",
+            super::ChatMessageRole::User,
+            "first".into(),
+            Some(super::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        super::append_message_in(
+            &root,
+            "chat_rollback",
+            super::ChatMessageRole::User,
+            "second".into(),
+            Some(super::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+
+        super::remove_message_in(&root, "chat_rollback", &first.id)
+            .await
+            .unwrap();
+        let thread = super::get_thread_in(&root, "chat_rollback").await.unwrap();
+        assert_eq!(thread.messages.len(), 1);
+        assert_eq!(thread.messages[0].content, "second");
     }
 
     #[tokio::test]
