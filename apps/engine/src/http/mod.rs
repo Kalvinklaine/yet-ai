@@ -2712,7 +2712,12 @@ mod project_tests {
             serde_json::from_str(&response_text(response).await).unwrap();
         assert_eq!(value["projectId"], project_id);
         assert_eq!(value["inventoryGeneration"], 1);
+        assert!(value.get("projectRevision").is_none());
         assert!(value["summary"].as_str().unwrap().contains("rust"));
+        assert!(!value["summaryProvenance"].as_array().unwrap().is_empty());
+        assert!(value["facts"].as_array().unwrap().iter().any(|fact| {
+            fact["kind"] == "test_command" && fact["provenance"] == "manifest_convention"
+        }));
         assert!(!value.to_string().contains(root.to_str().unwrap()));
 
         let other_root = root.parent().unwrap().join("profile-http-other");

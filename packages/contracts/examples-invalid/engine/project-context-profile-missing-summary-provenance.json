@@ -1,0 +1,18 @@
+{
+  "protocolVersion": "2026-08-02",
+  "schemaVersion": 1,
+  "profileId": "profile-invalid-1",
+  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUA",
+  "inventoryGeneration": 1,
+  "profileHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "summary": "Local project profile with structural rust evidence.",
+  "facts": [{
+    "kind": "language",
+    "label": "rust (1 files)",
+    "sourceRef": "src/main.rs",
+    "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "provenance": "structural_inventory"
+  }],
+  "createdAt": "2026-08-02T12:00:00Z",
+  "cloudRequired": false
+}

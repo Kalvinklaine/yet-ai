@@ -2,25 +2,30 @@
   "protocolVersion": "2026-08-02",
   "schemaVersion": 1,
   "profileId": "profile-demo-1",
-  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
+  "projectId": "prj_AbCdEfGhIjKlMnOpQrStUA",
   "inventoryGeneration": 3,
-  "projectRevision": "1",
   "profileHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "summary": "Local application with an engine, interface, and shared contracts.",
+  "summary": "Local project profile derived from structural inventory evidence.",
+  "summaryProvenance": [
+    {
+      "sourceRef": "README.md",
+      "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
   "facts": [
     {
       "kind": "overview",
       "label": "Project overview",
       "sourceRef": "README.md",
       "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "provenance": "profile"
+      "provenance": "structural_inventory"
     },
     {
       "kind": "module",
       "label": "Local runtime module",
       "sourceRef": "apps/engine/README.md",
       "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-      "provenance": "profile"
+      "provenance": "structural_inventory"
     }
   ],
   "createdAt": "2026-08-02T12:00:00Z",

@@ -43,7 +43,7 @@ Initial inclusion reasons are `profile_candidate`, `lexical_match`, `symbol_matc
 
 ### Deterministic profile
 
-A profile is rebuilt from safe inventory facts only. It summarizes bounded evidence from common readme, manifest, workspace, module, language, and entry-point candidates. Ordering is deterministic: policy priority, normalized path, then stable tie-breakers. Identical eligible files and bytes produce the same profile facts and hashes. Profile summaries cite relative source refs and content hashes; they do not contain raw roots, unbounded file bodies, model output, or inferred certainty beyond the evidence.
+A profile is rebuilt from safe inventory facts only. It summarizes bounded evidence from common readme, manifest, workspace, module, language, and entry-point candidates. Ordering is deterministic: policy priority, normalized path, then stable tie-breakers. Identical eligible files and bytes produce the same profile facts and hashes. Freshness uses the cache's stable opaque-project/current-root identity plus inventory generation, not mutable registry revision, so navigation timestamps and display-name changes preserve a built profile while authorized root rebind resets it. Profile summaries include supporting relative source refs and content hashes; labels exclude secret markers, authentication terms, private paths, URLs, and command-like text. README and manifest bodies remain untrusted and uninterpreted, while manifest-filename build/test conventions carry a distinct evidence provenance. Profiles do not contain raw roots, unbounded file bodies, model output, or inferred certainty beyond the evidence.
 
 ### Retrieval and modes
 

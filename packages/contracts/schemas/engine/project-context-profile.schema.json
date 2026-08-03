@@ -4,16 +4,21 @@
   "title": "ProjectContextProfile",
   "type": "object",
   "additionalProperties": false,
-  "required": ["protocolVersion", "schemaVersion", "profileId", "projectId", "inventoryGeneration", "projectRevision", "profileHash", "summary", "facts", "createdAt", "cloudRequired"],
+  "required": ["protocolVersion", "schemaVersion", "profileId", "projectId", "inventoryGeneration", "profileHash", "summary", "summaryProvenance", "facts", "createdAt", "cloudRequired"],
   "properties": {
     "protocolVersion": { "const": "2026-08-02" },
     "schemaVersion": { "const": 1 },
     "profileId": { "$ref": "#/$defs/id" },
     "projectId": { "$ref": "#/$defs/projectId" },
     "inventoryGeneration": { "type": "integer", "minimum": 1 },
-    "projectRevision": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[0-9]+$" },
     "profileHash": { "$ref": "#/$defs/hash" },
-    "summary": { "$ref": "#/$defs/text" },
+    "summary": { "$ref": "#/$defs/safeText" },
+    "summaryProvenance": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/sourceEvidence" }
+    },
     "facts": {
       "type": "array",
       "minItems": 1,
@@ -24,10 +29,10 @@
         "required": ["kind", "label", "sourceRef", "contentHash", "provenance"],
         "properties": {
           "kind": { "enum": ["overview", "manifest", "language", "documentation", "module", "entry_point", "build_command", "test_command"] },
-          "label": { "$ref": "#/$defs/text" },
+          "label": { "$ref": "#/$defs/safeText" },
           "sourceRef": { "$ref": "#/$defs/path" },
           "contentHash": { "$ref": "#/$defs/hash" },
-          "provenance": { "const": "profile" }
+          "provenance": { "enum": ["structural_inventory", "manifest_convention"] }
         }
       }
     },
@@ -36,9 +41,24 @@
   },
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 96, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
-    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{22}$" },
+    "projectId": { "type": "string", "pattern": "^prj_[A-Za-z0-9_-]{21}[AQgw]$" },
     "hash": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
     "path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?!/)(?!~)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\)(?!.*://)[^\\u0000-\\u001F\\u007F]+$" },
-    "text": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "^[^\\u0000-\\u001F\\u007F]*$" }
+    "safeText": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^[^\\u0000-\\u001F\\u007F]*$",
+      "not": { "pattern": "[Aa][Pp][Ii][_ -]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh](?:[Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])?|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|(?:file|https?)://|(?:^|\\s)(?:/|~[/\\\\])|(?:^|\\s)[A-Za-z]:[/\\\\]|[`$;&|<>]" }
+    },
+    "sourceEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceRef", "contentHash"],
+      "properties": {
+        "sourceRef": { "$ref": "#/$defs/path" },
+        "contentHash": { "$ref": "#/$defs/hash" }
+      }
+    }
   }
 }
