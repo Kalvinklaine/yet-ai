@@ -10,7 +10,8 @@ use crate::projects::ProjectContext;
 use crate::storage::{ensure_store_namespace_sync, validate_storage_chain};
 
 use super::schema::{
-    CREATE_INVENTORY_SCHEMA, CREATE_SCHEMA, POLICY_VERSION, RANKING_VERSION, SCHEMA_VERSION,
+    CREATE_INVENTORY_SCHEMA, CREATE_SCHEMA, POLICY_VERSION, RANKING_VERSION,
+    RECREATE_CONTEXT_SYMBOLS_SCHEMA, SCHEMA_VERSION,
 };
 
 const DATABASE_FILE: &str = "cache.sqlite3";
@@ -288,6 +289,19 @@ fn migrate(
         transaction
             .pragma_update(None, "user_version", SCHEMA_VERSION)
             .map_err(|_| ContextDatabaseError::Corrupt)?;
+    } else if version == 1 {
+        transaction
+            .execute_batch(RECREATE_CONTEXT_SYMBOLS_SCHEMA)
+            .map_err(|_| ContextDatabaseError::Corrupt)?;
+        transaction
+            .execute(
+                "UPDATE context_metadata SET schema_version = ?1, symbols = 0, build_state = CASE WHEN inventory_generation > 0 THEN 'stale' ELSE 'not_built' END WHERE singleton = 1",
+                [SCHEMA_VERSION],
+            )
+            .map_err(|_| ContextDatabaseError::Corrupt)?;
+        transaction
+            .pragma_update(None, "user_version", SCHEMA_VERSION)
+            .map_err(|_| ContextDatabaseError::Corrupt)?;
     }
     transaction
         .execute_batch(CREATE_INVENTORY_SCHEMA)
@@ -516,6 +530,65 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn project_context_symbols_schema_migration_resets_rebuildable_rows() {
+        let (_temp, first, _) = contexts().await;
+        drop(open(&first).await.unwrap());
+        let raw = Connection::open(database_path(&first)).unwrap();
+        raw.execute_batch(
+            "DROP TABLE context_symbols;
+             CREATE TABLE context_symbols (
+                 symbol_id INTEGER PRIMARY KEY,
+                 project_id TEXT NOT NULL,
+                 generation INTEGER NOT NULL,
+                 relative_path TEXT NOT NULL,
+                 language TEXT NOT NULL,
+                 name TEXT NOT NULL,
+                 kind TEXT NOT NULL,
+                 start_line INTEGER NOT NULL,
+                 start_column INTEGER NOT NULL,
+                 end_line INTEGER NOT NULL,
+                 end_column INTEGER NOT NULL,
+                 file_hash TEXT NOT NULL,
+                 source TEXT NOT NULL,
+                 confidence REAL NOT NULL
+             );
+             INSERT INTO context_symbols (project_id, generation, relative_path, language, name, kind, start_line, start_column, end_line, end_column, file_hash, source, confidence)
+             VALUES ('old', 1, 'src/lib.rs', 'rust', 'old', 'function', 2, 8, 1, 0, 'sha256:old', 'tree_sitter', 0.9);
+             UPDATE context_metadata SET schema_version = 1, inventory_generation = 1, symbols = 1, build_state = 'ready';
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        drop(raw);
+
+        let migrated = open(&first).await.unwrap();
+        assert_eq!(
+            migrated
+                .connection
+                .query_row("SELECT COUNT(*) FROM context_symbols", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            migrated
+                .connection
+                .query_row("SELECT build_state FROM context_metadata", [], |row| row
+                    .get::<_, String>(
+                    0
+                ))
+                .unwrap(),
+            "stale"
+        );
+        assert!(migrated
+            .connection
+            .execute(
+                "INSERT INTO context_symbols (project_id, generation, relative_path, language, name, kind, start_line, start_column, end_line, end_column, column_unit, file_hash, source, confidence) VALUES ('p', 1, 'src/lib.rs', 'rust', 'bad', 'function', 2, 8, 1, 0, 'utf8_byte', 'sha256:x', 'heuristic', 0.5)",
+                [],
+            )
+            .is_err());
     }
 
     #[tokio::test]

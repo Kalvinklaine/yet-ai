@@ -1,5 +1,5 @@
 pub const PROTOCOL_VERSION: &str = "2026-08-02";
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 pub const POLICY_VERSION: &str = "inventory-policy-1";
 pub const RANKING_VERSION: &str = "lexical-symbol-ranking-1";
 
@@ -68,7 +68,8 @@ CREATE TABLE context_symbols (
     start_line INTEGER NOT NULL CHECK (start_line > 0),
     start_column INTEGER NOT NULL CHECK (start_column >= 0),
     end_line INTEGER NOT NULL CHECK (end_line >= start_line),
-    end_column INTEGER NOT NULL CHECK (end_column >= 0),
+    end_column INTEGER NOT NULL CHECK (end_column >= 0 AND (end_line > start_line OR end_column >= start_column)),
+    column_unit TEXT NOT NULL CHECK (column_unit = 'utf8_byte'),
     file_hash TEXT NOT NULL,
     source TEXT NOT NULL CHECK (source IN ('tree_sitter', 'heuristic')),
     confidence REAL NOT NULL CHECK (confidence >= 0.0 AND confidence <= 1.0),
@@ -134,7 +135,8 @@ CREATE TABLE IF NOT EXISTS context_symbols (
     start_line INTEGER NOT NULL CHECK (start_line > 0),
     start_column INTEGER NOT NULL CHECK (start_column >= 0),
     end_line INTEGER NOT NULL CHECK (end_line >= start_line),
-    end_column INTEGER NOT NULL CHECK (end_column >= 0),
+    end_column INTEGER NOT NULL CHECK (end_column >= 0 AND (end_line > start_line OR end_column >= start_column)),
+    column_unit TEXT NOT NULL CHECK (column_unit = 'utf8_byte'),
     file_hash TEXT NOT NULL,
     source TEXT NOT NULL CHECK (source IN ('tree_sitter', 'heuristic')),
     confidence REAL NOT NULL CHECK (confidence >= 0.0 AND confidence <= 1.0),
@@ -151,4 +153,27 @@ CREATE VIRTUAL TABLE IF NOT EXISTS context_chunks_fts USING fts5(
     content,
     tokenize = 'unicode61 remove_diacritics 2'
 );
+"#;
+
+pub const RECREATE_CONTEXT_SYMBOLS_SCHEMA: &str = r#"
+DROP TABLE IF EXISTS context_symbols;
+CREATE TABLE context_symbols (
+    symbol_id INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    relative_path TEXT NOT NULL,
+    language TEXT NOT NULL,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    start_line INTEGER NOT NULL CHECK (start_line > 0),
+    start_column INTEGER NOT NULL CHECK (start_column >= 0),
+    end_line INTEGER NOT NULL CHECK (end_line >= start_line),
+    end_column INTEGER NOT NULL CHECK (end_column >= 0 AND (end_line > start_line OR end_column >= start_column)),
+    column_unit TEXT NOT NULL CHECK (column_unit = 'utf8_byte'),
+    file_hash TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('tree_sitter', 'heuristic')),
+    confidence REAL NOT NULL CHECK (confidence >= 0.0 AND confidence <= 1.0),
+    UNIQUE (project_id, generation, relative_path, name, kind, start_line, start_column)
+);
+CREATE INDEX context_symbols_scope ON context_symbols(project_id, generation, relative_path);
 "#;

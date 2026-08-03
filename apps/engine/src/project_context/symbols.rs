@@ -9,6 +9,7 @@ const MAX_PARSE_BYTES: usize = 512 * 1024;
 const MAX_SYMBOLS_PER_FILE: usize = 256;
 const MAX_PARSE_TIME: Duration = Duration::from_millis(100);
 const MAX_NAME_BYTES: usize = 256;
+const COLUMN_UNIT: &str = "utf8_byte";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Symbol {
@@ -20,6 +21,7 @@ pub struct Symbol {
     pub start_column: u64,
     pub end_line: u64,
     pub end_column: u64,
+    pub column_unit: String,
     pub file_hash: String,
     pub source: String,
     pub confidence: f64,
@@ -39,9 +41,12 @@ pub(super) fn replace_generation(
         symbols.extend(extract(entry));
     }
     for symbol in &symbols {
+        if !valid_symbol(symbol) {
+            return Err(InventoryError::Unavailable);
+        }
         transaction.execute(
-            "INSERT INTO context_symbols (project_id, generation, relative_path, language, name, kind, start_line, start_column, end_line, end_column, file_hash, source, confidence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![project_id, generation, symbol.relative_path, symbol.language, symbol.name, symbol.kind, symbol.start_line, symbol.start_column, symbol.end_line, symbol.end_column, symbol.file_hash, symbol.source, symbol.confidence],
+            "INSERT INTO context_symbols (project_id, generation, relative_path, language, name, kind, start_line, start_column, end_line, end_column, column_unit, file_hash, source, confidence) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![project_id, generation, symbol.relative_path, symbol.language, symbol.name, symbol.kind, symbol.start_line, symbol.start_column, symbol.end_line, symbol.end_column, symbol.column_unit, symbol.file_hash, symbol.source, symbol.confidence],
         ).map_err(|_| InventoryError::Unavailable)?;
     }
     Ok(symbols)
@@ -82,8 +87,11 @@ fn extract_tree(
     let mut timed_out = |_: &tree_sitter::ParseState| started.elapsed() >= MAX_PARSE_TIME;
     let options = ParseOptions::new().progress_callback(&mut timed_out);
     let Some(tree) = parser.parse_with_options(&mut read, None, Some(options)) else {
-        return Vec::new();
+        return extract_heuristic(text, relative_path, language_name, file_hash);
     };
+    if tree.root_node().has_error() {
+        return extract_heuristic(text, relative_path, language_name, file_hash);
+    }
     let mut result = Vec::new();
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
@@ -173,10 +181,79 @@ fn make_symbol(
         start_column: start.column as u64,
         end_line: end.row as u64 + 1,
         end_column: end.column as u64,
+        column_unit: COLUMN_UNIT.to_string(),
         file_hash: file_hash.to_string(),
         source: "tree_sitter".to_string(),
         confidence: 0.9,
     })
+}
+
+fn extract_heuristic(
+    text: &str,
+    relative_path: &str,
+    language: &str,
+    file_hash: &str,
+) -> Vec<Symbol> {
+    let mut symbols = Vec::new();
+    let patterns: &[(&str, &str)] = match language {
+        "rust" => &[("fn ", "function"), ("struct ", "class"), ("enum ", "enum")],
+        "javascript" | "typescript" => &[
+            ("function ", "function"),
+            ("class ", "class"),
+            ("interface ", "interface"),
+        ],
+        _ => return symbols,
+    };
+    for (row, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let prefix_bytes = line.len() - trimmed.len();
+        let candidate = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+        let candidate = candidate.strip_prefix("export ").unwrap_or(candidate);
+        for (prefix, kind) in patterns {
+            let Some(rest) = candidate.strip_prefix(prefix) else {
+                continue;
+            };
+            let name_len = rest
+                .bytes()
+                .take_while(|byte| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte >= 0x80)
+                .count();
+            let name = &rest[..name_len];
+            if name.is_empty() || name.len() > MAX_NAME_BYTES {
+                continue;
+            }
+            let symbol = Symbol {
+                relative_path: relative_path.to_string(),
+                language: language.to_string(),
+                name: name.to_string(),
+                kind: (*kind).to_string(),
+                start_line: row as u64 + 1,
+                start_column: prefix_bytes as u64,
+                end_line: row as u64 + 1,
+                end_column: line.len() as u64,
+                column_unit: COLUMN_UNIT.to_string(),
+                file_hash: file_hash.to_string(),
+                source: "heuristic".to_string(),
+                confidence: 0.5,
+            };
+            if valid_symbol(&symbol) {
+                symbols.push(symbol);
+            }
+            break;
+        }
+        if symbols.len() >= MAX_SYMBOLS_PER_FILE {
+            break;
+        }
+    }
+    symbols
+}
+
+fn valid_symbol(symbol: &Symbol) -> bool {
+    symbol.start_line > 0
+        && symbol.end_line >= symbol.start_line
+        && (symbol.end_line > symbol.start_line || symbol.end_column >= symbol.start_column)
+        && symbol.column_unit == COLUMN_UNIT
+        && matches!(symbol.source.as_str(), "tree_sitter" | "heuristic")
+        && (0.0..=1.0).contains(&symbol.confidence)
 }
 
 #[cfg(test)]
@@ -215,7 +292,7 @@ mod tests {
     fn rows(context: &ProjectContext) -> Vec<Symbol> {
         let database = rusqlite::Connection::open(db::database_path(context)).unwrap();
         let mut statement = database
-            .prepare("SELECT relative_path, language, name, kind, start_line, start_column, end_line, end_column, file_hash, source, confidence FROM context_symbols ORDER BY relative_path, start_line, start_column")
+            .prepare("SELECT relative_path, language, name, kind, start_line, start_column, end_line, end_column, column_unit, file_hash, source, confidence FROM context_symbols ORDER BY relative_path, start_line, start_column")
             .unwrap();
         statement
             .query_map([], |row| {
@@ -228,9 +305,10 @@ mod tests {
                     start_column: row.get(5)?,
                     end_line: row.get(6)?,
                     end_column: row.get(7)?,
-                    file_hash: row.get(8)?,
-                    source: row.get(9)?,
-                    confidence: row.get(10)?,
+                    column_unit: row.get(8)?,
+                    file_hash: row.get(9)?,
+                    source: row.get(10)?,
+                    confidence: row.get(11)?,
                 })
             })
             .unwrap()
@@ -258,6 +336,11 @@ mod tests {
         );
         write(&context, "notes.py", "def unsupported_symbol(): pass\n");
         write(&context, "src/broken.ts", "export function unfinished( {\n");
+        write(
+            &context,
+            "src/non_ascii.ts",
+            "/*é*/ export function cafe() {}\n",
+        );
         write(
             &context,
             "src/huge.rs",
@@ -297,10 +380,26 @@ mod tests {
         assert!(symbols.iter().all(|symbol| {
             !symbol.relative_path.starts_with('/')
                 && symbol.start_line <= symbol.end_line
-                && symbol.source == "tree_sitter"
-                && symbol.confidence == 0.9
+                && (symbol.start_line < symbol.end_line || symbol.start_column <= symbol.end_column)
+                && symbol.column_unit == COLUMN_UNIT
+                && matches!(symbol.source.as_str(), "tree_sitter" | "heuristic")
                 && symbol.file_hash.starts_with("sha256:")
         }));
+        let non_ascii = symbols.iter().find(|symbol| symbol.name == "cafe").unwrap();
+        assert_eq!(non_ascii.start_column, 14);
+        assert_eq!(non_ascii.end_column, 32);
+        assert_eq!(non_ascii.source, "tree_sitter");
+
+        let fallback = extract_heuristic(
+            "\u{2003}export function café( {\n",
+            "src/fallback.ts",
+            "typescript",
+            "sha256:test",
+        );
+        assert_eq!(fallback[0].name, "café");
+        assert_eq!(fallback[0].start_column, 3);
+        assert_eq!(fallback[0].source, "heuristic");
+        assert_eq!(fallback[0].confidence, 0.5);
 
         let first = fts::query(&context, built.generation, "ExactNeedle", 8)
             .await
@@ -343,5 +442,27 @@ mod tests {
         assert!(symbols.iter().any(|symbol| symbol.name == "NewName"));
         assert!(!symbols.iter().any(|symbol| symbol.name == "OldName"));
         assert!(!symbols.iter().any(|symbol| symbol.name == "DeleteName"));
+    }
+
+    #[tokio::test]
+    async fn project_context_symbols_database_rejects_invalid_ranges_and_units() {
+        let (_temp, context) = fixture("Symbol constraints").await;
+        drop(db::open(&context).await.unwrap());
+        let database = rusqlite::Connection::open(db::database_path(&context)).unwrap();
+        let insert = |end_column: i64, unit: &str| {
+            database.execute(
+                "INSERT INTO context_symbols (project_id, generation, relative_path, language, name, kind, start_line, start_column, end_line, end_column, column_unit, file_hash, source, confidence) VALUES ('p', 1, 'src/lib.rs', 'rust', 'bad', 'function', 1, 8, 1, ?1, ?2, 'sha256:x', 'heuristic', 0.5)",
+                params![end_column, unit],
+            )
+        };
+        assert!(insert(7, COLUMN_UNIT).is_err());
+        assert!(insert(9, "unicode_scalar").is_err());
+        assert_eq!(
+            database
+                .query_row("SELECT COUNT(*) FROM context_symbols", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
     }
 }
