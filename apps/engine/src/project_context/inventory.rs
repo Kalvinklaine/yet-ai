@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::projects::ProjectContext;
 
 use super::db::{self, ContextDatabaseError};
+use super::fts;
 use super::policy;
 use super::profile;
 
@@ -38,6 +39,7 @@ pub(super) struct Entry {
     modified_ms: Option<u64>,
     pub(super) language: Option<&'static str>,
     pub(super) hash: Option<String>,
+    pub(super) text: Option<String>,
     pub(super) disposition: &'static str,
     reason: &'static str,
 }
@@ -110,6 +112,7 @@ fn rebuild_sync(
             )
             .map_err(|_| InventoryError::Unavailable)?;
     }
+    let chunks = fts::replace_generation(&transaction, context.project_id(), generation, &entries)?;
     let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
     let profile = profile::derive(context, generation, &entries, &now)?;
     let profile_json = serde_json::to_string(&profile).map_err(|_| InventoryError::Unavailable)?;
@@ -121,8 +124,8 @@ fn rebuild_sync(
         .map_err(|_| InventoryError::Unavailable)?;
     transaction
         .execute(
-            "UPDATE context_metadata SET inventory_generation = ?1, build_state = 'ready', profile_id = ?2, built_at = ?3, updated_at = ?3, eligible_files = ?4, indexed_files = ?4, omitted_files = ?5, chunks = 0, symbols = 0, pending_changes = 0 WHERE singleton = 1 AND inventory_generation = ?6",
-            (generation, &profile.profile_id, now, eligible, omitted, current),
+            "UPDATE context_metadata SET inventory_generation = ?1, build_state = 'ready', profile_id = ?2, built_at = ?3, updated_at = ?3, eligible_files = ?4, indexed_files = ?4, omitted_files = ?5, chunks = ?6, symbols = 0, pending_changes = 0 WHERE singleton = 1 AND inventory_generation = ?7",
+            (generation, &profile.profile_id, now, eligible, omitted, chunks, current),
         )
         .map_err(|_| InventoryError::Unavailable)?;
     transaction
@@ -263,12 +266,17 @@ fn read_entry(
     if policy::is_binary(&bytes[..bytes.len().min(8192)]) {
         return Ok(omitted(relative, before.len(), "binary"));
     }
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(_) => return Ok(omitted(relative, before.len(), "binary")),
+    };
     Ok(Entry {
         path: relative,
         bytes: before.len(),
         modified_ms: modified_ms(before.modified().ok()),
         language: policy::language(path),
-        hash: Some(format!("sha256:{:x}", Sha256::digest(&bytes))),
+        hash: Some(format!("sha256:{:x}", Sha256::digest(text.as_bytes()))),
+        text: Some(text),
         disposition: "included",
         reason: "profile_candidate",
     })
@@ -281,6 +289,7 @@ fn omitted(path: String, bytes: u64, reason: &'static str) -> Entry {
         modified_ms: None,
         language: None,
         hash: None,
+        text: None,
         disposition: "omitted",
         reason,
     }

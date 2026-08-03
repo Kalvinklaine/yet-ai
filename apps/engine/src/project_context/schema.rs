@@ -42,6 +42,31 @@ CREATE TABLE project_profiles (
     profile_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE context_chunks (
+    chunk_id INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    relative_path TEXT NOT NULL,
+    language TEXT,
+    symbol_name TEXT,
+    start_line INTEGER NOT NULL CHECK (start_line > 0),
+    end_line INTEGER NOT NULL CHECK (end_line >= start_line),
+    file_hash TEXT NOT NULL,
+    chunk_hash TEXT NOT NULL,
+    content TEXT NOT NULL,
+    UNIQUE (project_id, generation, relative_path, start_line, chunk_hash)
+);
+CREATE INDEX context_chunks_scope ON context_chunks(project_id, generation, relative_path);
+CREATE VIRTUAL TABLE context_chunks_fts USING fts5(
+    project_id UNINDEXED,
+    generation UNINDEXED,
+    relative_path,
+    file_name,
+    language,
+    symbol_name,
+    content,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
 "#;
 
 pub const CREATE_INVENTORY_SCHEMA: &str = r#"
@@ -64,5 +89,30 @@ CREATE TABLE IF NOT EXISTS project_profiles (
     profile_hash TEXT NOT NULL,
     profile_json TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS context_chunks (
+    chunk_id INTEGER PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    relative_path TEXT NOT NULL,
+    language TEXT,
+    symbol_name TEXT,
+    start_line INTEGER NOT NULL CHECK (start_line > 0),
+    end_line INTEGER NOT NULL CHECK (end_line >= start_line),
+    file_hash TEXT NOT NULL,
+    chunk_hash TEXT NOT NULL,
+    content TEXT NOT NULL,
+    UNIQUE (project_id, generation, relative_path, start_line, chunk_hash)
+);
+CREATE INDEX IF NOT EXISTS context_chunks_scope ON context_chunks(project_id, generation, relative_path);
+CREATE VIRTUAL TABLE IF NOT EXISTS context_chunks_fts USING fts5(
+    project_id UNINDEXED,
+    generation UNINDEXED,
+    relative_path,
+    file_name,
+    language,
+    symbol_name,
+    content,
+    tokenize = 'unicode61 remove_diacritics 2'
 );
 "#;

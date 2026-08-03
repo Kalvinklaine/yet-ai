@@ -1,4 +1,6 @@
+pub mod chunking;
 pub mod db;
+pub mod fts;
 pub mod inventory;
 pub mod policy;
 pub mod profile;
