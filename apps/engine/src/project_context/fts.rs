@@ -7,6 +7,7 @@ use crate::projects::ProjectContext;
 use super::chunking;
 use super::db;
 use super::inventory::{Entry, InventoryError};
+use super::symbols::Symbol;
 
 const MAX_QUERY_CHARS: usize = 256;
 const MAX_QUERY_TERMS: usize = 16;
@@ -32,6 +33,7 @@ pub(super) fn replace_generation(
     project_id: &str,
     generation: u64,
     entries: &[Entry],
+    symbols: &[Symbol],
 ) -> Result<u64, InventoryError> {
     transaction
         .execute("DELETE FROM context_chunks_fts", [])
@@ -45,15 +47,26 @@ pub(super) fn replace_generation(
             continue;
         };
         for chunk in chunking::chunks(text) {
+            let symbol_name = symbols
+                .iter()
+                .filter(|symbol| {
+                    symbol.relative_path == entry.path
+                        && symbol.start_line <= chunk.end_line
+                        && symbol.end_line >= chunk.start_line
+                })
+                .map(|symbol| symbol.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
+            let symbol_name = (!symbol_name.is_empty()).then_some(symbol_name);
             transaction.execute(
-                "INSERT INTO context_chunks (project_id, generation, relative_path, language, symbol_name, start_line, end_line, file_hash, chunk_hash, content) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, ?9)",
-                params![project_id, generation, entry.path, entry.language, chunk.start_line, chunk.end_line, file_hash, chunk.hash, chunk.content],
+                "INSERT INTO context_chunks (project_id, generation, relative_path, language, symbol_name, start_line, end_line, file_hash, chunk_hash, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![project_id, generation, entry.path, entry.language, symbol_name, chunk.start_line, chunk.end_line, file_hash, chunk.hash, chunk.content],
             ).map_err(|_| InventoryError::Unavailable)?;
             let rowid = transaction.last_insert_rowid();
             let file_name = entry.path.rsplit('/').next().unwrap_or(&entry.path);
             transaction.execute(
-                "INSERT INTO context_chunks_fts (rowid, project_id, generation, relative_path, file_name, language, symbol_name, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
-                params![rowid, project_id, generation, entry.path, file_name, entry.language, chunk.content],
+                "INSERT INTO context_chunks_fts (rowid, project_id, generation, relative_path, file_name, language, symbol_name, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![rowid, project_id, generation, entry.path, file_name, entry.language, symbol_name, chunk.content],
             ).map_err(|_| InventoryError::Unavailable)?;
             count += 1;
         }
@@ -117,7 +130,12 @@ pub async fn query(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| InventoryError::Unavailable)?;
     for candidate in &mut candidates {
-        candidate.score += boosts(&candidate.relative_path, &normalized_query, &terms);
+        candidate.score += boosts(
+            &candidate.relative_path,
+            candidate.symbol_name.as_deref(),
+            &normalized_query,
+            &terms,
+        );
     }
     candidates.sort_by(|left, right| {
         right
@@ -168,7 +186,7 @@ fn terms(value: &str) -> Vec<String> {
     result
 }
 
-fn boosts(path: &str, query: &str, terms: &[String]) -> f64 {
+fn boosts(path: &str, symbols: Option<&str>, query: &str, terms: &[String]) -> f64 {
     let path = path.to_ascii_lowercase();
     let name = path.rsplit('/').next().unwrap_or(&path);
     let mut score = 0.0;
@@ -177,6 +195,13 @@ fn boosts(path: &str, query: &str, terms: &[String]) -> f64 {
     }
     if name == query {
         score += 80.0;
+    }
+    if symbols
+        .into_iter()
+        .flat_map(str::split_whitespace)
+        .any(|symbol| symbol.eq_ignore_ascii_case(query))
+    {
+        score += 120.0;
     }
     score += terms
         .iter()

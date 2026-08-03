@@ -14,6 +14,7 @@ use super::db::{self, ContextDatabaseError};
 use super::fts;
 use super::policy;
 use super::profile;
+use super::symbols;
 
 #[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
 pub enum InventoryError {
@@ -112,7 +113,15 @@ fn rebuild_sync(
             )
             .map_err(|_| InventoryError::Unavailable)?;
     }
-    let chunks = fts::replace_generation(&transaction, context.project_id(), generation, &entries)?;
+    let symbols =
+        symbols::replace_generation(&transaction, context.project_id(), generation, &entries)?;
+    let chunks = fts::replace_generation(
+        &transaction,
+        context.project_id(),
+        generation,
+        &entries,
+        &symbols,
+    )?;
     let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
     let profile = profile::derive(context, generation, &entries, &now)?;
     let profile_json = serde_json::to_string(&profile).map_err(|_| InventoryError::Unavailable)?;
@@ -124,8 +133,8 @@ fn rebuild_sync(
         .map_err(|_| InventoryError::Unavailable)?;
     transaction
         .execute(
-            "UPDATE context_metadata SET inventory_generation = ?1, build_state = 'ready', profile_id = ?2, built_at = ?3, updated_at = ?3, eligible_files = ?4, indexed_files = ?4, omitted_files = ?5, chunks = ?6, symbols = 0, pending_changes = 0 WHERE singleton = 1 AND inventory_generation = ?7",
-            (generation, &profile.profile_id, now, eligible, omitted, chunks, current),
+            "UPDATE context_metadata SET inventory_generation = ?1, build_state = 'ready', profile_id = ?2, built_at = ?3, updated_at = ?3, eligible_files = ?4, indexed_files = ?4, omitted_files = ?5, chunks = ?6, symbols = ?7, pending_changes = 0 WHERE singleton = 1 AND inventory_generation = ?8",
+            (generation, &profile.profile_id, now, eligible, omitted, chunks, symbols.len() as u64, current),
         )
         .map_err(|_| InventoryError::Unavailable)?;
     transaction

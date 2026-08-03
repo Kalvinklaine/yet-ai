@@ -33,6 +33,10 @@ tokio-stream.workspace = true
 tower-http.workspace = true
 reqwest.workspace = true
 rusqlite.workspace = true
+tree-sitter.workspace = true
+tree-sitter-javascript.workspace = true
+tree-sitter-rust.workspace = true
+tree-sitter-typescript.workspace = true
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]

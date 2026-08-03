@@ -4,11 +4,11 @@
 - Plan traceability: project-context-master-plan, Wave 0, T-45
 - Scope: engine-owned project inventory, indexing, retrieval, manifests, continuity identifiers, and local cache contracts
 - Current implementation status: `partial`
-- Current provenance: `live_engine` for SQLite bootstrap, authenticated status, explicit safe inventory rebuild, deterministic profile, and internal FTS5 lexical retrieval
+- Current provenance: `live_engine` for SQLite bootstrap, authenticated status, explicit safe inventory rebuild, deterministic profile, internal FTS5 lexical retrieval, and bounded lightweight symbol metadata
 
 ## Context
 
-Registered projects already have opaque identities and isolated engine-owned storage, while project memory is an implemented shelf of explicit user-authored notes. The engine bootstraps one isolated rebuildable SQLite context cache per project, exposes authenticated project-scoped status, supports explicit bounded safe inventory rebuild, serves a deterministic profile, and stores/query-ranks bounded admitted source chunks in generation-scoped FTS5 tables. Lexical retrieval is engine-internal: Yet AI does not yet expose a query or planning endpoint, attach retrieved text to chat, send it to a provider, or persist turn context manifests. Schemas and examples beyond status, rebuild, and profile remain `fixture_demo` evidence and do not make those endpoints reachable.
+Registered projects already have opaque identities and isolated engine-owned storage, while project memory is an implemented shelf of explicit user-authored notes. The engine bootstraps one isolated rebuildable SQLite context cache per project, exposes authenticated project-scoped status, supports explicit bounded safe inventory rebuild, serves a deterministic profile, and stores/query-ranks bounded admitted source chunks plus lightweight Rust and TypeScript/JavaScript definitions in generation-scoped FTS5 tables. Lexical and symbol-assisted retrieval is engine-internal: Yet AI does not yet expose a query or planning endpoint, attach retrieved text to chat, send it to a provider, or persist turn context manifests. Symbols carry explicit tree-sitter provenance and confidence and do not claim call/reference resolution, compiler accuracy, or graph semantics. Schemas and examples beyond status, rebuild, and profile remain `fixture_demo` evidence and do not make those endpoints reachable.
 
 The context platform must explain what it read and selected without exposing canonical roots, crossing projects, silently indexing secrets, or requiring a hosted service. It must remain useful before embeddings or compiler-accurate analysis exist.
 
