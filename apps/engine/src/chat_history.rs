@@ -353,6 +353,56 @@ pub async fn interrupt_streaming_messages_in(
     Ok(Some(thread))
 }
 
+pub async fn repair_pending_user_messages_in(
+    root: &Path,
+    chat_id: &str,
+) -> Result<Option<ChatThread>, ChatHistoryError> {
+    let path = chat_history_path_in(root, chat_id)?;
+    let mut thread = match get_thread_in(root, chat_id).await {
+        Ok(thread) => thread,
+        Err(ChatHistoryError::NotFound) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut changed = false;
+    let mut index = 0;
+    while index < thread.messages.len() {
+        if thread.messages[index].role == ChatMessageRole::User
+            && thread.messages[index].status == Some(ChatMessageStatus::Pending)
+        {
+            thread.messages[index].status = Some(ChatMessageStatus::Complete);
+            let has_terminal = thread.messages[index + 1..]
+                .iter()
+                .take_while(|message| message.role != ChatMessageRole::User)
+                .any(|message| {
+                    matches!(
+                        message.role,
+                        ChatMessageRole::Assistant | ChatMessageRole::Error
+                    )
+                });
+            if !has_terminal {
+                thread.messages.insert(
+                    index + 1,
+                    new_message(
+                        chat_id,
+                        ChatMessageRole::Error,
+                        "Chat response could not be started because local storage failed. Retry the request."
+                            .into(),
+                        Some(ChatMessageStatus::Error),
+                    )?,
+                );
+                index += 1;
+            }
+            changed = true;
+        }
+        index += 1;
+    }
+    if changed {
+        thread.updated_at = timestamp_now();
+        write_thread_path(&path, &thread).await?;
+    }
+    Ok(Some(thread))
+}
+
 #[cfg(test)]
 fn append_failures() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, usize>> {
     static FAILURES: std::sync::OnceLock<
@@ -372,6 +422,14 @@ fn delayed_append_failures() -> &'static std::sync::Mutex<std::collections::Hash
 
 #[cfg(test)]
 fn replace_failures() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, usize>> {
+    static FAILURES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
+    > = std::sync::OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+#[cfg(test)]
+fn remove_failures() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, usize>> {
     static FAILURES: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
     > = std::sync::OnceLock::new();
@@ -419,6 +477,19 @@ fn consume_replace_failure(root: &Path) -> bool {
 }
 
 #[cfg(test)]
+fn consume_remove_failure(root: &Path) -> bool {
+    let mut failures = remove_failures().lock().unwrap();
+    let Some(remaining) = failures.get_mut(root) else {
+        return false;
+    };
+    *remaining -= 1;
+    if *remaining == 0 {
+        failures.remove(root);
+    }
+    true
+}
+
+#[cfg(test)]
 pub fn inject_next_append_failure(root: &Path) {
     inject_append_failures(root, 1);
 }
@@ -447,12 +518,24 @@ pub fn inject_replace_failures(root: &Path, count: usize) {
         .insert(root.to_path_buf(), count);
 }
 
+#[cfg(test)]
+pub fn inject_remove_failures(root: &Path, count: usize) {
+    remove_failures()
+        .lock()
+        .unwrap()
+        .insert(root.to_path_buf(), count);
+}
+
 pub async fn remove_message_in(
     root: &Path,
     chat_id: &str,
     message_id: &str,
 ) -> Result<(), ChatHistoryError> {
     validate_chat_id(message_id)?;
+    #[cfg(test)]
+    if consume_remove_failure(root) {
+        return Err(ChatHistoryError::Storage);
+    }
     let path = chat_history_path_in(root, chat_id)?;
     let mut thread = get_thread_in(root, chat_id).await?;
     let Some(index) = thread
