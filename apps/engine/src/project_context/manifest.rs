@@ -380,7 +380,7 @@ pub struct RedactionSummary {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ContextManifest {
-    pub protocol_version: &'static str,
+    pub protocol_version: String,
     pub schema_version: i64,
     pub manifest_id: String,
     pub project_id: String,
@@ -390,7 +390,7 @@ pub struct ContextManifest {
     pub mode: ContextMode,
     pub inventory_generation: u64,
     pub query_hash: String,
-    pub ranking_version: &'static str,
+    pub ranking_version: String,
     pub budget: EffectiveBudget,
     pub entries: Vec<ManifestEntry>,
     pub omissions: Vec<ManifestOmission>,
@@ -411,7 +411,7 @@ impl ContextManifest {
         created_at: String,
     ) -> Self {
         Self {
-            protocol_version: PROTOCOL_VERSION,
+            protocol_version: PROTOCOL_VERSION.to_string(),
             schema_version: MANIFEST_SCHEMA_VERSION,
             manifest_id,
             project_id,
@@ -420,7 +420,7 @@ impl ContextManifest {
             mode,
             inventory_generation,
             query_hash,
-            ranking_version: RANKING_VERSION,
+            ranking_version: RANKING_VERSION.to_string(),
             budget,
             entries: Vec::new(),
             omissions: Vec::new(),

@@ -4,7 +4,7 @@
 - Plan traceability: project-context-master-plan, Wave 0, T-45
 - Scope: engine-owned project inventory, indexing, retrieval, manifests, continuity identifiers, and local cache contracts
 - Current implementation status: `partial`
-- Current provenance: `live_engine` for SQLite bootstrap, authenticated status, explicit safe inventory rebuild, deterministic profile, internal FTS5 lexical retrieval, bounded lightweight symbol metadata, and authenticated bounded context planning
+- Current provenance: `live_engine` through authenticated bounded planning, reviewed Send integration, and durable per-turn effective-manifest evidence
 
 ## Context
 

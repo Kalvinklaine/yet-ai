@@ -435,6 +435,7 @@ pub struct EffectivePlannedContext {
     pub query_hash: String,
     pub ranking_version: String,
     pub selected_ranks: Vec<u64>,
+    pub manifest: ContextManifest,
     pub rendered_text: String,
 }
 
@@ -469,6 +470,7 @@ pub async fn rehydrate_for_chat(
     let plan = stored.get("plan").and_then(serde_json::Value::as_object).ok_or(PlannerError::Conflict)?;
     let manifest = plan.get("manifest").and_then(serde_json::Value::as_object).ok_or(PlannerError::Conflict)?;
     let entries: Vec<ManifestEntry> = serde_json::from_value(manifest.get("entries").cloned().ok_or(PlannerError::Conflict)?).map_err(|_| PlannerError::Conflict)?;
+    let mut effective_manifest: ContextManifest = serde_json::from_value(serde_json::Value::Object(manifest.clone())).map_err(|_| PlannerError::Conflict)?;
     let stored_refs: Vec<ExplicitContextRef> = serde_json::from_value(stored.pointer("/request/explicitRefs").cloned().ok_or(PlannerError::Conflict)?).map_err(|_| PlannerError::Conflict)?;
     if project_id != context.project_id()
         || generation != selection.expected_inventory_generation
@@ -507,6 +509,11 @@ pub async fn rehydrate_for_chat(
         if &path != source_ref || stored_hash != *content_hash || hash(chunk.as_bytes()) != *content_hash || range.start.line != start_line.saturating_sub(1) || range.end.line != end_line { return Err(PlannerError::Conflict); }
         write!(&mut prompt, "\n\nEvidence {rank} ({path}):\n{chunk}").map_err(|_| PlannerError::Unavailable)?;
     }
+    effective_manifest.entries.retain(|entry| included.contains(&entry.rank()));
+    effective_manifest.budget.used_chunks = effective_manifest.entries.len() as u64;
+    effective_manifest.budget.used_files = effective_manifest.entries.iter().filter_map(|entry| match entry { ManifestEntry::FileChunk { source_ref, .. } | ManifestEntry::ActiveEditor { source_ref, .. } => Some(source_ref), _ => None }).collect::<BTreeSet<_>>().len() as u64;
+    effective_manifest.budget.used_bytes = effective_manifest.entries.iter().map(|entry| match entry { ManifestEntry::FileChunk { byte_count, .. } | ManifestEntry::ActiveEditor { byte_count, .. } | ManifestEntry::MemoryNote { byte_count, .. } | ManifestEntry::VerificationOutput { byte_count, .. } | ManifestEntry::ContinuationPrefix { byte_count, .. } => *byte_count }).sum();
+    effective_manifest.budget.used_estimated_tokens = effective_manifest.entries.iter().map(|entry| match entry { ManifestEntry::FileChunk { estimated_tokens, .. } | ManifestEntry::ActiveEditor { estimated_tokens, .. } | ManifestEntry::MemoryNote { estimated_tokens, .. } | ManifestEntry::VerificationOutput { estimated_tokens, .. } | ManifestEntry::ContinuationPrefix { estimated_tokens, .. } => *estimated_tokens }).sum();
     Ok(EffectivePlannedContext {
         plan_id: selection.plan_id,
         manifest_id: selection.manifest_id,
@@ -515,6 +522,7 @@ pub async fn rehydrate_for_chat(
         query_hash: selection.query_hash,
         ranking_version: selection.ranking_version,
         selected_ranks: included.into_iter().collect(),
+        manifest: effective_manifest,
         rendered_text: prompt,
     })
 }

@@ -1151,9 +1151,28 @@ async fn project_chats_delete(
         Ok(context) => context,
         Err(response) => return response,
     };
+    if crate::chat_turn_context::delete_chat(&context.storage().turn_context, &chat_id).await.is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     match chat_history::delete_thread_in(&context.storage().chat_history, &chat_id).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(error) => chat_history_error(error),
+    }
+}
+
+async fn project_chat_turn_context(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path((project_id, chat_id)): Path<(String, String)>,
+) -> Response {
+    let context = match project_chat_context(&state, &project_id, &chat_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    match crate::chat_turn_context::read(&context.storage().turn_context, context.project_id(), &chat_id).await {
+        Ok(response) => Json(response).into_response(),
+        Err(crate::chat_turn_context::TurnContextError::Invalid) => StatusCode::BAD_REQUEST.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -1316,6 +1335,8 @@ async fn project_chat_command(
                     context.project_id(),
                     state.storage_paths.config_dir.clone(),
                     context.storage().chat_history.clone(),
+                    context.storage().turn_context.clone(),
+                    context.revision().to_string(),
                     chat_id.clone(),
                     content.to_string(),
                     chat_context,

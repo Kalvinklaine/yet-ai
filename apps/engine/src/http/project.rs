@@ -693,6 +693,10 @@ pub(super) fn scoped_router() -> Router<AppState> {
             axum::routing::post(super::project_chat_command),
         )
         .route(
+            "/chats/:chat_id/turn-context",
+            axum::routing::get(super::project_chat_turn_context),
+        )
+        .route(
             "/project-memory",
             axum::routing::get(memory_list).post(memory_create),
         )
