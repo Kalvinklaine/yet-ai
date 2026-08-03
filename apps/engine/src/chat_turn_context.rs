@@ -170,6 +170,8 @@ pub async fn remove(
     chat_id: &str,
     turn_id: &str,
 ) -> Result<(), TurnContextError> {
+    #[cfg(test)]
+    fail_if_injected(root, FailureStage::Remove)?;
     validate_id(project_id)?;
     validate_id(turn_id)?;
     let path = path(root, chat_id)?;
@@ -244,11 +246,25 @@ pub async fn read_reconciled(
     if !response.available {
         return Ok(response);
     }
-    let history = chat_history::get_thread_in(history_root, chat_id)
-        .await
-        .ok();
+    let mut history = match chat_history::get_thread_in(history_root, chat_id).await {
+        Ok(history) => Some(history),
+        Err(chat_history::ChatHistoryError::NotFound) => None,
+        Err(_) => return Err(TurnContextError::Storage),
+    };
     let mut changed = false;
+    let mut removed = Vec::new();
     for record in &mut response.records {
+        let user_index = history.as_ref().and_then(|thread| {
+            thread.messages.iter().position(|message| {
+                message.id == record.user_message_id
+                    && message.role == chat_history::ChatMessageRole::User
+            })
+        });
+        if user_index.is_none() {
+            removed.push(record.turn_id.clone());
+            changed = true;
+            continue;
+        }
         let linked = record
             .assistant_message_id
             .as_ref()
@@ -264,10 +280,44 @@ pub async fn read_reconciled(
                     })
                 })
             });
-        if record.assistant_message_id.is_some() && !linked {
-            record.assistant_message_id = None;
-            record.status = TurnContextStatus::Interrupted;
-            record.finish_reason = Some("interrupted".into());
+        let has_terminal_after_user = history.as_ref().is_some_and(|thread| {
+            thread.messages[user_index.unwrap() + 1..]
+                .iter()
+                .take_while(|message| message.role != chat_history::ChatMessageRole::User)
+                .any(|message| {
+                    matches!(
+                        message.role,
+                        chat_history::ChatMessageRole::Assistant
+                            | chat_history::ChatMessageRole::Error
+                    )
+                })
+        });
+        if !linked && !has_terminal_after_user {
+            let mut tombstone = chat_history::new_message(
+                chat_id,
+                chat_history::ChatMessageRole::Error,
+                "Chat response persistence was interrupted. Retry the request.".into(),
+                Some(chat_history::ChatMessageStatus::Error),
+            )
+            .map_err(|_| TurnContextError::Storage)?;
+            if let Some(message_id) = &record.assistant_message_id {
+                tombstone.id = message_id.clone();
+            }
+            let tombstone = chat_history::append_existing_message_in(history_root, tombstone)
+                .await
+                .map_err(|_| TurnContextError::Storage)?;
+            if let Some(thread) = &mut history {
+                thread.messages.push(tombstone.clone());
+            } else {
+                history = Some(
+                    chat_history::get_thread_in(history_root, chat_id)
+                        .await
+                        .map_err(|_| TurnContextError::Storage)?,
+                );
+            }
+            record.assistant_message_id = Some(tombstone.id);
+            record.status = TurnContextStatus::Error;
+            record.finish_reason = None;
             record.error_code = Some("terminal_history_missing".into());
             record.updated_at = timestamp_now();
             changed = true;
@@ -278,7 +328,13 @@ pub async fn read_reconciled(
         let mut store = read_store(&path, project_id, chat_id)
             .await?
             .ok_or(TurnContextError::Storage)?;
+        store
+            .records
+            .retain(|record| !removed.contains(&record.turn_id));
         for repaired in &response.records {
+            if removed.contains(&repaired.turn_id) {
+                continue;
+            }
             if let Some(record) = store
                 .records
                 .iter_mut()
@@ -288,6 +344,9 @@ pub async fn read_reconciled(
             }
         }
         write_store(&path, &store).await?;
+        response
+            .records
+            .retain(|record| !removed.contains(&record.turn_id));
     }
     Ok(response)
 }
@@ -397,6 +456,7 @@ pub async fn mark_interrupted_with_reason(
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FailureStage {
+    Remove,
     MarkStreaming,
     MarkInterrupted,
     LinkTerminal,
@@ -740,7 +800,16 @@ mod tests {
             .records
             .is_empty());
 
-        let linked = item("project-a", "chat_1", "msg_user_2", "manifest-2");
+        let user = chat_history::append_message_in(
+            &history_root,
+            "chat_1",
+            chat_history::ChatMessageRole::User,
+            "hello".into(),
+            Some(chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        let linked = item("project-a", "chat_1", &user.id, "manifest-2");
         let linked_id = linked.turn_id.clone();
         append(&root, "project-a", linked).await.unwrap();
         mark_terminal(
@@ -759,12 +828,33 @@ mod tests {
             let repaired = read_reconciled(&root, &history_root, "project-a", "chat_1")
                 .await
                 .unwrap();
-            assert_eq!(repaired.records[0].status, TurnContextStatus::Interrupted);
-            assert!(repaired.records[0].assistant_message_id.is_none());
+            assert_eq!(repaired.records[0].status, TurnContextStatus::Error);
+            assert!(repaired.records[0].assistant_message_id.is_some());
             assert_eq!(
                 repaired.records[0].error_code.as_deref(),
                 Some("terminal_history_missing")
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_turn_context_reconciliation_removes_evidence_without_user_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("config/projects/project-a/turn-context");
+        let history_root = temp.path().join("config/projects/project-a/chat-history");
+        append(
+            &root,
+            "project-a",
+            item("project-a", "chat_1", "msg_missing", "manifest-1"),
+        )
+        .await
+        .unwrap();
+
+        for _ in 0..2 {
+            let repaired = read_reconciled(&root, &history_root, "project-a", "chat_1")
+                .await
+                .unwrap();
+            assert!(repaired.records.is_empty());
         }
     }
 

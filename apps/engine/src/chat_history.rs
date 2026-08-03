@@ -294,20 +294,37 @@ pub async fn append_existing_message_in(
 }
 
 #[cfg(test)]
-fn append_failures() -> &'static std::sync::Mutex<std::collections::HashSet<PathBuf>> {
-    static FAILURES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
-        std::sync::OnceLock::new();
+fn append_failures() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, usize>> {
+    static FAILURES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, usize>>,
+    > = std::sync::OnceLock::new();
     FAILURES.get_or_init(Default::default)
 }
 
 #[cfg(test)]
 fn consume_append_failure(root: &Path) -> bool {
-    append_failures().lock().unwrap().remove(root)
+    let mut failures = append_failures().lock().unwrap();
+    let Some(remaining) = failures.get_mut(root) else {
+        return false;
+    };
+    *remaining -= 1;
+    if *remaining == 0 {
+        failures.remove(root);
+    }
+    true
 }
 
 #[cfg(test)]
 pub fn inject_next_append_failure(root: &Path) {
-    append_failures().lock().unwrap().insert(root.to_path_buf());
+    inject_append_failures(root, 1);
+}
+
+#[cfg(test)]
+pub fn inject_append_failures(root: &Path, count: usize) {
+    append_failures()
+        .lock()
+        .unwrap()
+        .insert(root.to_path_buf(), count);
 }
 
 pub async fn remove_message_in(
