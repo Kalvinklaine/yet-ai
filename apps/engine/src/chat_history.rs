@@ -64,6 +64,7 @@ pub enum ChatMessageRole {
 pub enum ChatMessageStatus {
     Pending,
     Streaming,
+    Interrupted,
     Complete,
     Error,
 }
@@ -291,6 +292,61 @@ pub async fn append_existing_message_in(
     thread.messages.push(message.clone());
     write_thread_path(&path, &thread).await?;
     Ok(message)
+}
+
+pub async fn replace_existing_message_in(
+    root: &Path,
+    message: ChatMessage,
+) -> Result<ChatMessage, ChatHistoryError> {
+    validate_message(&message.chat_id, &message)?;
+    let path = chat_history_path_in(root, &message.chat_id)?;
+    let mut thread = get_thread_in(root, &message.chat_id).await?;
+    let stored = thread
+        .messages
+        .iter_mut()
+        .find(|stored| stored.id == message.id)
+        .ok_or(ChatHistoryError::InvalidRecord)?;
+    if stored.chat_id != message.chat_id || stored.role != message.role {
+        return Err(ChatHistoryError::InvalidRecord);
+    }
+    *stored = message.clone();
+    thread.updated_at = timestamp_now();
+    write_thread_path(&path, &thread).await?;
+    Ok(message)
+}
+
+pub async fn interrupt_streaming_messages_in(
+    root: &Path,
+    chat_id: &str,
+) -> Result<Option<ChatThread>, ChatHistoryError> {
+    let path = chat_history_path_in(root, chat_id)?;
+    let mut thread = match get_thread_in(root, chat_id).await {
+        Ok(thread) => thread,
+        Err(ChatHistoryError::NotFound) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut changed = false;
+    let mut remove = Vec::new();
+    for (index, message) in thread.messages.iter_mut().enumerate() {
+        if message.role == ChatMessageRole::Assistant
+            && message.status == Some(ChatMessageStatus::Streaming)
+        {
+            if message.content.is_empty() {
+                remove.push(index);
+            } else {
+                message.status = Some(ChatMessageStatus::Interrupted);
+            }
+            changed = true;
+        }
+    }
+    for index in remove.into_iter().rev() {
+        thread.messages.remove(index);
+    }
+    if changed {
+        thread.updated_at = timestamp_now();
+        write_thread_path(&path, &thread).await?;
+    }
+    Ok(Some(thread))
 }
 
 #[cfg(test)]
@@ -726,6 +782,60 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn chat_partial_streaming_message_updates_and_interrupts_on_restart() {
+        let dir = temp_dir();
+        let root = dir.join("projects/first/chat-history");
+        let mut message = super::new_message(
+            "chat_partial",
+            super::ChatMessageRole::Assistant,
+            String::new(),
+            Some(super::ChatMessageStatus::Streaming),
+        )
+        .unwrap();
+        super::append_existing_message_in(&root, message.clone())
+            .await
+            .unwrap();
+        message.content = "bounded partial".into();
+        super::replace_existing_message_in(&root, message.clone())
+            .await
+            .unwrap();
+
+        let thread = super::interrupt_streaming_messages_in(&root, "chat_partial")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(thread.messages.len(), 1);
+        assert_eq!(thread.messages[0].id, message.id);
+        assert_eq!(thread.messages[0].content, "bounded partial");
+        assert_eq!(
+            thread.messages[0].status,
+            Some(super::ChatMessageStatus::Interrupted)
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_partial_empty_stream_is_removed_on_restart() {
+        let dir = temp_dir();
+        let root = dir.join("projects/first/chat-history");
+        let message = super::new_message(
+            "chat_partial_empty",
+            super::ChatMessageRole::Assistant,
+            String::new(),
+            Some(super::ChatMessageStatus::Streaming),
+        )
+        .unwrap();
+        super::append_existing_message_in(&root, message)
+            .await
+            .unwrap();
+
+        let thread = super::interrupt_streaming_messages_in(&root, "chat_partial_empty")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(thread.messages.is_empty());
     }
 
     #[tokio::test]

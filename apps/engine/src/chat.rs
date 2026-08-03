@@ -24,6 +24,7 @@ use crate::providers::{self, AuthType, ModelReadinessStatus, ProviderKind, Store
 pub struct ChatRuntime {
     inner: Arc<Mutex<HashMap<String, ChatState>>>,
     history_locks: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    partials: Arc<Mutex<HashMap<(String, u64), chat_history::ChatMessage>>>,
     client: reqwest::Client,
     #[cfg(test)]
     provider_selection_error_gate: Arc<Mutex<Option<Arc<ProviderSelectionErrorGate>>>>,
@@ -263,6 +264,7 @@ impl Default for ChatRuntime {
         Self {
             inner: Arc::new(Mutex::new(HashMap::new())),
             history_locks: Arc::new(Mutex::new(HashMap::new())),
+            partials: Arc::new(Mutex::new(HashMap::new())),
             client: reqwest::Client::builder()
                 .no_proxy()
                 .build()
@@ -538,8 +540,46 @@ impl ChatRuntime {
             }
             self.fail_before_stream_start(&runtime_key, &chat_id, stream_id)
                 .await;
+            if let Some(progress) = &progress {
+                progress
+                    .publish(&chat_id, stream_id, ChatProgressLifecycle::HistoryFailed)
+                    .await;
+            }
             return;
         }
+        let assistant_message = match chat_history::new_message(
+            &chat_id,
+            ChatMessageRole::Assistant,
+            String::new(),
+            Some(ChatMessageStatus::Streaming),
+        ) {
+            Ok(message) => message,
+            Err(_) => {
+                self.fail_before_stream_start(&runtime_key, &chat_id, stream_id)
+                    .await;
+                return;
+            }
+        };
+        if chat_history::append_existing_message_in(&history_root, assistant_message.clone())
+            .await
+            .is_err()
+        {
+            if self
+                .fail_before_stream_start(&runtime_key, &chat_id, stream_id)
+                .await
+            {
+                if let Some(progress) = &progress {
+                    progress
+                        .publish(&chat_id, stream_id, ChatProgressLifecycle::HistoryFailed)
+                        .await;
+                }
+            }
+            return;
+        }
+        self.partials
+            .lock()
+            .await
+            .insert((runtime_key.clone(), stream_id), assistant_message);
         self.set_active_turn_evidence(&runtime_key, stream_id, turn_evidence.clone())
             .await;
         let _ = start_sender.send((selected_provider, turn_evidence));
@@ -629,6 +669,10 @@ impl ChatRuntime {
         chat_id: String,
     ) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
         let runtime_key = runtime_key(scope, &chat_id);
+        let needs_restart_repair = !self.inner.lock().await.contains_key(&runtime_key);
+        if needs_restart_repair {
+            let _ = chat_history::interrupt_streaming_messages_in(&history_root, &chat_id).await;
+        }
         let (snapshot, replay, receiver) = {
             let mut snapshot = self
                 .snapshot_event(&runtime_key, &history_root, &chat_id)
@@ -662,6 +706,11 @@ impl ChatRuntime {
         let (snapshot, replay, receiver) = {
             let lock = self.history_lock(&runtime_key).await;
             let _history_guard = lock.lock().await;
+            if !self.inner.lock().await.contains_key(&runtime_key) {
+                chat_history::interrupt_streaming_messages_in(&history_root, &chat_id)
+                    .await
+                    .map_err(|_| chat_turn_context::TurnContextError::Storage)?;
+            }
             let reconciliation = chat_turn_context::read_reconciled_with_outcome(
                 &turn_context_root,
                 &history_root,
@@ -696,6 +745,17 @@ impl ChatRuntime {
         event_type: &str,
         payload: serde_json::Value,
     ) -> bool {
+        if event_type == "stream_delta" {
+            let Some(content) = payload["delta"]["content"].as_str() else {
+                return false;
+            };
+            if !self
+                .persist_stream_delta(runtime_key, stream_id, content)
+                .await
+            {
+                return false;
+            }
+        }
         let mut guard = self.inner.lock().await;
         let state = guard
             .entry(runtime_key.to_string())
@@ -708,6 +768,44 @@ impl ChatRuntime {
             return false;
         }
         state.push_event(chat_id, event_type, payload);
+        true
+    }
+
+    async fn persist_stream_delta(&self, runtime_key: &str, stream_id: u64, delta: &str) -> bool {
+        let history_root = {
+            let guard = self.inner.lock().await;
+            let Some(active) = guard
+                .get(runtime_key)
+                .and_then(|state| state.active_stream.as_ref())
+                .filter(|active| active.id == stream_id)
+            else {
+                return false;
+            };
+            active.history_root.clone()
+        };
+        let Some(mut message) = self
+            .partials
+            .lock()
+            .await
+            .get(&(runtime_key.to_string(), stream_id))
+            .cloned()
+        else {
+            return false;
+        };
+        if message.content.chars().count() + delta.chars().count() > 20_000 {
+            return false;
+        }
+        message.content.push_str(delta);
+        if chat_history::replace_existing_message_in(&history_root, message.clone())
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        self.partials
+            .lock()
+            .await
+            .insert((runtime_key.to_string(), stream_id), message);
         true
     }
 
@@ -826,6 +924,82 @@ impl ChatRuntime {
                     stream_id,
                     clean: true,
                 });
+            }
+
+            if let Some(mut partial) = runtime
+                .partials
+                .lock()
+                .await
+                .remove(&(runtime_key.clone(), stream_id))
+            {
+                if partial.content.is_empty() {
+                    if chat_history::remove_message_in(
+                        &active.history_root,
+                        &chat_id,
+                        &partial.id,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return Some(StreamReconciliation {
+                            stream_id,
+                            clean: false,
+                        });
+                    }
+                } else {
+                    partial.status = Some(ChatMessageStatus::Interrupted);
+                    let clean = chat_history::replace_existing_message_in(
+                        &active.history_root,
+                        partial.clone(),
+                    )
+                    .await
+                    .is_ok();
+                    if clean {
+                        if let Some(evidence) = &active.turn_evidence {
+                            if chat_turn_context::mark_terminal(
+                                &evidence.root,
+                                &evidence.project_id,
+                                &chat_id,
+                                &evidence.turn_id,
+                                &partial.id,
+                                TurnContextStatus::Interrupted,
+                                Some(interruption.finish_reason()),
+                                None,
+                            )
+                            .await
+                            .is_err()
+                            {
+                                return Some(StreamReconciliation {
+                                    stream_id,
+                                    clean: false,
+                                });
+                            }
+                        }
+                        let mut guard = runtime.inner.lock().await;
+                        let state = guard
+                            .entry(runtime_key)
+                            .or_insert_with(|| ChatState::new(&chat_id));
+                        state.push_event(
+                            &chat_id,
+                            "message_added",
+                            json!({ "message": partial }),
+                        );
+                        state.push_event(
+                            &chat_id,
+                            "stream_finished",
+                            json!({ "finishReason": interruption.finish_reason() }),
+                        );
+                        state.mark_terminal_replay_persisted();
+                        return Some(StreamReconciliation {
+                            stream_id,
+                            clean: true,
+                        });
+                    }
+                    return Some(StreamReconciliation {
+                        stream_id,
+                        clean: false,
+                    });
+                }
             }
 
             let mut durable_clean = true;
@@ -1099,8 +1273,19 @@ impl ChatRuntime {
                 }
             }
             Err(error) => {
-                let terminal = self
-                    .persist_terminal_history_and_event(
+                let terminal = if self.has_partial_content(&runtime_key, stream_id).await {
+                    self.persist_interrupted_partial(
+                        &history_root,
+                        &runtime_key,
+                        &chat_id,
+                        stream_id,
+                        turn_evidence.as_ref(),
+                        "provider_error",
+                        Some(error.code()),
+                    )
+                    .await
+                } else {
+                    self.persist_terminal_history_and_event(
                         &history_root,
                         &runtime_key,
                         &chat_id,
@@ -1114,7 +1299,8 @@ impl ChatRuntime {
                         None,
                         Some(error.code()),
                     )
-                    .await;
+                    .await
+                };
                 if terminal.is_some() {
                     if let Some(progress) = &progress {
                         progress
@@ -1124,6 +1310,81 @@ impl ChatRuntime {
                 }
             }
         }
+    }
+
+    async fn has_partial_content(&self, runtime_key: &str, stream_id: u64) -> bool {
+        self.partials
+            .lock()
+            .await
+            .get(&(runtime_key.to_string(), stream_id))
+            .is_some_and(|message| !message.content.is_empty())
+    }
+
+    async fn persist_interrupted_partial(
+        &self,
+        history_root: &std::path::Path,
+        runtime_key: &str,
+        chat_id: &str,
+        stream_id: u64,
+        turn_evidence: Option<&TurnEvidence>,
+        finish_reason: &str,
+        error_code: Option<&str>,
+    ) -> Option<bool> {
+        let lock = self.history_lock(runtime_key).await;
+        let _guard = lock.lock().await;
+        if !self
+            .claim_stream_terminal_ownership(runtime_key, stream_id)
+            .await
+        {
+            return None;
+        }
+        let Some(mut message) = self
+            .partials
+            .lock()
+            .await
+            .remove(&(runtime_key.to_string(), stream_id))
+        else {
+            return Some(false);
+        };
+        message.status = Some(ChatMessageStatus::Interrupted);
+        if chat_history::replace_existing_message_in(history_root, message.clone())
+            .await
+            .is_err()
+        {
+            return Some(false);
+        }
+        if let Some(evidence) = turn_evidence {
+            if chat_turn_context::mark_terminal(
+                &evidence.root,
+                &evidence.project_id,
+                chat_id,
+                &evidence.turn_id,
+                &message.id,
+                TurnContextStatus::Interrupted,
+                Some(finish_reason),
+                error_code,
+            )
+            .await
+            .is_err()
+            {
+                return Some(false);
+            }
+        }
+        self.push_terminal_event(
+            runtime_key,
+            chat_id,
+            "message_added",
+            json!({ "message": message }),
+        )
+        .await;
+        self.push_persisted_terminal_event(
+            runtime_key,
+            chat_id,
+            "stream_finished",
+            json!({ "finishReason": finish_reason, "errorCode": error_code }),
+        )
+        .await;
+        Some(true)
     }
 
     async fn mark_active_streaming(
@@ -1181,11 +1442,42 @@ impl ChatRuntime {
         {
             return None;
         }
-        let message = match chat_history::new_message(chat_id, role, content, Some(status)) {
-            Ok(message) => message,
-            Err(_) => return Some(false),
+        let partial = self
+            .partials
+            .lock()
+            .await
+            .remove(&(runtime_key.to_string(), stream_id));
+        let had_assistant_partial = partial.as_ref().is_some_and(|message| {
+            role == ChatMessageRole::Assistant && message.role == ChatMessageRole::Assistant
+        });
+        let message = match partial {
+            Some(mut message) if role == ChatMessageRole::Assistant => {
+                message.content = content;
+                message.status = Some(status);
+                message
+            }
+            Some(message) => {
+                if chat_history::remove_message_in(history_root, chat_id, &message.id)
+                    .await
+                    .is_err()
+                {
+                    return Some(false);
+                }
+                match chat_history::new_message(chat_id, role.clone(), content, Some(status)) {
+                    Ok(message) => message,
+                    Err(_) => return Some(false),
+                }
+            }
+            None => match chat_history::new_message(chat_id, role.clone(), content, Some(status)) {
+                Ok(message) => message,
+                Err(_) => return Some(false),
+            },
         };
-        let append_result = chat_history::append_existing_message_in(history_root, message).await;
+        let append_result = if had_assistant_partial {
+            chat_history::replace_existing_message_in(history_root, message).await
+        } else {
+            chat_history::append_existing_message_in(history_root, message).await
+        };
         let mut terminal_repaired = false;
         let terminal = match append_result {
             Ok(message) => {
@@ -3731,7 +4023,8 @@ mod tests {
                         message.role,
                         crate::chat_history::ChatMessageRole::Assistant
                             | crate::chat_history::ChatMessageRole::Error
-                    ) {
+                    ) && message.status != Some(crate::chat_history::ChatMessageStatus::Streaming)
+                    {
                         return message.clone();
                     }
                 }
@@ -3887,14 +4180,13 @@ mod tests {
 
     #[tokio::test]
     async fn experimental_codex_same_chunk_delta_then_recoverable_error_does_not_retry() {
-        for (label, error, expected_role) in [
+        for (label, error) in [
             (
                 "model",
                 serde_json::json!({
                     "type": "response.failed",
                     "error": { "code": "unsupported_model", "message": "invalid_request: model is not supported" }
                 }),
-                crate::chat_history::ChatMessageRole::Error,
             ),
             (
                 "unauthorized",
@@ -3902,7 +4194,6 @@ mod tests {
                     "type": "response.failed",
                     "error": { "message": "unauthorized" }
                 }),
-                crate::chat_history::ChatMessageRole::Error,
             ),
         ] {
             let dir = temp_dir();
@@ -3929,7 +4220,16 @@ mod tests {
                 .await;
             let message = wait_for_terminal_message(&dir, &chat_id).await;
 
-            assert_eq!(message.role, expected_role);
+            assert_eq!(
+                message.role,
+                crate::chat_history::ChatMessageRole::Assistant,
+                "{label}: partial output was not retained"
+            );
+            assert_eq!(message.content, "visible");
+            assert_eq!(
+                message.status,
+                Some(crate::chat_history::ChatMessageStatus::Interrupted)
+            );
             let requests = server.requests.lock().unwrap().clone();
             assert_eq!(requests.len(), 1, "{label}: retried after parsed output");
         }

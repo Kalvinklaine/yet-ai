@@ -66,7 +66,7 @@ export function hydrateChatViewFromMessages(state: ChatViewState, messages: Chat
         id: message.id || `${state.chatId}-message-${index + 1}`,
         role: message.role,
         content: message.role === "error" ? sanitizeErrorText(message.content) : message.content,
-        status: message.status ?? (message.role === "error" ? "error" : "complete"),
+        status: message.status === "interrupted" ? "error" : message.status ?? (message.role === "error" ? "error" : "complete"),
       })),
   };
 }
@@ -278,7 +278,7 @@ function isChatHistoryMessage(value: unknown): value is ChatHistoryMessage {
     && (message.role === "user" || message.role === "assistant" || message.role === "error")
     && typeof message.content === "string"
     && typeof message.createdAt === "string"
-    && (message.status === undefined || message.status === "pending" || message.status === "streaming" || message.status === "complete" || message.status === "error");
+    && (message.status === undefined || message.status === "pending" || message.status === "streaming" || message.status === "interrupted" || message.status === "complete" || message.status === "error");
 }
 
 function readMessageAdded(payload: SseEvent["payload"]): ChatHistoryMessage | null {
@@ -297,7 +297,7 @@ function toViewMessage(state: ChatViewState, message: ChatHistoryMessage): ChatV
     id: message.id || nextMessageId(state),
     role: message.role,
     content: message.role === "error" ? sanitizeErrorText(message.content) : message.content,
-    status: message.status ?? (message.role === "error" ? "error" : "complete"),
+    status: message.status === "interrupted" ? "error" : message.status ?? (message.role === "error" ? "error" : "complete"),
   };
 }
 

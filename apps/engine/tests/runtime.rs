@@ -2085,8 +2085,16 @@ async fn wait_for_chat_messages(app: axum::Router, chat_id: &str, count: usize) 
             authed_request(Method::GET, &format!("/v1/chats/{chat_id}"), Body::empty()),
         )
         .await;
-        if status == StatusCode::OK && body["messages"].as_array().unwrap().len() >= count {
-            return body;
+        if status == StatusCode::OK {
+            let messages = body["messages"].as_array().unwrap();
+            if messages.len() >= count
+                && messages
+                    .last()
+                    .and_then(|message| message["status"].as_str())
+                    != Some("streaming")
+            {
+                return body;
+            }
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
@@ -12377,7 +12385,6 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
         assert!(!events.iter().any(|event| {
             event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
         }), "late subscriber {subscriber_index} saw a successful stop despite terminal append failure");
-        assert!(events.iter().any(|event| event["type"] == "stream_delta"));
         assert!(!events.iter().any(|event| event["type"] == "message_added"));
         assert_sanitized_sse_error(&text);
         assert!(!text.contains(api_key));
@@ -12437,10 +12444,7 @@ async fn chat_new_message_history_failure_does_not_start_replacement_provider_st
     assert_eq!(late_events[0]["type"], "snapshot");
     let error = find_error_event(&late_events);
     assert_eq!(error["payload"]["code"], "chat_history_storage_error");
-    assert!(late_events
-        .iter()
-        .any(|event| event["type"] == "stream_delta"
-            && event["payload"]["delta"]["content"] == "old"));
+    assert!(!late_events.iter().any(|event| event["type"] == "message_added"));
 
     assert_eq!(
         send_user_message_with_content(app.clone(), chat_id, "second prompt").await,
@@ -14535,12 +14539,12 @@ async fn chat_experimental_oauth_stream_auth_error_after_delta_does_not_refresh_
     .await;
     let events = sse_json_events(&text);
     assert_no_replayed_stream_events(&events);
-    let error = find_error_event(&events);
-    assert_eq!(error["payload"]["code"], "provider_unauthorized");
     assert_eq!(
         loaded["messages"][1]["content"],
-        "Provider credentials were rejected. Update the provider API key or account login, then retry."
+        "partial"
     );
+    assert_eq!(loaded["messages"][1]["role"], "assistant");
+    assert_eq!(loaded["messages"][1]["status"], "interrupted");
     assert_sanitized_sse_error(&text);
     assert!(!text.contains("access-1"));
     assert!(!text.contains("refresh-1"));

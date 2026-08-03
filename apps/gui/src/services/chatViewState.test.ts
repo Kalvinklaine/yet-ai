@@ -72,6 +72,18 @@ describe("chatViewState", () => {
     ]);
   });
 
+  it("hydrates interrupted assistant content as a retained failed answer", () => {
+    const next = applyChatViewEvent(createInitialChatViewState("chat-1"), event("snapshot", {
+      messages: [
+        { id: "msg-partial", chatId: "chat-1", role: "assistant", content: "Useful partial answer", createdAt: "2026-05-29T07:16:00Z", status: "interrupted" },
+      ],
+    }));
+
+    expect(next.messages).toEqual([
+      { id: "msg-partial", role: "assistant", content: "Useful partial answer", status: "error" },
+    ]);
+  });
+
   it("hydrates nested thread snapshot messages", () => {
     const next = applyChatViewEvent(createInitialChatViewState("chat-1"), event("snapshot", {
       thread: {

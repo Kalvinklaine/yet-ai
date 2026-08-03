@@ -218,7 +218,7 @@ export type ChatHistoryMessage = {
   role: "user" | "assistant" | "error";
   content: string;
   createdAt: string;
-  status?: "pending" | "streaming" | "complete" | "error";
+  status?: "pending" | "streaming" | "interrupted" | "complete" | "error";
 };
 
 export type ChatThread = {
