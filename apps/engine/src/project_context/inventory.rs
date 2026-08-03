@@ -41,6 +41,14 @@ struct Entry {
     reason: &'static str,
 }
 
+#[derive(Debug)]
+struct Candidate {
+    path: PathBuf,
+    relative: String,
+    metadata: std::fs::Metadata,
+    omission: Option<&'static str>,
+}
+
 pub async fn rebuild(
     context: &ProjectContext,
     expected_generation: u64,
@@ -124,10 +132,11 @@ fn collect(root: &Path) -> Result<Vec<Entry>, InventoryError> {
     builder
         .follow_links(false)
         .hidden(false)
+        .parents(false)
         .git_ignore(true)
         .require_git(false)
         .git_global(false)
-        .git_exclude(true)
+        .git_exclude(false)
         .add_custom_ignore_filename(".ignore")
         .max_depth(Some(policy::MAX_DEPTH))
         .filter_entry(|entry| {
@@ -135,9 +144,8 @@ fn collect(root: &Path) -> Result<Vec<Entry>, InventoryError> {
                 || !entry.path().is_dir()
                 || policy::path_denial(entry.path(), true).is_none()
         });
-    let mut entries = Vec::new();
+    let mut candidates = Vec::new();
     let mut visited = 0usize;
-    let mut total_bytes = 0u64;
     for result in builder.build() {
         if started.elapsed() > policy::MAX_SCAN_TIME {
             return Err(InventoryError::ResourceLimit);
@@ -150,12 +158,22 @@ fn collect(root: &Path) -> Result<Vec<Entry>, InventoryError> {
         let relative = relative_path(root, path)?;
         let metadata = std::fs::symlink_metadata(path).map_err(|_| InventoryError::Unavailable)?;
         if metadata.file_type().is_symlink() {
-            entries.push(omitted(relative, metadata.len(), "symlink"));
+            candidates.push(Candidate {
+                path: path.to_path_buf(),
+                relative,
+                metadata,
+                omission: Some("symlink"),
+            });
             continue;
         }
         if metadata.is_dir() {
             if let Some(reason) = policy::path_denial(path, true) {
-                entries.push(omitted(relative, 0, reason));
+                candidates.push(Candidate {
+                    path: path.to_path_buf(),
+                    relative,
+                    metadata,
+                    omission: Some(reason),
+                });
             }
             continue;
         }
@@ -164,26 +182,52 @@ fn collect(root: &Path) -> Result<Vec<Entry>, InventoryError> {
             return Err(InventoryError::ResourceLimit);
         }
         if !metadata.is_file() {
-            entries.push(omitted(relative, metadata.len(), "unsupported_type"));
-            continue;
+            candidates.push(Candidate {
+                path: path.to_path_buf(),
+                relative,
+                metadata,
+                omission: Some("unsupported_type"),
+            });
+        } else {
+            let omission = policy::path_denial(path, false)
+                .or_else(|| (metadata.len() > policy::MAX_FILE_BYTES).then_some("oversized"));
+            candidates.push(Candidate {
+                path: path.to_path_buf(),
+                relative,
+                metadata,
+                omission,
+            });
         }
-        if let Some(reason) = policy::path_denial(path, false) {
-            entries.push(omitted(relative, metadata.len(), reason));
-            continue;
+    }
+    candidates.sort_by(|left, right| left.relative.cmp(&right.relative));
+    let mut entries = Vec::with_capacity(candidates.len());
+    let mut total_bytes = 0u64;
+    for candidate in candidates {
+        if started.elapsed() > policy::MAX_SCAN_TIME {
+            return Err(InventoryError::ResourceLimit);
         }
-        if metadata.len() > policy::MAX_FILE_BYTES {
-            entries.push(omitted(relative, metadata.len(), "oversized"));
+        if let Some(reason) = candidate.omission {
+            let bytes = if candidate.metadata.is_dir() {
+                0
+            } else {
+                candidate.metadata.len()
+            };
+            entries.push(omitted(candidate.relative, bytes, reason));
             continue;
         }
         total_bytes = total_bytes
-            .checked_add(metadata.len())
+            .checked_add(candidate.metadata.len())
             .ok_or(InventoryError::ResourceLimit)?;
         if total_bytes > policy::MAX_TOTAL_BYTES {
             return Err(InventoryError::ResourceLimit);
         }
-        entries.push(read_entry(root, path, relative, &metadata)?);
+        entries.push(read_entry(
+            root,
+            &candidate.path,
+            candidate.relative,
+            &candidate.metadata,
+        )?);
     }
-    entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(entries)
 }
 
@@ -309,6 +353,7 @@ mod tests {
     use crate::identity::ProductIdentity;
     use crate::projects::ProjectRegistryRuntime;
     use crate::storage::resolve_storage_paths;
+    use std::process::Command;
 
     async fn fixture() -> (tempfile::TempDir, ProjectContext) {
         let temp = tempfile::tempdir().unwrap();
@@ -352,7 +397,16 @@ mod tests {
         let (_temp, context) = fixture().await;
         let root = context.canonical_root();
         std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
+        std::fs::create_dir(root.join(".cargo")).unwrap();
+        std::fs::create_dir_all(root.join(".git/info")).unwrap();
         std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(root.join(".github/workflows/check.yml"), "name: check\n").unwrap();
+        std::fs::write(root.join(".cargo/config.toml"), "[build]\n").unwrap();
+        std::fs::write(root.join(".nvmrc"), "22\n").unwrap();
+        std::fs::write(root.join(".env"), "TOKEN=ultra-private-value\n").unwrap();
+        std::fs::write(root.join("exclude-proof.txt"), "kept").unwrap();
+        std::fs::write(root.join(".git/info/exclude"), "exclude-proof.txt\n").unwrap();
         std::fs::write(root.join("ignored.txt"), "ignored value").unwrap();
         std::fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
         std::fs::write(root.join("credentials.json"), "ultra-private-value").unwrap();
@@ -375,8 +429,22 @@ mod tests {
         assert!(first_rows
             .iter()
             .any(|row| row.0 == "src/main.rs" && row.1 == "included"));
+        for path in [
+            ".cargo/config.toml",
+            ".github/workflows/check.yml",
+            ".nvmrc",
+            "exclude-proof.txt",
+        ] {
+            assert!(first_rows
+                .iter()
+                .any(|row| row.0 == path && row.1 == "included"));
+        }
         assert!(!first_rows.iter().any(|row| row.0 == "ignored.txt"));
+        assert!(!first_rows.iter().any(|row| row.0.starts_with(".git/")));
         assert!(!first_rows.iter().any(|row| row.0 == "target/generated.rs"));
+        assert!(first_rows
+            .iter()
+            .any(|row| row.0 == ".env" && row.2 == "secret_like" && row.3.is_none()));
         assert!(first_rows
             .iter()
             .any(|row| row.0 == "credentials.json" && row.2 == "secret_like" && row.3.is_none()));
@@ -411,17 +479,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn project_context_inventory_ignores_parent_rules_and_creation_order() {
+        let (first_temp, first) = fixture().await;
+        let (second_temp, second) = fixture().await;
+        std::fs::write(first_temp.path().join(".gitignore"), "*.rs\n").unwrap();
+        std::fs::write(first_temp.path().join(".ignore"), "*.toml\n").unwrap();
+        std::fs::write(second_temp.path().join(".gitignore"), "*.txt\n").unwrap();
+        std::fs::write(second_temp.path().join(".ignore"), "*.md\n").unwrap();
+
+        for (context, paths) in [
+            (&first, ["z.txt", "src/main.rs", ".cargo/config.toml"]),
+            (&second, [".cargo/config.toml", "src/main.rs", "z.txt"]),
+        ] {
+            let root = context.canonical_root();
+            for path in paths {
+                let path = root.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, "same content\n").unwrap();
+            }
+        }
+
+        let first_generation = rebuild(&first, 0, first.revision())
+            .await
+            .unwrap()
+            .generation;
+        let second_generation = rebuild(&second, 0, second.revision())
+            .await
+            .unwrap()
+            .generation;
+        let paths = |context: &ProjectContext, generation| rows(context, generation);
+        assert_eq!(
+            paths(&first, first_generation),
+            paths(&second, second_generation)
+        );
+        assert_eq!(
+            paths(&first, first_generation)
+                .into_iter()
+                .map(|row| row.0)
+                .collect::<Vec<_>>(),
+            [".cargo/config.toml", "src/main.rs", "z.txt"]
+        );
+    }
+
+    #[test]
+    fn project_context_inventory_ignores_global_gitignore() {
+        const PROBE_ROOT: &str = "YET_AI_INVENTORY_GLOBAL_PROBE_ROOT";
+        if let Some(root) = std::env::var_os(PROBE_ROOT) {
+            let root = Path::new(&root).canonicalize().unwrap();
+            let entries = collect(&root).unwrap();
+            assert!(
+                entries.iter().any(
+                    |entry| entry.path == "global-proof.txt" && entry.disposition == "included"
+                ),
+                "{entries:?}"
+            );
+            return;
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("global-proof.txt"), "kept").unwrap();
+        let excludes = temp.path().join("global-ignore");
+        std::fs::write(&excludes, "global-proof.txt\n").unwrap();
+        let config = temp.path().join("global-config");
+        let excludes = excludes.to_string_lossy().replace('\\', "/");
+        std::fs::write(&config, format!("[core]\nexcludesFile = \"{excludes}\"\n")).unwrap();
+        let output = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg("project_context::inventory::tests::project_context_inventory_ignores_global_gitignore")
+            .arg("--nocapture")
+            .env(PROBE_ROOT, &root)
+            .env("GIT_CONFIG_GLOBAL", config)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test]
     async fn project_context_rebuild_reflects_ignore_changes_and_preserves_completed_generation_on_failure(
     ) {
         let (_temp, context) = fixture().await;
         let root = context.canonical_root();
         std::fs::write(root.join("keep.txt"), "keep").unwrap();
         std::fs::write(root.join("later.txt"), "later").unwrap();
+        std::fs::write(root.join("git-later.txt"), "git later").unwrap();
         std::fs::write(root.join(".ignore"), "later.txt\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "git-later.txt\n").unwrap();
         let first = rebuild(&context, 0, context.revision()).await.unwrap();
         assert!(!rows(&context, first.generation)
             .iter()
             .any(|row| row.0 == "later.txt"));
+        assert!(!rows(&context, first.generation)
+            .iter()
+            .any(|row| row.0 == "git-later.txt"));
         assert_eq!(
             rebuild(&context, 0, context.revision()).await.unwrap_err(),
             InventoryError::Conflict
@@ -432,15 +589,19 @@ mod tests {
                 .unwrap_err(),
             InventoryError::Conflict
         );
-        assert_eq!(rows(&context, first.generation).len(), 2);
+        assert_eq!(rows(&context, first.generation).len(), 3);
 
         std::fs::write(root.join(".ignore"), "").unwrap();
+        std::fs::write(root.join(".gitignore"), "").unwrap();
         let second = rebuild(&context, first.generation, context.revision())
             .await
             .unwrap();
         assert!(rows(&context, second.generation)
             .iter()
             .any(|row| row.0 == "later.txt"));
+        assert!(rows(&context, second.generation)
+            .iter()
+            .any(|row| row.0 == "git-later.txt"));
     }
 
     #[tokio::test]

@@ -58,9 +58,6 @@ pub fn path_denial(path: &Path, is_dir: bool) -> Option<&'static str> {
     if is_dir && GENERATED_DIRS.contains(&name.as_str()) {
         return Some("generated");
     }
-    if name.starts_with('.') && name != ".gitignore" && name != ".ignore" {
-        return Some("policy_denied");
-    }
     None
 }
 
