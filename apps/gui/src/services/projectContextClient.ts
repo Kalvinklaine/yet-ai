@@ -1,8 +1,8 @@
 import { runtimeFetch, type RuntimeError, type RuntimeResult } from "./runtimeClient";
 import type { ProjectRuntimeSettings } from "./projectClient";
+import { parseProjectId } from "./projectRouting";
 
 const protocolVersion = "2026-08-02";
-const projectIdPattern = /^prj_[A-Za-z0-9_-]{22}$/;
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
 const hashPattern = /^sha256:[a-f0-9]{64}$/;
 const relativePathPattern = /^(?!\/)(?!~)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\\)(?!.*:\/\/)[^\u0000-\u001F\u007F]+$/;
@@ -111,10 +111,13 @@ function string(value: unknown): value is string { return typeof value === "stri
 function oneOf<T extends string>(value: unknown, values: readonly T[]): value is T { return typeof value === "string" && values.includes(value as T); }
 function count(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= 10_000_000; }
 function positiveCount(value: unknown): value is number { return count(value) && value >= 1; }
-function projectId(value: unknown): value is string { return string(value) && projectIdPattern.test(value); }
+function projectId(value: unknown): value is string { return string(value) && parseProjectId(value) !== null; }
 function hash(value: unknown): value is string { return string(value) && hashPattern.test(value); }
 function relativePath(value: unknown): value is string { return string(value) && value.length <= 512 && relativePathPattern.test(value); }
-function safeText(value: unknown, max: number): value is string { return string(value) && value.length >= 1 && value.length <= max && !/[\u0000-\u001F\u007F]/.test(value) && !/(api[_ -]?key|authorization|bearer|cookie|credential|password|secret|token|(?:file|https?):\/\/|(?:^|\s)(?:\/|~[/\\])|(?:^|\s)[A-Za-z]:[/\\]|[`$;&|<>])/i.test(value); }
+function safeText(value: unknown, max: number): value is string {
+  if (!string(value) || value.length < 1 || value.length > max || /[\u0000-\u001F\u007F]/.test(value)) return false;
+  return !/(?:authorization\s*:|\bbearer\s+\S|\b(?:(?:access|refresh|id)[_ -]?)?token\s*[:=]\s*\S|\b(?:api[_ -]?key|cookie|credential|password|secret)\s*[:=]\s*\S|\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|\b(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}|(?:file|https?):\/\/|(?:^|\s)(?:\/|~[/\\])|(?:^|\s)[A-Za-z]:[/\\]|\b(?:ignore (?:all|previous) instructions|reveal (?:secrets?|credentials?)|system prompt)\b|[`$;&|<>])/i.test(value);
+}
 function time(value: unknown): value is string { return string(value) && value.endsWith("Z") && !Number.isNaN(Date.parse(value)); }
 
 export type { RuntimeError };

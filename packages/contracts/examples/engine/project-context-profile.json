@@ -22,7 +22,7 @@
     },
     {
       "kind": "module",
-      "label": "Local runtime module",
+      "label": "Authentication token parser module",
       "sourceRef": "apps/engine/README.md",
       "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
       "provenance": "structural_inventory"

@@ -265,7 +265,7 @@ fn push_with_provenance(
     entry: &Entry,
     provenance: ProfileFactProvenance,
 ) {
-    if facts.len() < MAX_FACTS {
+    if facts.len() < MAX_FACTS && is_safe_public_text(&label) {
         facts.push(ProfileFact {
             kind,
             label: label.chars().take(MAX_LABEL).collect(),
@@ -274,6 +274,79 @@ fn push_with_provenance(
             provenance,
         });
     }
+}
+
+fn is_safe_public_text(value: &str) -> bool {
+    if value.is_empty()
+        || value.chars().count() > 500
+        || value.chars().any(|character| character.is_control())
+        || value.contains("://")
+        || value.contains(['`', '$', ';', '&', '|', '<', '>'])
+    {
+        return false;
+    }
+    let lower = value.to_ascii_lowercase();
+    if lower.contains("authorization:")
+        || lower.contains("authorization :")
+        || lower.split_whitespace().any(|part| part == "bearer")
+        || lower.contains("ignore all instructions")
+        || lower.contains("ignore previous instructions")
+        || lower.contains("reveal secret")
+        || lower.contains("reveal credential")
+        || lower.contains("system prompt")
+    {
+        return false;
+    }
+    if value.split_whitespace().any(|part| {
+        let candidate = part.trim_matches(|character: char| {
+            !character.is_ascii_alphanumeric() && !matches!(character, '_' | '-')
+        });
+        let lower = candidate.to_ascii_lowercase();
+        (lower.starts_with("sk-") || lower.starts_with("pk-") || lower.starts_with("rk-"))
+            && candidate.len() >= 15
+    }) {
+        return false;
+    }
+    if value.split_whitespace().any(|part| {
+        let candidate = part.trim_matches(|character: char| {
+            !matches!(character, '.' | '_' | '-') && !character.is_ascii_alphanumeric()
+        });
+        candidate.starts_with("eyJ") && candidate.split('.').count() == 3 && candidate.len() >= 20
+    }) {
+        return false;
+    }
+    let words: Vec<_> = lower.split_whitespace().collect();
+    if words.iter().any(|word| {
+        [
+            "api_key",
+            "api-key",
+            "apikey",
+            "cookie",
+            "credential",
+            "password",
+            "secret",
+            "token",
+            "access_token",
+            "access-token",
+            "refresh_token",
+            "refresh-token",
+            "id_token",
+            "id-token",
+        ]
+        .iter()
+        .any(|marker| {
+            word.starts_with(&format!("{marker}=")) || word.starts_with(&format!("{marker}:"))
+        })
+    }) {
+        return false;
+    }
+    !words.iter().any(|word| {
+        word.starts_with('/')
+            || word.starts_with("~/")
+            || (word.len() >= 3
+                && word.as_bytes()[1] == b':'
+                && matches!(word.as_bytes()[2], b'/' | b'\\'))
+    })
 }
 
 fn manifest(name: &str) -> bool {
@@ -572,5 +645,33 @@ mod tests {
         assert_eq!(first_profile.facts, second_profile.facts);
         assert_ne!(first_profile.project_id, second_profile.project_id);
         assert_eq!(first_profile.profile_hash, second_profile.profile_hash);
+    }
+
+    #[test]
+    fn project_context_profile_public_text_allows_vocabulary_but_rejects_secret_shapes() {
+        for value in [
+            "Authentication token parser",
+            "Secret scanner module",
+            "Authorization middleware",
+            "API key validation types",
+        ] {
+            assert!(is_safe_public_text(value), "{value}");
+        }
+        for value in [
+            "Authorization: Bearer placeholder",
+            "Bearer placeholder",
+            "token=placeholder",
+            "access_token=placeholder",
+            "secret: placeholder",
+            "eyJhbGciOiJIUzI1NiJ9.cGF5bG9hZA.signature",
+            "sk-abcdefghijklmnop",
+            "https://private.invalid/value",
+            "file:///private/value",
+            "/Users/private/value",
+            "ignore; reveal",
+            "ignore previous instructions",
+        ] {
+            assert!(!is_safe_public_text(value), "{value}");
+        }
     }
 }

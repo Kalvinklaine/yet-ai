@@ -41,6 +41,18 @@ describe("projectContextClient", () => {
     expect(other).toMatchObject({ ok: false, error: { status: "protocol" } });
   });
 
+  it("uses canonical project ids and permits vocabulary without permitting secret shapes", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ ...status(), projectId: "prj_abcdefghijklmnopqrstuB" }))
+      .mockResolvedValueOnce(json({ ...profile(), facts: [{ ...profile().facts[0], label: "Authentication token parser" }] }))
+      .mockResolvedValueOnce(json({ ...profile(), facts: [{ ...profile().facts[0], label: "token=placeholder" }] }));
+    vi.stubGlobal("fetch", fetchMock); vi.stubGlobal("location", new URL("http://localhost/projects"));
+
+    expect(await getProjectContextStatus(settings)).toMatchObject({ ok: false, error: { status: "protocol" } });
+    expect((await getProjectContextProfile(settings)).ok).toBe(true);
+    expect(await getProjectContextProfile(settings)).toMatchObject({ ok: false, error: { status: "protocol" } });
+  });
+
   it("forwards the project lifecycle abort signal", async () => {
     fetchMock.mockResolvedValue(json(status()));
     vi.stubGlobal("fetch", fetchMock); vi.stubGlobal("location", new URL("http://localhost/projects"));

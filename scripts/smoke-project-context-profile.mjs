@@ -19,6 +19,8 @@ let child;
 let childExit;
 let browser;
 let output = "";
+let outputOverflow = false;
+const maxOutputBytes = 1_000_000;
 
 try {
   await requireFile(binary);
@@ -35,8 +37,8 @@ try {
 
   const port = await allocatePort();
   child = spawn(binary, [], { cwd: root, stdio: ["ignore", "pipe", "pipe"], env: { ...env, YET_AI_HTTP_PORT: String(port), YET_AI_AUTH_TOKEN: token, YET_AI_WEB_UI_DIST_DIR: distRoot } });
-  child.stdout.on("data", (chunk) => { output = remember(output, chunk); });
-  child.stderr.on("data", (chunk) => { output = remember(output, chunk); });
+  child.stdout.on("data", captureOutput);
+  child.stderr.on("data", captureOutput);
   childExit = new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
   await waitForEngine(port);
 
@@ -65,7 +67,8 @@ try {
   const evidence = await page.locator("body").innerText();
   for (const forbidden of [projectRoot, home, token]) if (evidence.includes(forbidden)) throw new Error("Project context GUI exposed private runtime evidence.");
   if (failures.length) throw new Error(failures.join("; "));
-  if (output.includes(projectRoot) || output.includes(token)) throw new Error("Runtime output exposed private smoke evidence.");
+  if (outputOverflow) throw new Error("Runtime output exceeded the bounded privacy evidence capture.");
+  if (output.includes(projectRoot) || output.includes(home) || output.includes(token)) throw new Error("Runtime output exposed private smoke evidence.");
   console.log("Project context profile smoke passed.");
   console.log("Verified routed real-engine status, explicit rebuild, deterministic profile facts, and relative-only provenance.");
 } catch (error) {
@@ -87,5 +90,9 @@ function runCli(env, args) { return new Promise((resolve, reject) => { const com
 async function expectText(page, text) { await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout: timeoutMs }); }
 async function waitForEngine(port) { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { try { if ((await fetch(`http://127.0.0.1:${port}/`)).ok) return; } catch {} await new Promise((resolve) => setTimeout(resolve, 150)); } throw new Error("Timed out waiting for the loopback runtime."); }
 function allocatePort() { return new Promise((resolve, reject) => { const server = createServer(); server.once("error", reject); server.listen(0, "127.0.0.1", () => { const address = server.address(); server.close((error) => error ? reject(error) : address && typeof address === "object" ? resolve(address.port) : reject(new Error("Could not allocate a port."))); }); }); }
-function remember(target, chunk) { return (target + chunk.toString("utf8")).slice(-8_000); }
+function captureOutput(chunk) {
+  if (outputOverflow) return;
+  output += chunk.toString("utf8");
+  if (Buffer.byteLength(output, "utf8") > maxOutputBytes) outputOverflow = true;
+}
 function redact(value) { return String(value).split(token).join("[REDACTED]").split(tempRoot ?? "never-match").join("[TEMP]"); }

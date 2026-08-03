@@ -49,7 +49,7 @@
       "minLength": 1,
       "maxLength": 500,
       "pattern": "^[^\\u0000-\\u001F\\u007F]*$",
-      "not": { "pattern": "[Aa][Pp][Ii][_ -]?[Kk][Ee][Yy]|[Aa][Uu][Tt][Hh](?:[Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn])?|[Bb][Ee][Aa][Rr][Ee][Rr]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt]|[Tt][Oo][Kk][Ee][Nn]|(?:file|https?)://|(?:^|\\s)(?:/|~[/\\\\])|(?:^|\\s)[A-Za-z]:[/\\\\]|[`$;&|<>]" }
+      "not": { "pattern": "[Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]\\s*:|\\b[Bb][Ee][Aa][Rr][Ee][Rr]\\s+\\S|\\b(?:(?:[Aa][Cc][Cc][Ee][Ss][Ss]|[Rr][Ee][Ff][Rr][Ee][Ss][Hh]|[Ii][Dd])[_ -]?)?[Tt][Oo][Kk][Ee][Nn]\\s*[:=]\\s*\\S|\\b(?:[Aa][Pp][Ii][_ -]?[Kk][Ee][Yy]|[Cc][Oo][Oo][Kk][Ii][Ee]|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]|[Pp][Aa][Ss][Ss][Ww][Oo][Rr][Dd]|[Ss][Ee][Cc][Rr][Ee][Tt])\\s*[:=]\\s*\\S|\\beyJ[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+|\\b(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}|(?:file|https?)://|(?:^|\\s)(?:/|~[/\\\\])|(?:^|\\s)[A-Za-z]:[/\\\\]|[Ii][Gg][Nn][Oo][Rr][Ee] (?:[Aa][Ll][Ll]|[Pp][Rr][Ee][Vv][Ii][Oo][Uu][Ss]) [Ii][Nn][Ss][Tt][Rr][Uu][Cc][Tt][Ii][Oo][Nn][Ss]|[Rr][Ee][Vv][Ee][Aa][Ll] (?:[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?)|[Ss][Yy][Ss][Tt][Ee][Mm] [Pp][Rr][Oo][Mm][Pp][Tt]|[`$;&|<>]" }
     },
     "sourceEvidence": {
       "type": "object",

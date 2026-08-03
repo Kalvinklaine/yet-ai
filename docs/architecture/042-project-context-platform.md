@@ -4,11 +4,11 @@
 - Plan traceability: project-context-master-plan, Wave 0, T-45
 - Scope: engine-owned project inventory, indexing, retrieval, manifests, continuity identifiers, and local cache contracts
 - Current implementation status: `partial`
-- Current provenance: `live_engine` for SQLite bootstrap, authenticated status, explicit safe inventory rebuild, and deterministic profile
+- Current provenance: `live_engine` for SQLite bootstrap, authenticated status, explicit safe inventory rebuild, deterministic profile, and internal FTS5 lexical retrieval
 
 ## Context
 
-Registered projects already have opaque identities and isolated engine-owned storage, while project memory is an implemented shelf of explicit user-authored notes. The engine bootstraps one isolated rebuildable SQLite context cache per project, exposes authenticated project-scoped status, supports explicit bounded safe inventory rebuild, and serves a deterministic profile for the completed generation. Yet AI does not yet index file content, retrieve indexed context, expose context planning endpoints, or persist turn context manifests. Schemas and examples beyond status, rebuild, and profile remain `fixture_demo` evidence and do not make those endpoints reachable.
+Registered projects already have opaque identities and isolated engine-owned storage, while project memory is an implemented shelf of explicit user-authored notes. The engine bootstraps one isolated rebuildable SQLite context cache per project, exposes authenticated project-scoped status, supports explicit bounded safe inventory rebuild, serves a deterministic profile, and stores/query-ranks bounded admitted source chunks in generation-scoped FTS5 tables. Lexical retrieval is engine-internal: Yet AI does not yet expose a query or planning endpoint, attach retrieved text to chat, send it to a provider, or persist turn context manifests. Schemas and examples beyond status, rebuild, and profile remain `fixture_demo` evidence and do not make those endpoints reachable.
 
 The context platform must explain what it read and selected without exposing canonical roots, crossing projects, silently indexing secrets, or requiring a hosted service. It must remain useful before embeddings or compiler-accurate analysis exist.
 
@@ -19,6 +19,10 @@ The context platform must explain what it read and selected without exposing can
 The engine owns inventory policy, local reads, hashing, chunking, SQLite migrations, lexical retrieval, symbol extraction, planning, manifests, cache deletion, and turn-continuity identifiers. GUI and IDE hosts may request operations and render sanitized results; they do not scan roots, persist raw indexed content, or reinterpret policy.
 
 Each registered `projectId` has one context-cache SQLite database in its engine cache namespace. The database is resolved from immutable request-scoped project context and is never selected by a client path. A connection opened for one project cannot query or attach another project's database. SQL `ATTACH` is forbidden in this subsystem. Tests must prove two-project isolation.
+
+The live rebuild writes admitted source text only as deterministic byte-bounded chunks, per-file capped and tied to the current inventory generation, plus local FTS5 rows. It does not store ignored, secret-like, generated, dependency, binary, oversized, invalid-UTF-8, symlinked, or out-of-root content. This cache is not encrypted. Cache files use private permissions where the platform supports them, but another process with the same user authority may still inspect them. The planned cache-delete route will remove the database, sidecars, and context temporary files; until that route ships, users may stop the engine and remove the per-project rebuildable cache through local storage administration. Deleting it is local-only and does not imply source or provider-side deletion.
+
+Inventory metadata/profile responses and the local lexical cache are live boundaries. Planner output, `ContextManifest`, chat attachment, provider dispatch integration, durable turn links, partial assistant persistence, and Continue are planned. Cached source text is never automatically uploaded; only a future explicit plan/review followed by Send may disclose selected exact bytes to the configured provider or local runtime.
 
 The cache namespace owns only rebuildable inventory facts, profiles, chunks, lexical/symbol indexes, ranking metadata, and ephemeral plans. Deleting context cache closes handles and removes that database, its SQLite sidecars, and context-owned temporary files. The next cache status is `not_built`; a later explicit rebuild recreates it.
 

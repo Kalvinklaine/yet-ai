@@ -259,6 +259,8 @@ Displayed progress data is limited to safe operational fields such as ids, phase
 
 ## Provider secret handling
 
+The Project Context card consumes only the authenticated engine status/profile/rebuild routes and renders bounded structural facts with project-relative provenance. The live engine rebuild also maintains a local per-project FTS5 cache of bounded admitted source chunks, but the GUI has no lexical query, planner, manifest, automatic chat attachment, or provider-send authority. That cache is unencrypted and permission-restricted where supported; cache deletion is not yet exposed in the GUI. Indexed text remains local until a future explicit plan/review and Send path exists.
+
 The provider form allows entering an API key for create/update. After submit, the key field is cleared immediately and the key is sent only to the local runtime. The UI renders only `auth.configured` and `auth.redacted` returned by the runtime. Do not add localStorage or sessionStorage persistence for provider keys.
 
 Each saved provider summary includes a `Test provider` action. The GUI sends that action only to the local runtime endpoint `POST /v1/providers/:id/test`; it never contacts the provider URL directly. The runtime loads local provider config and secrets, performs a short OpenAI-compatible `/models` reachability/auth probe when supported, and returns sanitized `ok`, `status`, `message`, and optional `modelId` fields. Failures such as unauthorized, timeout, missing key, missing model, unsupported kind, and upstream errors are displayed without raw upstream response bodies or provider secrets. The test is optional and does not change existing Send readiness rules.
