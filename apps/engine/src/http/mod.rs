@@ -2654,6 +2654,40 @@ mod project_tests {
     }
 
     #[tokio::test]
+    async fn project_context_rebuild_requires_auth_and_enforces_revision_and_generation() {
+        let (state, project_id, root) = project_test_state().await;
+        std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
+        let uri = format!("/p/{project_id}/v1/context/rebuild");
+        let body = r#"{"mode":"full","expectedInventoryGeneration":0,"expectedProjectRevision":"1"}"#;
+        let unauthenticated =
+            project_request(state.clone(), "POST", uri.clone(), body, false).await;
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let response = project_request(state.clone(), "POST", uri.clone(), body, true).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let response: serde_json::Value =
+            serde_json::from_str(&response_text(response).await).unwrap();
+        assert_eq!(response["protocolVersion"], "2026-08-02");
+        assert_eq!(response["projectId"], project_id);
+        assert_eq!(response["status"], "accepted");
+        assert_eq!(response["operationId"], "context-rebuild-1");
+        assert!(response.get("root").is_none());
+
+        let conflict = project_request(state.clone(), "POST", uri.clone(), body, true).await;
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        let wrong_revision = project_request(
+            state,
+            "POST",
+            uri,
+            r#"{"mode":"incremental","expectedInventoryGeneration":1,"expectedProjectRevision":"2"}"#,
+            true,
+        )
+        .await;
+        assert_eq!(wrong_revision.status(), StatusCode::CONFLICT);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[tokio::test]
     async fn project_chat_crud_isolates_same_id_and_legacy_history() {
         let (state, first_id, first_root) = project_test_state().await;
         let second_root = first_root

@@ -9,7 +9,9 @@ use sha2::{Digest, Sha256};
 use crate::projects::ProjectContext;
 use crate::storage::{ensure_store_namespace_sync, validate_storage_chain};
 
-use super::schema::{CREATE_SCHEMA, POLICY_VERSION, RANKING_VERSION, SCHEMA_VERSION};
+use super::schema::{
+    CREATE_INVENTORY_SCHEMA, CREATE_SCHEMA, POLICY_VERSION, RANKING_VERSION, SCHEMA_VERSION,
+};
 
 const DATABASE_FILE: &str = "cache.sqlite3";
 const LOCK_FILE: &str = "cache.sqlite3.lock";
@@ -72,6 +74,17 @@ fn open_sync(
         open_database(path, project_id, root).map(|connection| ContextDatabase { connection });
     drop(lock);
     result
+}
+
+pub(crate) fn open_sync_for_rebuild(
+    context: &ProjectContext,
+) -> Result<ContextDatabase, ContextDatabaseError> {
+    open_sync(
+        &context.storage().context_cache,
+        &database_path(context),
+        context.project_id(),
+        context.canonical_root(),
+    )
 }
 
 fn open_database(
@@ -276,6 +289,9 @@ fn migrate(
             .pragma_update(None, "user_version", SCHEMA_VERSION)
             .map_err(|_| ContextDatabaseError::Corrupt)?;
     }
+    transaction
+        .execute_batch(CREATE_INVENTORY_SCHEMA)
+        .map_err(|_| ContextDatabaseError::Corrupt)?;
     validate_metadata(&transaction, project_id, root)?;
     transaction
         .commit()

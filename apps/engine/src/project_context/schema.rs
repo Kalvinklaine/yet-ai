@@ -22,4 +22,31 @@ CREATE TABLE context_metadata (
     symbols INTEGER NOT NULL DEFAULT 0 CHECK (symbols >= 0),
     pending_changes INTEGER NOT NULL DEFAULT 0 CHECK (pending_changes >= 0)
 );
+CREATE TABLE inventory_entries (
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    relative_path TEXT NOT NULL,
+    file_bytes INTEGER NOT NULL CHECK (file_bytes >= 0),
+    modified_unix_ms INTEGER,
+    language TEXT,
+    content_hash TEXT,
+    disposition TEXT NOT NULL CHECK (disposition IN ('included', 'omitted')),
+    reason TEXT NOT NULL,
+    PRIMARY KEY (generation, relative_path)
+);
+CREATE INDEX inventory_entries_generation ON inventory_entries(generation, disposition);
+"#;
+
+pub const CREATE_INVENTORY_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS inventory_entries (
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    relative_path TEXT NOT NULL,
+    file_bytes INTEGER NOT NULL CHECK (file_bytes >= 0),
+    modified_unix_ms INTEGER,
+    language TEXT,
+    content_hash TEXT,
+    disposition TEXT NOT NULL CHECK (disposition IN ('included', 'omitted')),
+    reason TEXT NOT NULL,
+    PRIMARY KEY (generation, relative_path)
+);
+CREATE INDEX IF NOT EXISTS inventory_entries_generation ON inventory_entries(generation, disposition);
 "#;

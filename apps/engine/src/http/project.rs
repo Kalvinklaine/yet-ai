@@ -60,6 +60,35 @@ struct ProjectLifecycleResponse {
     updated_at: String,
 }
 
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ProjectContextRebuildMode {
+    Full,
+    Incremental,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ProjectContextRebuildRequest {
+    mode: ProjectContextRebuildMode,
+    expected_inventory_generation: u64,
+    expected_project_revision: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectContextRebuildResponse {
+    protocol_version: &'static str,
+    schema_version: i64,
+    operation_id: String,
+    project_id: String,
+    mode: ProjectContextRebuildMode,
+    status: &'static str,
+    expected_inventory_generation: u64,
+    expected_project_revision: String,
+    cloud_required: bool,
+}
+
 impl From<ProjectSummary> for ProjectLifecycleResponse {
     fn from(summary: ProjectSummary) -> Self {
         Self {
@@ -407,6 +436,57 @@ pub(super) async fn project_context_status(
     }
 }
 
+pub(super) async fn project_context_rebuild(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    request: Result<Json<ProjectContextRebuildRequest>, JsonRejection>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_project_json(rejection),
+    };
+    match crate::project_context::rebuild(
+        &context,
+        request.expected_inventory_generation,
+        &request.expected_project_revision,
+    )
+    .await
+    {
+        Ok(result) => Json(ProjectContextRebuildResponse {
+            protocol_version: crate::project_context::schema::PROTOCOL_VERSION,
+            schema_version: crate::project_context::schema::SCHEMA_VERSION,
+            operation_id: format!("context-rebuild-{}", result.generation),
+            project_id,
+            mode: request.mode,
+            status: "accepted",
+            expected_inventory_generation: request.expected_inventory_generation,
+            expected_project_revision: request.expected_project_revision,
+            cloud_required: false,
+        })
+        .into_response(),
+        Err(crate::project_context::InventoryError::Conflict) => project_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            "Project context changed before rebuild.",
+        ),
+        Err(crate::project_context::InventoryError::ResourceLimit) => project_error(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "resource_limit",
+            "Project context inventory reached a resource limit.",
+        ),
+        Err(crate::project_context::InventoryError::Unavailable) => project_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "Project context inventory is unavailable.",
+        ),
+    }
+}
+
 pub(super) async fn resolve_context(
     state: &AppState,
     project_id: &str,
@@ -518,6 +598,10 @@ pub(super) fn scoped_router() -> Router<AppState> {
         .route(
             "/context/status",
             axum::routing::get(project_context_status),
+        )
+        .route(
+            "/context/rebuild",
+            axum::routing::post(project_context_rebuild),
         )
         .route(
             "/chats",
