@@ -13,6 +13,7 @@ use super::fts;
 use super::manifest::{
     ContextBudgetRequest, ContextManifest, ContextMode, EffectiveBudget, InclusionReason,
     ManifestEntry, ManifestOmission, OmissionReason, Provenance, TextRange,
+    MANIFEST_SCHEMA_VERSION,
     VerificationCommandId,
 };
 use super::profile::{self, ProfileError};
@@ -136,6 +137,8 @@ pub enum PlannerError {
     InvalidRequest,
     #[error("project context plan conflict")]
     Conflict,
+    #[error("project context manifest migration required")]
+    MigrationRequired,
     #[error("project context profile is not built")]
     NotFound,
     #[error("project context planner unavailable")]
@@ -469,6 +472,11 @@ pub async fn rehydrate_for_chat(
     let stored: serde_json::Value = serde_json::from_str(&json).map_err(|_| PlannerError::Conflict)?;
     let plan = stored.get("plan").and_then(serde_json::Value::as_object).ok_or(PlannerError::Conflict)?;
     let manifest = plan.get("manifest").and_then(serde_json::Value::as_object).ok_or(PlannerError::Conflict)?;
+    if manifest.get("schemaVersion").and_then(serde_json::Value::as_i64)
+        != Some(MANIFEST_SCHEMA_VERSION)
+    {
+        return Err(PlannerError::MigrationRequired);
+    }
     let entries: Vec<ManifestEntry> = serde_json::from_value(manifest.get("entries").cloned().ok_or(PlannerError::Conflict)?).map_err(|_| PlannerError::Conflict)?;
     let mut effective_manifest: ContextManifest = serde_json::from_value(serde_json::Value::Object(manifest.clone())).map_err(|_| PlannerError::Conflict)?;
     let stored_refs: Vec<ExplicitContextRef> = serde_json::from_value(stored.pointer("/request/explicitRefs").cloned().ok_or(PlannerError::Conflict)?).map_err(|_| PlannerError::Conflict)?;
@@ -992,6 +1000,45 @@ mod tests {
         let mut stale = selection;
         stale.query_hash = hash(b"changed draft");
         assert_eq!(rehydrate_for_chat(&context, "chat-1", query, stale).await.unwrap_err(), PlannerError::Conflict);
+    }
+
+    #[tokio::test]
+    async fn project_chat_context_rejects_older_persisted_manifest_without_reinterpretation() {
+        let (_temp, context) = fixture().await;
+        write(&context, "src/lib.rs", "pub fn retained_context() {}\n");
+        let built = rebuild(&context, 0, context.revision()).await.unwrap();
+        let query = "retained context";
+        let request = request(&context, built.generation, query, ContextMode::Balanced);
+        let planned = plan(&context, request.clone()).await.unwrap();
+        let database = db::open(&context).await.unwrap();
+        let json: String = database.connection.query_row(
+            "SELECT plan_json FROM context_plans WHERE plan_id = ?1",
+            [&planned.plan_id],
+            |row| row.get(0),
+        ).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["plan"]["manifest"]["schemaVersion"] =
+            serde_json::json!(MANIFEST_SCHEMA_VERSION - 1);
+        database.connection.execute(
+            "UPDATE context_plans SET plan_json = ?1 WHERE plan_id = ?2",
+            params![value.to_string(), planned.plan_id],
+        ).unwrap();
+        let mut selection = ContextPlanSelection { plan_id: planned.plan_id.clone(), manifest_id: planned.manifest.manifest_id, mode: planned.mode, expected_inventory_generation: built.generation, expected_project_revision: context.revision().into(), query_hash: hash(query.as_bytes()), ranking_version: RANKING_VERSION.into(), budget: request.budget, explicit_refs: request.explicit_refs, excluded_sources: Vec::new(), correlation: ContextPlanCorrelation { project_id: context.project_id().into(), chat_id: Some("chat-old-manifest".into()), settings_generation: "1".into(), control_fingerprint: String::new() } };
+        selection.correlation.control_fingerprint = control_fingerprint(&selection);
+
+        assert_eq!(
+            rehydrate_for_chat(&context, "chat-old-manifest", query, selection).await.unwrap_err(),
+            PlannerError::MigrationRequired
+        );
+        let persisted: String = database.connection.query_row(
+            "SELECT plan_json FROM context_plans WHERE plan_id = ?1",
+            [&planned.plan_id],
+            |row| row.get(0),
+        ).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&persisted).unwrap()["plan"]["manifest"]["schemaVersion"],
+            MANIFEST_SCHEMA_VERSION - 1
+        );
     }
 
     #[tokio::test]

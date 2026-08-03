@@ -8,7 +8,7 @@
   "status": "ready",
   "manifest": {
     "protocolVersion": "2026-08-02",
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "manifestId": "manifest-demo-1",
     "projectId": "prj_AbCdEfGhIjKlMnOpQrStUA",
     "profileId": "profile-demo-1",

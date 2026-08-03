@@ -49,6 +49,21 @@ pub struct ChatMessage {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<ChatMessageStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation: Option<ChatContinuation>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatContinuation {
+    pub turn_id: String,
+    pub project_revision: String,
+    pub manifest_id: String,
+    pub depth: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_from_message_id: Option<String>,
+    #[serde(default)]
+    pub context_changed: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -255,6 +270,7 @@ pub fn new_message(
         content,
         created_at: now,
         status,
+        continuation: None,
     })
 }
 

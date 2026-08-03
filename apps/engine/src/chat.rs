@@ -259,6 +259,16 @@ pub enum ChatError {
     ProviderConfig,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum ChatContinueError {
+    #[error("continuation is stale or ineligible")]
+    Conflict,
+    #[error("continuation manifest migration required")]
+    MigrationRequired,
+    #[error("continuation storage is unavailable")]
+    Storage,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderInvalidRequestReason {
@@ -359,6 +369,179 @@ impl ChatRuntime {
             }),
         )
         .await;
+    }
+
+    pub async fn accept_project_continue_response(
+        &self,
+        project_id: &str,
+        provider_config_dir: std::path::PathBuf,
+        history_root: std::path::PathBuf,
+        turn_context_root: std::path::PathBuf,
+        project_revision: &str,
+        chat_id: String,
+        source_turn_id: &str,
+        expected_manifest_id: &str,
+        request_id: &str,
+        progress_runtime: AgentProgressRuntime,
+    ) -> Result<(), ChatContinueError> {
+        let runtime_key = runtime_key(project_id, &chat_id);
+        let lock = self.history_lock(&runtime_key).await;
+        let _history_guard = lock.lock().await;
+        if self
+            .inner
+            .lock()
+            .await
+            .get(&runtime_key)
+            .is_some_and(|state| state.active_stream.is_some())
+        {
+            return Err(ChatContinueError::Conflict);
+        }
+        let source_records = chat_turn_context::read_reconciled(
+            &turn_context_root,
+            &history_root,
+            project_id,
+            &chat_id,
+        )
+        .await
+        .map_err(|error| match error {
+            chat_turn_context::TurnContextError::MigrationRequired => {
+                ChatContinueError::MigrationRequired
+            }
+            _ => ChatContinueError::Storage,
+        })?;
+        let source = source_records
+            .records
+            .iter()
+            .find(|record| record.turn_id == source_turn_id)
+            .ok_or(ChatContinueError::Conflict)?;
+        let source_message_id = source
+            .assistant_message_id
+            .as_deref()
+            .ok_or(ChatContinueError::Conflict)?;
+        let history = chat_history::get_thread_in(&history_root, &chat_id)
+            .await
+            .map_err(|_| ChatContinueError::Storage)?;
+        let source_index = history
+            .messages
+            .iter()
+            .position(|message| {
+                message.id == source_message_id
+                    && message.role == ChatMessageRole::Assistant
+                    && message.status == Some(ChatMessageStatus::Interrupted)
+            })
+            .ok_or(ChatContinueError::Conflict)?;
+        if history.messages[source_index + 1..]
+            .iter()
+            .any(|message| message.role != ChatMessageRole::Error)
+        {
+            return Err(ChatContinueError::Conflict);
+        }
+        let selected_provider = select_chat_provider(&provider_config_dir)
+            .await
+            .map_err(|_| ChatContinueError::Conflict)?;
+        if selected_provider.metadata() != source.effective_model {
+            return Err(ChatContinueError::Conflict);
+        }
+        let continuation = chat_turn_context::claim_continuation(
+            &turn_context_root,
+            project_id,
+            &chat_id,
+            source_turn_id,
+            request_id,
+            project_revision,
+            expected_manifest_id,
+        )
+        .await
+        .map_err(|error| match error {
+            chat_turn_context::TurnContextError::Invalid => ChatContinueError::Conflict,
+            chat_turn_context::TurnContextError::MigrationRequired => {
+                ChatContinueError::MigrationRequired
+            }
+            chat_turn_context::TurnContextError::Storage => ChatContinueError::Storage,
+        })?;
+        let prompt = continuation_prompt(&history.messages, source_index);
+        let mut assistant = chat_history::new_message(
+            &chat_id,
+            ChatMessageRole::Assistant,
+            String::new(),
+            Some(ChatMessageStatus::Streaming),
+        )
+        .map_err(|_| ChatContinueError::Storage)?;
+        assistant.continuation = Some(chat_history::ChatContinuation {
+            turn_id: continuation.turn_id.clone(),
+            project_revision: continuation.project_revision.clone(),
+            manifest_id: continuation.manifest.manifest_id.clone(),
+            depth: continuation.continuation_depth,
+            continued_from_message_id: Some(source_message_id.into()),
+            context_changed: continuation.context_changed,
+        });
+        if chat_history::append_existing_message_in(&history_root, assistant.clone())
+            .await
+            .is_err()
+        {
+            let _ = chat_turn_context::remove(
+                &turn_context_root,
+                project_id,
+                &chat_id,
+                &continuation.turn_id,
+            )
+            .await;
+            return Err(ChatContinueError::Storage);
+        }
+        let evidence = TurnEvidence {
+            root: turn_context_root,
+            project_id: project_id.into(),
+            turn_id: continuation.turn_id,
+        };
+        let progress = ProjectProgressObserver {
+            runtime: progress_runtime,
+            project_id: project_id.into(),
+        };
+        let runtime = self.clone();
+        let task_key = runtime_key.clone();
+        let task_chat = chat_id.clone();
+        let task_history = history_root.clone();
+        let task_evidence = evidence.clone();
+        let stream_id;
+        {
+            let mut states = self.inner.lock().await;
+            let state = states
+                .entry(runtime_key.clone())
+                .or_insert_with(|| ChatState::new(&chat_id));
+            stream_id = state.next_stream_id;
+            state.next_stream_id += 1;
+            let handle = tokio::spawn(async move {
+                runtime
+                    .run_stream(
+                        provider_config_dir,
+                        task_history,
+                        task_key,
+                        task_chat,
+                        stream_id,
+                        prompt,
+                        None,
+                        None,
+                        Ok(Some(selected_provider)),
+                        Some(task_evidence),
+                        Some(progress),
+                    )
+                    .await;
+            });
+            state.active_stream = Some(ActiveStream {
+                id: stream_id,
+                handle,
+                #[cfg(test)]
+                effective_planned_context: None,
+                history_root,
+                turn_evidence: Some(evidence),
+                phase: ActiveStreamPhase::Pending,
+            });
+        }
+        self.partials
+            .lock()
+            .await
+            .insert((runtime_key, stream_id), assistant);
+        Ok(())
     }
 
     async fn accept_user_message_scoped(
@@ -467,6 +650,7 @@ impl ChatRuntime {
         };
         let mut selected_provider = Ok(None);
         let mut turn_evidence = None;
+        let mut turn_metadata = None;
         if let (Some(effective), Some((root, revision))) =
             (&effective_planned_context, turn_context_store)
         {
@@ -486,14 +670,22 @@ impl ChatRuntime {
                                 project_id: scope.into(),
                                 turn_id: record.turn_id.clone(),
                             };
+                            let metadata = chat_history::ChatContinuation {
+                                turn_id: record.turn_id.clone(),
+                                project_revision: record.project_revision.clone(),
+                                manifest_id: record.manifest.manifest_id.clone(),
+                                depth: 0,
+                                continued_from_message_id: None,
+                                context_changed: false,
+                            };
                             chat_turn_context::append(&root, scope, record)
                                 .await
-                                .map(|_| evidence)
+                                .map(|_| (evidence, metadata))
                         }
                         Err(error) => Err(error),
                     };
-                    let evidence = match persisted {
-                        Ok(evidence) => evidence,
+                    let (evidence, metadata) = match persisted {
+                        Ok(value) => value,
                         Err(_) => {
                             self.fail_turn_context_before_stream(
                                 &runtime_key,
@@ -507,6 +699,7 @@ impl ChatRuntime {
                     };
                     selected_provider = Ok(Some(provider));
                     turn_evidence = Some(evidence);
+                    turn_metadata = Some(metadata);
                 }
                 Err(error) => selected_provider = Err(error),
             }
@@ -544,7 +737,7 @@ impl ChatRuntime {
             }
             return;
         }
-        let assistant_message = match chat_history::new_message(
+        let mut assistant_message = match chat_history::new_message(
             &chat_id,
             ChatMessageRole::Assistant,
             String::new(),
@@ -557,6 +750,7 @@ impl ChatRuntime {
                 return;
             }
         };
+        assistant_message.continuation = turn_metadata;
         if chat_history::append_existing_message_in(&history_root, assistant_message.clone())
             .await
             .is_err()
@@ -2593,6 +2787,39 @@ fn assemble_effective_provider_prompt(
     }
 }
 
+const CONTINUATION_CONVERSATION_MAX_CHARS: usize = 12_000;
+const CONTINUATION_PARTIAL_SUFFIX_MAX_CHARS: usize = 2_000;
+
+fn continuation_prompt(messages: &[chat_history::ChatMessage], source_index: usize) -> String {
+    let source = &messages[source_index];
+    let suffix = source
+        .content
+        .chars()
+        .rev()
+        .take(CONTINUATION_PARTIAL_SUFFIX_MAX_CHARS)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    let mut transcript = String::new();
+    for message in messages[..source_index].iter().rev() {
+        let role = match message.role {
+            ChatMessageRole::User => "User",
+            ChatMessageRole::Assistant => "Assistant",
+            ChatMessageRole::Error => continue,
+        };
+        let entry = format!("{role}: {}\n", message.content);
+        if transcript.chars().count() + entry.chars().count() > CONTINUATION_CONVERSATION_MAX_CHARS
+        {
+            break;
+        }
+        transcript.insert_str(0, &entry);
+    }
+    format!(
+        "Continue the interrupted assistant response in the same conversation. Do not repeat, paraphrase, or restart text already written. Begin directly after the partial answer's final idea. Preserve the original request and context boundaries.\n\nPersisted conversation:\n{transcript}\nBounded suffix of the interrupted answer (already visible; do not repeat):\n{suffix}"
+    )
+}
+
 fn provider_prompt_fits_budget(content: &str, context: &ChatContext) -> bool {
     let mut counter = BoundedCharCounter::new(CHAT_PROVIDER_PROMPT_MAX_CHARS);
     render_provider_prompt(&mut counter, content, context).is_ok()
@@ -4094,7 +4321,7 @@ mod tests {
     ) -> crate::project_context::manifest::ContextManifest {
         crate::project_context::manifest::ContextManifest {
             protocol_version: "2026-08-02".into(),
-            schema_version: 1,
+            schema_version: crate::project_context::manifest::MANIFEST_SCHEMA_VERSION,
             manifest_id: manifest_id.into(),
             project_id: project_id.into(),
             profile_id: None,
@@ -6985,6 +7212,259 @@ mod tests {
             .unwrap();
         assert_eq!(retained.manifest_id, effective.manifest_id);
         assert_eq!(retained.selected_ranks, vec![2]);
+    }
+
+    #[test]
+    fn chat_continue_prompt_is_bounded_and_forbids_repetition() {
+        let messages = vec![
+            crate::chat_history::ChatMessage {
+                id: "msg_user".into(),
+                chat_id: "chat_continue".into(),
+                role: crate::chat_history::ChatMessageRole::User,
+                content: "Explain the result".into(),
+                created_at: "2026-08-03T00:00:00Z".into(),
+                status: Some(crate::chat_history::ChatMessageStatus::Complete),
+                continuation: None,
+            },
+            crate::chat_history::ChatMessage {
+                id: "msg_partial".into(),
+                chat_id: "chat_continue".into(),
+                role: crate::chat_history::ChatMessageRole::Assistant,
+                content: format!("{}UNIQUE_SUFFIX", "x".repeat(3_000)),
+                created_at: "2026-08-03T00:00:01Z".into(),
+                status: Some(crate::chat_history::ChatMessageStatus::Interrupted),
+                continuation: None,
+            },
+        ];
+        let prompt = super::continuation_prompt(&messages, 1);
+        assert!(prompt.contains("Do not repeat, paraphrase, or restart"));
+        assert!(prompt.contains("UNIQUE_SUFFIX"));
+        assert!(!prompt.contains(&"x".repeat(2_001)));
+        assert_eq!(prompt.matches("Explain the result").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn chat_continue_claim_rejects_duplicate_stale_and_complete_turns() {
+        let dir = temp_dir();
+        let history_root = dir.join("chat-history");
+        let turn_root = dir.join("turn-context");
+        let chat_id = "chat_continue_claim";
+        let user = crate::chat_history::append_message_in(
+            &history_root,
+            chat_id,
+            crate::chat_history::ChatMessageRole::User,
+            "hello".into(),
+            Some(crate::chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        let assistant = crate::chat_history::append_message_in(
+            &history_root,
+            chat_id,
+            crate::chat_history::ChatMessageRole::Assistant,
+            "partial".into(),
+            Some(crate::chat_history::ChatMessageStatus::Interrupted),
+        )
+        .await
+        .unwrap();
+        let record = crate::chat_turn_context::record(
+            "project-a",
+            "revision-1",
+            chat_id,
+            &user.id,
+            test_manifest("project-a", "manifest-1", 3),
+            crate::chat_turn_context::EffectiveModel {
+                provider_id: "demo-local".into(),
+                provider_kind: "demo_local".into(),
+                model_id: "demo-local".into(),
+            },
+        )
+        .unwrap();
+        let turn_id = record.turn_id.clone();
+        crate::chat_turn_context::append(&turn_root, "project-a", record)
+            .await
+            .unwrap();
+        crate::chat_turn_context::mark_terminal(
+            &turn_root,
+            "project-a",
+            chat_id,
+            &turn_id,
+            &assistant.id,
+            crate::chat_turn_context::TurnContextStatus::Interrupted,
+            Some("provider_error"),
+            Some("provider_timeout"),
+        )
+        .await
+        .unwrap();
+
+        let claimed = crate::chat_turn_context::claim_continuation(
+            &turn_root,
+            "project-a",
+            chat_id,
+            &turn_id,
+            "request-1",
+            "revision-1",
+            "manifest-1",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            claimed.continued_from_turn_id.as_deref(),
+            Some(turn_id.as_str())
+        );
+        assert_eq!(claimed.continuation_depth, 1);
+        assert!(crate::chat_turn_context::claim_continuation(
+            &turn_root,
+            "project-a",
+            chat_id,
+            &turn_id,
+            "request-2",
+            "revision-1",
+            "manifest-1"
+        )
+        .await
+        .is_err());
+        assert!(crate::chat_turn_context::claim_continuation(
+            &turn_root,
+            "project-a",
+            chat_id,
+            &claimed.turn_id,
+            "request-3",
+            "stale",
+            "manifest-1"
+        )
+        .await
+        .is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_continue_success_keeps_same_chat_without_user_message_and_links_generation() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        let chat_id = "chat_continue_success";
+        crate::demo_mode::set(&dir, true).await.unwrap();
+        let user = crate::chat_history::append_message_in(
+            &history_root,
+            chat_id,
+            crate::chat_history::ChatMessageRole::User,
+            "hello".into(),
+            Some(crate::chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        let mut assistant = crate::chat_history::append_message_in(
+            &history_root,
+            chat_id,
+            crate::chat_history::ChatMessageRole::Assistant,
+            "partial unique opening".into(),
+            Some(crate::chat_history::ChatMessageStatus::Interrupted),
+        )
+        .await
+        .unwrap();
+        let record = crate::chat_turn_context::record(
+            "project-a",
+            "revision-1",
+            chat_id,
+            &user.id,
+            test_manifest("project-a", "manifest-1", 3),
+            crate::chat_turn_context::EffectiveModel {
+                provider_id: "demo-local".into(),
+                provider_kind: "demo_local".into(),
+                model_id: "demo-local".into(),
+            },
+        )
+        .unwrap();
+        let turn_id = record.turn_id.clone();
+        assistant.continuation = Some(crate::chat_history::ChatContinuation {
+            turn_id: turn_id.clone(),
+            project_revision: "revision-1".into(),
+            manifest_id: "manifest-1".into(),
+            depth: 0,
+            continued_from_message_id: None,
+            context_changed: false,
+        });
+        crate::chat_history::replace_existing_message_in(&history_root, assistant.clone())
+            .await
+            .unwrap();
+        crate::chat_turn_context::append(&turn_root, "project-a", record)
+            .await
+            .unwrap();
+        crate::chat_turn_context::mark_terminal(
+            &turn_root,
+            "project-a",
+            chat_id,
+            &turn_id,
+            &assistant.id,
+            crate::chat_turn_context::TurnContextStatus::Interrupted,
+            Some("provider_error"),
+            Some("provider_timeout"),
+        )
+        .await
+        .unwrap();
+        let runtime = super::ChatRuntime::new();
+
+        runtime
+            .accept_project_continue_response(
+                "project-a",
+                dir.clone(),
+                history_root.clone(),
+                turn_root.clone(),
+                "revision-1",
+                chat_id.into(),
+                &turn_id,
+                "manifest-1",
+                "request-continue",
+                crate::agent_progress::AgentProgressRuntime::new(),
+            )
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            let thread = crate::chat_history::get_thread_in(&history_root, chat_id)
+                .await
+                .unwrap();
+            if thread.messages.last().is_some_and(|message| {
+                message.status == Some(crate::chat_history::ChatMessageStatus::Complete)
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let thread = crate::chat_history::get_thread_in(&history_root, chat_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            thread
+                .messages
+                .iter()
+                .filter(|message| message.role == crate::chat_history::ChatMessageRole::User)
+                .count(),
+            1
+        );
+        assert_eq!(thread.messages.len(), 3);
+        let continued = thread.messages.last().unwrap();
+        assert_eq!(
+            continued.status,
+            Some(crate::chat_history::ChatMessageStatus::Complete)
+        );
+        assert_eq!(
+            continued
+                .continuation
+                .as_ref()
+                .unwrap()
+                .continued_from_message_id
+                .as_deref(),
+            Some(assistant.id.as_str())
+        );
+        assert!(!continued.content.contains("partial unique opening"));
+        let turns = crate::chat_turn_context::read(&turn_root, "project-a", chat_id)
+            .await
+            .unwrap();
+        assert_eq!(turns.records.len(), 2);
+        assert_eq!(
+            turns.records[1].continued_from_turn_id.as_deref(),
+            Some(turn_id.as_str())
+        );
     }
 
     #[cfg(unix)]

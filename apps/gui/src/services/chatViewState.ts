@@ -7,7 +7,8 @@ export type ChatViewMessage = {
   id: string;
   role: "user" | "assistant" | "error";
   content: string;
-  status?: "pending" | "streaming" | "complete" | "error";
+  status?: "pending" | "streaming" | "interrupted" | "complete" | "error";
+  continuation?: ChatHistoryMessage["continuation"];
 };
 
 export type ChatViewState = {
@@ -66,7 +67,8 @@ export function hydrateChatViewFromMessages(state: ChatViewState, messages: Chat
         id: message.id || `${state.chatId}-message-${index + 1}`,
         role: message.role,
         content: message.role === "error" ? sanitizeErrorText(message.content) : message.content,
-        status: message.status === "interrupted" ? "error" : message.status ?? (message.role === "error" ? "error" : "complete"),
+        status: message.status ?? (message.role === "error" ? "error" : "complete"),
+        continuation: message.continuation,
       })),
   };
 }
@@ -278,7 +280,19 @@ function isChatHistoryMessage(value: unknown): value is ChatHistoryMessage {
     && (message.role === "user" || message.role === "assistant" || message.role === "error")
     && typeof message.content === "string"
     && typeof message.createdAt === "string"
-    && (message.status === undefined || message.status === "pending" || message.status === "streaming" || message.status === "interrupted" || message.status === "complete" || message.status === "error");
+    && (message.status === undefined || message.status === "pending" || message.status === "streaming" || message.status === "interrupted" || message.status === "complete" || message.status === "error")
+    && (message.continuation === undefined || isContinuation(message.continuation));
+}
+
+function isContinuation(value: unknown): value is NonNullable<ChatHistoryMessage["continuation"]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const continuation = value as Record<string, unknown>;
+  return typeof continuation.turnId === "string"
+    && typeof continuation.projectRevision === "string"
+    && typeof continuation.manifestId === "string"
+    && Number.isInteger(continuation.depth)
+    && typeof continuation.contextChanged === "boolean"
+    && (continuation.continuedFromMessageId === undefined || typeof continuation.continuedFromMessageId === "string");
 }
 
 function readMessageAdded(payload: SseEvent["payload"]): ChatHistoryMessage | null {
@@ -297,7 +311,8 @@ function toViewMessage(state: ChatViewState, message: ChatHistoryMessage): ChatV
     id: message.id || nextMessageId(state),
     role: message.role,
     content: message.role === "error" ? sanitizeErrorText(message.content) : message.content,
-    status: message.status === "interrupted" ? "error" : message.status ?? (message.role === "error" ? "error" : "complete"),
+    status: message.status ?? (message.role === "error" ? "error" : "complete"),
+    continuation: message.continuation,
   };
 }
 

@@ -4,7 +4,7 @@ use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::chat_history;
-use crate::project_context::manifest::ContextManifest;
+use crate::project_context::manifest::{ContextManifest, MANIFEST_SCHEMA_VERSION};
 
 const SCHEMA_VERSION: u32 = 1;
 const FILE_MAX_BYTES: usize = 1_000_000;
@@ -39,6 +39,14 @@ pub struct TurnContextRecord {
     pub finish_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_from_turn_id: Option<String>,
+    #[serde(default)]
+    pub continuation_depth: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_request_id: Option<String>,
+    #[serde(default)]
+    pub context_changed: bool,
     pub created_at: String,
     #[serde(default)]
     pub updated_at: String,
@@ -78,6 +86,8 @@ pub struct ReconciledTurnContext {
 pub enum TurnContextError {
     #[error("invalid turn context request")]
     Invalid,
+    #[error("turn context manifest migration required")]
+    MigrationRequired,
     #[error("turn context storage error")]
     Storage,
 }
@@ -110,7 +120,10 @@ pub fn record(
     validate_id(project_id)?;
     chat_history::validate_chat_id(chat_id).map_err(|_| TurnContextError::Invalid)?;
     chat_history::validate_chat_id(message_id).map_err(|_| TurnContextError::Invalid)?;
-    if manifest.project_id != project_id || manifest.inventory_generation > i64::MAX as u64 {
+    if manifest.schema_version != MANIFEST_SCHEMA_VERSION
+        || manifest.project_id != project_id
+        || manifest.inventory_generation > i64::MAX as u64
+    {
         return Err(TurnContextError::Invalid);
     }
     let turn_id = new_id("turn")?;
@@ -126,9 +139,70 @@ pub fn record(
         status: TurnContextStatus::Pending,
         finish_reason: None,
         error_code: None,
+        continued_from_turn_id: None,
+        continuation_depth: 0,
+        continuation_request_id: None,
+        context_changed: false,
         created_at: timestamp_now(),
         updated_at: timestamp_now(),
     })
+}
+
+pub async fn claim_continuation(
+    root: &Path,
+    project_id: &str,
+    chat_id: &str,
+    source_turn_id: &str,
+    request_id: &str,
+    expected_project_revision: &str,
+    expected_manifest_id: &str,
+) -> Result<TurnContextRecord, TurnContextError> {
+    validate_id(project_id)?;
+    validate_id(source_turn_id)?;
+    validate_id(request_id)?;
+    let path = path(root, chat_id)?;
+    let mut store = read_store(&path, project_id, chat_id)
+        .await?
+        .ok_or(TurnContextError::Invalid)?;
+    if store.records.iter().any(|record| {
+        record.continued_from_turn_id.as_deref() == Some(source_turn_id)
+            || record.continuation_request_id.as_deref() == Some(request_id)
+    }) {
+        return Err(TurnContextError::Invalid);
+    }
+    let source_index = store
+        .records
+        .iter()
+        .position(|record| record.turn_id == source_turn_id)
+        .ok_or(TurnContextError::Invalid)?;
+    let source = &store.records[source_index];
+    if source.status != TurnContextStatus::Interrupted
+        || source.assistant_message_id.is_none()
+        || source.project_revision != expected_project_revision
+        || source.manifest.manifest_id != expected_manifest_id
+        || source.continuation_depth >= 3
+        || store.records[source_index + 1..].iter().any(|record| {
+            record.status != TurnContextStatus::Error
+                || record.continued_from_turn_id.as_deref() == Some(source_turn_id)
+        })
+    {
+        return Err(TurnContextError::Invalid);
+    }
+    let mut continuation = record(
+        project_id,
+        expected_project_revision,
+        chat_id,
+        &source.user_message_id,
+        source.manifest.clone(),
+        source.effective_model.clone(),
+    )?;
+    continuation.continued_from_turn_id = Some(source_turn_id.into());
+    continuation.continuation_depth = source.continuation_depth + 1;
+    continuation.continuation_request_id = Some(request_id.into());
+    continuation.context_changed = false;
+    store.records.push(continuation.clone());
+    write_store(&path, &store).await?;
+    Ok(continuation)
 }
 
 pub async fn append(
@@ -137,7 +211,10 @@ pub async fn append(
     record: TurnContextRecord,
 ) -> Result<(), TurnContextError> {
     validate_id(project_id)?;
-    if record.chat_id.is_empty() || record.manifest.project_id != project_id {
+    if record.chat_id.is_empty()
+        || record.manifest.schema_version != MANIFEST_SCHEMA_VERSION
+        || record.manifest.project_id != project_id
+    {
         return Err(TurnContextError::Invalid);
     }
     let path = path(root, &record.chat_id)?;
@@ -640,6 +717,13 @@ async fn read_store(
     {
         return Err(TurnContextError::Storage);
     }
+    if store
+        .records
+        .iter()
+        .any(|record| record.manifest.schema_version != MANIFEST_SCHEMA_VERSION)
+    {
+        return Err(TurnContextError::MigrationRequired);
+    }
     Ok(Some(store))
 }
 
@@ -714,7 +798,7 @@ mod tests {
     fn manifest(project_id: &str, id: &str) -> ContextManifest {
         ContextManifest {
             protocol_version: "2026-08-02".into(),
-            schema_version: 1,
+            schema_version: MANIFEST_SCHEMA_VERSION,
             manifest_id: id.into(),
             project_id: project_id.into(),
             profile_id: None,
@@ -968,7 +1052,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn chat_turn_context_rejects_cross_project_and_migrates_legacy() {
+    async fn chat_turn_context_rejects_cross_project_and_reads_legacy_envelope() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("config/projects/project-a/turn-context");
         crate::storage::ensure_store_namespace(&root, true)
@@ -1010,6 +1094,35 @@ mod tests {
         )
         .await
         .is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_turn_context_rejects_older_manifest_without_reinterpretation() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("config/projects/project-a/turn-context");
+        crate::storage::ensure_store_namespace(&root, true)
+            .await
+            .unwrap();
+        let mut old = item("project-a", "chat_1", "msg_1", "manifest-1");
+        old.manifest.schema_version = MANIFEST_SCHEMA_VERSION - 1;
+        let store = serde_json::json!({
+            "schemaVersion": SCHEMA_VERSION,
+            "projectId": "project-a",
+            "chatId": "chat_1",
+            "records": [old]
+        });
+        let path = root.join("chat_1.json");
+        std::fs::write(&path, serde_json::to_vec(&store).unwrap()).unwrap();
+
+        assert!(matches!(
+            read(&root, "project-a", "chat_1").await,
+            Err(TurnContextError::MigrationRequired)
+        ));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).unwrap()).unwrap()
+                ["records"][0]["manifest"]["schemaVersion"],
+            MANIFEST_SCHEMA_VERSION - 1
+        );
     }
 
     #[tokio::test]

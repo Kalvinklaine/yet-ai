@@ -99,6 +99,7 @@
     "smoke:project-command-center": "cargo build -p yet-lsp && npm --prefix apps/gui run build && node scripts/smoke-project-command-center.mjs",
     "smoke:project-context-profile": "cargo build -p yet-lsp && npm --prefix apps/gui run build && node scripts/smoke-project-context-profile.mjs",
     "smoke:project-context-chat": "node scripts/smoke-project-context-chat.mjs",
+    "smoke:project-context-continue": "node scripts/smoke-project-context-continue.mjs",
     "check:gui-smoke-bootstrap": "node scripts/check-gui-smoke-bootstrap.mjs",
     "smoke:hosted-gui-host-ready-gate": "node scripts/smoke-hosted-gui-host-ready-gate.mjs",
     "smoke:real-engine-gui": "npm run smoke:real-engine-startup && npm --prefix apps/gui run build && npm run smoke:hosted-gui-host-ready-gate",

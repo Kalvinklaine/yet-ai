@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::schema::{PROTOCOL_VERSION, RANKING_VERSION};
 
-pub const MANIFEST_SCHEMA_VERSION: i64 = 1;
+pub const MANIFEST_SCHEMA_VERSION: i64 = 2;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -471,7 +471,7 @@ mod tests {
         ));
         let value = serde_json::to_value(manifest).unwrap();
         assert_eq!(value["protocolVersion"], "2026-08-02");
-        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["schemaVersion"], MANIFEST_SCHEMA_VERSION);
         assert_eq!(value["rankingVersion"], RANKING_VERSION);
         assert_eq!(value["entries"][0]["kind"], "file_chunk");
         assert_eq!(value["entries"][0]["range"]["start"]["line"], 0);

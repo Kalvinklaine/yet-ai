@@ -197,11 +197,14 @@ export type ProjectContextPlanningSelection = {
 
 export type ChatCommand = {
   requestId: string;
-  type: "user_message" | "abort";
+  type: "user_message" | "abort" | "continue_response";
   payload?: {
-    content: string;
+    content?: string;
     context?: ChatContext;
     planningSelection?: ProjectContextPlanningSelection;
+    interruptedTurnId?: string;
+    expectedProjectRevision?: string;
+    expectedManifestId?: string;
   };
 };
 
@@ -219,6 +222,14 @@ export type ChatHistoryMessage = {
   content: string;
   createdAt: string;
   status?: "pending" | "streaming" | "interrupted" | "complete" | "error";
+  continuation?: {
+    turnId: string;
+    projectRevision: string;
+    manifestId: string;
+    depth: number;
+    continuedFromMessageId?: string;
+    contextChanged: boolean;
+  };
 };
 
 export type ChatThread = {
@@ -553,6 +564,22 @@ export function sendAbort(
   const command: ChatCommand = {
     requestId: crypto.randomUUID(),
     type: "abort",
+  };
+  return runtimeFetch<ChatCommandResponse>(settings, chatApiPath(settings, `/chats/${encodeURIComponent(chatId)}/commands`), {
+    method: "POST",
+    body: JSON.stringify(command),
+  });
+}
+
+export function sendContinueResponse(
+  settings: ChatRuntimeSettings,
+  chatId: string,
+  input: { interruptedTurnId: string; expectedProjectRevision: string; expectedManifestId: string },
+): Promise<RuntimeResult<ChatCommandResponse>> {
+  const command: ChatCommand = {
+    requestId: crypto.randomUUID(),
+    type: "continue_response",
+    payload: input,
   };
   return runtimeFetch<ChatCommandResponse>(settings, chatApiPath(settings, `/chats/${encodeURIComponent(chatId)}/commands`), {
     method: "POST",

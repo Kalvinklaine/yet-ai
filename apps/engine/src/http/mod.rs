@@ -20,8 +20,8 @@ use crate::chat_history;
 use crate::demo_mode;
 use crate::logging::{log_event, EngineLogLevel};
 use crate::project_browser::ProjectBrowserError;
-use crate::project_memory;
 use crate::project_context::ContextPlanSelection;
+use crate::project_memory;
 use crate::projects::ProjectRegistryError;
 use crate::provider_auth;
 use crate::providers;
@@ -1151,7 +1151,10 @@ async fn project_chats_delete(
         Ok(context) => context,
         Err(response) => return response,
     };
-    if crate::chat_turn_context::delete_chat(&context.storage().turn_context, &chat_id).await.is_err() {
+    if crate::chat_turn_context::delete_chat(&context.storage().turn_context, &chat_id)
+        .await
+        .is_err()
+    {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     match chat_history::delete_thread_in(&context.storage().chat_history, &chat_id).await {
@@ -1174,9 +1177,18 @@ async fn project_chat_turn_context(
         &context.storage().chat_history,
         context.project_id(),
         &chat_id,
-    ).await {
+    )
+    .await
+    {
         Ok(response) => Json(response).into_response(),
-        Err(crate::chat_turn_context::TurnContextError::Invalid) => StatusCode::BAD_REQUEST.into_response(),
+        Err(crate::chat_turn_context::TurnContextError::Invalid) => {
+            StatusCode::BAD_REQUEST.into_response()
+        }
+        Err(crate::chat_turn_context::TurnContextError::MigrationRequired) => (
+            StatusCode::CONFLICT,
+            Json(json!({ "error": "manifest_migration_required" })),
+        )
+            .into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
@@ -1227,6 +1239,14 @@ struct ChatCommandRequest {
     #[serde(rename = "type")]
     command_type: String,
     payload: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ContinueResponsePayload {
+    interrupted_turn_id: String,
+    expected_project_revision: String,
+    expected_manifest_id: String,
 }
 
 async fn chat_command(
@@ -1321,19 +1341,104 @@ async fn project_chat_command(
                 )
                 .await;
         }
+        "continue_response" => {
+            let payload: ContinueResponsePayload = match command.payload {
+                Some(value) => match serde_json::from_value(value) {
+                    Ok(payload) => payload,
+                    Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+                },
+                None => return StatusCode::BAD_REQUEST.into_response(),
+            };
+            if !valid_bounded_string(&payload.interrupted_turn_id, 128)
+                || !valid_bounded_string(&payload.expected_project_revision, 128)
+                || !valid_bounded_string(&payload.expected_manifest_id, 128)
+            {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            if payload.expected_project_revision != context.revision() {
+                return StatusCode::CONFLICT.into_response();
+            }
+            match state
+                .chat_runtime
+                .accept_project_continue_response(
+                    context.project_id(),
+                    state.storage_paths.config_dir.clone(),
+                    context.storage().chat_history.clone(),
+                    context.storage().turn_context.clone(),
+                    context.revision(),
+                    chat_id.clone(),
+                    &payload.interrupted_turn_id,
+                    &payload.expected_manifest_id,
+                    &command.request_id,
+                    state.agent_progress_runtime.clone(),
+                )
+                .await
+            {
+                Ok(()) => {}
+                Err(crate::chat::ChatContinueError::Conflict) => {
+                    return (
+                        StatusCode::CONFLICT,
+                        Json(json!({ "error": "continuation is stale or ineligible" })),
+                    )
+                        .into_response()
+                }
+                Err(crate::chat::ChatContinueError::MigrationRequired) => {
+                    return (
+                        StatusCode::CONFLICT,
+                        Json(json!({ "error": "manifest_migration_required" })),
+                    )
+                        .into_response()
+                }
+                Err(crate::chat::ChatContinueError::Storage) => {
+                    return (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({ "error": "continuation storage unavailable" })),
+                    )
+                        .into_response()
+                }
+            }
+        }
         "user_message" => {
-            let Some((content, chat_context, planning_selection)) = project_user_message_payload(command.payload.as_ref())
+            let Some((content, chat_context, planning_selection)) =
+                project_user_message_payload(command.payload.as_ref())
             else {
                 return StatusCode::BAD_REQUEST.into_response();
             };
-            let effective_planned_context = match planning_selection {
-                Some(selection) => match crate::project_context::rehydrate_for_chat(&context, &chat_id, content, selection).await {
-                    Ok(value) => Some(value),
-                    Err(crate::project_context::PlannerError::Conflict | crate::project_context::PlannerError::NotFound) => return (StatusCode::CONFLICT, Json(json!({ "error": "project context plan is stale or unavailable" }))).into_response(),
-                    Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "project context is unavailable" }))).into_response(),
-                },
-                None => None,
-            };
+            let effective_planned_context =
+                match planning_selection {
+                    Some(selection) => match crate::project_context::rehydrate_for_chat(
+                        &context, &chat_id, content, selection,
+                    )
+                    .await
+                    {
+                        Ok(value) => Some(value),
+                        Err(
+                            crate::project_context::PlannerError::Conflict
+                            | crate::project_context::PlannerError::NotFound,
+                        ) => return (
+                            StatusCode::CONFLICT,
+                            Json(
+                                json!({ "error": "project context plan is stale or unavailable" }),
+                            ),
+                        )
+                            .into_response(),
+                        Err(crate::project_context::PlannerError::MigrationRequired) => {
+                            return (
+                                StatusCode::CONFLICT,
+                                Json(json!({ "error": "manifest_migration_required" })),
+                            )
+                                .into_response()
+                        }
+                        Err(_) => {
+                            return (
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                Json(json!({ "error": "project context is unavailable" })),
+                            )
+                                .into_response()
+                        }
+                    },
+                    None => None,
+                };
             state
                 .chat_runtime
                 .accept_project_user_message(
@@ -1420,12 +1525,16 @@ fn project_user_message_payload(
     let object = payload?.as_object()?;
     if object.len() > 3
         || !object.contains_key("content")
-        || object.keys().any(|key| key != "content" && key != "context" && key != "planningSelection")
+        || object
+            .keys()
+            .any(|key| key != "content" && key != "context" && key != "planningSelection")
     {
         return None;
     }
     let content = object.get("content")?.as_str()?;
-    if !valid_chat_message_content(content) { return None; }
+    if !valid_chat_message_content(content) {
+        return None;
+    }
     let context = match object.get("context") {
         Some(value) => Some(ChatContext::from_value(value.clone(), content)?),
         None => None,
@@ -2336,23 +2445,13 @@ mod project_tests {
         std::fs::create_dir_all(paths.config_dir.join("chat-history")).unwrap();
         std::fs::create_dir_all(paths.config_dir.join("project-memory")).unwrap();
         std::fs::create_dir_all(paths.cache_dir.join("agent-progress")).unwrap();
-        let state = AppState::with_storage_paths(
-            identity,
-            AuthToken::new("test-token").unwrap(),
-            paths,
-        );
+        let state =
+            AppState::with_storage_paths(identity, AuthToken::new("test-token").unwrap(), paths);
 
-        let empty = project_request(
-            state.clone(),
-            "GET",
-            "/v1/projects".to_string(),
-            "",
-            true,
-        )
-        .await;
+        let empty =
+            project_request(state.clone(), "GET", "/v1/projects".to_string(), "", true).await;
         assert_eq!(empty.status(), StatusCode::OK);
-        let empty: serde_json::Value =
-            serde_json::from_str(&response_text(empty).await).unwrap();
+        let empty: serde_json::Value = serde_json::from_str(&response_text(empty).await).unwrap();
         assert_eq!(empty["legacyUnscopedAvailable"], false);
 
         crate::chat_history::append_message(
@@ -2364,14 +2463,8 @@ mod project_tests {
         )
         .await
         .unwrap();
-        let chat_only = project_request(
-            state.clone(),
-            "GET",
-            "/v1/projects".to_string(),
-            "",
-            true,
-        )
-        .await;
+        let chat_only =
+            project_request(state.clone(), "GET", "/v1/projects".to_string(), "", true).await;
         let chat_only: serde_json::Value =
             serde_json::from_str(&response_text(chat_only).await).unwrap();
         assert_eq!(chat_only["legacyUnscopedAvailable"], true);
@@ -2383,8 +2476,7 @@ mod project_tests {
         )
         .await;
         assert_eq!(memory.status(), StatusCode::CREATED);
-        let memory: serde_json::Value =
-            serde_json::from_str(&response_text(memory).await).unwrap();
+        let memory: serde_json::Value = serde_json::from_str(&response_text(memory).await).unwrap();
         let legacy_note_id = memory["id"].as_str().unwrap().to_string();
         let progress = project_request(
             state.clone(),
@@ -2430,14 +2522,8 @@ mod project_tests {
             .await
             .unwrap();
 
-        let list = project_request(
-            state.clone(),
-            "GET",
-            "/v1/projects".to_string(),
-            "",
-            true,
-        )
-        .await;
+        let list =
+            project_request(state.clone(), "GET", "/v1/projects".to_string(), "", true).await;
         assert_eq!(list.status(), StatusCode::OK);
         let list_body = response_text(list).await;
         let list: serde_json::Value = serde_json::from_str(&list_body).unwrap();
@@ -2687,10 +2773,9 @@ mod project_tests {
         assert_eq!(second["state"], "not_built");
         assert_eq!(second["inventoryGeneration"], 0);
 
-        let database = rusqlite::Connection::open(
-            crate::project_context::db::database_path(&first_context),
-        )
-        .unwrap();
+        let database =
+            rusqlite::Connection::open(crate::project_context::db::database_path(&first_context))
+                .unwrap();
         database.pragma_update(None, "user_version", 2).unwrap();
         drop(database);
         let migration_required = project_request(
@@ -2728,7 +2813,8 @@ mod project_tests {
         let (state, project_id, root) = project_test_state().await;
         std::fs::write(root.join("main.rs"), "fn main() {}\n").unwrap();
         let uri = format!("/p/{project_id}/v1/context/rebuild");
-        let body = r#"{"mode":"full","expectedInventoryGeneration":0,"expectedProjectRevision":"1"}"#;
+        let body =
+            r#"{"mode":"full","expectedInventoryGeneration":0,"expectedProjectRevision":"1"}"#;
         let unauthenticated =
             project_request(state.clone(), "POST", uri.clone(), body, false).await;
         assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
@@ -2816,24 +2902,54 @@ mod project_tests {
         let (state, project_id, root) = project_test_state().await;
         std::fs::create_dir(root.join("src")).unwrap();
         std::fs::write(root.join("src/auth.rs"), "pub fn authentication() {}\n").unwrap();
-        let context = state.project_registry_runtime.resolve_context(&state.storage_paths, &project_id).await.unwrap();
-        crate::project_context::rebuild(&context, 0, context.revision()).await.unwrap();
+        let context = state
+            .project_registry_runtime
+            .resolve_context(&state.storage_paths, &project_id)
+            .await
+            .unwrap();
+        crate::project_context::rebuild(&context, 0, context.revision())
+            .await
+            .unwrap();
         let uri = format!("/p/{project_id}/v1/context/plan");
         let body = r#"{"query":"where is authentication","mode":"balanced","budget":{"maxFiles":8,"maxChunks":16,"maxBytes":32000,"maxEstimatedTokens":8000},"explicitRefs":[],"expectedInventoryGeneration":1,"expectedProjectRevision":"1"}"#;
-        assert_eq!(project_request(state.clone(), "POST", uri.clone(), body, false).await.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            project_request(state.clone(), "POST", uri.clone(), body, false)
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
         let response = project_request(state.clone(), "POST", uri.clone(), body, true).await;
         assert_eq!(response.status(), StatusCode::OK);
-        let value: serde_json::Value = serde_json::from_str(&response_text(response).await).unwrap();
-        assert!(value["manifest"]["entries"].as_array().is_some_and(|entries| !entries.is_empty()));
+        let value: serde_json::Value =
+            serde_json::from_str(&response_text(response).await).unwrap();
+        assert!(value["manifest"]["entries"]
+            .as_array()
+            .is_some_and(|entries| !entries.is_empty()));
         assert_eq!(value["cloudRequired"], false);
         assert!(!value.to_string().contains(root.to_str().unwrap()));
-        let metadata_body = format!(r#"{{"query":"selected context","mode":"manual_only","budget":{{"maxFiles":8,"maxChunks":16,"maxBytes":32000,"maxEstimatedTokens":8000}},"explicitRefs":[{{"kind":"active_editor","editorSnapshotId":"snapshot-1","sourceRef":"src/auth.rs","range":{{"start":{{"line":0,"character":0}},"end":{{"line":1,"character":0}}}},"contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"memory_note","memoryNoteId":"memory-1","contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"verification_output","verificationResultId":"result-1","commandId":"repository-check","contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"continuation_prefix","assistantMessageId":"message-1","generationId":"generation-1","contentPrefixHash":"sha256:{}","byteCount":8,"estimatedTokens":2}}],"expectedInventoryGeneration":0,"expectedProjectRevision":"1"}}"#, "a".repeat(64), "b".repeat(64), "c".repeat(64), "d".repeat(64));
-        let metadata_response = project_request(state.clone(), "POST", uri.clone(), &metadata_body, true).await;
+        let metadata_body = format!(
+            r#"{{"query":"selected context","mode":"manual_only","budget":{{"maxFiles":8,"maxChunks":16,"maxBytes":32000,"maxEstimatedTokens":8000}},"explicitRefs":[{{"kind":"active_editor","editorSnapshotId":"snapshot-1","sourceRef":"src/auth.rs","range":{{"start":{{"line":0,"character":0}},"end":{{"line":1,"character":0}}}},"contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"memory_note","memoryNoteId":"memory-1","contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"verification_output","verificationResultId":"result-1","commandId":"repository-check","contentHash":"sha256:{}","byteCount":8,"estimatedTokens":2}},{{"kind":"continuation_prefix","assistantMessageId":"message-1","generationId":"generation-1","contentPrefixHash":"sha256:{}","byteCount":8,"estimatedTokens":2}}],"expectedInventoryGeneration":0,"expectedProjectRevision":"1"}}"#,
+            "a".repeat(64),
+            "b".repeat(64),
+            "c".repeat(64),
+            "d".repeat(64)
+        );
+        let metadata_response =
+            project_request(state.clone(), "POST", uri.clone(), &metadata_body, true).await;
         assert_eq!(metadata_response.status(), StatusCode::OK);
-        let metadata: serde_json::Value = serde_json::from_str(&response_text(metadata_response).await).unwrap();
+        let metadata: serde_json::Value =
+            serde_json::from_str(&response_text(metadata_response).await).unwrap();
         assert_eq!(metadata["manifest"]["entries"].as_array().unwrap().len(), 4);
-        let stale = body.replace("\"expectedInventoryGeneration\":1", "\"expectedInventoryGeneration\":2");
-        assert_eq!(project_request(state, "POST", uri, &stale, true).await.status(), StatusCode::CONFLICT);
+        let stale = body.replace(
+            "\"expectedInventoryGeneration\":1",
+            "\"expectedInventoryGeneration\":2",
+        );
+        assert_eq!(
+            project_request(state, "POST", uri, &stale, true)
+                .await
+                .status(),
+            StatusCode::CONFLICT
+        );
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 

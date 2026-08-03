@@ -3,8 +3,8 @@
 - Status: accepted
 - Plan traceability: project-context-master-plan, Wave 0, T-45
 - Scope: project-context inventory, cache, retrieval, manifest, prompt, and deletion boundaries
-- Current implementation status: `planned`
-- Current provenance: `unsupported`
+- Current implementation status: `implemented`
+- Current provenance: `live_engine`
 
 ## Assets and trust boundaries
 
@@ -68,7 +68,7 @@ False positives are safer than false negatives for automatic context. A future e
 
 Inventory generation changes when eligible source facts change. Profiles, chunks, symbols, plans, and manifests record the generation and source hashes they derive from. A plan from another project, policy version, ranking version, or obsolete generation is rejected or visibly replanned. Dispatch freezes an immutable effective manifest.
 
-Partial assistant persistence records the exact prefix and its digest before exposing Continue. A continuation request fails closed if chat, turn, assistant message, generation lineage, manifest, or prefix hash does not match. Retrying transport must not append the same delta twice. These controls are planned, not implemented in Wave 0.
+Partial assistant text is durably replaced before its delta is exposed and abandoned streaming messages become visible interrupted messages on recovery. Explicit Continue is live for eligible interrupted planned-context turns: it validates chat, source turn, assistant message, project revision, manifest identity, effective provider/model, duplicate request/successor lineage, and a maximum depth of three. It reuses the persisted manifest and model, adds no user message, and sends only bounded prior conversation plus the bounded partial suffix with an anti-repetition instruction. ContextManifest schema version 2 owns `continuation_prefix`; durable readers reject older manifest records with the explicit `manifest_migration_required` outcome and never reinterpret them. A future content-prefix digest check at the continuation execution boundary remains unsupported; the current engine validates persisted identity and lineage rather than accepting a client-supplied prefix hash.
 
 ## Logging and diagnostics
 

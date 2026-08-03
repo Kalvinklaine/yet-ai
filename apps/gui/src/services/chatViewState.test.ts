@@ -80,8 +80,16 @@ describe("chatViewState", () => {
     }));
 
     expect(next.messages).toEqual([
-      { id: "msg-partial", role: "assistant", content: "Useful partial answer", status: "error" },
+      { id: "msg-partial", role: "assistant", content: "Useful partial answer", status: "interrupted" },
     ]);
+  });
+
+  it("hydrates interrupted continuation lineage without flattening its status", () => {
+    const continuation = { turnId: "turn-1", projectRevision: "1", manifestId: "manifest-1", depth: 0, contextChanged: false };
+    const next = applyChatViewEvent(createInitialChatViewState("chat-1"), event("snapshot", {
+      messages: [{ id: "msg-partial", chatId: "chat-1", role: "assistant", content: "Useful partial", createdAt: "2026-08-03T00:00:00Z", status: "interrupted", continuation }],
+    }));
+    expect(next.messages[0]).toEqual({ id: "msg-partial", role: "assistant", content: "Useful partial", status: "interrupted", continuation });
   });
 
   it("hydrates nested thread snapshot messages", () => {

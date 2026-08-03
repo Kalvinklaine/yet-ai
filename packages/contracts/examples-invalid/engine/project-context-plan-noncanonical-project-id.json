@@ -8,7 +8,7 @@
   "status": "ready",
   "manifest": {
     "protocolVersion": "2026-08-02",
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "manifestId": "manifest-invalid-project",
     "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
     "planId": "plan-invalid-project",

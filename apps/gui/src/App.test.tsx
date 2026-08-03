@@ -10002,6 +10002,29 @@ describe("chat panel", () => {
     expect(fetchMock.mock.calls.filter(([url, init]) => String(url).endsWith("/v1/chats/chat-001/commands") && init?.method === "POST")).toHaveLength(1);
   });
 
+  it("renders Continue only for the latest eligible interrupted project response and submits lineage", async () => {
+    const projectId = "prj_abcdefghijklmnopqrstuA";
+    mockRuntimeResponses({
+      ...readyRuntimeOptions(),
+      chats: [{ chatId: "chat-continue", title: "Continue", createdAt: "2026-08-03T00:00:00Z", updatedAt: "2026-08-03T00:00:01Z", messageCount: 2 }],
+      chatThreads: { "chat-continue": {
+        chatId: "chat-continue", title: "Continue", createdAt: "2026-08-03T00:00:00Z", updatedAt: "2026-08-03T00:00:01Z",
+        messages: [
+          chatMessage("chat-continue", "user-continue", "user", "Original prompt"),
+          { ...chatMessage("chat-continue", "assistant-partial", "assistant", "Useful partial"), status: "interrupted", continuation: { turnId: "turn-1", projectRevision: "1", manifestId: "manifest-1", depth: 0, contextChanged: false } },
+        ],
+      } },
+    });
+    renderAppRoute({ kind: "project", projectId: projectId as never, page: "chat", chatId: "chat-continue" });
+    await flushAsync();
+    const button = findButton("Continue response");
+    expect(container?.textContent).toContain("Response interrupted. The partial answer is retained.");
+    await act(async () => { button.click(); await Promise.resolve(); });
+    const request = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/p/${projectId}/v1/chats/chat-continue/commands`) && init?.method === "POST" && String(init.body).includes("continue_response"));
+    expect(request).toBeDefined();
+    expect(JSON.parse(String(request?.[1]?.body)).payload).toEqual({ interruptedTurnId: "turn-1", expectedProjectRevision: "1", expectedManifestId: "manifest-1" });
+  });
+
   it("renders consecutive identical terminal message_added assistant responses after their user prompts", async () => {
     let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
     const encoder = new TextEncoder();

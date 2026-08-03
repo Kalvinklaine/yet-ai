@@ -1,6 +1,6 @@
 {
   "protocolVersion": "2026-08-02",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "manifestId": "manifest-invalid-1",
   "projectId": "prj_AbCdEfGhIjKlMnOpQrStUv",
   "profileId": "profile-demo-1",

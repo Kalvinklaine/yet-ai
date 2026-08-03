@@ -581,7 +581,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     chatHistoryLoading, setChatHistoryLoading, missingRoutedChatId, setMissingRoutedChatId, deletingChatId, setDeletingChatId, conversationNotice, setConversationNotice,
     compactConversationsOpen, setCompactConversationsOpen, chatInput, setChatInput, chatView, setChatView, chatLifecycleState, setChatLifecycleState,
     chatHistoryAttemptRef, firstProjectChatCreateRef, activeStreamRef, refreshChats, loadChatThread, createNewChat, selectChat, updateDirectChatId, deleteCurrentChat,
-    submitChat: submitChatCommand, startSse, stopSse, abortActiveStream, appendChatError, resetForScope: resetChatForScope, invalidate: invalidateChatController,
+    submitChat: submitChatCommand, continueResponse, startSse, stopSse, abortActiveStream, appendChatError, resetForScope: resetChatForScope, invalidate: invalidateChatController,
   } = chatController;
   const setUserChatInputDraft = setChatInput;
   refreshChatsRef.current = refreshChats;
@@ -3318,7 +3318,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                     <span className="subtle">The URL still names {sanitizeDisplayText(routedChatId ?? chatId)}. No other conversation was loaded in its place.</span>
                     {projectId && <a href={buildProjectRoute({ kind: "project", projectId, page: "chat" })}>Back to project chat list</a>}
                   </section>
-                ) : chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect(true)} showSetupActions={projectPage === undefined} /> : chatView.messages.map((message) => <ChatBubble key={message.id} message={message} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
+                ) : chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect(true)} showSetupActions={projectPage === undefined} /> : chatView.messages.map((message, index) => <ChatBubble key={message.id} message={message} canContinue={Boolean(projectId && message.role === "assistant" && message.status === "interrupted" && message.continuation && index === chatView.messages.length - 1 && !activeStreamRef.current)} onContinue={() => void continueResponse(message.id)} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
                 <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
                 {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
               </div>
@@ -4568,7 +4568,7 @@ function ChatEmptyState({ runtimeConnected, canSendChat, providerReady, activeDe
   );
 }
 
-function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMessageId, activeIdeActionProposal, rejectedIdeActionProposalSourceMessageId }: { message: ChatViewMessage; activeEditProposal: EditProposalState | null; rejectedEditProposalSourceMessageId: string | null; activeIdeActionProposal: IdeActionProposalState | null; rejectedIdeActionProposalSourceMessageId: string | null }) {
+function ChatBubble({ message, canContinue, onContinue, activeEditProposal, rejectedEditProposalSourceMessageId, activeIdeActionProposal, rejectedIdeActionProposalSourceMessageId }: { message: ChatViewMessage; canContinue: boolean; onContinue: () => void; activeEditProposal: EditProposalState | null; rejectedEditProposalSourceMessageId: string | null; activeIdeActionProposal: IdeActionProposalState | null; rejectedIdeActionProposalSourceMessageId: string | null }) {
   const editProposal = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? parseEditProposalContent(message.content) : null;
   const editProposalAnalysis = message.role === "assistant" && isCompleteAssistantEditProposalStatus(message.status) ? analyzeEditProposalContent(message.content) : { state: "none" as const };
   const editProposalJson = editProposal ? JSON.stringify(sanitizeDisplayValue(editProposal), null, 2) : null;
@@ -4591,6 +4591,8 @@ function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMes
   return (
     <div className={`chat-bubble ${message.role}`}>
       <strong>{message.role === "user" ? "You" : message.role === "assistant" ? "Yet AI" : "Error"}</strong>
+      {message.continuation?.continuedFromMessageId && <span className="badge">Continued response · part {message.continuation.depth + 1}</span>}
+      {message.continuation?.contextChanged && <span className="badge warn">Context changed from the interrupted response</span>}
       {editProposal && editProposalJson && editProposalKey ? (
         <div className="assistant-proposal-compact stack">
           <span>{isActiveEditProposal ? "Proposed a safe edit. Review the proposal card below. It will not apply automatically." : "Earlier safe edit proposal. Only the latest valid proposal can be requested from the proposal card."}</span>
@@ -4633,6 +4635,8 @@ function ChatBubble({ message, activeEditProposal, rejectedEditProposalSourceMes
       ) : (
         <span>{message.content || (message.status === "streaming" ? "…" : "")}</span>
       )}
+      {message.status === "interrupted" && <span className="subtle">Response interrupted. The partial answer is retained.</span>}
+      {canContinue && <button type="button" className="secondary-button" data-testid="continue-response" onClick={onContinue}>Continue response</button>}
     </div>
   );
 }

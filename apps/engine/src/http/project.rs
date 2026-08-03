@@ -542,6 +542,11 @@ pub(super) async fn project_context_plan(
             "conflict",
             "Project context changed before planning.",
         ),
+        Err(crate::project_context::PlannerError::MigrationRequired) => project_error(
+            StatusCode::CONFLICT,
+            "manifest_migration_required",
+            "Stored project context manifest requires migration.",
+        ),
         Err(crate::project_context::PlannerError::NotFound) => project_error(
             StatusCode::NOT_FOUND,
             "not_found",
