@@ -141,6 +141,17 @@ pub async fn append(
             records: Vec::new(),
         },
     };
+    if let Some(existing) = store
+        .records
+        .iter()
+        .find(|item| item.turn_id == record.turn_id)
+    {
+        return if existing == &record {
+            Ok(())
+        } else {
+            Err(TurnContextError::Invalid)
+        };
+    }
     if store.records.len() >= MAX_RECORDS
         || serde_json::to_vec(&record)
             .map_err(|_| TurnContextError::Invalid)?
@@ -150,6 +161,29 @@ pub async fn append(
         return Err(TurnContextError::Storage);
     }
     store.records.push(record);
+    write_store(&path, &store).await
+}
+
+pub async fn remove(
+    root: &Path,
+    project_id: &str,
+    chat_id: &str,
+    turn_id: &str,
+) -> Result<(), TurnContextError> {
+    validate_id(project_id)?;
+    validate_id(turn_id)?;
+    let path = path(root, chat_id)?;
+    let mut store = read_store(&path, project_id, chat_id)
+        .await?
+        .ok_or(TurnContextError::Storage)?;
+    let Some(index) = store
+        .records
+        .iter()
+        .position(|record| record.turn_id == turn_id)
+    else {
+        return Ok(());
+    };
+    store.records.remove(index);
     write_store(&path, &store).await
 }
 
@@ -172,6 +206,7 @@ pub async fn read(
             record.status,
             TurnContextStatus::Pending | TurnContextStatus::Streaming
         ) {
+            record.assistant_message_id = None;
             record.status = TurnContextStatus::Interrupted;
             record.finish_reason = Some("interrupted".into());
             record.error_code = None;
@@ -199,12 +234,72 @@ pub async fn read(
     })
 }
 
+pub async fn read_reconciled(
+    root: &Path,
+    history_root: &Path,
+    project_id: &str,
+    chat_id: &str,
+) -> Result<TurnContextResponse, TurnContextError> {
+    let mut response = read(root, project_id, chat_id).await?;
+    if !response.available {
+        return Ok(response);
+    }
+    let history = chat_history::get_thread_in(history_root, chat_id)
+        .await
+        .ok();
+    let mut changed = false;
+    for record in &mut response.records {
+        let linked = record
+            .assistant_message_id
+            .as_ref()
+            .is_some_and(|message_id| {
+                history.as_ref().is_some_and(|thread| {
+                    thread.messages.iter().any(|message| {
+                        message.id == *message_id
+                            && matches!(
+                                message.role,
+                                chat_history::ChatMessageRole::Assistant
+                                    | chat_history::ChatMessageRole::Error
+                            )
+                    })
+                })
+            });
+        if record.assistant_message_id.is_some() && !linked {
+            record.assistant_message_id = None;
+            record.status = TurnContextStatus::Interrupted;
+            record.finish_reason = Some("interrupted".into());
+            record.error_code = Some("terminal_history_missing".into());
+            record.updated_at = timestamp_now();
+            changed = true;
+        }
+    }
+    if changed {
+        let path = path(root, chat_id)?;
+        let mut store = read_store(&path, project_id, chat_id)
+            .await?
+            .ok_or(TurnContextError::Storage)?;
+        for repaired in &response.records {
+            if let Some(record) = store
+                .records
+                .iter_mut()
+                .find(|record| record.turn_id == repaired.turn_id)
+            {
+                *record = repaired.clone();
+            }
+        }
+        write_store(&path, &store).await?;
+    }
+    Ok(response)
+}
+
 pub async fn mark_streaming(
     root: &Path,
     project_id: &str,
     chat_id: &str,
     turn_id: &str,
 ) -> Result<(), TurnContextError> {
+    #[cfg(test)]
+    fail_if_injected(root, FailureStage::MarkStreaming)?;
     update(root, project_id, chat_id, turn_id, |record| {
         record.status = TurnContextStatus::Streaming;
         record.updated_at = timestamp_now();
@@ -229,6 +324,8 @@ pub async fn mark_terminal(
         return Err(TurnContextError::Invalid);
     }
     chat_history::validate_chat_id(assistant_message_id).map_err(|_| TurnContextError::Invalid)?;
+    #[cfg(test)]
+    fail_if_injected(root, FailureStage::MarkTerminal)?;
     update(root, project_id, chat_id, turn_id, |record| {
         record.assistant_message_id = Some(assistant_message_id.into());
         record.status = status;
@@ -247,6 +344,8 @@ pub async fn link_terminal(
     assistant_message_id: &str,
 ) -> Result<(), TurnContextError> {
     chat_history::validate_chat_id(assistant_message_id).map_err(|_| TurnContextError::Invalid)?;
+    #[cfg(test)]
+    fail_if_injected(root, FailureStage::LinkTerminal)?;
     update(root, project_id, chat_id, turn_id, |record| {
         record.assistant_message_id = Some(assistant_message_id.into());
         record.updated_at = timestamp_now();
@@ -262,12 +361,51 @@ pub async fn mark_interrupted(
     error_code: &str,
 ) -> Result<(), TurnContextError> {
     update(root, project_id, chat_id, turn_id, |record| {
+        record.assistant_message_id = None;
         record.status = TurnContextStatus::Interrupted;
         record.finish_reason = Some("interrupted".into());
         record.error_code = Some(error_code.into());
         record.updated_at = timestamp_now();
     })
     .await
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum FailureStage {
+    MarkStreaming,
+    LinkTerminal,
+    MarkTerminal,
+}
+
+#[cfg(test)]
+fn injected_failures(
+) -> &'static std::sync::Mutex<std::collections::HashSet<(PathBuf, FailureStage)>> {
+    static FAILURES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashSet<(PathBuf, FailureStage)>>,
+    > = std::sync::OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+#[cfg(test)]
+fn fail_if_injected(root: &Path, stage: FailureStage) -> Result<(), TurnContextError> {
+    if injected_failures()
+        .lock()
+        .unwrap()
+        .remove(&(root.to_path_buf(), stage))
+    {
+        Err(TurnContextError::Storage)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+pub fn inject_failure(root: &Path, stage: FailureStage) {
+    injected_failures()
+        .lock()
+        .unwrap()
+        .insert((root.to_path_buf(), stage));
 }
 
 async fn update(
@@ -555,6 +693,80 @@ mod tests {
         );
         assert_eq!(terminal.status, TurnContextStatus::Complete);
         assert_eq!(terminal.finish_reason.as_deref(), Some("stop"));
+    }
+
+    #[tokio::test]
+    async fn chat_turn_context_remove_and_reconciliation_are_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("config/projects/project-a/turn-context");
+        let history_root = temp.path().join("config/projects/project-a/chat-history");
+        let pending = item("project-a", "chat_1", "msg_user", "manifest-1");
+        let pending_id = pending.turn_id.clone();
+        append(&root, "project-a", pending).await.unwrap();
+        remove(&root, "project-a", "chat_1", &pending_id)
+            .await
+            .unwrap();
+        remove(&root, "project-a", "chat_1", &pending_id)
+            .await
+            .unwrap();
+        assert!(read(&root, "project-a", "chat_1")
+            .await
+            .unwrap()
+            .records
+            .is_empty());
+
+        let linked = item("project-a", "chat_1", "msg_user_2", "manifest-2");
+        let linked_id = linked.turn_id.clone();
+        append(&root, "project-a", linked).await.unwrap();
+        mark_terminal(
+            &root,
+            "project-a",
+            "chat_1",
+            &linked_id,
+            "msg_missing",
+            TurnContextStatus::Complete,
+            Some("stop"),
+            None,
+        )
+        .await
+        .unwrap();
+        for _ in 0..2 {
+            let repaired = read_reconciled(&root, &history_root, "project-a", "chat_1")
+                .await
+                .unwrap();
+            assert_eq!(repaired.records[0].status, TurnContextStatus::Interrupted);
+            assert!(repaired.records[0].assistant_message_id.is_none());
+            assert_eq!(
+                repaired.records[0].error_code.as_deref(),
+                Some("terminal_history_missing")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_turn_context_mark_streaming_failure_repairs_to_interrupted() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("config/projects/project-a/turn-context");
+        let pending = item("project-a", "chat_1", "msg_user", "manifest-1");
+        let turn_id = pending.turn_id.clone();
+        append(&root, "project-a", pending).await.unwrap();
+        inject_failure(&root, FailureStage::MarkStreaming);
+
+        assert!(mark_streaming(&root, "project-a", "chat_1", &turn_id)
+            .await
+            .is_err());
+        mark_interrupted(
+            &root,
+            "project-a",
+            "chat_1",
+            &turn_id,
+            "turn_context_storage_error",
+        )
+        .await
+        .unwrap();
+        let repaired = read(&root, "project-a", "chat_1").await.unwrap();
+        assert_eq!(repaired.records[0].status, TurnContextStatus::Interrupted);
+        assert!(repaired.records[0].assistant_message_id.is_none());
     }
 
     #[tokio::test]

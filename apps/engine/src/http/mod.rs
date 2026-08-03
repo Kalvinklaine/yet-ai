@@ -1169,7 +1169,12 @@ async fn project_chat_turn_context(
         Ok(context) => context,
         Err(response) => return response,
     };
-    match crate::chat_turn_context::read(&context.storage().turn_context, context.project_id(), &chat_id).await {
+    match crate::chat_turn_context::read_reconciled(
+        &context.storage().turn_context,
+        &context.storage().chat_history,
+        context.project_id(),
+        &chat_id,
+    ).await {
         Ok(response) => Json(response).into_response(),
         Err(crate::chat_turn_context::TurnContextError::Invalid) => StatusCode::BAD_REQUEST.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),

@@ -13,7 +13,7 @@ const CHAT_HISTORY_TITLE_MAX_CHARS: usize = 160;
 const CHAT_HISTORY_CONTENT_MAX_CHARS: usize = 20_000;
 const CHAT_HISTORY_ID_RANDOM_BYTES: usize = 18;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatThread {
     pub chat_id: String,
@@ -39,7 +39,7 @@ pub struct ChatListResponse {
     pub chats: Vec<ChatThreadSummary>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     pub id: String,
@@ -276,10 +276,38 @@ pub async fn append_existing_message_in(
         },
         Err(error) => return Err(error),
     };
+    if let Some(existing) = thread.messages.iter().find(|item| item.id == message.id) {
+        return if existing == &message {
+            Ok(existing.clone())
+        } else {
+            Err(ChatHistoryError::InvalidRecord)
+        };
+    }
+    #[cfg(test)]
+    if consume_append_failure(root) {
+        return Err(ChatHistoryError::Storage);
+    }
     thread.updated_at = now;
     thread.messages.push(message.clone());
     write_thread_path(&path, &thread).await?;
     Ok(message)
+}
+
+#[cfg(test)]
+fn append_failures() -> &'static std::sync::Mutex<std::collections::HashSet<PathBuf>> {
+    static FAILURES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+        std::sync::OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+#[cfg(test)]
+fn consume_append_failure(root: &Path) -> bool {
+    append_failures().lock().unwrap().remove(root)
+}
+
+#[cfg(test)]
+pub fn inject_next_append_failure(root: &Path) {
+    append_failures().lock().unwrap().insert(root.to_path_buf());
 }
 
 pub async fn remove_message_in(
@@ -653,6 +681,34 @@ mod tests {
         let thread = super::get_thread_in(&root, "chat_rollback").await.unwrap();
         assert_eq!(thread.messages.len(), 1);
         assert_eq!(thread.messages[0].content, "second");
+    }
+
+    #[tokio::test]
+    async fn chat_history_append_existing_message_is_idempotent() {
+        let dir = temp_dir();
+        let root = dir.join("projects/first/chat-history");
+        let message = super::new_message(
+            "chat_retry",
+            super::ChatMessageRole::Error,
+            "repair".into(),
+            Some(super::ChatMessageStatus::Error),
+        )
+        .unwrap();
+
+        super::append_existing_message_in(&root, message.clone())
+            .await
+            .unwrap();
+        super::append_existing_message_in(&root, message)
+            .await
+            .unwrap();
+        assert_eq!(
+            super::get_thread_in(&root, "chat_retry")
+                .await
+                .unwrap()
+                .messages
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]

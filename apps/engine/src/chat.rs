@@ -417,8 +417,12 @@ impl ChatRuntime {
                 Ok(provider) => provider,
                 Err(error) => {
                     selected_provider = Err(error);
-                    if chat_history::append_existing_message_in(&history_root, message).await.is_err() {
-                        self.fail_before_stream_start(&runtime_key, &chat_id, stream_id).await;
+                    if chat_history::append_existing_message_in(&history_root, message)
+                        .await
+                        .is_err()
+                    {
+                        self.fail_before_stream_start(&runtime_key, &chat_id, stream_id)
+                            .await;
                         return;
                     }
                     let _ = start_sender.send((selected_provider, None));
@@ -461,18 +465,21 @@ impl ChatRuntime {
             selected_provider = Ok(Some(provider));
             turn_evidence = Some(evidence);
         }
-        if chat_history::append_existing_message_in(&history_root, message).await.is_err() {
+        if chat_history::append_existing_message_in(&history_root, message)
+            .await
+            .is_err()
+        {
             if let Some(evidence) = &turn_evidence {
-                let _ = chat_turn_context::mark_interrupted(
+                let _ = chat_turn_context::remove(
                     &evidence.root,
                     &evidence.project_id,
                     &chat_id,
                     &evidence.turn_id,
-                    "chat_history_storage_error",
                 )
                 .await;
             }
-            self.fail_before_stream_start(&runtime_key, &chat_id, stream_id).await;
+            self.fail_before_stream_start(&runtime_key, &chat_id, stream_id)
+                .await;
             return;
         }
         let _ = start_sender.send((selected_provider, turn_evidence));
@@ -755,6 +762,14 @@ impl ChatRuntime {
                     .claim_stream_terminal_ownership(&runtime_key, stream_id)
                     .await
                 {
+                    let _ = chat_turn_context::mark_interrupted(
+                        &evidence.root,
+                        &evidence.project_id,
+                        &chat_id,
+                        &evidence.turn_id,
+                        "turn_context_storage_error",
+                    )
+                    .await;
                     let _ = chat_history::append_message_in(
                         &history_root,
                         &chat_id,
@@ -869,6 +884,8 @@ impl ChatRuntime {
         }
     }
 
+    /// `pending -> streaming -> history terminal -> linked -> complete|error`.
+    /// Any failed arrow repairs to `interrupted + no link` and a sanitized history error.
     async fn persist_terminal_history_and_event(
         &self,
         history_root: &std::path::Path,
@@ -896,24 +913,30 @@ impl ChatRuntime {
             Ok(message) => message,
             Err(_) => return Some(false),
         };
-        if let Some(evidence) = turn_evidence {
-            if chat_turn_context::link_terminal(
-                &evidence.root,
-                &evidence.project_id,
-                chat_id,
-                &evidence.turn_id,
-                &message.id,
-            )
-            .await
-            .is_err()
-            {
-                return Some(false);
-            }
-        }
         let append_result = chat_history::append_existing_message_in(history_root, message).await;
         let terminal = match append_result {
             Ok(message) => {
                 if let Some(evidence) = turn_evidence {
+                    if chat_turn_context::link_terminal(
+                        &evidence.root,
+                        &evidence.project_id,
+                        chat_id,
+                        &evidence.turn_id,
+                        &message.id,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        self.repair_terminal_commit(
+                            history_root,
+                            chat_id,
+                            &message.id,
+                            evidence,
+                            "turn_context_storage_error",
+                        )
+                        .await;
+                        return Some(false);
+                    }
                     let evidence_status = if message.role == ChatMessageRole::Assistant {
                         TurnContextStatus::Complete
                     } else {
@@ -932,6 +955,14 @@ impl ChatRuntime {
                     .await
                     .is_err()
                     {
+                        self.repair_terminal_commit(
+                            history_root,
+                            chat_id,
+                            &message.id,
+                            evidence,
+                            "turn_context_storage_error",
+                        )
+                        .await;
                         return Some(false);
                     }
                 }
@@ -946,14 +977,24 @@ impl ChatRuntime {
                 }
                 (event_type, payload, true)
             }
-            Err(_) => (
-                "error",
-                json!({
-                    "code": "chat_history_storage_error",
-                    "message": "Chat response could not be saved to local storage."
-                }),
-                false,
-            ),
+            Err(_) => {
+                let _ = chat_history::append_message_in(
+                    history_root,
+                    chat_id,
+                    ChatMessageRole::Error,
+                    "Chat response could not be saved to local storage.".into(),
+                    Some(ChatMessageStatus::Error),
+                )
+                .await;
+                (
+                    "error",
+                    json!({
+                        "code": "chat_history_storage_error",
+                        "message": "Chat response could not be saved to local storage."
+                    }),
+                    false,
+                )
+            }
         };
         if !terminal.2 {
             if let Some(evidence) = turn_evidence {
@@ -979,6 +1020,33 @@ impl ChatRuntime {
             state.push_event(chat_id, terminal.0, terminal.1);
         }
         Some(terminal.2)
+    }
+
+    async fn repair_terminal_commit(
+        &self,
+        history_root: &std::path::Path,
+        chat_id: &str,
+        terminal_message_id: &str,
+        evidence: &TurnEvidence,
+        error_code: &str,
+    ) {
+        let _ = chat_turn_context::mark_interrupted(
+            &evidence.root,
+            &evidence.project_id,
+            chat_id,
+            &evidence.turn_id,
+            error_code,
+        )
+        .await;
+        let _ = chat_history::remove_message_in(history_root, chat_id, terminal_message_id).await;
+        let _ = chat_history::append_message_in(
+            history_root,
+            chat_id,
+            ChatMessageRole::Error,
+            "Chat response persistence was interrupted. Retry the request.".into(),
+            Some(ChatMessageStatus::Error),
+        )
+        .await;
     }
 
     async fn snapshot_event(
@@ -4853,6 +4921,167 @@ mod tests {
         let serialized = serde_json::to_string(&snapshot).unwrap();
         assert!(!serialized.contains(chat_id));
         assert!(!serialized.contains("private request body"));
+    }
+
+    #[tokio::test]
+    async fn project_chat_context_begin_history_failure_removes_durable_evidence() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        crate::demo_mode::set(&dir, true).await.unwrap();
+        crate::chat_history::inject_next_append_failure(&history_root);
+        let runtime = super::ChatRuntime::new();
+        let effective = crate::project_context::EffectivePlannedContext {
+            plan_id: "plan-1".into(),
+            manifest_id: "manifest-1".into(),
+            project_id: "project-a".into(),
+            inventory_generation: 3,
+            query_hash: format!("sha256:{}", "a".repeat(64)),
+            ranking_version: "lexical-symbol-ranking-1".into(),
+            selected_ranks: Vec::new(),
+            manifest: test_manifest("project-a", "manifest-1", 3),
+            rendered_text: "Repository evidence".into(),
+        };
+
+        runtime
+            .accept_project_user_message(
+                "project-a",
+                dir,
+                history_root,
+                turn_root.clone(),
+                "revision-1".into(),
+                "chat_begin_failure".into(),
+                "hello".into(),
+                None,
+                Some(effective),
+                crate::agent_progress::AgentProgressRuntime::new(),
+            )
+            .await;
+
+        let evidence =
+            crate::chat_turn_context::read(&turn_root, "project-a", "chat_begin_failure")
+                .await
+                .unwrap();
+        assert!(evidence.records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn project_chat_context_terminal_evidence_failures_repair_history_and_linkage() {
+        for stage in [
+            crate::chat_turn_context::FailureStage::LinkTerminal,
+            crate::chat_turn_context::FailureStage::MarkTerminal,
+        ] {
+            let dir = temp_dir();
+            let history_root = dir.join("projects/project-a/chat-history");
+            let turn_root = dir.join("projects/project-a/turn-context");
+            let chat_id = match stage {
+                crate::chat_turn_context::FailureStage::LinkTerminal => "chat_link_failure",
+                crate::chat_turn_context::FailureStage::MarkTerminal => "chat_mark_failure",
+                _ => unreachable!(),
+            };
+            let user = crate::chat_history::append_message_in(
+                &history_root,
+                chat_id,
+                crate::chat_history::ChatMessageRole::User,
+                "hello".into(),
+                Some(crate::chat_history::ChatMessageStatus::Complete),
+            )
+            .await
+            .unwrap();
+            let record = crate::chat_turn_context::record(
+                "project-a",
+                "revision-1",
+                chat_id,
+                &user.id,
+                test_manifest("project-a", "manifest-1", 3),
+                crate::chat_turn_context::EffectiveModel {
+                    provider_id: "demo-local".into(),
+                    provider_kind: "demo_local".into(),
+                    model_id: "demo-local".into(),
+                },
+            )
+            .unwrap();
+            let evidence = super::TurnEvidence {
+                root: turn_root.clone(),
+                project_id: "project-a".into(),
+                turn_id: record.turn_id.clone(),
+            };
+            crate::chat_turn_context::append(&turn_root, "project-a", record)
+                .await
+                .unwrap();
+            crate::chat_turn_context::mark_streaming(
+                &turn_root,
+                "project-a",
+                chat_id,
+                &evidence.turn_id,
+            )
+            .await
+            .unwrap();
+            crate::chat_turn_context::inject_failure(&turn_root, stage);
+            let runtime = super::ChatRuntime::new();
+            let key = super::runtime_key("project-a", chat_id);
+            let handle = tokio::spawn(std::future::pending::<()>());
+            runtime.inner.lock().await.insert(
+                key.clone(),
+                super::ChatState {
+                    events: Vec::new(),
+                    terminal_replay: super::TerminalReplayRetention::ActiveOrUnpersisted,
+                    known_terminal_append_failure: false,
+                    next_seq: 1,
+                    sender: tokio::sync::broadcast::channel(64).0,
+                    active_stream: Some(super::ActiveStream {
+                        id: 1,
+                        handle,
+                        effective_planned_context: None,
+                    }),
+                    next_stream_id: 2,
+                },
+            );
+
+            assert_eq!(
+                runtime
+                    .persist_terminal_history_and_event(
+                        &history_root,
+                        &key,
+                        chat_id,
+                        1,
+                        crate::chat_history::ChatMessageRole::Assistant,
+                        "answer".into(),
+                        crate::chat_history::ChatMessageStatus::Complete,
+                        "stream_finished",
+                        serde_json::json!({ "finishReason": "stop" }),
+                        Some(&evidence),
+                        Some("stop"),
+                        None,
+                    )
+                    .await,
+                Some(false)
+            );
+            let thread = crate::chat_history::get_thread_in(&history_root, chat_id)
+                .await
+                .unwrap();
+            assert_eq!(
+                thread.messages.last().unwrap().role,
+                crate::chat_history::ChatMessageRole::Error
+            );
+            assert!(!thread
+                .messages
+                .iter()
+                .any(|message| message.content == "answer"));
+            let repaired = crate::chat_turn_context::read_reconciled(
+                &turn_root,
+                &history_root,
+                "project-a",
+                chat_id,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                repaired.records[0].status,
+                crate::chat_turn_context::TurnContextStatus::Interrupted
+            );
+            assert!(repaired.records[0].assistant_message_id.is_none());
+        }
     }
 
     #[tokio::test]
