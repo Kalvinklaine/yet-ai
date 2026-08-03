@@ -1669,6 +1669,30 @@ mod project_tests {
             .register(&old_root, Some("Stable"))
             .await
             .unwrap();
+        let initial_context = state
+            .project_registry_runtime
+            .resolve_context(&state.storage_paths, &created.project_id)
+            .await
+            .unwrap();
+        crate::project_context::load_status(&initial_context)
+            .await
+            .unwrap();
+        let initial_database =
+            rusqlite::Connection::open(crate::project_context::db::database_path(&initial_context))
+                .unwrap();
+        initial_database
+            .execute(
+                "UPDATE context_metadata SET build_state = 'ready', inventory_generation = 7 WHERE singleton = 1",
+                [],
+            )
+            .unwrap();
+        drop(initial_database);
+        std::fs::create_dir_all(&initial_context.storage().turn_context).unwrap();
+        let turn_marker = initial_context
+            .storage()
+            .turn_context
+            .join("preserved.json");
+        std::fs::write(&turn_marker, b"durable").unwrap();
         std::fs::remove_dir(&old_root).unwrap();
         let session = state
             .project_browser_runtime
@@ -1770,6 +1794,25 @@ mod project_tests {
         assert_eq!(rebound["rootAvailable"], true);
         assert!(!rebound_text.contains(home.path().to_str().unwrap()));
         assert!(!rebound_text.contains(&new_handle));
+
+        let context_status = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/p/{}/v1/context/status", created.project_id))
+                    .header(header::AUTHORIZATION, "Bearer test-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(context_status.status(), StatusCode::OK);
+        let context_status: serde_json::Value =
+            serde_json::from_str(&response_text(context_status).await).unwrap();
+        assert_eq!(context_status["state"], "not_built");
+        assert_eq!(context_status["inventoryGeneration"], 0);
+        assert_eq!(std::fs::read(turn_marker).unwrap(), b"durable");
 
         let replayed = app
             .oneshot(

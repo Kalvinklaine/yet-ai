@@ -128,9 +128,9 @@ If implementation behavior changes with the contract, also run the affected GUI 
 
 `GET /v1/caps` includes a minimal local runtime signal: `runtime.mode = "local"`, `runtime.cloudRequired = false`, and `runtime.providerAccess = "direct"`. This records the product contract that Yet AI core runs through the local runtime and does not require a hosted Yet AI backend or managed model gateway.
 
-## Planned project context contracts
+## Project context contracts
 
-Project context is a future engine-owned, project-scoped capability defined by ADR 042 and secured by ADR 043. Its examples are small contract fixtures, not endpoint responses captured from a live runtime. The complete planned route set is `GET /p/{projectId}/v1/context/status`, `GET /p/{projectId}/v1/context/profile`, `POST /p/{projectId}/v1/context/rebuild`, `DELETE /p/{projectId}/v1/context/cache`, and `POST /p/{projectId}/v1/context/plan`; none is currently reachable. GET and DELETE have no body. Rebuild and plan use strict request schemas; all routes have strict response schemas.
+Project context is an engine-owned, project-scoped capability defined by ADR 042 and secured by ADR 043. Authenticated `GET /p/{projectId}/v1/context/status` is live and bootstraps only the isolated rebuildable cache metadata; its contract example remains a small fixture rather than a captured runtime response. `GET /p/{projectId}/v1/context/profile`, `POST /p/{projectId}/v1/context/rebuild`, `DELETE /p/{projectId}/v1/context/cache`, and `POST /p/{projectId}/v1/context/plan` remain planned and unreachable. GET and DELETE have no body. Rebuild and plan use strict request schemas; all routes have strict response schemas.
 
 The contracts use `protocolVersion: "2026-08-02"`, `schemaVersion: 1`, and canonical opaque project IDs matching `prj_[A-Za-z0-9_-]{22}`. Plan requests require a bounded query, mode, hard budget, explicit project-relative refs, expected inventory generation, and project revision. Rebuild requests require mode plus expected generation/revision. Unknown fields are rejected.
 
