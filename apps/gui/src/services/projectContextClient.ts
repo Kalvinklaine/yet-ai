@@ -59,7 +59,7 @@ export type ProjectContextMode = "manual_only" | "balanced" | "deep";
 export type ContextPosition = { line: number; character: number };
 export type ContextRange = { start: ContextPosition; end: ContextPosition };
 export type ProjectContextExplicitRef =
-  | { kind: "file_chunk"; sourceRef: string }
+  | { kind: "file_chunk"; chunkId: string; sourceRef: string; range: ContextRange; contentHash: string }
   | { kind: "active_editor"; editorSnapshotId: string; sourceRef: string; range: ContextRange; contentHash: string; byteCount: number; estimatedTokens: number }
   | { kind: "memory_note"; memoryNoteId: string; contentHash: string; byteCount: number; estimatedTokens: number }
   | { kind: "verification_output"; verificationResultId: string; commandId: "repository-check" | "gui-app-tests" | "engine-chat-tests"; contentHash: string; byteCount: number; estimatedTokens: number }
@@ -74,6 +74,7 @@ export type ProjectContextPlanRequest = {
 };
 export type ProjectContextManifestEntry = {
   kind: "file_chunk" | "active_editor" | "memory_note" | "verification_output" | "continuation_prefix";
+  chunkId?: string;
   sourceRef?: string;
   range?: ContextRange;
   symbol?: string;
@@ -176,7 +177,7 @@ function manifestEntry(value: unknown): value is ProjectContextManifestEntry {
   if (value.commandId !== undefined && !oneOf(value.commandId, ["repository-check", "gui-app-tests", "engine-chat-tests"])) return false;
   if (value.contentHash !== undefined && !hash(value.contentHash)) return false;
   if (value.contentPrefixHash !== undefined && !hash(value.contentPrefixHash)) return false;
-  return (value.kind === "file_chunk" && relativePath(value.sourceRef) && textRange(value.range) && hash(value.contentHash))
+  return (value.kind === "file_chunk" && string(value.chunkId) && /^chunk-[1-9][0-9]*$/.test(value.chunkId) && relativePath(value.sourceRef) && textRange(value.range) && hash(value.contentHash))
     || (value.kind === "active_editor" && validId(value.editorSnapshotId) && relativePath(value.sourceRef) && textRange(value.range) && hash(value.contentHash))
     || (value.kind === "memory_note" && validId(value.memoryNoteId) && hash(value.contentHash))
     || (value.kind === "verification_output" && validId(value.verificationResultId) && oneOf(value.commandId, ["repository-check", "gui-app-tests", "engine-chat-tests"]) && hash(value.contentHash))

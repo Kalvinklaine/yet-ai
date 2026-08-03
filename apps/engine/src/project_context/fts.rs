@@ -17,6 +17,7 @@ const CANDIDATE_LIMIT: usize = 256;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LexicalMatch {
+    pub chunk_id: String,
     pub relative_path: String,
     pub language: Option<String>,
     pub symbol_name: Option<String>,
@@ -100,7 +101,7 @@ pub async fn query(
         return Err(InventoryError::Conflict);
     }
     let mut statement = database.connection.prepare(
-        "SELECT c.relative_path, c.language, c.symbol_name, c.start_line, c.end_line, c.file_hash, c.chunk_hash, c.content, bm25(context_chunks_fts, 0.0, 0.0, 8.0, 12.0, 2.0, 4.0, 1.0) FROM context_chunks_fts JOIN context_chunks c ON c.chunk_id = context_chunks_fts.rowid WHERE context_chunks_fts MATCH ?1 AND context_chunks_fts.project_id = ?2 AND context_chunks_fts.generation = ?3 AND c.project_id = ?2 AND c.generation = ?3 LIMIT ?4"
+        "SELECT c.chunk_id, c.relative_path, c.language, c.symbol_name, c.start_line, c.end_line, c.file_hash, c.chunk_hash, c.content, bm25(context_chunks_fts, 0.0, 0.0, 8.0, 12.0, 2.0, 4.0, 1.0) FROM context_chunks_fts JOIN context_chunks c ON c.chunk_id = context_chunks_fts.rowid WHERE context_chunks_fts MATCH ?1 AND context_chunks_fts.project_id = ?2 AND context_chunks_fts.generation = ?3 AND c.project_id = ?2 AND c.generation = ?3 LIMIT ?4"
     ).map_err(|_| InventoryError::Unavailable)?;
     let rows = statement
         .query_map(
@@ -112,15 +113,16 @@ pub async fn query(
             ],
             |row| {
                 Ok(LexicalMatch {
-                    relative_path: row.get(0)?,
-                    language: row.get(1)?,
-                    symbol_name: row.get(2)?,
-                    start_line: row.get(3)?,
-                    end_line: row.get(4)?,
-                    file_hash: row.get(5)?,
-                    chunk_hash: row.get(6)?,
-                    content: row.get(7)?,
-                    score: -row.get::<_, f64>(8)?,
+                    chunk_id: format!("chunk-{}", row.get::<_, i64>(0)?),
+                    relative_path: row.get(1)?,
+                    language: row.get(2)?,
+                    symbol_name: row.get(3)?,
+                    start_line: row.get(4)?,
+                    end_line: row.get(5)?,
+                    file_hash: row.get(6)?,
+                    chunk_hash: row.get(7)?,
+                    content: row.get(8)?,
+                    score: -row.get::<_, f64>(9)?,
                 })
             },
         )

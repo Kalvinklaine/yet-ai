@@ -434,6 +434,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [selectedWorkspaceSnippetKeys, setSelectedWorkspaceSnippetKeys] = useState<string[]>([]);
   const [workspaceSnippetStatus, setWorkspaceSnippetStatus] = useState<string | null>(null);
   const [projectContextPlanningSelection, setProjectContextPlanningSelection] = useState<ProjectContextPlanningSelection | null>(null);
+  const [projectContextReady, setProjectContextReady] = useState(true);
   const [projectMemoryTitle, setProjectMemoryTitle] = useState("");
   const [projectMemoryText, setProjectMemoryText] = useState("");
   const [projectMemoryTags, setProjectMemoryTags] = useState("");
@@ -3340,10 +3341,10 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   <span className="subtle">Unsent one-shot context. Review it here, then click Send explicitly or remove it from the explicit context controls.</span>
                   {explicitContextBundleStatus && <span className="subtle">{sanitizeDisplayText(explicitContextBundleStatus)}</span>}
                 </section>}
-                {projectId && <ChatContextDrawer projectId={projectId} chatId={chatId} draft={chatInput} settings={{ baseUrl, token, runtimeAccess }} generationKey={`${settingsRevision}:${hostReadyGeneration ?? "browser"}`} onSelectionChange={setProjectContextPlanningSelection} />}
-                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setUserChatInputDraft(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
+                {projectId && <ChatContextDrawer projectId={projectId} chatId={chatId} draft={chatInput} settings={{ baseUrl, token, runtimeAccess }} generationKey={`${settingsRevision}:${hostReadyGeneration ?? "browser"}`} onSelectionChange={setProjectContextPlanningSelection} onReadyChange={setProjectContextReady} />}
+                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => { if (projectId && projectContextPlanningSelection) { setProjectContextPlanningSelection(null); setProjectContextReady(false); } setUserChatInputDraft(event.target.value); }} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">
-                  <button type="submit" disabled={!canSendChat}>Send</button>
+                  <button type="submit" disabled={!canSendChat || Boolean(projectId && chatInput.trim() && !projectContextReady)}>Send</button>
                   <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>
                 </div>
               </div>

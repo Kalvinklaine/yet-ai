@@ -3,8 +3,8 @@
   "mode": "balanced",
   "budget": { "maxFiles": 12, "maxChunks": 32, "maxBytes": 131072, "maxEstimatedTokens": 24000 },
   "explicitRefs": [
-    { "kind": "file_chunk", "sourceRef": "README.md" },
-    { "kind": "file_chunk", "sourceRef": "apps/engine/src/lib.rs" }
+    { "kind": "file_chunk", "chunkId": "chunk-1", "sourceRef": "README.md", "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 24, "character": 0 } }, "contentHash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    { "kind": "file_chunk", "chunkId": "chunk-2", "sourceRef": "apps/engine/src/lib.rs", "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 20, "character": 0 } }, "contentHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }
   ],
   "expectedInventoryGeneration": 3,
   "expectedProjectRevision": "4"

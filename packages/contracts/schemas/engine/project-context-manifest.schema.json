@@ -106,9 +106,10 @@
     "fileChunkEntry": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "sourceRef", "range", "contentHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
+      "required": ["kind", "chunkId", "sourceRef", "range", "contentHash", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"],
       "properties": {
         "kind": { "const": "file_chunk" },
+        "chunkId": { "type": "string", "pattern": "^chunk-[1-9][0-9]*$" },
         "sourceRef": { "$ref": "#/$defs/path" },
         "range": { "$ref": "#/$defs/range" },
         "symbol": { "$ref": "#/$defs/text" },

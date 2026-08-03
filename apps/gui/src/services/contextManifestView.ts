@@ -41,7 +41,7 @@ export function buildContextManifestView(plan: ProjectContextPlan, excludedKeys:
 }
 
 export function manifestEntryToExplicitRef(entry: ProjectContextManifestEntry) {
-  if (entry.kind === "file_chunk" && entry.sourceRef) return { kind: "file_chunk" as const, sourceRef: entry.sourceRef };
+  if (entry.kind === "file_chunk" && entry.chunkId && entry.sourceRef && entry.range && entry.contentHash) return { kind: "file_chunk" as const, chunkId: entry.chunkId, sourceRef: entry.sourceRef, range: entry.range, contentHash: entry.contentHash };
   if (entry.kind === "active_editor" && entry.editorSnapshotId && entry.sourceRef && entry.range && entry.contentHash) return { kind: "active_editor" as const, editorSnapshotId: entry.editorSnapshotId, sourceRef: entry.sourceRef, range: entry.range, contentHash: entry.contentHash, byteCount: entry.byteCount, estimatedTokens: entry.estimatedTokens };
   if (entry.kind === "memory_note" && entry.memoryNoteId && entry.contentHash) return { kind: "memory_note" as const, memoryNoteId: entry.memoryNoteId, contentHash: entry.contentHash, byteCount: entry.byteCount, estimatedTokens: entry.estimatedTokens };
   if (entry.kind === "verification_output" && entry.verificationResultId && entry.commandId && entry.contentHash) return { kind: "verification_output" as const, verificationResultId: entry.verificationResultId, commandId: entry.commandId, contentHash: entry.contentHash, byteCount: entry.byteCount, estimatedTokens: entry.estimatedTokens };

@@ -434,8 +434,8 @@ describe("runtimeClient", () => {
       expectedInventoryGeneration: 3, expectedProjectRevision: "7", queryHash: `sha256:${"a".repeat(64)}`,
       rankingVersion: "lexical-symbol-ranking-1" as const,
       budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 },
-      explicitRefs: [{ kind: "file_chunk", sourceRef: "src/main.ts" }], includedRanks: [1], excludedRanks: [],
-      correlation: { projectId: "prj_abcdefghijklmnopqrstuA", chatId: "chat-001", settingsGeneration: "1:browser" },
+      explicitRefs: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, contentHash: `sha256:${"a".repeat(64)}` }], includedRanks: [1], excludedRanks: [],
+      correlation: { projectId: "prj_abcdefghijklmnopqrstuA", chatId: "chat-001", settingsGeneration: "1:browser", controlFingerprint: "current-controls" },
     };
 
     await sendUserMessage({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "chat-001", "hello", undefined, selection);

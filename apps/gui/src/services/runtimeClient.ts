@@ -186,7 +186,7 @@ export type ProjectContextPlanningSelection = {
   explicitRefs: unknown[];
   includedRanks: number[];
   excludedRanks: number[];
-  correlation: { projectId: string; chatId: string | null; settingsGeneration: string };
+  correlation: { projectId: string; chatId: string | null; settingsGeneration: string; controlFingerprint: string };
 };
 
 export type ChatCommand = {

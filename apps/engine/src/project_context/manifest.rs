@@ -108,6 +108,8 @@ pub enum RedactionState {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ManifestEntry {
     FileChunk {
+        #[serde(rename = "chunkId")]
+        chunk_id: String,
         #[serde(rename = "sourceRef")]
         source_ref: String,
         range: TextRange,
@@ -209,6 +211,7 @@ impl ManifestEntry {
         }
     }
     pub(crate) fn file_chunk(
+        chunk_id: String,
         source_ref: String,
         start_line: u64,
         end_line: u64,
@@ -221,6 +224,7 @@ impl ManifestEntry {
         rank: u64,
     ) -> Self {
         Self::FileChunk {
+            chunk_id,
             source_ref,
             range: TextRange {
                 start: Position {
@@ -453,6 +457,7 @@ mod tests {
             "2026-08-03T00:00:00Z".into(),
         );
         manifest.entries.push(ManifestEntry::file_chunk(
+            "chunk-1".into(),
             "src/lib.rs".into(),
             1,
             2,
