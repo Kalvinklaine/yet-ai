@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProjectRuntimeSettings } from "./projectClient";
-import { getProjectContextProfile, getProjectContextStatus, rebuildProjectContext } from "./projectContextClient";
+import { getProjectContextProfile, getProjectContextStatus, planProjectContext, rebuildProjectContext } from "./projectContextClient";
 
 const projectId = "prj_abcdefghijklmnopqrstuA";
 const settings = createProjectRuntimeSettings({ baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, projectId);
@@ -59,8 +59,21 @@ describe("projectContextClient", () => {
     await getProjectContextStatus(settings);
     expect(fetchMock.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
+
+  it("posts and strictly validates a bounded context plan", async () => {
+    const plan = contextPlan();
+    fetchMock.mockResolvedValueOnce(json(plan));
+    vi.stubGlobal("fetch", fetchMock); vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const request = { query: "Find runtime", mode: "balanced" as const, budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 }, explicitRefs: [{ kind: "file_chunk" as const, sourceRef: "src/main.rs" }], expectedInventoryGeneration: 1, expectedProjectRevision: "7" };
+    expect((await planProjectContext(settings, request)).ok).toBe(true);
+    expect(fetchMock.mock.calls[0].slice(0, 2)).toEqual([`/p/${projectId}/v1/context/plan`, expect.objectContaining({ method: "POST", body: JSON.stringify(request) })]);
+
+    fetchMock.mockResolvedValueOnce(json({ ...plan, manifest: { ...plan.manifest, entries: [{ ...plan.manifest.entries[0], sourceRef: "/Users/private/main.rs" }] } }));
+    expect(await planProjectContext(settings, request)).toMatchObject({ ok: false, error: { status: "protocol" } });
+  });
 });
 
 function status() { return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state: "ready", inventoryGeneration: 1, profileId: "profile-1", counts: { eligibleFiles: 3, indexedFiles: 2, omittedFiles: 1, chunks: 0, symbols: 0 }, freshness: { status: "current", pendingChanges: 0 }, cloudRequired: false, providerAccess: "direct" }; }
 function profile() { return { protocolVersion: "2026-08-02", schemaVersion: 1, profileId: "profile-1", projectId, inventoryGeneration: 1, profileHash: hash, summary: "Local project profile derived from structural inventory evidence.", summaryProvenance: [{ sourceRef: "src/main.rs", contentHash: hash }], facts: [{ kind: "language", label: "Rust source files", sourceRef: "src/main.rs", contentHash: hash, provenance: "structural_inventory" }], createdAt: "2026-08-02T12:00:00Z", cloudRequired: false }; }
+function contextPlan() { return { protocolVersion: "2026-08-02", schemaVersion: 1, planId: "plan-1", projectId, mode: "balanced", queryLabel: "Find runtime", status: "ready", manifest: { protocolVersion: "2026-08-02", schemaVersion: 1, manifestId: "manifest-1", projectId, planId: "plan-1", mode: "balanced", inventoryGeneration: 1, queryHash: hash, rankingVersion: "lexical-symbol-ranking-1", budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 1, usedChunks: 1, usedBytes: 40, usedEstimatedTokens: 10, truncated: false }, entries: [{ kind: "file_chunk", sourceRef: "src/main.rs", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, contentHash: hash, inclusionReason: "lexical_match", provenance: "lexical", redaction: "none", byteCount: 40, estimatedTokens: 10, rank: 1 }], omissions: [], redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 }, createdAt: "2026-08-02T12:00:00Z" }, createdAt: "2026-08-02T12:00:00Z", expiresAt: "2026-08-02T12:05:00Z", cloudRequired: false }; }
 function json(value: unknown) { return new Response(JSON.stringify(value), { status: 200 }); }

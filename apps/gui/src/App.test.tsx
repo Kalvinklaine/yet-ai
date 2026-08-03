@@ -178,6 +178,16 @@ describe("project lifecycle scope", () => {
   const projectA = "prj_AAAAAAAAAAAAAAAAAAAAAA" as never;
   const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBQ" as never;
 
+  it("shows the context-plan drawer only in project chat", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    expect(container?.querySelector("[data-testid='chat-context-drawer']")).not.toBeNull();
+    await act(async () => root?.render(<App route={{ kind: "legacy" }} />));
+    await flushAsync();
+    expect(container?.querySelector("[data-testid='chat-context-drawer']")).toBeNull();
+  });
+
   it("keeps an empty project in draft without synthetic chat requests", async () => {
     mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [] });
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
