@@ -12568,11 +12568,13 @@ async fn abort_does_not_leave_assistant_or_streaming_history_state() {
     let _ = continue_sender.send(());
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let loaded = wait_for_chat_messages(app.clone(), "chat-history-abort", 1).await;
-    assert_eq!(loaded["messages"].as_array().unwrap().len(), 1);
+    let loaded = wait_for_chat_messages(app.clone(), "chat-history-abort", 2).await;
+    assert_eq!(loaded["messages"].as_array().unwrap().len(), 2);
     assert_eq!(loaded["messages"][0]["role"], "user");
     assert_eq!(loaded["messages"][0]["status"], "complete");
     assert_ne!(loaded["messages"][0]["status"], "streaming");
+    assert_eq!(loaded["messages"][1]["role"], "error");
+    assert_eq!(loaded["messages"][1]["content"], "Chat response was stopped.");
     let text = sse_text_from(
         app.clone(),
         "/v1/chats/subscribe?chat_id=chat-history-abort",
@@ -12581,7 +12583,7 @@ async fn abort_does_not_leave_assistant_or_streaming_history_state() {
     let events = sse_json_events(&text);
     assert_eq!(
         events[0]["payload"]["messages"].as_array().unwrap().len(),
-        1
+        2
     );
     assert_sse_connection_sequences_are_rebased(&events);
     assert_no_replayed_stream_events(&events);
@@ -13645,12 +13647,14 @@ async fn chat_immediate_abort_after_user_message_reliably_aborts_active_stream()
     let _ = continue_sender.send(());
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let loaded = wait_for_chat_messages(app.clone(), "chat-immediate-abort-race", 1).await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-immediate-abort-race", 2).await;
     let messages = loaded["messages"].as_array().unwrap();
-    assert_eq!(messages.len(), 1);
+    assert_eq!(messages.len(), 2);
     assert_eq!(messages[0]["role"], "user");
     assert_eq!(messages[0]["content"], "abort immediately");
     assert_eq!(messages[0]["status"], "complete");
+    assert_eq!(messages[1]["role"], "error");
+    assert_eq!(messages[1]["content"], "Chat response was stopped.");
     let text = sse_text_from(app, "/v1/chats/subscribe?chat_id=chat-immediate-abort-race").await;
     let events = sse_json_events(&text);
     assert_eq!(events[0]["type"], "snapshot");
@@ -13857,15 +13861,20 @@ async fn chat_same_chat_replacement_aborts_old_stream_without_stale_terminal_eff
     let _ = release_first_sender.send(());
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
-    let loaded = wait_for_chat_messages(app.clone(), "chat-replacement-race", 3).await;
+    let loaded = wait_for_chat_messages(app.clone(), "chat-replacement-race", 4).await;
     let messages = loaded["messages"].as_array().unwrap();
-    assert_eq!(messages.len(), 3);
+    assert_eq!(messages.len(), 4);
     assert_eq!(messages[0]["role"], "user");
     assert_eq!(messages[0]["content"], "old prompt");
-    assert_eq!(messages[1]["role"], "user");
-    assert_eq!(messages[1]["content"], "new prompt");
-    assert_eq!(messages[2]["role"], "assistant");
-    assert_eq!(messages[2]["content"], "new");
+    assert_eq!(messages[1]["role"], "error");
+    assert_eq!(
+        messages[1]["content"],
+        "Chat response was superseded by a newer message."
+    );
+    assert_eq!(messages[2]["role"], "user");
+    assert_eq!(messages[2]["content"], "new prompt");
+    assert_eq!(messages[3]["role"], "assistant");
+    assert_eq!(messages[3]["content"], "new");
     assert!(!messages
         .iter()
         .any(|message| message["role"] == "assistant" && message["content"] == "old"));

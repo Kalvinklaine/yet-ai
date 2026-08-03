@@ -360,6 +360,8 @@ pub async fn mark_interrupted(
     turn_id: &str,
     error_code: &str,
 ) -> Result<(), TurnContextError> {
+    #[cfg(test)]
+    fail_if_injected(root, FailureStage::MarkInterrupted)?;
     update(root, project_id, chat_id, turn_id, |record| {
         record.assistant_message_id = None;
         record.status = TurnContextStatus::Interrupted;
@@ -380,6 +382,8 @@ pub async fn mark_interrupted_with_reason(
     if !matches!(finish_reason, "abort" | "superseded") {
         return Err(TurnContextError::Invalid);
     }
+    #[cfg(test)]
+    fail_if_injected(root, FailureStage::MarkInterrupted)?;
     update(root, project_id, chat_id, turn_id, |record| {
         record.assistant_message_id = None;
         record.status = TurnContextStatus::Interrupted;
@@ -394,6 +398,7 @@ pub async fn mark_interrupted_with_reason(
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FailureStage {
     MarkStreaming,
+    MarkInterrupted,
     LinkTerminal,
     MarkTerminal,
 }
