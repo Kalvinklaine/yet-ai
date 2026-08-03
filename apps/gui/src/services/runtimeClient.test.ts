@@ -425,6 +425,26 @@ describe("runtimeClient", () => {
     expect(body).not.toHaveProperty("modelId");
   });
 
+  it("sends an opaque project context planning selection without source content", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ accepted: true, chatId: "chat-001", requestId: "request-001", type: "user_message" }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(crypto, "randomUUID").mockReturnValue("00000000-0000-4000-8000-000000000003");
+    const selection = {
+      planId: "plan-1", manifestId: "manifest-1", mode: "balanced" as const,
+      expectedInventoryGeneration: 3, expectedProjectRevision: "7", queryHash: `sha256:${"a".repeat(64)}`,
+      rankingVersion: "lexical-symbol-ranking-1" as const,
+      budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 },
+      explicitRefs: [{ kind: "file_chunk", sourceRef: "src/main.ts" }], includedRanks: [1], excludedRanks: [],
+      correlation: { projectId: "prj_abcdefghijklmnopqrstuA", chatId: "chat-001", settingsGeneration: "1:browser" },
+    };
+
+    await sendUserMessage({ baseUrl: "http://127.0.0.1:8001", token: "runtime-token" }, "chat-001", "hello", undefined, selection);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body.payload).toEqual({ content: "hello", planningSelection: selection });
+    expect(JSON.stringify(body)).not.toContain("file content sentinel");
+  });
+
   it("has no runtime lifecycle endpoint or launch authority", () => {
     expect(Object.keys({ createChat, deleteChat, getChat, listChats, runtimeFetch, sendUserMessage }).join(" ")).not.toContain("launch");
     expect(Object.keys({ createChat, deleteChat, getChat, listChats, runtimeFetch, sendUserMessage }).join(" ")).not.toContain("restart");

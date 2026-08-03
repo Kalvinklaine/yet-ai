@@ -203,6 +203,11 @@ pub enum VerificationCommandId {
 }
 
 impl ManifestEntry {
+    pub(crate) fn rank(&self) -> u64 {
+        match self {
+            Self::FileChunk { rank, .. } | Self::ActiveEditor { rank, .. } | Self::MemoryNote { rank, .. } | Self::VerificationOutput { rank, .. } | Self::ContinuationPrefix { rank, .. } => *rank,
+        }
+    }
     pub(crate) fn file_chunk(
         source_ref: String,
         start_line: u64,

@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createProjectRuntimeSettings, getProject } from "../services/projectClient";
 import { getProjectContextStatus, planProjectContext, type ProjectContextExplicitRef, type ProjectContextMode, type ProjectContextPlan } from "../services/projectContextClient";
 import { buildContextManifestView, contextManifestEntryKey, manifestEntryToExplicitRef, manifestMatchesCorrelation } from "../services/contextManifestView";
-import type { RuntimeSettings } from "../services/runtimeClient";
+import type { ProjectContextPlanningSelection, RuntimeSettings } from "../services/runtimeClient";
 
 const budget = { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 };
 
-export function ChatContextDrawer({ projectId, chatId, draft, settings, generationKey }: { projectId: string; chatId: string | null; draft: string; settings: RuntimeSettings; generationKey: string }) {
+export function ChatContextDrawer({ projectId, chatId, draft, settings, generationKey, onSelectionChange }: { projectId: string; chatId: string | null; draft: string; settings: RuntimeSettings; generationKey: string; onSelectionChange?: (selection: ProjectContextPlanningSelection | null) => void }) {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<ProjectContextMode>("balanced");
   const [plan, setPlan] = useState<ProjectContextPlan | null>(null);
@@ -14,36 +14,60 @@ export function ChatContextDrawer({ projectId, chatId, draft, settings, generati
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [pinned, setPinned] = useState<ProjectContextExplicitRef[]>([]);
   const requestRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+  const revisionRef = useRef("");
   const correlation = `${projectId}:${chatId ?? "draft"}:${draft}:${generationKey}:${mode}`;
   const correlationRef = useRef(correlation);
   correlationRef.current = correlation;
 
   const refresh = useCallback(async () => {
     const query = draft.trim();
-    if (!query) { setPlan(null); setState("idle"); return; }
+    abortRef.current?.abort();
+    if (!query) { setPlan(null); setState("idle"); onSelectionChange?.(null); return; }
     const request = ++requestRef.current;
     const expectedCorrelation = correlationRef.current;
     const controller = new AbortController();
+    abortRef.current = controller;
     const scoped = createProjectRuntimeSettings(settings, projectId, { generation: request, abortSignal: controller.signal });
     setState("loading");
+    setPlan(null);
+    onSelectionChange?.(null);
     const [projectResult, statusResult] = await Promise.all([getProject(settings, projectId, controller.signal), getProjectContextStatus(scoped)]);
-    if (request !== requestRef.current || expectedCorrelation !== correlationRef.current || !projectResult.ok || !statusResult.ok) { if (request === requestRef.current) setState("error"); return; }
+    if (request !== requestRef.current || expectedCorrelation !== correlationRef.current || !projectResult.ok || !statusResult.ok) { if (request === requestRef.current) { setPlan(null); setState("error"); onSelectionChange?.(null); } return; }
+    revisionRef.current = projectResult.data.revision;
     const result = await planProjectContext(scoped, { query, mode, budget, explicitRefs: pinned, expectedInventoryGeneration: statusResult.data.inventoryGeneration, expectedProjectRevision: projectResult.data.revision });
     if (request !== requestRef.current || expectedCorrelation !== correlationRef.current) return;
-    if (!result.ok || !manifestMatchesCorrelation(result.data.manifest, projectId, statusResult.data.inventoryGeneration)) { setPlan(null); setState("error"); return; }
+    if (!result.ok || !manifestMatchesCorrelation(result.data.manifest, projectId, statusResult.data.inventoryGeneration)) { setPlan(null); setState("error"); onSelectionChange?.(null); return; }
     setPlan(result.data);
     setExcluded(new Set());
     setState("idle");
-  }, [draft, mode, pinned, projectId, settings]);
+  }, [draft, mode, onSelectionChange, pinned, projectId, settings]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 350);
-    return () => { window.clearTimeout(timer); requestRef.current += 1; };
+    return () => { window.clearTimeout(timer); requestRef.current += 1; abortRef.current?.abort(); };
   }, [chatId, draft, generationKey, mode, projectId, refresh]);
 
   useEffect(() => { setPlan(null); setExcluded(new Set()); setPinned([]); }, [chatId, generationKey, projectId]);
 
   const view = useMemo(() => plan ? buildContextManifestView(plan, excluded) : null, [excluded, plan]);
+  useEffect(() => {
+    if (!plan) { onSelectionChange?.(null); return; }
+    onSelectionChange?.({
+      planId: plan.planId,
+      manifestId: plan.manifest.manifestId,
+      mode,
+      expectedInventoryGeneration: plan.manifest.inventoryGeneration,
+      expectedProjectRevision: revisionRef.current,
+      queryHash: plan.manifest.queryHash,
+      rankingVersion: plan.manifest.rankingVersion,
+      budget,
+      explicitRefs: pinned,
+      includedRanks: plan.manifest.entries.filter((entry) => !excluded.has(contextManifestEntryKey(entry))).map((entry) => entry.rank),
+      excludedRanks: plan.manifest.entries.filter((entry) => excluded.has(contextManifestEntryKey(entry))).map((entry) => entry.rank),
+      correlation: { projectId, chatId, settingsGeneration: generationKey },
+    });
+  }, [chatId, excluded, generationKey, mode, onSelectionChange, pinned, plan, projectId]);
   const pin = (key: string) => {
     const entry = plan?.manifest.entries.find((item) => contextManifestEntryKey(item) === key);
     const ref = entry ? manifestEntryToExplicitRef(entry) : null;

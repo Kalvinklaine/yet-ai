@@ -22,7 +22,7 @@ import { conversationHistoryStatusLabel } from "./services/conversationHistory";
 import { type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
 import { classifyProviderReadinessState, modelReadinessEvidenceText, modelStatusText, resolveProviderModelReadiness, type ProviderReadinessState } from "./services/providerReadiness";
 import { listProviders, saveProvider, testProvider, type ProviderSummary, type ProviderTestResponse, type ProviderWriteRequest } from "./services/providersClient";
-import { createChat, getAgentProgress, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, productIdentity, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type ChatRuntimeSettings, type ChatSummary, type ManualRunnerPlanProposal, type RuntimeError, type RuntimeSettings } from "./services/runtimeClient";
+import { createChat, getAgentProgress, isLoopbackRuntimeUrl, isSameOriginProxyBaseUrl, productIdentity, setRuntimeFetchTraceConnectionSource, setRuntimeFetchTraceSink, type AgentOverflowRecovery, type AgentOverflowRecoveryKind, type AgentProgressListResponse, type AgentProgressSnapshot, type ChatRuntimeSettings, type ChatSummary, type ManualRunnerPlanProposal, type ProjectContextPlanningSelection, type RuntimeError, type RuntimeSettings } from "./services/runtimeClient";
 import { createProjectRuntimeSettings } from "./services/projectClient";
 import { buildProjectRoute, type AppRoute, type ProjectNavigation } from "./services/projectRouting";
 import { ProjectScopeController, createProjectScopeCorrelation, type ProjectScopeCorrelation, type ProjectScopeResetters } from "./services/projectScope";
@@ -433,6 +433,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [workspaceSnippetResult, setWorkspaceSnippetResult] = useState<WorkspaceSnippetSearchResultPayload | null>(null);
   const [selectedWorkspaceSnippetKeys, setSelectedWorkspaceSnippetKeys] = useState<string[]>([]);
   const [workspaceSnippetStatus, setWorkspaceSnippetStatus] = useState<string | null>(null);
+  const [projectContextPlanningSelection, setProjectContextPlanningSelection] = useState<ProjectContextPlanningSelection | null>(null);
   const [projectMemoryTitle, setProjectMemoryTitle] = useState("");
   const [projectMemoryText, setProjectMemoryText] = useState("");
   const [projectMemoryTags, setProjectMemoryTags] = useState("");
@@ -2930,6 +2931,11 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         submittedExplicitContextBundle = includeExplicitContextBundle ? explicitContextBundleToChatContext(explicitContextBundleItems) : undefined;
         return submittedExplicitContextBundle ?? (submittedAttachedContext?.excerpt ? activeFileExcerptToChatContext(submittedAttachedContext.excerpt) : submittedAttachedContext?.payload);
       },
+      planningSelection: projectId ? (targetChatId: string) => {
+        const selection = projectContextPlanningSelection;
+        if (!selection || selection.correlation.projectId !== projectId || selection.correlation.chatId !== null && selection.correlation.chatId !== targetChatId) return undefined;
+        return selection;
+      } : undefined,
       onCreated: (createdChatId: string) => {
         const draftContext = attachedContextRef.current;
         if (draftContext?.settingsRevision === settingsRevisionRef.current && draftContext.chatId === null && projectScopeController.accepts(draftContext.scopeCorrelation)) {
@@ -2943,7 +2949,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
         else setSubmittedModelProposalPrompt(null);
         clearSubmittedAttachedContext(submittedExplicitContextBundle ? null : submittedAttachedContext);
         if (submittedExplicitContextBundle) clearExplicitContextBundle("One-shot explicit context bundle attached to the last accepted message and cleared.");
+        setProjectContextPlanningSelection(null);
       },
+      onRejected: () => setProjectContextPlanningSelection(null),
     };
   };
 
@@ -3332,7 +3340,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   <span className="subtle">Unsent one-shot context. Review it here, then click Send explicitly or remove it from the explicit context controls.</span>
                   {explicitContextBundleStatus && <span className="subtle">{sanitizeDisplayText(explicitContextBundleStatus)}</span>}
                 </section>}
-                {projectId && <ChatContextDrawer projectId={projectId} chatId={chatId} draft={chatInput} settings={{ baseUrl, token, runtimeAccess }} generationKey={`${settingsRevision}:${hostReadyGeneration ?? "browser"}`} />}
+                {projectId && <ChatContextDrawer projectId={projectId} chatId={chatId} draft={chatInput} settings={{ baseUrl, token, runtimeAccess }} generationKey={`${settingsRevision}:${hostReadyGeneration ?? "browser"}`} onSelectionChange={setProjectContextPlanningSelection} />}
                 <textarea ref={chatInputRef} value={chatInput} onChange={(event) => setUserChatInputDraft(event.target.value)} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">
                   <button type="submit" disabled={!canSendChat}>Send</button>

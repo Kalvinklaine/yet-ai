@@ -21,6 +21,7 @@ use crate::demo_mode;
 use crate::logging::{log_event, EngineLogLevel};
 use crate::project_browser::ProjectBrowserError;
 use crate::project_memory;
+use crate::project_context::ContextPlanSelection;
 use crate::projects::ProjectRegistryError;
 use crate::provider_auth;
 use crate::providers;
@@ -1297,9 +1298,17 @@ async fn project_chat_command(
                 .await;
         }
         "user_message" => {
-            let Some((content, chat_context)) = user_message_payload(command.payload.as_ref())
+            let Some((content, chat_context, planning_selection)) = project_user_message_payload(command.payload.as_ref())
             else {
                 return StatusCode::BAD_REQUEST.into_response();
+            };
+            let planned_repository_context = match planning_selection {
+                Some(selection) => match crate::project_context::rehydrate_for_chat(&context, &chat_id, content, selection).await {
+                    Ok(value) => Some(value),
+                    Err(crate::project_context::PlannerError::Conflict | crate::project_context::PlannerError::NotFound) => return (StatusCode::CONFLICT, Json(json!({ "error": "project context plan is stale or unavailable" }))).into_response(),
+                    Err(_) => return (StatusCode::SERVICE_UNAVAILABLE, Json(json!({ "error": "project context is unavailable" }))).into_response(),
+                },
+                None => None,
             };
             state
                 .chat_runtime
@@ -1310,6 +1319,7 @@ async fn project_chat_command(
                     chat_id.clone(),
                     content.to_string(),
                     chat_context,
+                    planned_repository_context,
                     state.agent_progress_runtime.clone(),
                 )
                 .await;
@@ -1376,6 +1386,29 @@ fn user_message_payload(
         None => None,
     };
     Some((content, context))
+}
+
+fn project_user_message_payload(
+    payload: Option<&serde_json::Value>,
+) -> Option<(&str, Option<ChatContext>, Option<ContextPlanSelection>)> {
+    let object = payload?.as_object()?;
+    if object.len() > 3
+        || !object.contains_key("content")
+        || object.keys().any(|key| key != "content" && key != "context" && key != "planningSelection")
+    {
+        return None;
+    }
+    let content = object.get("content")?.as_str()?;
+    if !valid_chat_message_content(content) { return None; }
+    let context = match object.get("context") {
+        Some(value) => Some(ChatContext::from_value(value.clone(), content)?),
+        None => None,
+    };
+    let selection = match object.get("planningSelection") {
+        Some(value) => Some(serde_json::from_value(value.clone()).ok()?),
+        None => None,
+    };
+    Some((content, context, selection))
 }
 
 #[derive(Debug, Deserialize)]

@@ -4,7 +4,7 @@ import { chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./chat
 import { resolveChatAfterList, resolveFallbackChatAfterDelete } from "./conversationHistory";
 import { createProjectScopeCorrelation, type ProjectScopeController, type ProjectScopeCorrelation } from "./projectScope";
 import { sanitizeDisplayText, sanitizeDisplayValue, sanitizeTimelineText } from "./redaction";
-import { createChat, deleteChat, getChat, listChats, sendAbort, sendUserMessage, type ChatContext, type ChatRuntimeSettings, type ChatSummary, type RuntimeError, type RuntimeSettings } from "./runtimeClient";
+import { createChat, deleteChat, getChat, listChats, sendAbort, sendUserMessage, type ChatContext, type ChatRuntimeSettings, type ChatSummary, type ProjectContextPlanningSelection, type RuntimeError, type RuntimeSettings } from "./runtimeClient";
 import { subscribeToChat, type SseEvent } from "./sseClient";
 import { addAcceptedUserMessage, applyChatViewEvent, createInitialChatViewState, hydrateChatViewFromThread, removeOptimisticUserMessage, resetChatViewState, stopStreamingAssistant } from "./chatViewState";
 
@@ -18,6 +18,7 @@ export type ChatControllerResetters = {
 export type ChatSendOptions = {
   canSend: boolean;
   context?: ChatContext | ((chatId: string, revision: number) => ChatContext | undefined);
+  planningSelection?: ProjectContextPlanningSelection | ((chatId: string, revision: number) => ProjectContextPlanningSelection | undefined);
   onCreated?: (chatId: string) => void;
   onAccepted?: (input: { chatId: string; content: string; optimisticUserMessageId: string; requestId: string; revision: number }) => void;
   onRejected?: () => void;
@@ -282,10 +283,11 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     }
     if (!targetChatId) return;
     const context = typeof options.context === "function" ? options.context(targetChatId, revision) : options.context;
+    const planningSelection = typeof options.planningSelection === "function" ? options.planningSelection(targetChatId, revision) : options.planningSelection;
     setChatLifecycleState("command_submitting"); const optimisticId = `${targetChatId}-optimistic-user-${++optimisticUserMessageCounterRef.current}`;
     appendTraceRef.current({ family: "chat.sendAccepted", title: "Send requested", status: "pending", summary: "User message submitted from the GUI.", details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
     setChatView((current) => addAcceptedUserMessage(current, content, optimisticId));
-    const result = await sendUserMessage(settings, targetChatId, content, context);
+    const result = await sendUserMessage(settings, targetChatId, content, context, planningSelection);
     if (!mountedRef.current || settingsRevisionRef.current !== revision || chatIdRef.current !== targetChatId) {
       if (firstProjectChatCreateRef.current?.token === createToken) firstProjectChatCreateRef.current = null;
       setChatView((current) => removeOptimisticUserMessage(current, optimisticId));

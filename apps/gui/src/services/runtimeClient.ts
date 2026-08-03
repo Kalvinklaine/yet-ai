@@ -174,12 +174,28 @@ export type ExplicitContextBundle = {
 
 export type ChatContext = ActiveEditorChatContext | ExplicitContextBundle;
 
+export type ProjectContextPlanningSelection = {
+  planId: string;
+  manifestId: string;
+  mode: "manual_only" | "balanced" | "deep";
+  expectedInventoryGeneration: number;
+  expectedProjectRevision: string;
+  queryHash: string;
+  rankingVersion: "lexical-symbol-ranking-1";
+  budget: { maxFiles: number; maxChunks: number; maxBytes: number; maxEstimatedTokens: number };
+  explicitRefs: unknown[];
+  includedRanks: number[];
+  excludedRanks: number[];
+  correlation: { projectId: string; chatId: string | null; settingsGeneration: string };
+};
+
 export type ChatCommand = {
   requestId: string;
   type: "user_message" | "abort";
   payload?: {
     content: string;
     context?: ChatContext;
+    planningSelection?: ProjectContextPlanningSelection;
   };
 };
 
@@ -511,11 +527,12 @@ export function sendUserMessage(
   chatId: string,
   content: string,
   context?: ChatContext,
+  planningSelection?: ProjectContextPlanningSelection,
 ): Promise<RuntimeResult<ChatCommandResponse>> {
   const command: ChatCommand = {
     requestId: crypto.randomUUID(),
     type: "user_message",
-    payload: context ? { content, context } : { content },
+    payload: { content, ...(context ? { context } : {}), ...(planningSelection ? { planningSelection } : {}) },
   };
   return runtimeFetch<ChatCommandResponse>(settings, chatApiPath(settings, `/chats/${encodeURIComponent(chatId)}/commands`), {
     method: "POST",
