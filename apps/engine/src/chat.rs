@@ -639,26 +639,44 @@ impl ChatRuntime {
             let replay = state.replay_events_for_subscriber();
             (snapshot, replay, state.sender.subscribe())
         };
-        let snapshot_stream = futures_util::stream::once(async move { Ok(to_sse_event(snapshot)) });
-        let replay_stream =
-            futures_util::stream::iter(replay.into_iter().map(SubscriptionEvent::Event));
-        let live_stream = BroadcastStream::new(receiver).map(|event| match event {
-            Ok(event) => SubscriptionEvent::Event(event),
-            Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(count)) => {
-                SubscriptionEvent::Lagged(count)
+        subscription_stream(snapshot, replay, receiver)
+    }
+
+    pub async fn subscribe_project(
+        &self,
+        project_id: &str,
+        history_root: std::path::PathBuf,
+        turn_context_root: std::path::PathBuf,
+        chat_id: String,
+    ) -> Result<
+        impl futures_util::Stream<Item = Result<Event, Infallible>>,
+        chat_turn_context::TurnContextError,
+    > {
+        let runtime_key = runtime_key(project_id, &chat_id);
+        let (snapshot, replay, receiver) = {
+            let lock = self.history_lock(&runtime_key).await;
+            let _history_guard = lock.lock().await;
+            chat_turn_context::read_reconciled(
+                &turn_context_root,
+                &history_root,
+                project_id,
+                &chat_id,
+            )
+            .await?;
+            let mut snapshot = self.snapshot_event_locked(&history_root, &chat_id).await;
+            let mut guard = self.inner.lock().await;
+            let state = guard
+                .entry(runtime_key)
+                .or_insert_with(|| ChatState::new(&chat_id));
+            if snapshot.event_type == "error"
+                && (state.known_terminal_append_failure || state.active_stream.is_some())
+            {
+                snapshot = snapshot_event(&chat_id, None);
             }
-        });
-        let event_stream = replay_stream
-            .chain(live_stream)
-            .scan(1_u64, |next_seq, event| {
-                futures_util::future::ready(Some(
-                    sequence_subscription_event(next_seq, event)
-                        .map(to_sse_event)
-                        .map(Ok),
-                ))
-            })
-            .filter_map(|event| async move { event });
-        snapshot_stream.chain(event_stream)
+            let replay = state.replay_events_for_subscriber();
+            (snapshot, replay, state.sender.subscribe())
+        };
+        Ok(subscription_stream(snapshot, replay, receiver))
     }
 
     async fn push_stream_event(
@@ -1334,6 +1352,14 @@ impl ChatRuntime {
     ) -> ChatEvent {
         let lock = self.history_lock(runtime_key).await;
         let _guard = lock.lock().await;
+        self.snapshot_event_locked(history_root, chat_id).await
+    }
+
+    async fn snapshot_event_locked(
+        &self,
+        history_root: &std::path::Path,
+        chat_id: &str,
+    ) -> ChatEvent {
         match chat_history::get_thread_in(history_root, chat_id).await {
             Ok(thread) => snapshot_event(chat_id, Some(thread)),
             Err(chat_history::ChatHistoryError::NotFound) => snapshot_event(chat_id, None),
@@ -1451,6 +1477,33 @@ impl ChatRuntime {
 
 fn runtime_key(scope: &str, chat_id: &str) -> String {
     format!("{}:{scope}:{chat_id}", scope.len())
+}
+
+fn subscription_stream(
+    snapshot: ChatEvent,
+    replay: Vec<ChatEvent>,
+    receiver: broadcast::Receiver<ChatEvent>,
+) -> impl futures_util::Stream<Item = Result<Event, Infallible>> {
+    let snapshot_stream = futures_util::stream::once(async move { Ok(to_sse_event(snapshot)) });
+    let replay_stream =
+        futures_util::stream::iter(replay.into_iter().map(SubscriptionEvent::Event));
+    let live_stream = BroadcastStream::new(receiver).map(|event| match event {
+        Ok(event) => SubscriptionEvent::Event(event),
+        Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(count)) => {
+            SubscriptionEvent::Lagged(count)
+        }
+    });
+    let event_stream = replay_stream
+        .chain(live_stream)
+        .scan(1_u64, |next_seq, event| {
+            futures_util::future::ready(Some(
+                sequence_subscription_event(next_seq, event)
+                    .map(to_sse_event)
+                    .map(Ok),
+            ))
+        })
+        .filter_map(|event| async move { event });
+    snapshot_stream.chain(event_stream)
 }
 
 impl ChatContext {
@@ -5919,6 +5972,132 @@ mod tests {
                 crate::chat_history::ChatMessageRole::Error
             );
         }
+    }
+
+    #[tokio::test]
+    async fn project_chat_reload_subscription_repairs_hanging_turn_before_snapshot() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        let other_history_root = dir.join("projects/project-b/chat-history");
+        let chat_id = "chat_project_reload";
+        let user = crate::chat_history::append_message_in(
+            &history_root,
+            chat_id,
+            crate::chat_history::ChatMessageRole::User,
+            "hello".into(),
+            Some(crate::chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        let record = crate::chat_turn_context::record(
+            "project-a",
+            "revision-1",
+            chat_id,
+            &user.id,
+            test_manifest("project-a", "manifest-1", 3),
+            crate::chat_turn_context::EffectiveModel {
+                provider_id: "demo-local".into(),
+                provider_kind: "demo_local".into(),
+                model_id: "demo-local".into(),
+            },
+        )
+        .unwrap();
+        crate::chat_turn_context::append(&turn_root, "project-a", record)
+            .await
+            .unwrap();
+
+        let runtime = super::ChatRuntime::new();
+        let _subscription = runtime
+            .subscribe_project(
+                "project-a",
+                history_root.clone(),
+                turn_root.clone(),
+                chat_id.into(),
+            )
+            .await
+            .unwrap();
+        let repaired = crate::chat_history::get_thread_in(&history_root, chat_id)
+            .await
+            .unwrap();
+        assert_eq!(repaired.messages.len(), 2);
+        assert_eq!(
+            repaired.messages[1].content,
+            "Chat response persistence was interrupted. Retry the request."
+        );
+        assert_eq!(
+            repaired.messages[1].role,
+            crate::chat_history::ChatMessageRole::Error
+        );
+        assert!(matches!(
+            crate::chat_history::get_thread_in(&other_history_root, chat_id).await,
+            Err(crate::chat_history::ChatHistoryError::NotFound)
+        ));
+
+        let _second_subscription = super::ChatRuntime::new()
+            .subscribe_project("project-a", history_root.clone(), turn_root, chat_id.into())
+            .await
+            .unwrap();
+        assert_eq!(
+            crate::chat_history::get_thread_in(&history_root, chat_id)
+                .await
+                .unwrap()
+                .messages
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn project_chat_reload_subscription_fails_closed_for_corrupt_turn_store() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        std::fs::create_dir_all(&turn_root).unwrap();
+        std::fs::write(turn_root.join("chat_project_reload_corrupt.json"), b"{").unwrap();
+
+        let result = super::ChatRuntime::new()
+            .subscribe_project(
+                "project-a",
+                history_root,
+                turn_root,
+                "chat_project_reload_corrupt".into(),
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn project_chat_reload_subscription_fails_closed_for_symlinked_turn_store() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        let outside = temp_dir();
+        std::fs::create_dir_all(turn_root.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(
+            outside.join("chat_project_reload_symlink.json"),
+            b"private marker",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(&outside, &turn_root).unwrap();
+
+        let result = super::ChatRuntime::new()
+            .subscribe_project(
+                "project-a",
+                history_root,
+                turn_root,
+                "chat_project_reload_symlink".into(),
+            )
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read(outside.join("chat_project_reload_symlink.json")).unwrap(),
+            b"private marker"
+        );
     }
 
     #[tokio::test]

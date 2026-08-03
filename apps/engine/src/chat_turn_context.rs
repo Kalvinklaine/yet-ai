@@ -194,6 +194,16 @@ pub async fn read(
     project_id: &str,
     chat_id: &str,
 ) -> Result<TurnContextResponse, TurnContextError> {
+    if !crate::storage::ensure_store_namespace(root, false)
+        .await
+        .map_err(|_| TurnContextError::Storage)?
+    {
+        return Ok(TurnContextResponse {
+            available: false,
+            records: Vec::new(),
+            truncated: false,
+        });
+    }
     let path = path(root, chat_id)?;
     let Some(mut store) = read_store(&path, project_id, chat_id).await? else {
         return Ok(TurnContextResponse {

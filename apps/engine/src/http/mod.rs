@@ -1488,14 +1488,25 @@ async fn project_chats_subscribe(
         Ok(context) => context,
         Err(response) => return response,
     };
-    let stream = state
+    let stream = match state
         .chat_runtime
-        .subscribe_in(
+        .subscribe_project(
             context.project_id(),
             context.storage().chat_history.clone(),
+            context.storage().turn_context.clone(),
             chat_id,
         )
-        .await;
+        .await
+    {
+        Ok(stream) => stream,
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "error": "chat context storage error" })),
+            )
+                .into_response()
+        }
+    };
     Sse::new(stream)
         .keep_alive(
             KeepAlive::new()
