@@ -656,7 +656,7 @@ impl ChatRuntime {
         let (snapshot, replay, receiver) = {
             let lock = self.history_lock(&runtime_key).await;
             let _history_guard = lock.lock().await;
-            chat_turn_context::read_reconciled(
+            let reconciliation = chat_turn_context::read_reconciled_with_outcome(
                 &turn_context_root,
                 &history_root,
                 project_id,
@@ -668,6 +668,9 @@ impl ChatRuntime {
             let state = guard
                 .entry(runtime_key)
                 .or_insert_with(|| ChatState::new(&chat_id));
+            if reconciliation.outcome != chat_turn_context::ReconciliationOutcome::None {
+                state.accept_durable_repair();
+            }
             if snapshot.event_type == "error"
                 && (state.known_terminal_append_failure || state.active_stream.is_some())
             {
@@ -2226,6 +2229,22 @@ impl ChatState {
             self.events.clear();
             self.terminal_replay = TerminalReplayRetention::SnapshotBackedPrunable;
         }
+    }
+
+    fn accept_durable_repair(&mut self) {
+        self.known_terminal_append_failure = false;
+        if let Some(index) = self
+            .events
+            .iter()
+            .position(is_unpersisted_terminal_evidence)
+        {
+            self.events.drain(..=index);
+        }
+        self.terminal_replay = if self.active_stream.is_none() && self.events.is_empty() {
+            TerminalReplayRetention::SnapshotBackedPrunable
+        } else {
+            TerminalReplayRetention::ActiveOrUnpersisted
+        };
     }
 
     fn replay_events_for_subscriber(&mut self) -> Vec<ChatEvent> {
@@ -6046,6 +6065,150 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn project_chat_reload_terminal_replay_prunes_repaired_failure_only() {
+        let dir = temp_dir();
+        let history_root = dir.join("projects/project-a/chat-history");
+        let turn_root = dir.join("projects/project-a/turn-context");
+        let chat_id = "chat_project_reload_terminal_replay";
+        let user = crate::chat_history::append_message_in(
+            &history_root,
+            chat_id,
+            crate::chat_history::ChatMessageRole::User,
+            "hello".into(),
+            Some(crate::chat_history::ChatMessageStatus::Complete),
+        )
+        .await
+        .unwrap();
+        let record = crate::chat_turn_context::record(
+            "project-a",
+            "revision-1",
+            chat_id,
+            &user.id,
+            test_manifest("project-a", "manifest-1", 3),
+            crate::chat_turn_context::EffectiveModel {
+                provider_id: "demo-local".into(),
+                provider_kind: "demo_local".into(),
+                model_id: "demo-local".into(),
+            },
+        )
+        .unwrap();
+        let evidence = super::TurnEvidence {
+            root: turn_root.clone(),
+            project_id: "project-a".into(),
+            turn_id: record.turn_id.clone(),
+        };
+        crate::chat_turn_context::append(&turn_root, "project-a", record)
+            .await
+            .unwrap();
+        let runtime = super::ChatRuntime::new();
+        let key = super::runtime_key("project-a", chat_id);
+        runtime.inner.lock().await.insert(
+            key.clone(),
+            super::ChatState {
+                events: Vec::new(),
+                terminal_replay: super::TerminalReplayRetention::ActiveOrUnpersisted,
+                known_terminal_append_failure: false,
+                next_seq: 1,
+                sender: tokio::sync::broadcast::channel(64).0,
+                active_stream: Some(super::ActiveStream {
+                    id: 1,
+                    handle: tokio::spawn(std::future::pending::<()>()),
+                    effective_planned_context: None,
+                    history_root: history_root.clone(),
+                    turn_evidence: Some(evidence.clone()),
+                    phase: super::ActiveStreamPhase::Streaming,
+                }),
+                next_stream_id: 2,
+            },
+        );
+        crate::chat_history::inject_append_failures(&history_root, 2);
+        assert_eq!(
+            runtime
+                .persist_terminal_history_and_event(
+                    &history_root,
+                    &key,
+                    chat_id,
+                    1,
+                    crate::chat_history::ChatMessageRole::Assistant,
+                    "answer".into(),
+                    crate::chat_history::ChatMessageStatus::Complete,
+                    "stream_finished",
+                    serde_json::json!({ "finishReason": "stop" }),
+                    Some(&evidence),
+                    Some("stop"),
+                    None,
+                )
+                .await,
+            Some(false)
+        );
+        let newer_handle = tokio::spawn(std::future::pending::<()>());
+        {
+            let mut states = runtime.inner.lock().await;
+            let state = states.get_mut(&key).unwrap();
+            state.push_event(
+                chat_id,
+                "stream_started",
+                serde_json::json!({ "role": "assistant" }),
+            );
+            state.push_event(
+                chat_id,
+                "stream_delta",
+                serde_json::json!({ "delta": { "content": "newer" } }),
+            );
+            state.active_stream = Some(super::ActiveStream {
+                id: 2,
+                handle: newer_handle,
+                effective_planned_context: None,
+                history_root: history_root.clone(),
+                turn_evidence: None,
+                phase: super::ActiveStreamPhase::Streaming,
+            });
+        }
+        let other_key = super::runtime_key("project-b", chat_id);
+        {
+            let mut states = runtime.inner.lock().await;
+            let other = states
+                .entry(other_key.clone())
+                .or_insert_with(|| super::ChatState::new(chat_id));
+            other.known_terminal_append_failure = true;
+            other.push_event(
+                chat_id,
+                "error",
+                serde_json::json!({ "code": "chat_history_storage_error" }),
+            );
+        }
+
+        let _subscription = runtime
+            .subscribe_project("project-a", history_root.clone(), turn_root, chat_id.into())
+            .await
+            .unwrap();
+
+        let history = crate::chat_history::get_thread_in(&history_root, chat_id)
+            .await
+            .unwrap();
+        assert_eq!(history.messages.len(), 2);
+        assert_eq!(
+            history.messages[1].content,
+            "Chat response persistence was interrupted. Retry the request."
+        );
+        let states = runtime.inner.lock().await;
+        let state = &states[&key];
+        assert!(!state.known_terminal_append_failure);
+        assert_eq!(state.active_stream.as_ref().unwrap().id, 2);
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .map(|event| event.event_type.as_str())
+                .collect::<Vec<_>>(),
+            vec!["stream_started", "stream_delta"]
+        );
+        assert_eq!(state.events[1].payload["delta"]["content"], "newer");
+        assert!(states[&other_key].known_terminal_append_failure);
+        assert_eq!(states[&other_key].events.len(), 1);
     }
 
     #[tokio::test]

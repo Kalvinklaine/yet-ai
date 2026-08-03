@@ -62,6 +62,18 @@ pub struct TurnContextResponse {
     pub truncated: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReconciliationOutcome {
+    None,
+    Repaired,
+    Removed,
+}
+
+pub struct ReconciledTurnContext {
+    pub response: TurnContextResponse,
+    pub outcome: ReconciliationOutcome,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TurnContextError {
     #[error("invalid turn context request")]
@@ -194,23 +206,37 @@ pub async fn read(
     project_id: &str,
     chat_id: &str,
 ) -> Result<TurnContextResponse, TurnContextError> {
+    Ok(read_with_outcome(root, project_id, chat_id).await?.0)
+}
+
+async fn read_with_outcome(
+    root: &Path,
+    project_id: &str,
+    chat_id: &str,
+) -> Result<(TurnContextResponse, bool), TurnContextError> {
     if !crate::storage::ensure_store_namespace(root, false)
         .await
         .map_err(|_| TurnContextError::Storage)?
     {
-        return Ok(TurnContextResponse {
-            available: false,
-            records: Vec::new(),
-            truncated: false,
-        });
+        return Ok((
+            TurnContextResponse {
+                available: false,
+                records: Vec::new(),
+                truncated: false,
+            },
+            false,
+        ));
     }
     let path = path(root, chat_id)?;
     let Some(mut store) = read_store(&path, project_id, chat_id).await? else {
-        return Ok(TurnContextResponse {
-            available: false,
-            records: Vec::new(),
-            truncated: false,
-        });
+        return Ok((
+            TurnContextResponse {
+                available: false,
+                records: Vec::new(),
+                truncated: false,
+            },
+            false,
+        ));
     };
     let mut repaired = false;
     for record in &mut store.records {
@@ -239,11 +265,14 @@ pub async fn read(
         .into_iter()
         .rev()
         .collect();
-    Ok(TurnContextResponse {
-        available: true,
-        records,
-        truncated,
-    })
+    Ok((
+        TurnContextResponse {
+            available: true,
+            records,
+            truncated,
+        },
+        repaired,
+    ))
 }
 
 pub async fn read_reconciled(
@@ -252,9 +281,25 @@ pub async fn read_reconciled(
     project_id: &str,
     chat_id: &str,
 ) -> Result<TurnContextResponse, TurnContextError> {
-    let mut response = read(root, project_id, chat_id).await?;
+    Ok(
+        read_reconciled_with_outcome(root, history_root, project_id, chat_id)
+            .await?
+            .response,
+    )
+}
+
+pub async fn read_reconciled_with_outcome(
+    root: &Path,
+    history_root: &Path,
+    project_id: &str,
+    chat_id: &str,
+) -> Result<ReconciledTurnContext, TurnContextError> {
+    let (mut response, read_repaired) = read_with_outcome(root, project_id, chat_id).await?;
     if !response.available {
-        return Ok(response);
+        return Ok(ReconciledTurnContext {
+            response,
+            outcome: ReconciliationOutcome::None,
+        });
     }
     let mut history = match chat_history::get_thread_in(history_root, chat_id).await {
         Ok(history) => Some(history),
@@ -358,7 +403,14 @@ pub async fn read_reconciled(
             .records
             .retain(|record| !removed.contains(&record.turn_id));
     }
-    Ok(response)
+    let outcome = if !removed.is_empty() {
+        ReconciliationOutcome::Removed
+    } else if read_repaired || changed {
+        ReconciliationOutcome::Repaired
+    } else {
+        ReconciliationOutcome::None
+    };
+    Ok(ReconciledTurnContext { response, outcome })
 }
 
 pub async fn mark_streaming(
