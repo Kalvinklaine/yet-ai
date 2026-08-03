@@ -178,7 +178,13 @@ fn terms(value: &str) -> Vec<String> {
         .collect::<String>()
         .split_whitespace()
         .map(|term| term.to_lowercase())
-        .filter(|term| !term.is_empty())
+        .filter(|term| {
+            !term.is_empty()
+                && !matches!(
+                    term.as_str(),
+                    "a" | "an" | "are" | "how" | "is" | "the" | "this" | "what" | "where"
+                )
+        })
         .take(MAX_QUERY_TERMS)
         .collect::<Vec<_>>();
     result.sort();

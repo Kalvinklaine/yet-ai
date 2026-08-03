@@ -2742,6 +2742,27 @@ mod project_tests {
     }
 
     #[tokio::test]
+    async fn project_context_plan_http_requires_auth_and_fails_closed_on_stale_context() {
+        let (state, project_id, root) = project_test_state().await;
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/auth.rs"), "pub fn authentication() {}\n").unwrap();
+        let context = state.project_registry_runtime.resolve_context(&state.storage_paths, &project_id).await.unwrap();
+        crate::project_context::rebuild(&context, 0, context.revision()).await.unwrap();
+        let uri = format!("/p/{project_id}/v1/context/plan");
+        let body = r#"{"query":"where is authentication","mode":"balanced","budget":{"maxFiles":8,"maxChunks":16,"maxBytes":32000,"maxEstimatedTokens":8000},"explicitRefs":["src/auth.rs"],"expectedInventoryGeneration":1,"expectedProjectRevision":"1"}"#;
+        assert_eq!(project_request(state.clone(), "POST", uri.clone(), body, false).await.status(), StatusCode::UNAUTHORIZED);
+        let response = project_request(state.clone(), "POST", uri.clone(), body, true).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let value: serde_json::Value = serde_json::from_str(&response_text(response).await).unwrap();
+        assert_eq!(value["manifest"]["entries"][0]["provenance"], "explicit_user");
+        assert_eq!(value["cloudRequired"], false);
+        assert!(!value.to_string().contains(root.to_str().unwrap()));
+        let stale = body.replace("\"expectedInventoryGeneration\":1", "\"expectedInventoryGeneration\":2");
+        assert_eq!(project_request(state, "POST", uri, &stale, true).await.status(), StatusCode::CONFLICT);
+        let _ = std::fs::remove_dir_all(root.parent().unwrap());
+    }
+
+    #[tokio::test]
     async fn project_chat_crud_isolates_same_id_and_legacy_history() {
         let (state, first_id, first_root) = project_test_state().await;
         let second_root = first_root

@@ -516,6 +516,45 @@ pub(super) async fn project_context_rebuild(
     }
 }
 
+pub(super) async fn project_context_plan(
+    _auth: Authenticated,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    request: Result<Json<crate::project_context::ContextPlanRequest>, JsonRejection>,
+) -> Response {
+    let context = match resolve_context(&state, &project_id).await {
+        Ok(context) => context,
+        Err(response) => return response,
+    };
+    let Json(request) = match request {
+        Ok(request) => request,
+        Err(rejection) => return invalid_project_json(rejection),
+    };
+    match crate::project_context::plan(&context, request).await {
+        Ok(plan) => Json(plan).into_response(),
+        Err(crate::project_context::PlannerError::InvalidRequest) => project_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "Invalid project context plan request.",
+        ),
+        Err(crate::project_context::PlannerError::Conflict) => project_error(
+            StatusCode::CONFLICT,
+            "conflict",
+            "Project context changed before planning.",
+        ),
+        Err(crate::project_context::PlannerError::NotFound) => project_error(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Project context is not built.",
+        ),
+        Err(crate::project_context::PlannerError::Unavailable) => project_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            "Project context planner is unavailable.",
+        ),
+    }
+}
+
 pub(super) async fn resolve_context(
     state: &AppState,
     project_id: &str,
@@ -636,6 +675,7 @@ pub(super) fn scoped_router() -> Router<AppState> {
             "/context/rebuild",
             axum::routing::post(project_context_rebuild),
         )
+        .route("/context/plan", axum::routing::post(project_context_plan))
         .route(
             "/chats",
             axum::routing::get(super::project_chats_list).post(super::project_chats_create),

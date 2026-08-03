@@ -42,6 +42,13 @@ CREATE TABLE project_profiles (
     profile_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE context_plans (
+    plan_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation > 0),
+    plan_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 CREATE TABLE context_chunks (
     chunk_id INTEGER PRIMARY KEY,
     project_id TEXT NOT NULL,
@@ -107,6 +114,13 @@ CREATE TABLE IF NOT EXISTS project_profiles (
     profile_id TEXT NOT NULL,
     profile_hash TEXT NOT NULL,
     profile_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS context_plans (
+    plan_id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    inventory_generation INTEGER NOT NULL CHECK (inventory_generation > 0),
+    plan_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS context_chunks (
