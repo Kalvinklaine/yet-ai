@@ -604,9 +604,26 @@ impl ChatRuntime {
             .await
             .is_err()
         {
-            let _ = chat_history::repair_pending_user_messages_in(&history_root, &chat_id).await;
-            self.fail_before_stream_start(&runtime_key, &chat_id, stream_id)
+            if self
+                .claim_stream_terminal_ownership(&runtime_key, stream_id)
+                .await
+            {
+                self.repair_partial_terminal_locked(
+                    &history_root,
+                    &runtime_key,
+                    &chat_id,
+                    turn_evidence.as_ref(),
+                    "Chat response could not be started because local storage failed. Retry the request.",
+                    "error",
+                    json!({
+                        "code": "chat_history_storage_error",
+                        "message": "Chat message could not be saved to local storage."
+                    }),
+                    None,
+                    Some("chat_history_storage_error"),
+                )
                 .await;
+            }
             return;
         }
         self.partials
@@ -1060,9 +1077,27 @@ impl ChatRuntime {
                     .await
                     .is_err()
                     {
+                        let clean = runtime
+                            .repair_partial_terminal_locked(
+                                &active.history_root,
+                                &runtime_key,
+                                &chat_id,
+                                active.turn_evidence.as_ref(),
+                                match interruption {
+                                    StreamInterruption::Abort => "Chat response was stopped.",
+                                    StreamInterruption::Superseded => {
+                                        "Chat response was superseded by a newer message."
+                                    }
+                                },
+                                "stream_finished",
+                                json!({ "finishReason": interruption.finish_reason() }),
+                                Some(interruption.finish_reason()),
+                                None,
+                            )
+                            .await;
                         return Some(StreamReconciliation {
                             stream_id,
-                            clean: false,
+                            clean,
                         });
                     }
                 } else {
@@ -1638,7 +1673,20 @@ impl ChatRuntime {
                     .await
                     .is_err()
                 {
-                    return Some(false);
+                    let repaired = self
+                        .repair_partial_terminal_locked(
+                            history_root,
+                            runtime_key,
+                            chat_id,
+                            turn_evidence,
+                            &content,
+                            event_type,
+                            payload,
+                            finish_reason,
+                            error_code,
+                        )
+                        .await;
+                    return Some(repaired);
                 }
                 match chat_history::new_message(chat_id, role.clone(), content, Some(status)) {
                     Ok(message) => message,
@@ -1759,6 +1807,132 @@ impl ChatRuntime {
             state.push_event(chat_id, terminal.0, terminal.1);
         }
         Some(terminal.2)
+    }
+
+    async fn repair_partial_terminal_locked(
+        &self,
+        history_root: &std::path::Path,
+        runtime_key: &str,
+        chat_id: &str,
+        turn_evidence: Option<&TurnEvidence>,
+        content: &str,
+        event_type: &str,
+        payload: serde_json::Value,
+        finish_reason: Option<&str>,
+        error_code: Option<&str>,
+    ) -> bool {
+        if chat_history::interrupt_streaming_messages_in(history_root, chat_id)
+            .await
+            .is_err()
+        {
+            self.push_unpersisted_repair_error(runtime_key, chat_id)
+                .await;
+            return false;
+        }
+        let existing_terminal = chat_history::get_thread_in(history_root, chat_id)
+            .await
+            .ok()
+            .and_then(|thread| {
+                let start = thread
+                    .messages
+                    .iter()
+                    .rposition(|message| message.role == ChatMessageRole::User)
+                    .map_or(0, |index| index + 1);
+                thread.messages[start..]
+                    .iter()
+                    .find(|message| {
+                        matches!(
+                            message.role,
+                            ChatMessageRole::Assistant | ChatMessageRole::Error
+                        ) && message.status != Some(ChatMessageStatus::Streaming)
+                    })
+                    .cloned()
+            });
+        let terminal = match existing_terminal {
+            Some(message) => message,
+            None => match chat_history::append_message_in(
+                history_root,
+                chat_id,
+                ChatMessageRole::Error,
+                content.into(),
+                Some(ChatMessageStatus::Error),
+            )
+            .await
+            {
+                Ok(message) => message,
+                Err(_) => {
+                    self.push_unpersisted_repair_error(runtime_key, chat_id)
+                        .await;
+                    return false;
+                }
+            },
+        };
+        if chat_history::repair_pending_user_messages_in(history_root, chat_id)
+            .await
+            .is_err()
+        {
+            self.push_unpersisted_repair_error(runtime_key, chat_id)
+                .await;
+            return false;
+        }
+        if let Some(evidence) = turn_evidence {
+            let evidence_repaired = match finish_reason {
+                Some("abort" | "superseded") => chat_turn_context::mark_interrupted_with_reason(
+                    &evidence.root,
+                    &evidence.project_id,
+                    chat_id,
+                    &evidence.turn_id,
+                    finish_reason.unwrap(),
+                )
+                .await
+                .is_ok(),
+                _ => chat_turn_context::mark_terminal(
+                    &evidence.root,
+                    &evidence.project_id,
+                    chat_id,
+                    &evidence.turn_id,
+                    &terminal.id,
+                    TurnContextStatus::Error,
+                    finish_reason,
+                    error_code,
+                )
+                .await
+                .is_ok(),
+            };
+            if !evidence_repaired {
+                let repair = self
+                    .repair_terminal_commit(
+                        history_root,
+                        chat_id,
+                        &terminal.id,
+                        evidence,
+                        "turn_context_storage_error",
+                    )
+                    .await;
+                self.publish_terminal_commit_repair(runtime_key, chat_id, repair)
+                    .await;
+                return false;
+            }
+        }
+        self.push_persisted_terminal_event(runtime_key, chat_id, event_type, payload)
+            .await;
+        true
+    }
+
+    async fn push_unpersisted_repair_error(&self, runtime_key: &str, chat_id: &str) {
+        let mut guard = self.inner.lock().await;
+        let state = guard
+            .entry(runtime_key.to_string())
+            .or_insert_with(|| ChatState::new(chat_id));
+        state.known_terminal_append_failure = true;
+        state.push_event(
+            chat_id,
+            "error",
+            json!({
+                "code": "chat_reconciliation_storage_error",
+                "message": "Chat response persistence could not be confirmed. Retry the request."
+            }),
+        );
     }
 
     async fn reconcile_terminal_failure(
@@ -4412,6 +4586,160 @@ mod tests {
         .await
         .unwrap();
         assert!(repaired.records.is_empty());
+    }
+
+    #[tokio::test]
+    async fn empty_partial_remove_failure_repairs_abort_and_supersede_once() {
+        for interruption in [
+            super::StreamInterruption::Abort,
+            super::StreamInterruption::Superseded,
+        ] {
+            let dir = temp_dir();
+            let history_root = dir.join("chat-history");
+            let chat_id = match interruption {
+                super::StreamInterruption::Abort => "chat_empty_partial_abort_repair",
+                super::StreamInterruption::Superseded => "chat_empty_partial_supersede_repair",
+            };
+            let runtime = super::ChatRuntime::new();
+            let key = install_partial_stream(&runtime, &history_root, chat_id, "").await;
+            let mut receiver = runtime.inner.lock().await[&key].sender.subscribe();
+            crate::chat_history::inject_remove_failures(&history_root, 1);
+
+            let repaired = runtime
+                .reconcile_active_stream(&key, chat_id, interruption)
+                .await
+                .unwrap();
+
+            assert!(repaired.clean);
+            assert!(runtime
+                .reconcile_active_stream(&key, chat_id, interruption)
+                .await
+                .is_none());
+            let terminal = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(terminal.event_type, "stream_finished");
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(50), receiver.recv(),)
+                    .await
+                    .is_err()
+            );
+            let history = crate::chat_history::get_thread_in(&history_root, chat_id)
+                .await
+                .unwrap();
+            assert_eq!(history.messages.len(), 1);
+            assert_eq!(
+                history.messages[0].role,
+                crate::chat_history::ChatMessageRole::Error
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_error_empty_partial_remove_failure_repairs_once() {
+        let dir = temp_dir();
+        let history_root = dir.join("chat-history");
+        let chat_id = "chat_empty_partial_provider_repair";
+        let runtime = super::ChatRuntime::new();
+        let key = install_partial_stream(&runtime, &history_root, chat_id, "").await;
+        let mut receiver = runtime.inner.lock().await[&key].sender.subscribe();
+        crate::chat_history::inject_remove_failures(&history_root, 1);
+
+        assert_eq!(
+            runtime
+                .persist_terminal_history_and_event(
+                    &history_root,
+                    &key,
+                    chat_id,
+                    1,
+                    crate::chat_history::ChatMessageRole::Error,
+                    "Configure and enable a BYOK provider before chatting.".into(),
+                    crate::chat_history::ChatMessageStatus::Error,
+                    "error",
+                    serde_json::json!({ "code": "provider_not_configured" }),
+                    None,
+                    None,
+                    Some("provider_not_configured"),
+                )
+                .await,
+            Some(true)
+        );
+        let terminal = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(terminal.event_type, "error");
+        assert_eq!(terminal.payload["code"], "provider_not_configured");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), receiver.recv(),)
+                .await
+                .is_err()
+        );
+        let history = crate::chat_history::get_thread_in(&history_root, chat_id)
+            .await
+            .unwrap();
+        assert_eq!(history.messages.len(), 1);
+        assert_eq!(
+            history.messages[0].role,
+            crate::chat_history::ChatMessageRole::Error
+        );
+        assert_eq!(
+            history.messages[0].status,
+            Some(crate::chat_history::ChatMessageStatus::Error)
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_user_finalize_failure_repairs_on_same_runtime_reload() {
+        use futures_util::StreamExt;
+
+        let dir = temp_dir();
+        let history_root = dir.join("chat-history");
+        let chat_id = "chat_pending_finalize_repair";
+        crate::demo_mode::set(&dir, true).await.unwrap();
+        crate::chat_history::inject_replace_failures(&history_root, 1);
+        let runtime = super::ChatRuntime::new();
+
+        runtime
+            .accept_user_message(dir.clone(), chat_id.into(), "hello".into(), None)
+            .await;
+
+        let history = crate::chat_history::get_thread(&dir, chat_id)
+            .await
+            .unwrap();
+        assert_eq!(history.messages.len(), 2);
+        assert_eq!(
+            history.messages[0].status,
+            Some(crate::chat_history::ChatMessageStatus::Complete)
+        );
+        assert_eq!(
+            history.messages[1].role,
+            crate::chat_history::ChatMessageRole::Error
+        );
+        assert!(!history.messages.iter().any(|message| {
+            message.status == Some(crate::chat_history::ChatMessageStatus::Streaming)
+        }));
+        let key = super::runtime_key("legacy", chat_id);
+        assert_eq!(runtime.inner.lock().await[&key].next_seq, 2);
+
+        let stream = runtime.subscribe(dir, chat_id.into()).await;
+        futures_util::pin_mut!(stream);
+        let snapshot = format!("{:?}", stream.next().await.unwrap().unwrap());
+        assert!(snapshot.contains("local storage failed"));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), stream.next(),)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            crate::chat_history::get_thread_in(&history_root, chat_id)
+                .await
+                .unwrap()
+                .messages
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
