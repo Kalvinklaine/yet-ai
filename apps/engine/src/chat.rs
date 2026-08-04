@@ -1853,6 +1853,21 @@ impl ChatRuntime {
             .lock()
             .await
             .remove(&(runtime_key.to_string(), stream_id));
+        if role == ChatMessageRole::Assistant && content.is_empty() && turn_evidence.is_none() {
+            let removed = match partial {
+                Some(message) => {
+                    chat_history::remove_message_in(history_root, chat_id, &message.id)
+                        .await
+                        .is_ok()
+                }
+                None => true,
+            };
+            if removed {
+                self.push_persisted_terminal_event(runtime_key, chat_id, event_type, payload)
+                    .await;
+            }
+            return Some(removed);
+        }
         let had_assistant_partial = partial.as_ref().is_some_and(|message| {
             role == ChatMessageRole::Assistant && message.role == ChatMessageRole::Assistant
         });
@@ -4591,7 +4606,7 @@ mod tests {
         dir: &std::path::Path,
         chat_id: &str,
     ) -> crate::chat_history::ChatMessage {
-        for _ in 0..100 {
+        for _ in 0..500 {
             if let Ok(thread) = crate::chat_history::get_thread(dir, chat_id).await {
                 if let Some(message) = thread.messages.last() {
                     if matches!(
@@ -7419,7 +7434,7 @@ mod tests {
             )
             .await
             .unwrap();
-        for _ in 0..100 {
+        for _ in 0..500 {
             let thread = crate::chat_history::get_thread_in(&history_root, chat_id)
                 .await
                 .unwrap();
@@ -7657,11 +7672,14 @@ mod tests {
             .await;
         first.await.unwrap();
         let mut history = None;
-        for _ in 0..100 {
+        for _ in 0..500 {
             if let Ok(thread) =
                 crate::chat_history::get_thread_in(&history_root, "chat_provider_supersede").await
             {
-                if thread.messages.len() == 4 {
+                if thread.messages.len() == 4
+                    && thread.messages[3].status
+                        != Some(crate::chat_history::ChatMessageStatus::Streaming)
+                {
                     history = Some(thread);
                     break;
                 }

@@ -3,9 +3,10 @@ use serde::Serialize;
 use crate::projects::ProjectContext;
 
 use super::db::{self, ContextDatabaseError};
-use super::schema::{PROTOCOL_VERSION, SCHEMA_VERSION};
+use super::schema::PROTOCOL_VERSION;
 
 const MAX_PUBLIC_COUNT: u64 = 10_000_000;
+const STATUS_SCHEMA_VERSION: i64 = 1;
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -125,7 +126,7 @@ pub async fn load_status(
     let has_build_metadata = state != ContextState::NotBuilt;
     Ok(ProjectContextStatus {
         protocol_version: PROTOCOL_VERSION,
-        schema_version: SCHEMA_VERSION,
+        schema_version: STATUS_SCHEMA_VERSION,
         project_id: context.project_id().to_string(),
         state,
         inventory_generation: row.1,
@@ -191,7 +192,7 @@ pub fn error_status(context: &ProjectContext, error: ContextStatusError) -> Proj
     };
     ProjectContextStatus {
         protocol_version: PROTOCOL_VERSION,
-        schema_version: SCHEMA_VERSION,
+        schema_version: STATUS_SCHEMA_VERSION,
         project_id: context.project_id().to_string(),
         state,
         inventory_generation: 0,

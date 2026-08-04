@@ -2776,7 +2776,7 @@ mod project_tests {
         let database =
             rusqlite::Connection::open(crate::project_context::db::database_path(&first_context))
                 .unwrap();
-        database.pragma_update(None, "user_version", 2).unwrap();
+        database.pragma_update(None, "user_version", 3).unwrap();
         drop(database);
         let migration_required = project_request(
             state.clone(),

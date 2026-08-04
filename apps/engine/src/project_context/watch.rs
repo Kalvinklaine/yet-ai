@@ -546,7 +546,9 @@ mod tests {
             "fn fresh_marker() {}\n",
         )
         .unwrap();
-        let generation = wait_generation(&context, 2).await;
+        wait_generation(&context, 2).await;
+        runtime.stop(context.project_id()).await;
+        let generation = load_status(&context).await.unwrap().inventory_generation;
         let matches = fts::query(&context, generation, "fresh_marker", 8)
             .await
             .unwrap();
@@ -555,7 +557,6 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
-        runtime.stop(context.project_id()).await;
     }
 
     #[tokio::test]
@@ -581,7 +582,9 @@ mod tests {
             .unwrap();
         }
         std::fs::write(context.canonical_root().join(".ignore"), "").unwrap();
-        let generation = wait_generation(&context, 2).await;
+        wait_generation(&context, 2).await;
+        runtime.stop(context.project_id()).await;
+        let generation = load_status(&context).await.unwrap().inventory_generation;
         assert_eq!(
             load_status(&context)
                 .await

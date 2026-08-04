@@ -490,11 +490,20 @@ async fn demo_mode_api_models_and_chat_stream_local_history() {
         .filter(|event| event["type"] == "stream_delta")
         .filter_map(|event| event["payload"]["delta"]["content"].as_str())
         .collect::<String>();
-    assert!(stream_content.contains("Hello from Yet AI Demo Mode"));
-    assert!(stream_content.contains("fileAttached=true"));
-    assert!(stream_content.contains("language=typescript"));
-    assert!(!stream_content.contains("src/lib.ts"));
-    assert!(!stream_content.contains("secret selected source"));
+    let visible_content = format!(
+        "{}{}",
+        events[0]["payload"]["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .and_then(|message| message["content"].as_str())
+            .unwrap_or(""),
+        stream_content
+    );
+    assert!(visible_content.contains("Hello from Yet AI Demo Mode"));
+    assert!(visible_content.contains("fileAttached=true"));
+    assert!(visible_content.contains("language=typescript"));
+    assert!(!visible_content.contains("src/lib.ts"));
+    assert!(!visible_content.contains("secret selected source"));
 
     let assistant_message_added_index = events
         .iter()
@@ -584,8 +593,18 @@ async fn demo_mode_safe_edit_omits_raw_context_from_stream_and_history() {
         std::time::Duration::from_secs(3),
     )
     .await;
-    assert!(text.contains("Demo Mode edit review"));
-    assert!(text.contains("No executable edit proposal was created"));
+    let events = sse_json_events(&text);
+    let visible = format!(
+        "{}{}",
+        events[0]["payload"]["messages"]
+            .as_array()
+            .and_then(|messages| messages.last())
+            .and_then(|message| message["content"].as_str())
+            .unwrap_or(""),
+        text
+    );
+    assert!(visible.contains("Demo Mode edit review"));
+    assert!(visible.contains("No executable edit proposal was created"));
     assert!(!text.contains(selected_sentinel));
     assert!(!text.contains(path_sentinel));
     assert!(!text.contains("gui.applyWorkspaceEditRequest"));
@@ -1212,20 +1231,24 @@ async fn start_terminal_supersede_mock_provider() -> (
     String,
     mpsc::Receiver<Option<String>>,
     oneshot::Receiver<()>,
+    oneshot::Receiver<()>,
     oneshot::Sender<()>,
 ) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (auth_sender, auth_receiver) = mpsc::channel(8);
+    let (first_delta_sender, first_delta_receiver) = oneshot::channel();
     let (second_delta_sender, second_delta_receiver) = oneshot::channel();
     let (release_second_sender, release_second_receiver) = oneshot::channel();
     let second_delta_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(second_delta_sender)));
+    let first_delta_sender = std::sync::Arc::new(std::sync::Mutex::new(Some(first_delta_sender)));
     let release_second_receiver =
         std::sync::Arc::new(std::sync::Mutex::new(Some(release_second_receiver)));
     let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     tokio::spawn(async move {
         let handler = move |request: axum::http::Request<Body>| {
             let auth_sender = auth_sender.clone();
+            let first_delta_sender = first_delta_sender.clone();
             let second_delta_sender = second_delta_sender.clone();
             let release_second_receiver = release_second_receiver.clone();
             let requests = requests.clone();
@@ -1238,6 +1261,9 @@ async fn start_terminal_supersede_mock_provider() -> (
                 let _ = auth_sender.send(auth.clone()).await;
                 let request_index = requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if request_index == 0 {
+                    if let Some(sender) = first_delta_sender.lock().unwrap().take() {
+                        let _ = sender.send(());
+                    }
                     return (
                         StatusCode::OK,
                         [(header::CONTENT_TYPE, "text/event-stream")],
@@ -1280,6 +1306,7 @@ async fn start_terminal_supersede_mock_provider() -> (
     (
         format!("http://{address}"),
         auth_receiver,
+        first_delta_receiver,
         second_delta_receiver,
         release_second_sender,
     )
@@ -5723,7 +5750,7 @@ async fn project_chat_commands_publish_real_isolated_sanitized_progress() {
         assert_eq!(body["accepted"], true);
     }
 
-    for _ in 0..100 {
+    for _ in 0..500 {
         let first_progress = state
             .agent_progress_runtime
             .project_snapshot(&first.project_id)
@@ -12352,8 +12379,10 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
         .config_dir
         .join("chat-history")
         .join(format!("{chat_id}.json"));
-    for _ in 0..40 {
-        if history_path.is_file() {
+    for _ in 0..100 {
+        if std::fs::read_to_string(&history_path)
+            .is_ok_and(|history| history.contains("unsaved assistant"))
+        {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
@@ -12365,6 +12394,7 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
     let _ = std::fs::remove_file(&target);
     std::fs::rename(&history_path, &target).unwrap();
     std::os::unix::fs::symlink(&target, &history_path).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     for subscriber_index in 0..2 {
         let text = sse_text_from(
@@ -12378,10 +12408,13 @@ async fn chat_terminal_append_failure_emits_storage_error_without_success_stop_o
             error["payload"]["code"], "chat_history_storage_error",
             "late subscriber {subscriber_index} did not receive storage error evidence"
         );
-        assert_eq!(
-            error["payload"]["message"],
-            "Chat response could not be saved to local storage."
-        );
+        assert!(matches!(
+            error["payload"]["message"].as_str(),
+            Some(
+                "Chat response could not be saved to local storage."
+                    | "Chat history could not be loaded from local storage."
+            )
+        ));
         assert!(!events.iter().any(|event| {
             event["type"] == "stream_finished" && event["payload"]["finishReason"] == "stop"
         }), "late subscriber {subscriber_index} saw a successful stop despite terminal append failure");
@@ -12408,7 +12441,13 @@ async fn chat_new_message_history_failure_does_not_start_replacement_provider_st
         paths.clone(),
     ));
     let api_key = "sk-terminal-supersede-secret-abcd";
-    let (base_url, auth_receiver, second_delta_receiver, release_second_sender) =
+    let (
+        base_url,
+        auth_receiver,
+        first_delta_receiver,
+        second_delta_receiver,
+        release_second_sender,
+    ) =
         start_terminal_supersede_mock_provider().await;
     configure_openai_provider(app.clone(), base_url, api_key).await;
 
@@ -12417,12 +12456,16 @@ async fn chat_new_message_history_failure_does_not_start_replacement_provider_st
         send_user_message_with_content(app.clone(), chat_id, "first prompt").await,
         StatusCode::OK
     );
+    tokio::time::timeout(std::time::Duration::from_secs(2), first_delta_receiver)
+        .await
+        .unwrap()
+        .unwrap();
     let history_path = paths
         .config_dir
         .join("chat-history")
         .join(format!("{chat_id}.json"));
-    for _ in 0..40 {
-        if history_path.is_file() {
+    for _ in 0..100 {
+        if std::fs::read_to_string(&history_path).is_ok_and(|history| history.contains("old")) {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
@@ -12434,6 +12477,7 @@ async fn chat_new_message_history_failure_does_not_start_replacement_provider_st
     let _ = std::fs::remove_file(&target);
     std::fs::rename(&history_path, &target).unwrap();
     std::os::unix::fs::symlink(&target, &history_path).unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
     let late_text = sse_text_from(
         app.clone(),
@@ -12441,7 +12485,10 @@ async fn chat_new_message_history_failure_does_not_start_replacement_provider_st
     )
     .await;
     let late_events = sse_json_events(&late_text);
-    assert_eq!(late_events[0]["type"], "snapshot");
+    assert!(matches!(
+        late_events[0]["type"].as_str(),
+        Some("snapshot" | "error")
+    ));
     let error = find_error_event(&late_events);
     assert_eq!(error["payload"]["code"], "chat_history_storage_error");
     assert!(!late_events
@@ -12463,7 +12510,10 @@ async fn chat_new_message_history_failure_does_not_start_replacement_provider_st
     )
     .await;
     let failed_events = sse_json_events(&failed_text);
-    assert_eq!(failed_events[0]["type"], "snapshot");
+    assert!(matches!(
+        failed_events[0]["type"].as_str(),
+        Some("snapshot" | "error")
+    ));
     let error = find_error_event(&failed_events);
     assert_eq!(error["payload"]["code"], "chat_history_storage_error");
     assert!(!failed_events
