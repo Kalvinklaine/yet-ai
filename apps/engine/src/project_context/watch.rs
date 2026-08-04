@@ -1,8 +1,10 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{oneshot, Mutex};
+use tokio::task::JoinHandle;
 
 use crate::projects::ProjectContext;
 
@@ -11,17 +13,26 @@ use super::{db, inventory};
 const EVENT_QUEUE: usize = 256;
 const DEBOUNCE: Duration = Duration::from_millis(300);
 const RECONCILE_INTERVAL: Duration = Duration::from_secs(30);
+const WORKER_STOP_TIMEOUT: Duration = Duration::from_secs(1);
+const RETRY_BASE_DELAY: Duration = Duration::from_millis(25);
+const MAX_RETRIES: u32 = 3;
 
 #[derive(Clone)]
 pub struct ProjectContextWatchRuntime {
     workers: Arc<Mutex<HashMap<String, WatchWorker>>>,
+    lifecycle: Arc<Mutex<()>>,
+    next_token: Arc<AtomicU64>,
     debounce: Duration,
     reconcile_interval: Duration,
+    #[cfg(test)]
+    hooks: Option<Arc<TestHooks>>,
 }
 
 struct WatchWorker {
     revision: String,
+    token: u64,
     stop: oneshot::Sender<()>,
+    handle: JoinHandle<()>,
 }
 
 impl std::fmt::Debug for ProjectContextWatchRuntime {
@@ -46,41 +57,96 @@ impl ProjectContextWatchRuntime {
     fn with_intervals(debounce: Duration, reconcile_interval: Duration) -> Self {
         Self {
             workers: Arc::new(Mutex::new(HashMap::new())),
+            lifecycle: Arc::new(Mutex::new(())),
+            next_token: Arc::new(AtomicU64::new(1)),
             debounce,
             reconcile_interval,
+            #[cfg(test)]
+            hooks: None,
         }
     }
 
     pub async fn ensure(&self, context: ProjectContext, generation: u64) {
-        let mut workers = self.workers.lock().await;
-        if workers
-            .get(context.project_id())
-            .is_some_and(|worker| worker.revision == context.revision())
+        let _lifecycle = self.lifecycle.lock().await;
         {
-            return;
+            let workers = self.workers.lock().await;
+            if workers
+                .get(context.project_id())
+                .is_some_and(|worker| worker.revision == context.revision())
+            {
+                return;
+            }
         }
-        if let Some(worker) = workers.remove(context.project_id()) {
-            let _ = worker.stop.send(());
+        if let Some(worker) = self.workers.lock().await.remove(context.project_id()) {
+            stop_worker(worker).await;
         }
         let (stop, stopped) = oneshot::channel();
-        workers.insert(
-            context.project_id().to_string(),
-            WatchWorker {
-                revision: context.revision().to_string(),
-                stop,
-            },
-        );
+        let (start, started) = oneshot::channel();
+        let token = self.next_token.fetch_add(1, Ordering::Relaxed);
+        let project_id = context.project_id().to_string();
+        let worker_project_id = project_id.clone();
+        let revision = context.revision().to_string();
         let debounce = self.debounce;
         let reconcile_interval = self.reconcile_interval;
-        tokio::spawn(async move {
-            run(context, generation, debounce, reconcile_interval, stopped).await;
+        let runtime = self.clone();
+        let handle = tokio::spawn(async move {
+            if started.await.is_ok() {
+                run(
+                    &runtime,
+                    token,
+                    context,
+                    generation,
+                    debounce,
+                    reconcile_interval,
+                    stopped,
+                )
+                .await;
+            }
+            runtime.unregister(&worker_project_id, token).await;
         });
+        self.workers.lock().await.insert(
+            project_id,
+            WatchWorker {
+                revision,
+                token,
+                stop,
+                handle,
+            },
+        );
+        let _ = start.send(());
     }
 
     pub async fn stop(&self, project_id: &str) {
+        let _lifecycle = self.lifecycle.lock().await;
         if let Some(worker) = self.workers.lock().await.remove(project_id) {
-            let _ = worker.stop.send(());
+            stop_worker(worker).await;
         }
+    }
+
+    async fn unregister(&self, project_id: &str, token: u64) {
+        let mut workers = self.workers.lock().await;
+        if workers
+            .get(project_id)
+            .is_some_and(|worker| worker.token == token)
+        {
+            workers.remove(project_id);
+        }
+    }
+
+    async fn rebuild(
+        &self,
+        token: u64,
+        context: &ProjectContext,
+        generation: u64,
+    ) -> Option<Result<inventory::RebuildResult, inventory::InventoryError>> {
+        let workers = self.workers.lock().await;
+        if !workers
+            .get(context.project_id())
+            .is_some_and(|worker| worker.token == token)
+        {
+            return None;
+        }
+        Some(inventory::rebuild(context, generation, context.revision()).await)
     }
 
     #[cfg(test)]
@@ -89,7 +155,20 @@ impl ProjectContextWatchRuntime {
     }
 }
 
+async fn stop_worker(mut worker: WatchWorker) {
+    let _ = worker.stop.send(());
+    if tokio::time::timeout(WORKER_STOP_TIMEOUT, &mut worker.handle)
+        .await
+        .is_err()
+    {
+        worker.handle.abort();
+        let _ = worker.handle.await;
+    }
+}
+
 async fn run(
+    runtime: &ProjectContextWatchRuntime,
+    token: u64,
     context: ProjectContext,
     mut generation: u64,
     debounce: Duration,
@@ -100,17 +179,22 @@ async fn run(
     let identity = match inventory::root_identity(&root) {
         Ok(value) => value,
         Err(_) => {
-            mark_stale(&context).await;
+            mark_stale(runtime, token, &context).await;
             return;
         }
     };
     let mut fingerprint = match inventory::fingerprint(&root).await {
         Ok(value) => value,
         Err(_) => {
-            mark_stale(&context).await;
+            mark_stale(runtime, token, &context).await;
             return;
         }
     };
+    #[cfg(test)]
+    if let Some(hooks) = &runtime.hooks {
+        hooks.started.notify_waiters();
+    }
+    let mut failures = 0;
     let mut hints = ChangeHints::default();
     let mut watch_poll = tokio::time::interval(debounce);
     watch_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -125,33 +209,82 @@ async fn run(
             _ = reconcile.tick() => { hints.overflowed = true; }
         }
         if inventory::root_identity(&root).ok().as_ref() != Some(&identity) {
-            mark_stale(&context).await;
+            #[cfg(test)]
+            if let Some(hooks) = &runtime.hooks {
+                hooks.before_stale.notify_waiters();
+                let _ = hooks.release_stale.acquire().await;
+            }
+            mark_stale(runtime, token, &context).await;
             return;
         }
         let next = match inventory::fingerprint(&root).await {
             Ok(value) => value,
+            Err(inventory::InventoryError::ResourceLimit) => {
+                mark_stale(runtime, token, &context).await;
+                return;
+            }
+            Err(_) if failures < MAX_RETRIES => {
+                failures += 1;
+                if wait_or_stop(&mut stopped, retry_delay(failures)).await {
+                    return;
+                }
+                hints.overflowed = true;
+                continue;
+            }
             Err(_) => {
-                mark_stale(&context).await;
+                mark_stale(runtime, token, &context).await;
                 return;
             }
         };
         let forced = hints.take();
         if !forced && next == fingerprint {
+            failures = 0;
             continue;
         }
-        set_pending(&context, 1).await;
-        match inventory::rebuild(&context, generation, context.revision()).await {
+        if !set_pending(runtime, token, &context, 1).await {
+            return;
+        }
+        let Some(rebuild) = runtime.rebuild(token, &context, generation).await else {
+            return;
+        };
+        match rebuild {
             Ok(result) => {
                 generation = result.generation;
                 fingerprint = next;
+                failures = 0;
             }
             Err(inventory::InventoryError::Conflict) => {
                 if let Ok(status) = super::status::load_status(&context).await {
                     generation = status.inventory_generation;
                 }
+                if wait_or_stop(&mut stopped, retry_delay(1)).await {
+                    return;
+                }
+                hints.overflowed = true;
             }
-            Err(_) => mark_stale(&context).await,
+            Err(inventory::InventoryError::Unavailable) if failures < MAX_RETRIES => {
+                failures += 1;
+                if wait_or_stop(&mut stopped, retry_delay(failures)).await {
+                    return;
+                }
+                hints.overflowed = true;
+            }
+            Err(_) => {
+                mark_stale(runtime, token, &context).await;
+                return;
+            }
         }
+    }
+}
+
+fn retry_delay(attempt: u32) -> Duration {
+    RETRY_BASE_DELAY.saturating_mul(1 << attempt.saturating_sub(1).min(3))
+}
+
+async fn wait_or_stop(stopped: &mut oneshot::Receiver<()>, duration: Duration) -> bool {
+    tokio::select! {
+        _ = stopped => true,
+        _ = tokio::time::sleep(duration) => false,
     }
 }
 
@@ -178,16 +311,36 @@ impl ChangeHints {
     }
 }
 
-async fn set_pending(context: &ProjectContext, pending: u64) {
+async fn set_pending(
+    runtime: &ProjectContextWatchRuntime,
+    token: u64,
+    context: &ProjectContext,
+    pending: u64,
+) -> bool {
+    let workers = runtime.workers.lock().await;
+    if !workers
+        .get(context.project_id())
+        .is_some_and(|worker| worker.token == token)
+    {
+        return false;
+    }
     if let Ok(database) = db::open(context).await {
         let _ = database.connection.execute(
             "UPDATE context_metadata SET pending_changes = ?1 WHERE singleton = 1",
             [pending],
         );
     }
+    true
 }
 
-async fn mark_stale(context: &ProjectContext) {
+async fn mark_stale(runtime: &ProjectContextWatchRuntime, token: u64, context: &ProjectContext) {
+    let workers = runtime.workers.lock().await;
+    if !workers
+        .get(context.project_id())
+        .is_some_and(|worker| worker.token == token)
+    {
+        return;
+    }
     if let Ok(database) = db::open(context).await {
         let _ = database.connection.execute(
             "UPDATE context_metadata SET build_state = 'stale', pending_changes = CASE WHEN pending_changes < 1 THEN 1 ELSE pending_changes END WHERE singleton = 1",
@@ -197,14 +350,38 @@ async fn mark_stale(context: &ProjectContext) {
 }
 
 #[cfg(test)]
+struct TestHooks {
+    started: tokio::sync::Notify,
+    before_stale: tokio::sync::Notify,
+    release_stale: tokio::sync::Semaphore,
+}
+
+#[cfg(test)]
+impl Default for TestHooks {
+    fn default() -> Self {
+        Self {
+            started: tokio::sync::Notify::new(),
+            before_stale: tokio::sync::Notify::new(),
+            release_stale: tokio::sync::Semaphore::new(0),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::identity::ProductIdentity;
+    use crate::project_context::status::ContextState;
     use crate::project_context::{fts, load_status, rebuild};
     use crate::projects::ProjectRegistryRuntime;
-    use crate::storage::resolve_storage_paths;
+    use crate::storage::{resolve_storage_paths, StoragePaths};
 
-    async fn fixture() -> (tempfile::TempDir, ProjectRegistryRuntime, ProjectContext) {
+    async fn fixture() -> (
+        tempfile::TempDir,
+        ProjectRegistryRuntime,
+        StoragePaths,
+        ProjectContext,
+    ) {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("root");
         std::fs::create_dir(&root).unwrap();
@@ -220,7 +397,7 @@ mod tests {
             .resolve_context(&paths, &project.project_id)
             .await
             .unwrap();
-        (temp, registry, context)
+        (temp, registry, paths, context)
     }
 
     async fn wait_generation(context: &ProjectContext, minimum: u64) -> u64 {
@@ -234,9 +411,19 @@ mod tests {
         panic!("generation did not advance")
     }
 
+    async fn wait_inactive(runtime: &ProjectContextWatchRuntime, project_id: &str) {
+        for _ in 0..100 {
+            if !runtime.active(project_id).await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("worker remained registered")
+    }
+
     #[tokio::test]
     async fn project_context_watch_reindexes_changed_deleted_and_renamed_files() {
-        let (_temp, _registry, context) = fixture().await;
+        let (_temp, _registry, _paths, context) = fixture().await;
         std::fs::write(
             context.canonical_root().join("old.rs"),
             "fn old_marker() {}\n",
@@ -272,7 +459,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_context_watch_reconciles_ignore_changes_and_bursts() {
-        let (_temp, _registry, context) = fixture().await;
+        let (_temp, _registry, _paths, context) = fixture().await;
         std::fs::write(context.canonical_root().join(".ignore"), "later.txt\n").unwrap();
         std::fs::write(
             context.canonical_root().join("later.txt"),
@@ -311,7 +498,7 @@ mod tests {
 
     #[tokio::test]
     async fn project_context_watch_stop_and_rebind_cleanup_are_explicit() {
-        let (temp, registry, context) = fixture().await;
+        let (temp, registry, _paths, context) = fixture().await;
         std::fs::write(context.canonical_root().join("main.txt"), "one").unwrap();
         let first = rebuild(&context, 0, context.revision()).await.unwrap();
         let runtime = ProjectContextWatchRuntime::with_intervals(
@@ -331,6 +518,69 @@ mod tests {
         std::fs::write(context.canonical_root().join("main.txt"), "two").unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert_eq!(load_status(&context).await.unwrap().inventory_generation, 1);
+    }
+
+    #[tokio::test]
+    async fn project_context_watch_rebind_waits_for_blocked_old_worker_before_replacement_writes() {
+        let (temp, registry, paths, context) = fixture().await;
+        std::fs::write(context.canonical_root().join("main.txt"), "old").unwrap();
+        let first = rebuild(&context, 0, context.revision()).await.unwrap();
+        let hooks = Arc::new(TestHooks::default());
+        let mut runtime = ProjectContextWatchRuntime::with_intervals(
+            Duration::from_millis(10),
+            Duration::from_millis(20),
+        );
+        runtime.hooks = Some(hooks.clone());
+        let started = hooks.started.notified();
+        runtime.ensure(context.clone(), first.generation).await;
+        started.await;
+
+        let old_root = temp.path().join("old-root");
+        let before_stale = hooks.before_stale.notified();
+        std::fs::rename(context.canonical_root(), &old_root).unwrap();
+        before_stale.await;
+
+        let rebound_root = temp.path().join("rebound");
+        std::fs::create_dir(&rebound_root).unwrap();
+        std::fs::write(rebound_root.join("main.txt"), "new").unwrap();
+        let summary = registry
+            .rebind(context.project_id(), context.revision(), &rebound_root)
+            .await
+            .unwrap();
+        let rebound = registry
+            .resolve_context(&paths, &summary.project_id)
+            .await
+            .unwrap();
+        runtime.ensure(rebound.clone(), first.generation).await;
+
+        wait_generation(&rebound, 2).await;
+        assert_eq!(
+            load_status(&rebound).await.unwrap().state,
+            ContextState::Ready
+        );
+        runtime.stop(rebound.project_id()).await;
+    }
+
+    #[tokio::test]
+    async fn project_context_watch_same_revision_restarts_after_worker_self_exit() {
+        let (temp, _registry, _paths, context) = fixture().await;
+        std::fs::write(context.canonical_root().join("main.txt"), "one").unwrap();
+        let first = rebuild(&context, 0, context.revision()).await.unwrap();
+        let missing_root = temp.path().join("missing-root");
+        std::fs::rename(context.canonical_root(), &missing_root).unwrap();
+        let runtime = ProjectContextWatchRuntime::with_intervals(
+            Duration::from_millis(10),
+            Duration::from_millis(20),
+        );
+        runtime.ensure(context.clone(), first.generation).await;
+        wait_inactive(&runtime, context.project_id()).await;
+
+        std::fs::rename(&missing_root, context.canonical_root()).unwrap();
+        runtime.ensure(context.clone(), first.generation).await;
+        assert!(runtime.active(context.project_id()).await);
+        std::fs::write(context.canonical_root().join("main.txt"), "two").unwrap();
+        wait_generation(&context, 2).await;
+        runtime.stop(context.project_id()).await;
     }
 
     #[test]
