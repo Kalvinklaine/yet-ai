@@ -26,12 +26,14 @@ const LAYOUT_THRESHOLDS = Object.freeze({
   }),
 });
 const LAYOUT_CONTRACT = Object.freeze({ version: LAYOUT_CONTRACT_VERSION, thresholds: LAYOUT_THRESHOLDS });
+const DRAWER_SUMMARY_VISIBLE_AREA = Object.freeze({ minWidth: 96, minHeight: 24, minCoverage: 0.5 });
 let guiServer;
 let runtimeServer;
 let browser;
 let chatCommandCount = 0;
 const subscribers = new Map();
 
+verifyDrawerSummaryVisibleAreaContract();
 await requireBuiltGui();
 const { chromium } = await requireChromium();
 
@@ -244,7 +246,7 @@ async function clickComposerDrawerSummary(page, drawer, summary, testId, viewpor
 }
 
 async function findTopmostVisiblePoint(locator) {
-  return locator.evaluate((element) => {
+  const sampled = await locator.evaluate((element) => {
     if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
     const rect = element.getBoundingClientRect();
     const style = window.getComputedStyle(element);
@@ -290,17 +292,56 @@ async function findTopmostVisiblePoint(locator) {
     const safe = candidates.find((candidate) => candidate.hit);
     const visibleStyle = style.visibility !== "hidden" && style.display !== "none" && style.pointerEvents !== "none";
     return {
-      ok: Boolean(safe && width > 0 && height > 0 && visibleStyle),
-      reason: safe ? undefined : "no sampled point hit the summary or its descendant",
       position: safe ? { x: safe.x - rect.left, y: safe.y - rect.top } : null,
       rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
       visible,
+      visibleStyle,
       visibility: style.visibility,
       display: style.display,
       pointerEvents: style.pointerEvents,
       candidates,
     };
   }).catch((error) => ({ ok: false, reason: error instanceof Error ? error.message : String(error), position: null }));
+  if (!sampled.rect || !sampled.visible) return sampled;
+  const visibleArea = assessDrawerSummaryVisibleArea(sampled.rect, sampled.visible);
+  const ok = Boolean(sampled.position && sampled.visibleStyle && visibleArea.ok);
+  return {
+    ...sampled,
+    ok,
+    reason: !visibleArea.ok
+      ? "visible summary area is too small"
+      : sampled.position
+        ? undefined
+        : "no sampled point hit the summary or its descendant",
+    visibleArea,
+  };
+}
+
+function assessDrawerSummaryVisibleArea(rect, visible) {
+  const visibleWidth = Math.max(0, visible.right - visible.left);
+  const visibleHeight = Math.max(0, visible.bottom - visible.top);
+  const fullArea = Math.max(0, rect.width) * Math.max(0, rect.height);
+  const visibleArea = visibleWidth * visibleHeight;
+  const coverage = fullArea > 0 ? Math.min(1, visibleArea / fullArea) : 0;
+  return {
+    ok: visibleWidth >= DRAWER_SUMMARY_VISIBLE_AREA.minWidth
+      && visibleHeight >= DRAWER_SUMMARY_VISIBLE_AREA.minHeight
+      && coverage >= DRAWER_SUMMARY_VISIBLE_AREA.minCoverage,
+    visibleWidth,
+    visibleHeight,
+    coverage,
+    thresholds: DRAWER_SUMMARY_VISIBLE_AREA,
+  };
+}
+
+function verifyDrawerSummaryVisibleAreaContract() {
+  const rect = { width: 240, height: 40 };
+  const fullyVisible = assessDrawerSummaryVisibleArea(rect, { left: 0, top: 0, right: 240, bottom: 40 });
+  const meaningfullyClipped = assessDrawerSummaryVisibleArea(rect, { left: 24, top: 8, right: 216, bottom: 36 });
+  const tinyStrip = assessDrawerSummaryVisibleArea(rect, { left: 0, top: 38, right: 240, bottom: 40 });
+  if (!fullyVisible.ok || !meaningfullyClipped.ok || tinyStrip.ok) {
+    throw new Error(`Plugin layout drawer-summary visible-area self-check failed: ${JSON.stringify({ fullyVisible, meaningfullyClipped, tinyStrip })}`);
+  }
 }
 
 async function drawerStateSnapshot(drawer) {

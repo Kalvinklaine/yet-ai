@@ -1658,6 +1658,7 @@ pre,
 .host-jetbrains .composer-tools {
   flex: 0 1 auto;
   height: auto;
+  min-block-size: 48px;
   max-height: 86px !important;
   gap: 6px;
 }
