@@ -27,7 +27,7 @@ const GENERATED_DIRS: &[&str] = &[
     ".gradle",
     ".idea",
     ".next",
-    ".refact",
+    ".yet-ai",
     ".svn",
     ".vscode",
     "build",
@@ -94,4 +94,21 @@ pub fn is_binary(sample: &[u8]) -> bool {
                 .count()
                 * 10
                 > sample.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_context_policy_excludes_private_agent_state() {
+        assert_eq!(path_denial(Path::new(".yet-ai"), true), Some("generated"));
+    }
+
+    #[test]
+    fn project_context_policy_allows_safe_hidden_project_paths() {
+        for (path, is_dir) in [(".cargo", true), (".github", true), (".nvmrc", false)] {
+            assert_eq!(path_denial(Path::new(path), is_dir), None);
+        }
+    }
 }

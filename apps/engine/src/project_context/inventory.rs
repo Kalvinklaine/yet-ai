@@ -465,11 +465,13 @@ mod tests {
         std::fs::create_dir(root.join("src")).unwrap();
         std::fs::create_dir_all(root.join(".github/workflows")).unwrap();
         std::fs::create_dir(root.join(".cargo")).unwrap();
+        std::fs::create_dir_all(root.join(".yet-ai/tasks")).unwrap();
         std::fs::create_dir_all(root.join(".git/info")).unwrap();
         std::fs::write(root.join("src/main.rs"), "fn main() {}\n").unwrap();
         std::fs::write(root.join(".github/workflows/check.yml"), "name: check\n").unwrap();
         std::fs::write(root.join(".cargo/config.toml"), "[build]\n").unwrap();
         std::fs::write(root.join(".nvmrc"), "22\n").unwrap();
+        std::fs::write(root.join(".yet-ai/tasks/current.json"), "private-task-metadata").unwrap();
         std::fs::write(root.join(".env"), "TOKEN=ultra-private-value\n").unwrap();
         std::fs::write(root.join("exclude-proof.txt"), "kept").unwrap();
         std::fs::write(root.join(".git/info/exclude"), "exclude-proof.txt\n").unwrap();
@@ -507,6 +509,7 @@ mod tests {
         }
         assert!(!first_rows.iter().any(|row| row.0 == "ignored.txt"));
         assert!(!first_rows.iter().any(|row| row.0.starts_with(".git/")));
+        assert!(!first_rows.iter().any(|row| row.0.starts_with(".yet-ai/")));
         assert!(!first_rows.iter().any(|row| row.0 == "target/generated.rs"));
         assert!(first_rows
             .iter()
@@ -528,6 +531,9 @@ mod tests {
         assert!(!database_bytes
             .windows(19)
             .any(|value| value == b"ultra-private-value"));
+        assert!(!database_bytes
+            .windows(21)
+            .any(|value| value == b"private-task-metadata"));
 
         let second = rebuild(&context, first.generation, context.revision())
             .await
