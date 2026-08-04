@@ -124,6 +124,7 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
 
   const metrics = await collectLayoutMetrics(page, { width, height, name, host });
   assertLayoutMetrics(metrics, name, height, host);
+  await exerciseComposerDrawerIfPresent(page, "task-agent-tools-drawer", name);
 
   return saveEvidence(page, name, metrics);
 }
@@ -187,10 +188,7 @@ async function openComposerDrawer(page, testId, viewportName) {
   if (!summaryVisible) await failViewport(page, viewportName, `${testId} drawer summary did not become visible`, await drawerStateSnapshot(drawer));
   const open = await drawer.evaluate((element) => element instanceof HTMLDetailsElement && element.open).catch(() => false);
   if (!open) {
-    await summary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
-    await summary.click({ timeout: 5000 }).catch(async (error) => {
-      await failViewport(page, viewportName, `${testId} drawer summary click failed: ${error instanceof Error ? error.message : String(error)}`, await drawerStateSnapshot(drawer));
-    });
+    await clickComposerDrawerSummary(page, drawer, summary, testId, viewportName, "open");
   }
   const body = drawer.locator(":scope > .composer-drawer-body").first();
   const bodyVisible = await body.waitFor({ state: "visible", timeout: 10_000 }).then(() => true).catch(() => false);
@@ -217,12 +215,92 @@ async function closeComposerDrawer(page, testId, viewportName) {
   const summary = drawer.locator(":scope > summary").first();
   const summaryVisible = await summary.waitFor({ state: "visible", timeout: 5000 }).then(() => true).catch(() => false);
   if (!summaryVisible) await failViewport(page, viewportName, `${testId} drawer summary did not become visible for close`, await drawerStateSnapshot(drawer));
-  await summary.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
-  await summary.click({ timeout: 5000 }).catch(async (error) => {
-    await failViewport(page, viewportName, `${testId} drawer summary close click failed: ${error instanceof Error ? error.message : String(error)}`, await drawerStateSnapshot(drawer));
-  });
+  await clickComposerDrawerSummary(page, drawer, summary, testId, viewportName, "close");
   const closed = await drawer.evaluate((element) => element instanceof HTMLDetailsElement && !element.open).catch(() => false);
   if (!closed) await failViewport(page, viewportName, `${testId} drawer did not close after summary click`, await drawerStateSnapshot(drawer));
+}
+
+async function exerciseComposerDrawerIfPresent(page, testId, viewportName) {
+  if (await page.locator(`[data-testid='${testId}']`).count() === 0) return;
+  await openComposerDrawer(page, testId, viewportName);
+  await closeComposerDrawer(page, testId, viewportName);
+}
+
+async function clickComposerDrawerSummary(page, drawer, summary, testId, viewportName, action) {
+  await summary.scrollIntoViewIfNeeded({ timeout: 5000 });
+  const safePoint = await findTopmostVisiblePoint(summary);
+  if (!safePoint.ok || !safePoint.position) {
+    await failViewport(page, viewportName, `${testId} drawer summary has no topmost visible point for ${action}`, {
+      safePoint,
+      drawer: await drawerStateSnapshot(drawer),
+    });
+  }
+  await summary.click({ position: safePoint.position, timeout: 5000 }).catch(async (error) => {
+    await failViewport(page, viewportName, `${testId} drawer summary ${action} click failed: ${error instanceof Error ? error.message : String(error)}`, {
+      safePoint,
+      drawer: await drawerStateSnapshot(drawer),
+    });
+  });
+}
+
+async function findTopmostVisiblePoint(locator) {
+  return locator.evaluate((element) => {
+    if (!(element instanceof HTMLElement)) return { ok: false, reason: "not an HTMLElement" };
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    let visible = {
+      left: Math.max(0, rect.left),
+      top: Math.max(0, rect.top),
+      right: Math.min(window.innerWidth, rect.right),
+      bottom: Math.min(window.innerHeight, rect.bottom),
+    };
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      const ancestorStyle = window.getComputedStyle(ancestor);
+      const clipsX = ancestorStyle.overflowX !== "visible";
+      const clipsY = ancestorStyle.overflowY !== "visible";
+      if (!clipsX && !clipsY) continue;
+      const ancestorRect = ancestor.getBoundingClientRect();
+      if (clipsX) {
+        visible.left = Math.max(visible.left, ancestorRect.left);
+        visible.right = Math.min(visible.right, ancestorRect.right);
+      }
+      if (clipsY) {
+        visible.top = Math.max(visible.top, ancestorRect.top);
+        visible.bottom = Math.min(visible.bottom, ancestorRect.bottom);
+      }
+    }
+    const width = visible.right - visible.left;
+    const height = visible.bottom - visible.top;
+    const inset = Math.min(4, Math.max(0, width / 4), Math.max(0, height / 4));
+    const xs = [visible.left + inset, visible.left + width / 2, visible.right - inset];
+    const ys = [visible.top + inset, visible.top + height / 2, visible.bottom - inset];
+    const candidates = [];
+    for (const y of ys) {
+      for (const x of xs) {
+        const top = document.elementFromPoint(x, y);
+        candidates.push({
+          x,
+          y,
+          hit: top === element || element.contains(top),
+          topTag: top?.tagName,
+          topText: top?.textContent?.trim().slice(0, 80),
+        });
+      }
+    }
+    const safe = candidates.find((candidate) => candidate.hit);
+    const visibleStyle = style.visibility !== "hidden" && style.display !== "none" && style.pointerEvents !== "none";
+    return {
+      ok: Boolean(safe && width > 0 && height > 0 && visibleStyle),
+      reason: safe ? undefined : "no sampled point hit the summary or its descendant",
+      position: safe ? { x: safe.x - rect.left, y: safe.y - rect.top } : null,
+      rect: { top: rect.top, left: rect.left, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
+      visible,
+      visibility: style.visibility,
+      display: style.display,
+      pointerEvents: style.pointerEvents,
+      candidates,
+    };
+  }).catch((error) => ({ ok: false, reason: error instanceof Error ? error.message : String(error), position: null }));
 }
 
 async function drawerStateSnapshot(drawer) {
