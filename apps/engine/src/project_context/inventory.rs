@@ -58,6 +58,15 @@ pub async fn rebuild(
     expected_generation: u64,
     expected_revision: &str,
 ) -> Result<RebuildResult, InventoryError> {
+    rebuild_guarded(context, expected_generation, expected_revision, None).await
+}
+
+pub(super) async fn rebuild_guarded(
+    context: &ProjectContext,
+    expected_generation: u64,
+    expected_revision: &str,
+    commit_guard: Option<&db::CommitGuard>,
+) -> Result<RebuildResult, InventoryError> {
     if expected_revision != context.revision() {
         return Err(InventoryError::Conflict);
     }
@@ -66,7 +75,13 @@ pub async fn rebuild(
     let entries = tokio::task::spawn_blocking(move || collect(&root))
         .await
         .map_err(|_| InventoryError::Unavailable)??;
-    rebuild_sync(context, expected_generation, identity, entries)
+    rebuild_sync(
+        context,
+        expected_generation,
+        identity,
+        entries,
+        commit_guard,
+    )
 }
 
 fn rebuild_sync(
@@ -74,6 +89,7 @@ fn rebuild_sync(
     expected_generation: u64,
     expected_root_identity: RootIdentity,
     entries: Vec<Entry>,
+    commit_guard: Option<&db::CommitGuard>,
 ) -> Result<RebuildResult, InventoryError> {
     let root = canonical_root(context.canonical_root())?;
     let mut database = db::open_sync_for_rebuild(context).map_err(InventoryError::from)?;
@@ -137,9 +153,13 @@ fn rebuild_sync(
             (generation, &profile.profile_id, now, eligible, omitted, chunks, symbols.len() as u64, current),
         )
         .map_err(|_| InventoryError::Unavailable)?;
-    transaction
-        .commit()
-        .map_err(|_| InventoryError::Unavailable)?;
+    match commit_guard {
+        Some(guard) => guard
+            .run(|| transaction.commit())
+            .ok_or(InventoryError::Conflict)?,
+        None => transaction.commit(),
+    }
+    .map_err(|_| InventoryError::Unavailable)?;
     Ok(RebuildResult {
         generation,
         eligible_files: eligible,

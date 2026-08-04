@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use fs2::FileExt;
@@ -35,6 +36,24 @@ pub enum ContextDatabaseError {
 
 pub(crate) struct ContextDatabase {
     pub connection: Connection,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CommitGuard(Arc<Mutex<bool>>);
+
+impl CommitGuard {
+    pub(crate) fn new() -> Self {
+        Self(Arc::new(Mutex::new(true)))
+    }
+
+    pub(crate) fn invalidate(&self) {
+        *self.0.lock().expect("commit guard poisoned") = false;
+    }
+
+    pub(crate) fn run<T>(&self, commit: impl FnOnce() -> T) -> Option<T> {
+        let current = self.0.lock().expect("commit guard poisoned");
+        (*current).then(commit)
+    }
 }
 
 impl std::fmt::Debug for ContextDatabase {

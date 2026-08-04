@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -31,6 +33,7 @@ pub struct ProjectContextWatchRuntime {
 struct WatchWorker {
     revision: String,
     token: u64,
+    commit_guard: db::CommitGuard,
     stop: oneshot::Sender<()>,
     handle: JoinHandle<()>,
 }
@@ -77,23 +80,26 @@ impl ProjectContextWatchRuntime {
                 return;
             }
         }
-        if let Some(worker) = self.workers.lock().await.remove(context.project_id()) {
+        if let Some(worker) = self.remove(context.project_id()).await {
             stop_worker(worker).await;
         }
         let (stop, stopped) = oneshot::channel();
         let (start, started) = oneshot::channel();
         let token = self.next_token.fetch_add(1, Ordering::Relaxed);
+        let commit_guard = db::CommitGuard::new();
         let project_id = context.project_id().to_string();
         let worker_project_id = project_id.clone();
         let revision = context.revision().to_string();
         let debounce = self.debounce;
         let reconcile_interval = self.reconcile_interval;
         let runtime = self.clone();
+        let worker_commit_guard = commit_guard.clone();
         let handle = tokio::spawn(async move {
             if started.await.is_ok() {
                 run(
                     &runtime,
                     token,
+                    worker_commit_guard,
                     context,
                     generation,
                     debounce,
@@ -109,6 +115,7 @@ impl ProjectContextWatchRuntime {
             WatchWorker {
                 revision,
                 token,
+                commit_guard,
                 stop,
                 handle,
             },
@@ -118,9 +125,21 @@ impl ProjectContextWatchRuntime {
 
     pub async fn stop(&self, project_id: &str) {
         let _lifecycle = self.lifecycle.lock().await;
-        if let Some(worker) = self.workers.lock().await.remove(project_id) {
+        if let Some(worker) = self.remove(project_id).await {
             stop_worker(worker).await;
         }
+    }
+
+    async fn remove(&self, project_id: &str) -> Option<WatchWorker> {
+        let worker = self.workers.lock().await.remove(project_id);
+        if let Some(worker) = &worker {
+            worker.commit_guard.invalidate();
+            #[cfg(test)]
+            if let Some(hooks) = &self.hooks {
+                hooks.invalidated.notify_waiters();
+            }
+        }
+        worker
     }
 
     async fn unregister(&self, project_id: &str, token: u64) {
@@ -136,22 +155,44 @@ impl ProjectContextWatchRuntime {
     async fn rebuild(
         &self,
         token: u64,
+        commit_guard: &db::CommitGuard,
         context: &ProjectContext,
         generation: u64,
     ) -> Option<Result<inventory::RebuildResult, inventory::InventoryError>> {
-        let workers = self.workers.lock().await;
-        if !workers
-            .get(context.project_id())
-            .is_some_and(|worker| worker.token == token)
-        {
+        if !self.current(context.project_id(), token).await {
             return None;
         }
-        Some(inventory::rebuild(context, generation, context.revision()).await)
+        #[cfg(test)]
+        if let Some(hooks) = &self.hooks {
+            if hooks.block_ready.load(Ordering::SeqCst) {
+                hooks.before_ready.notify_waiters();
+                let _ = hooks.release_ready.acquire().await;
+            }
+        }
+        Some(
+            inventory::rebuild_guarded(context, generation, context.revision(), Some(commit_guard))
+                .await,
+        )
+    }
+
+    async fn current(&self, project_id: &str, token: u64) -> bool {
+        self.workers
+            .lock()
+            .await
+            .get(project_id)
+            .is_some_and(|worker| worker.token == token)
     }
 
     #[cfg(test)]
     async fn active(&self, project_id: &str) -> bool {
         self.workers.lock().await.contains_key(project_id)
+    }
+
+    #[cfg(test)]
+    async fn worker_identity(&self, project_id: &str) -> (u64, db::CommitGuard) {
+        let workers = self.workers.lock().await;
+        let worker = workers.get(project_id).unwrap();
+        (worker.token, worker.commit_guard.clone())
     }
 }
 
@@ -169,6 +210,7 @@ async fn stop_worker(mut worker: WatchWorker) {
 async fn run(
     runtime: &ProjectContextWatchRuntime,
     token: u64,
+    commit_guard: db::CommitGuard,
     context: ProjectContext,
     mut generation: u64,
     debounce: Duration,
@@ -244,7 +286,10 @@ async fn run(
         if !set_pending(runtime, token, &context, 1).await {
             return;
         }
-        let Some(rebuild) = runtime.rebuild(token, &context, generation).await else {
+        let Some(rebuild) = runtime
+            .rebuild(token, &commit_guard, &context, generation)
+            .await
+        else {
             return;
         };
         match rebuild {
@@ -317,35 +362,59 @@ async fn set_pending(
     context: &ProjectContext,
     pending: u64,
 ) -> bool {
-    let workers = runtime.workers.lock().await;
-    if !workers
+    let Some(commit_guard) = runtime
+        .workers
+        .lock()
+        .await
         .get(context.project_id())
-        .is_some_and(|worker| worker.token == token)
-    {
+        .filter(|worker| worker.token == token)
+        .map(|worker| worker.commit_guard.clone())
+    else {
         return false;
-    }
+    };
     if let Ok(database) = db::open(context).await {
-        let _ = database.connection.execute(
-            "UPDATE context_metadata SET pending_changes = ?1 WHERE singleton = 1",
-            [pending],
-        );
+        #[cfg(test)]
+        if let Some(hooks) = &runtime.hooks {
+            if hooks.block_pending.load(Ordering::SeqCst) {
+                hooks.before_pending.notify_waiters();
+                let _ = hooks.release_pending.acquire().await;
+            }
+        }
+        let _ = commit_guard.run(|| {
+            database.connection.execute(
+                "UPDATE context_metadata SET pending_changes = ?1 WHERE singleton = 1",
+                [pending],
+            )
+        });
     }
-    true
+    commit_guard.run(|| ()).is_some()
 }
 
 async fn mark_stale(runtime: &ProjectContextWatchRuntime, token: u64, context: &ProjectContext) {
-    let workers = runtime.workers.lock().await;
-    if !workers
+    let Some(commit_guard) = runtime
+        .workers
+        .lock()
+        .await
         .get(context.project_id())
-        .is_some_and(|worker| worker.token == token)
-    {
+        .filter(|worker| worker.token == token)
+        .map(|worker| worker.commit_guard.clone())
+    else {
         return;
-    }
+    };
     if let Ok(database) = db::open(context).await {
-        let _ = database.connection.execute(
-            "UPDATE context_metadata SET build_state = 'stale', pending_changes = CASE WHEN pending_changes < 1 THEN 1 ELSE pending_changes END WHERE singleton = 1",
-            [],
-        );
+        #[cfg(test)]
+        if let Some(hooks) = &runtime.hooks {
+            if hooks.block_stale_commit.load(Ordering::SeqCst) {
+                hooks.before_stale_commit.notify_waiters();
+                let _ = hooks.release_stale_commit.acquire().await;
+            }
+        }
+        let _ = commit_guard.run(|| {
+            database.connection.execute(
+                "UPDATE context_metadata SET build_state = 'stale', pending_changes = CASE WHEN pending_changes < 1 THEN 1 ELSE pending_changes END WHERE singleton = 1",
+                [],
+            )
+        });
     }
 }
 
@@ -354,6 +423,16 @@ struct TestHooks {
     started: tokio::sync::Notify,
     before_stale: tokio::sync::Notify,
     release_stale: tokio::sync::Semaphore,
+    invalidated: tokio::sync::Notify,
+    before_pending: tokio::sync::Notify,
+    release_pending: tokio::sync::Semaphore,
+    block_pending: AtomicBool,
+    before_ready: tokio::sync::Notify,
+    release_ready: tokio::sync::Semaphore,
+    block_ready: AtomicBool,
+    before_stale_commit: tokio::sync::Notify,
+    release_stale_commit: tokio::sync::Semaphore,
+    block_stale_commit: AtomicBool,
 }
 
 #[cfg(test)]
@@ -363,6 +442,16 @@ impl Default for TestHooks {
             started: tokio::sync::Notify::new(),
             before_stale: tokio::sync::Notify::new(),
             release_stale: tokio::sync::Semaphore::new(0),
+            invalidated: tokio::sync::Notify::new(),
+            before_pending: tokio::sync::Notify::new(),
+            release_pending: tokio::sync::Semaphore::new(0),
+            block_pending: AtomicBool::new(false),
+            before_ready: tokio::sync::Notify::new(),
+            release_ready: tokio::sync::Semaphore::new(0),
+            block_ready: AtomicBool::new(false),
+            before_stale_commit: tokio::sync::Notify::new(),
+            release_stale_commit: tokio::sync::Semaphore::new(0),
+            block_stale_commit: AtomicBool::new(false),
         }
     }
 }
@@ -419,6 +508,18 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("worker remained registered")
+    }
+
+    async fn metadata(context: &ProjectContext) -> (u64, ContextState, u64) {
+        let status = load_status(context).await.unwrap();
+        (
+            status.inventory_generation,
+            status.state,
+            status
+                .freshness
+                .map(|freshness| freshness.pending_changes)
+                .unwrap_or(0),
+        )
     }
 
     #[tokio::test]
@@ -581,6 +682,111 @@ mod tests {
         std::fs::write(context.canonical_root().join("main.txt"), "two").unwrap();
         wait_generation(&context, 2).await;
         runtime.stop(context.project_id()).await;
+    }
+
+    #[tokio::test]
+    async fn project_context_watch_stop_rejects_blocked_obsolete_pending_write() {
+        let (_temp, _registry, _paths, context) = fixture().await;
+        std::fs::write(context.canonical_root().join("main.txt"), "one").unwrap();
+        let first = rebuild(&context, 0, context.revision()).await.unwrap();
+        let hooks = Arc::new(TestHooks::default());
+        hooks.block_pending.store(true, Ordering::SeqCst);
+        let mut runtime = ProjectContextWatchRuntime::with_intervals(
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        runtime.hooks = Some(hooks.clone());
+        runtime.ensure(context.clone(), first.generation).await;
+        let (token, _) = runtime.worker_identity(context.project_id()).await;
+        let write = tokio::spawn({
+            let runtime = runtime.clone();
+            let context = context.clone();
+            async move { set_pending(&runtime, token, &context, 1).await }
+        });
+        hooks.before_pending.notified().await;
+        runtime.stop(context.project_id()).await;
+        hooks.release_pending.add_permits(1);
+        assert!(!write.await.unwrap());
+        assert_eq!(
+            metadata(&context).await,
+            (first.generation, ContextState::Ready, 0)
+        );
+    }
+
+    #[tokio::test]
+    async fn project_context_watch_replacement_rejects_blocked_obsolete_ready_commit() {
+        let (temp, registry, paths, context) = fixture().await;
+        std::fs::write(context.canonical_root().join("main.txt"), "one").unwrap();
+        let first = rebuild(&context, 0, context.revision()).await.unwrap();
+        let hooks = Arc::new(TestHooks::default());
+        hooks.block_ready.store(true, Ordering::SeqCst);
+        let mut runtime = ProjectContextWatchRuntime::with_intervals(
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        runtime.hooks = Some(hooks.clone());
+        runtime.ensure(context.clone(), first.generation).await;
+        let (token, guard) = runtime.worker_identity(context.project_id()).await;
+        std::fs::write(context.canonical_root().join("main.txt"), "two").unwrap();
+        let old_rebuild = tokio::spawn({
+            let runtime = runtime.clone();
+            let context = context.clone();
+            async move {
+                runtime
+                    .rebuild(token, &guard, &context, first.generation)
+                    .await
+                    .unwrap()
+            }
+        });
+        hooks.before_ready.notified().await;
+        let replacement_root = temp.path().join("replacement-root");
+        std::fs::create_dir(&replacement_root).unwrap();
+        std::fs::write(replacement_root.join("main.txt"), "replacement").unwrap();
+        let summary = registry
+            .rebind(context.project_id(), context.revision(), &replacement_root)
+            .await
+            .unwrap();
+        let replacement = registry
+            .resolve_context(&paths, &summary.project_id)
+            .await
+            .unwrap();
+        runtime.ensure(replacement.clone(), 0).await;
+        hooks.release_ready.add_permits(1);
+        assert_eq!(
+            old_rebuild.await.unwrap(),
+            Err(inventory::InventoryError::Conflict)
+        );
+        assert_eq!(metadata(&replacement).await.0, 0);
+        runtime.stop(replacement.project_id()).await;
+    }
+
+    #[tokio::test]
+    async fn project_context_watch_stop_rejects_blocked_obsolete_stale_write() {
+        let (_temp, _registry, _paths, context) = fixture().await;
+        std::fs::write(context.canonical_root().join("main.txt"), "one").unwrap();
+        let first = rebuild(&context, 0, context.revision()).await.unwrap();
+        let hooks = Arc::new(TestHooks::default());
+        hooks.block_stale_commit.store(true, Ordering::SeqCst);
+        let mut runtime = ProjectContextWatchRuntime::with_intervals(
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        runtime.hooks = Some(hooks.clone());
+        runtime.ensure(context.clone(), first.generation).await;
+        let (token, _) = runtime.worker_identity(context.project_id()).await;
+        let write = tokio::spawn({
+            let runtime = runtime.clone();
+            let context = context.clone();
+            async move { mark_stale(&runtime, token, &context).await }
+        });
+        hooks.before_stale_commit.notified().await;
+        runtime.stop(context.project_id()).await;
+        hooks.release_stale_commit.add_permits(1);
+        write.await.unwrap();
+        assert_eq!(
+            metadata(&context).await,
+            (first.generation, ContextState::Ready, 0)
+        );
     }
 
     #[test]
