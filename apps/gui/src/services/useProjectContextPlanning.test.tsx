@@ -43,6 +43,7 @@ type HarnessProps = {
   settings: RuntimeSettings;
   generationKey: string;
   onSelectionChange?: (selection: ProjectContextPlanningSelection | null) => void;
+  onReadyChange?: (ready: boolean) => void;
 };
 
 function Harness(props: HarnessProps) {
@@ -51,6 +52,7 @@ function Harness(props: HarnessProps) {
     <span data-testid="mode">{planning.mode}</span>
     <span data-testid="state">{planning.state}</span>
     <span data-testid="selection">{planning.selection?.manifestId ?? "none"}</span>
+    <span data-testid="ready">{String(planning.ready)}</span>
     <span data-testid="pinned">{planning.pinned.length}</span>
     <button type="button" onClick={() => planning.setMode("deep")}>deep</button>
     <button type="button" onClick={() => planning.exclude(planning.view?.included[0]?.key ?? "")}>exclude</button>
@@ -96,6 +98,80 @@ describe("useProjectContextPlanning", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(container.querySelector("[data-testid='selection']")?.textContent).toBe("manifest-plan-1");
     expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ manifestId: "manifest-plan-1" }));
+  });
+
+  it("plans once for the same draft in a new chat and publishes the new correlation", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-1")))
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-2")));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const onSelectionChange = vi.fn();
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1", onSelectionChange });
+    await advancePlanning();
+    await renderHarness({ projectId, chatId: "chat-2", draft: "Find start", settings: { ...settings }, generationKey: "1", onSelectionChange });
+    expect(container.querySelector("[data-testid='selection']")?.textContent).toBe("none");
+    await advancePlanning();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      manifestId: "manifest-plan-2",
+      correlation: expect.objectContaining({ chatId: "chat-2", settingsGeneration: "1" }),
+    }));
+  });
+
+  it("plans once for a new generation and publishes the new correlation", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-1")))
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-2")));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const onSelectionChange = vi.fn();
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1", onSelectionChange });
+    await advancePlanning();
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings: { ...settings }, generationKey: "2", onSelectionChange });
+    expect(container.querySelector("[data-testid='selection']")?.textContent).toBe("none");
+    await advancePlanning();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      manifestId: "manifest-plan-2",
+      correlation: expect.objectContaining({ chatId: "chat-1", settingsGeneration: "2" }),
+    }));
+  });
+
+  it("publishes an excluded selection and restores readiness", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan()));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const onSelectionChange = vi.fn();
+    const onReadyChange = vi.fn();
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1", onSelectionChange, onReadyChange });
+    await advancePlanning();
+    const buttons = container.querySelectorAll("button");
+    act(() => buttons[1].click());
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
+    expect(onReadyChange).toHaveBeenLastCalledWith(true);
+    expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({
+      manifestId: "manifest-plan-1",
+      excludedSources: [{ kind: "file_chunk", chunkId: "chunk-1", contentHash: hash }],
+    }));
   });
 
   it("keeps mode across chats in one project and resets it on project change without storage", async () => {

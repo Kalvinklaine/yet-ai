@@ -142,7 +142,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     publishReady(!query);
   }, [scopeIdentity]);
 
-  const planningTrigger = `::`;
+  const planningTrigger = JSON.stringify({ chatId, generationKey });
   useEffect(() => {
     const timer = window.setTimeout(() => void refresh(), 350);
     return () => {
@@ -194,7 +194,8 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     if (!plan?.manifest.entries.some((item) => contextManifestEntryKey(item) === key)) return;
     invalidate(false);
     setExcluded((current) => new Set(current).add(key));
-  }, [invalidate, plan]);
+    publishReady(true);
+  }, [invalidate, plan, publishReady]);
 
   const useManualFallback = useCallback(() => setMode("manual_only"), [setMode]);
 
