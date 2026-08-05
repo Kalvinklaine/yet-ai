@@ -56,6 +56,7 @@ function Harness(props: HarnessProps) {
     <span data-testid="pinned">{planning.pinned.length}</span>
     <button type="button" onClick={() => planning.setMode("deep")}>deep</button>
     <button type="button" onClick={() => planning.setMode("manual_only")}>manual</button>
+    <button type="button" onClick={() => planning.setMode("balanced")}>balanced</button>
     <button type="button" onClick={() => planning.exclude(planning.view?.included[0]?.key ?? "")}>exclude</button>
     <button type="button" onClick={() => planning.pin(planning.view?.included[0]?.key ?? "")}>pin</button>
   </div>;
@@ -142,6 +143,83 @@ describe("useProjectContextPlanning", () => {
     act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "manual") as HTMLButtonElement).click());
     expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
   });
+
+  it("replans when returning from Manual-only to a previously completed Balanced correlation", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-1")))
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-2")));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1" });
+    await advancePlanning();
+
+    const buttons = Array.from(container.querySelectorAll("button"));
+    act(() => (buttons.find((button) => button.textContent === "manual") as HTMLButtonElement).click());
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
+    act(() => (buttons.find((button) => button.textContent === "balanced") as HTMLButtonElement).click());
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("false");
+    await advancePlanning();
+
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(container.querySelector("[data-testid='selection']")?.textContent).toBe("manifest-plan-2");
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
+  });
+
+  it("replans when a draft returns to a previously completed correlation", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-a-1")))
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-b")))
+      .mockImplementationOnce(() => response(project()))
+      .mockImplementationOnce(() => response(status()))
+      .mockImplementationOnce(() => response(plan("balanced", "plan-a-2")));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    const base = { projectId, chatId: "chat-1", settings, generationKey: "1" };
+    await renderHarness({ ...base, draft: "Draft A" });
+    await advancePlanning();
+    await renderHarness({ ...base, draft: "Draft B" });
+    await advancePlanning();
+    await renderHarness({ ...base, draft: "Draft A" });
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("false");
+    await advancePlanning();
+
+    expect(fetchMock).toHaveBeenCalledTimes(9);
+    expect(container.querySelector("[data-testid='selection']")?.textContent).toBe("manifest-plan-a-2");
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
+  });
+
+  it("suppresses duplicate requests on equivalent rerenders while the completed plan remains live", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST") return response(plan());
+      return response(url.includes("/v1/projects/") ? project() : status());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const base = { projectId, chatId: "chat-1", draft: "Find start", generationKey: "1" };
+    await renderHarness({ ...base, settings: { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" } });
+    await advancePlanning();
+    await renderHarness({ ...base, settings: { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" } });
+    await advancePlanning();
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(container.querySelector("[data-testid='selection']")?.textContent).toBe("manifest-plan-1");
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
+  });
+
   it("does not restart pending planning when rerendered with equivalent fresh settings", async () => {
     vi.useFakeTimers();
     let resolvePlan!: (value: Response) => void;
@@ -227,7 +305,7 @@ describe("useProjectContextPlanning", () => {
     await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1", onSelectionChange, onReadyChange });
     await advancePlanning();
     const buttons = container.querySelectorAll("button");
-    act(() => buttons[2].click());
+    act(() => buttons[3].click());
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
     expect(onReadyChange).toHaveBeenLastCalledWith(true);
@@ -287,7 +365,7 @@ describe("useProjectContextPlanning", () => {
     await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1" });
     await advancePlanning();
     const buttons = container.querySelectorAll("button");
-    act(() => buttons[3].click());
+    act(() => buttons[4].click());
     expect(container.querySelector("[data-testid='pinned']")?.textContent).toBe("1");
     await act(async () => { await Promise.resolve(); });
     await advancePlanning();

@@ -78,6 +78,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     requestRef.current += 1;
     abortRef.current?.abort();
     if (clearPlan) {
+      completedCorrelationRef.current = "";
       setPlan(null);
       setState(query ? "loading" : "idle");
     }
@@ -88,6 +89,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
   const runPlanning = useCallback(async (force: boolean) => {
     abortRef.current?.abort();
     if (!query) {
+      completedCorrelationRef.current = "";
       setPlan(null);
       setState("idle");
       selectionCallbackRef.current?.(null);
@@ -95,6 +97,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
       return;
     }
     if (mode === "manual_only") {
+      completedCorrelationRef.current = "";
       setPlan(null);
       setState("idle");
       selectionCallbackRef.current?.(null);
@@ -148,6 +151,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
   useLayoutEffect(() => {
     requestRef.current += 1;
     abortRef.current?.abort();
+    completedCorrelationRef.current = "";
     setPlan(null);
     setExcluded(new Set());
     setPinned([]);
