@@ -229,6 +229,41 @@ describe("project lifecycle scope", () => {
     expect(findButton("Send without project context")).toBeDefined();
   });
 
+  it("shows queued planning immediately and Stop before debounce prevents context requests", async () => {
+    vi.useFakeTimers();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    fetchMock.mockClear();
+
+    await act(async () => setTextareaValue(chatInput(), "Stop queued context"));
+    expect(container?.querySelector("[data-testid='chat-lifecycle-status']")?.textContent).toContain("Planning bounded project context");
+    expect(container?.textContent).toContain("Planning…");
+    expect(findButton("Send without project context")).toBeDefined();
+    await act(async () => findButton("Stop").click());
+    await act(async () => { vi.advanceTimersByTime(350); await Promise.resolve(); });
+
+    expect(container?.querySelector("[data-testid='chat-lifecycle-status']")?.textContent).toContain("Project context planning stopped");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/context/status") || String(url).includes("/context/plan") || String(url).includes(`/v1/projects/${projectA}`))).toBe(false);
+  });
+
+  it("prompt-only fallback during debounce cancels planning and enables Send", async () => {
+    vi.useFakeTimers();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    fetchMock.mockClear();
+
+    await act(async () => setTextareaValue(chatInput(), "Fallback before planning"));
+    expect(findButton("Send").disabled).toBe(true);
+    await act(async () => findButton("Send without project context").click());
+    expect(findButton("Send").disabled).toBe(false);
+    await act(async () => { vi.advanceTimersByTime(350); await Promise.resolve(); });
+
+    expect(container?.textContent).toContain("Prompt only");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/context/status") || String(url).includes("/context/plan") || String(url).includes(`/v1/projects/${projectA}`))).toBe(false);
+  });
+
   it("shows a non-terminal long-wait warning and clears it after Stop", async () => {
     vi.useFakeTimers();
     const command = deferred<Response>();
@@ -248,6 +283,42 @@ describe("project lifecycle scope", () => {
     await act(async () => findButton("Stop").click());
     expect(container?.textContent).toContain("Response stopped locally");
     expect(container?.textContent).not.toContain("This is taking longer than expected");
+  });
+
+  it("uses streaming deltas as progress heartbeats and warns only after a real 10 second gap", async () => {
+    vi.useFakeTimers();
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/v1/chats/subscribe?chat_id=")) {
+        return Promise.resolve(new Response(new ReadableStream<Uint8Array>({ start(controller) { sseController = controller; }, cancel() {} }), { status: 200 }));
+      }
+      return mockRuntimeResponse(input, init, readyRuntimeOptions());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "Healthy stream"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: "chat-001", payload: {} })}\n\n`));
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_started", chatId: "chat-001", payload: {} })}\n\n`));
+      await Promise.resolve();
+    });
+
+    for (let seq = 2; seq < 5; seq += 1) {
+      await act(async () => {
+        vi.advanceTimersByTime(9_000);
+        sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq, type: "stream_delta", chatId: "chat-001", payload: { delta: { content: ` ${seq}` } } })}\n\n`));
+        await Promise.resolve();
+      });
+      expect(container?.textContent).not.toContain("This is taking longer than expected");
+    }
+
+    await act(async () => { vi.advanceTimersByTime(9_999); await Promise.resolve(); });
+    expect(container?.textContent).not.toContain("This is taking longer than expected");
+    await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve(); });
+    expect(container?.textContent).toContain("This is taking longer than expected");
   });
 
   it("offers unusable project-context setup and prompt-only fallback without auto-send", async () => {

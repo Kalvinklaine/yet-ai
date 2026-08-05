@@ -583,7 +583,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     chatError, setChatError, chatId, setChatId, chatIdRef, chatSummaries, setChatSummaries, chatHistoryError, setChatHistoryError, chatHistoryRevision, setChatHistoryRevision,
     chatHistoryLoading, setChatHistoryLoading, missingRoutedChatId, setMissingRoutedChatId, deletingChatId, setDeletingChatId, conversationNotice, setConversationNotice,
     compactConversationsOpen, setCompactConversationsOpen, chatInput, setChatInput, chatView, setChatView, chatLifecycleState, setChatLifecycleState,
-    chatHistoryAttemptRef, firstProjectChatCreateRef, activeStreamRef, refreshChats, loadChatThread, createNewChat, selectChat, updateDirectChatId, deleteCurrentChat,
+    chatHistoryAttemptRef, firstProjectChatCreateRef, activeStreamRef, chatProgressHeartbeat, refreshChats, loadChatThread, createNewChat, selectChat, updateDirectChatId, deleteCurrentChat,
     submitChat: submitChatCommand, continueResponse, startSse, stopSse, abortActiveStream, appendChatError, resetForScope: resetChatForScope, invalidate: invalidateChatController,
   } = chatController;
   const setUserChatInputDraft = setChatInput;
@@ -3095,7 +3095,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     if (!isChatLifecyclePending(visibleChatLifecycleState)) return;
     const timer = window.setTimeout(() => setChatLifecycleLongWait(true), chatLifecycleLongWaitMs);
     return () => window.clearTimeout(timer);
-  }, [chatId, hostReadyGeneration, projectId, settingsRevision, visibleChatLifecycleState]);
+  }, [chatId, chatProgressHeartbeat, hostReadyGeneration, projectId, settingsRevision, visibleChatLifecycleState]);
   const tracePanelEntries = codingSessionTraceWithCheckpointDecision.slice(-12);
   const currentChatTitle = sanitizeDisplayText(activeChatSummary?.title ?? chatId ?? "New chat draft");
   const renderConversationList = (deleteHelpId: string) => (

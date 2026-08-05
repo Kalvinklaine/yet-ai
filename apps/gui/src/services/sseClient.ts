@@ -21,6 +21,7 @@ export type SseEvent = {
 };
 
 export type SseCallbacks = {
+  onConnected?: () => void;
   onEvent: (event: SseEvent) => void;
   onError: (error: RuntimeError) => void;
 };
@@ -88,6 +89,8 @@ export async function subscribeToChat(
     });
     return;
   }
+
+  callbacks.onConnected?.();
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

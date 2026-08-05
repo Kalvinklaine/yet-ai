@@ -57,6 +57,7 @@ function Harness(props: HarnessProps) {
     <button type="button" onClick={() => planning.setMode("deep")}>deep</button>
     <button type="button" onClick={() => planning.setMode("manual_only")}>manual</button>
     <button type="button" onClick={() => planning.setMode("balanced")}>balanced</button>
+    <button type="button" onClick={planning.cancel}>cancel</button>
     <button type="button" onClick={() => planning.exclude(planning.view?.included[0]?.key ?? "")}>exclude</button>
     <button type="button" onClick={() => planning.pin(planning.view?.included[0]?.key ?? "")}>pin</button>
   </div>;
@@ -81,6 +82,52 @@ async function advancePlanning() {
 }
 
 describe("useProjectContextPlanning", () => {
+  it("shows queued planning immediately and Stop before debounce prevents every request", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Stop queued work", settings, generationKey: "1" });
+
+    expect(container.querySelector("[data-testid='state']")?.textContent).toBe("loading");
+    act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "cancel") as HTMLButtonElement).click());
+    expect(container.querySelector("[data-testid='state']")?.textContent).toBe("stopped");
+    await act(async () => { vi.advanceTimersByTime(350); await Promise.resolve(); });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("Manual-only during debounce cancels automatic launch and restores readiness", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Use prompt only", settings, generationKey: "1" });
+
+    expect(container.querySelector("[data-testid='state']")?.textContent).toBe("loading");
+    act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "manual") as HTMLButtonElement).click());
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
+    await act(async () => { vi.advanceTimersByTime(350); await Promise.resolve(); });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("cleans up queued planning on unmount", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Unmount queued work", settings: { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" }, generationKey: "1" });
+
+    act(() => root?.unmount());
+    root = undefined;
+    await act(async () => { vi.advanceTimersByTime(350); await Promise.resolve(); });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("gates immediately and starts exactly one planning sequence at the 350ms boundary", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -304,8 +351,7 @@ describe("useProjectContextPlanning", () => {
     const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
     await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1", onSelectionChange, onReadyChange });
     await advancePlanning();
-    const buttons = container.querySelectorAll("button");
-    act(() => buttons[3].click());
+    act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "exclude") as HTMLButtonElement).click());
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
     expect(onReadyChange).toHaveBeenLastCalledWith(true);
@@ -364,8 +410,7 @@ describe("useProjectContextPlanning", () => {
     const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
     await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1" });
     await advancePlanning();
-    const buttons = container.querySelectorAll("button");
-    act(() => buttons[4].click());
+    act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "pin") as HTMLButtonElement).click());
     expect(container.querySelector("[data-testid='pinned']")?.textContent).toBe("1");
     await act(async () => { await Promise.resolve(); });
     await advancePlanning();

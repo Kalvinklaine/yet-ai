@@ -50,6 +50,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
   const [pinned, setPinned] = useState<ProjectContextExplicitRef[]>([]);
   const requestRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const debounceTimerRef = useRef<number | null>(null);
   const revisionRef = useRef("");
   const completedCorrelationRef = useRef("");
   const selectionCallbackRef = useRef(onSelectionChange);
@@ -75,7 +76,14 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     readyCallbackRef.current?.(value);
   }, []);
 
+  const clearQueuedPlanning = useCallback(() => {
+    if (debounceTimerRef.current === null) return;
+    window.clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = null;
+  }, []);
+
   const invalidate = useCallback((clearPlan = true) => {
+    clearQueuedPlanning();
     requestRef.current += 1;
     abortRef.current?.abort();
     if (clearPlan) {
@@ -85,9 +93,10 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     }
     selectionCallbackRef.current?.(null);
     publishReady(!query);
-  }, [publishReady, query]);
+  }, [clearQueuedPlanning, publishReady, query]);
 
   const runPlanning = useCallback(async (force: boolean) => {
+    clearQueuedPlanning();
     abortRef.current?.abort();
     if (!query) {
       completedCorrelationRef.current = "";
@@ -141,7 +150,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     setState("idle");
     completedCorrelationRef.current = expectedCorrelation;
     publishReady(true);
-  }, [mode, pinnedFingerprint, projectId, publishReady, query, settings.baseUrl, settings.token, runtimeAccess]);
+  }, [clearQueuedPlanning, mode, pinnedFingerprint, projectId, publishReady, query, settings.baseUrl, settings.token, runtimeAccess]);
 
   const refresh = useCallback(() => runPlanning(true), [runPlanning]);
 
@@ -150,6 +159,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
   }, [projectId]);
 
   useLayoutEffect(() => {
+    clearQueuedPlanning();
     requestRef.current += 1;
     abortRef.current?.abort();
     completedCorrelationRef.current = "";
@@ -159,23 +169,29 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     setState("idle");
     selectionCallbackRef.current?.(null);
     publishReady(!query || mode === "manual_only");
-  }, [publishReady, scopeIdentity]);
+  }, [clearQueuedPlanning, publishReady, scopeIdentity]);
 
   const planningTrigger = JSON.stringify({ chatId, generationKey });
   useEffect(() => {
-    if (!enabled) return;
-    const timer = window.setTimeout(() => void runPlanning(false), projectContextPlanningDebounceMs);
+    if (!enabled || !query || mode === "manual_only" || completedCorrelationRef.current === correlationRef.current) return;
+    setState("loading");
+    setPlan(null);
+    selectionCallbackRef.current?.(null);
+    publishReady(false);
+    clearQueuedPlanning();
+    debounceTimerRef.current = window.setTimeout(() => void runPlanning(false), projectContextPlanningDebounceMs);
     return () => {
-      window.clearTimeout(timer);
+      clearQueuedPlanning();
       requestRef.current += 1;
       abortRef.current?.abort();
     };
-  }, [enabled, planningTrigger, runPlanning]);
+  }, [clearQueuedPlanning, enabled, mode, planningTrigger, publishReady, query, runPlanning]);
 
   useEffect(() => () => {
+    clearQueuedPlanning();
     requestRef.current += 1;
     abortRef.current?.abort();
-  }, []);
+  }, [clearQueuedPlanning]);
 
   const view = useMemo(() => plan ? buildContextManifestView(plan, excluded) : null, [excluded, plan]);
   const selection = useMemo<ProjectContextPlanningSelection | null>(() => plan ? {
@@ -222,6 +238,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
 
   const cancel = useCallback(() => {
     if (state !== "loading") return;
+    clearQueuedPlanning();
     requestRef.current += 1;
     abortRef.current?.abort();
     completedCorrelationRef.current = "";
@@ -229,7 +246,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     setState("stopped");
     selectionCallbackRef.current?.(null);
     publishReady(!query || mode === "manual_only");
-  }, [mode, publishReady, query, state]);
+  }, [clearQueuedPlanning, mode, publishReady, query, state]);
 
   return { mode, plan, view, state, loading: state === "loading", error: state === "error", ready, selection, excluded, pinned, setMode, refresh, invalidate, pin, exclude, useManualFallback, cancel };
 }

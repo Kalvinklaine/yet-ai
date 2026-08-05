@@ -94,6 +94,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
   const [chatInput, setChatInputState] = useState("");
   const [chatView, setChatView] = useState(() => createInitialChatViewState(initialChatId ?? ""));
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
+  const [chatProgressHeartbeat, setChatProgressHeartbeat] = useState(0);
   const chatIdRef = useRef<string | null>(initialChatId);
   const chatHistoryAttemptRef = useRef(0);
   const firstProjectChatCreateRef = useRef<{ token: symbol; revision: number; correlation: ProjectScopeCorrelation; request: PendingChatRequest } | null>(null);
@@ -103,6 +104,10 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
   const chatInputUserLineageRef = useRef(0);
   const mountedRef = useRef(true);
   chatIdRef.current = chatId;
+
+  const markChatProgress = useCallback(() => {
+    setChatProgressHeartbeat((current) => current + 1);
+  }, []);
 
   const setChatId = useCallback((next: string | null) => {
     chatIdRef.current = next;
@@ -161,9 +166,13 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     addTimelineRef.current(`Opening SSE for ${targetChatId}`);
     appendTraceRef.current({ family: "chat.streamStarted", title: "Opening chat stream", status: "pending", summary: `Opening SSE for ${targetChatId}.`, details: { chatId: targetChatId } });
     void subscribeToChat(stream.settings, targetChatId, {
+      onConnected: () => {
+        if (activeStreamRef.current === stream && stream.revision === settingsRevisionRef.current && chatIdRef.current === stream.chatId && projectScopeController.accepts(stream.scopeCorrelation)) markChatProgress();
+      },
       onEvent: (event) => {
         if (activeStreamRef.current !== stream || stream.revision !== settingsRevisionRef.current || chatIdRef.current !== stream.chatId || !projectScopeController.accepts(stream.scopeCorrelation) || event.chatId !== stream.chatId) return;
         const safeEvent: SseEvent = { ...event, payload: sanitizeDisplayValue(event.payload) as Record<string, unknown> | undefined };
+        markChatProgress();
         setChatView((current) => applyChatViewEvent(current, safeEvent));
         if (event.type === "stream_started" || event.type === "stream_delta") setChatLifecycleState("streaming");
         else if (event.type === "stream_finished") setChatLifecycleState("idle");
@@ -173,6 +182,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
       },
       onError: (error) => {
         if (activeStreamRef.current !== stream || stream.revision !== settingsRevisionRef.current || chatIdRef.current !== stream.chatId || !projectScopeController.accepts(stream.scopeCorrelation)) return;
+        markChatProgress();
         setChatError(error);
         setChatLifecycleState("failed");
         appendChatError(error.message, chatRecoveryCodeForRuntimeError(error, "sse"));
@@ -183,7 +193,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
       stream.unregisterScopeCancellation();
       if (activeStreamRef.current === stream) activeStreamRef.current = null;
     });
-  }, [addTimelineRef, appendChatError, appendTraceRef, projectScopeController, settingsRef, settingsRevisionRef]);
+  }, [addTimelineRef, appendChatError, appendTraceRef, markChatProgress, projectScopeController, settingsRef, settingsRevisionRef]);
 
   const refreshChats = useCallback(async (targetSettings: ChatRuntimeSettings = settingsRef.current, revision = settingsRevisionRef.current) => {
     const attempt = ++chatHistoryAttemptRef.current;
@@ -333,6 +343,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     if (result.ok) {
       if (firstProjectChatCreateRef.current?.token === createToken) firstProjectChatCreateRef.current = null;
       if (chatInputUserLineageRef.current === lineage) setChatInputState("");
+      markChatProgress();
       addTimelineRef.current(`Command accepted ${result.data.requestId}`); appendTraceRef.current({ family: "chat.sendAccepted", title: "Send accepted", status: "succeeded", summary: "Runtime accepted user message command.", requestId: result.data.requestId, details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
       options.onAccepted?.({ chatId: targetChatId, content, optimisticUserMessageId: optimisticId, requestId: result.data.requestId, revision }); resettersRef.current.clearAcceptedContext(); startSse(targetChatId);
       setChatLifecycleState((current) => current === "command_submitting" || current === "sse_connecting" ? "command_accepted" : current);
@@ -342,7 +353,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
       setChatView((current) => removeOptimisticUserMessage(current, optimisticId)); appendChatError(result.error.message, chatRecoveryCodeForRuntimeError(result.error, "command"));
       addTimelineRef.current(`Command error: ${sanitizeDisplayText(result.error.message)}`); appendTraceRef.current({ family: "chat.sendRejected", title: "Send rejected", status: "failed", summary: result.error.message, details: { chatId: targetChatId, status: result.error.status } }); options.onRejected?.();
     }
-  }, [addTimelineRef, appendChatError, appendTraceRef, chatInput, navigateToChat, projectId, projectScopeController, resettersRef, setChatId, settingsRef, settingsRevisionRef, startSse]);
+  }, [addTimelineRef, appendChatError, appendTraceRef, chatInput, markChatProgress, navigateToChat, projectId, projectScopeController, resettersRef, setChatId, settingsRef, settingsRevisionRef, startSse]);
 
   const continueResponse = useCallback(async (messageId: string) => {
     const targetChatId = chatIdRef.current;
@@ -357,6 +368,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     });
     if (chatIdRef.current !== targetChatId) return;
     if (result.ok) {
+      markChatProgress();
       addTimelineRef.current(`Continue accepted ${result.data.requestId}`);
       startSse(targetChatId);
       setChatLifecycleState("command_accepted");
@@ -365,7 +377,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
       setChatLifecycleState("failed");
       appendChatError(result.error.message, chatRecoveryCodeForRuntimeError(result.error, "command"));
     }
-  }, [addTimelineRef, appendChatError, chatView.messages, projectId, settingsRef, startSse]);
+  }, [addTimelineRef, appendChatError, chatView.messages, markChatProgress, projectId, settingsRef, startSse]);
 
   const resetForScope = useCallback((nextChatId: string | null) => {
     abortPendingChatRequest();
@@ -390,9 +402,9 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     chatError, setChatError, chatId, setChatId, chatIdRef, chatSummaries, setChatSummaries, chatHistoryError, setChatHistoryError, chatHistoryRevision, setChatHistoryRevision,
     chatHistoryLoading, setChatHistoryLoading, missingRoutedChatId, setMissingRoutedChatId, deletingChatId, setDeletingChatId, conversationNotice, setConversationNotice,
     compactConversationsOpen, setCompactConversationsOpen, chatInput, setChatInput, chatView, setChatView, chatLifecycleState, setChatLifecycleState,
-    chatHistoryAttemptRef, firstProjectChatCreateRef, activeStreamRef, refreshChats, loadChatThread, createNewChat, selectChat, updateDirectChatId, deleteCurrentChat,
+    chatHistoryAttemptRef, firstProjectChatCreateRef, activeStreamRef, chatProgressHeartbeat, refreshChats, loadChatThread, createNewChat, selectChat, updateDirectChatId, deleteCurrentChat,
     submitChat, continueResponse, startSse, stopSse: () => { if (!abortPendingChatRequest() && !abortActiveStream("SSE stopped and abort requested")) addTimelineRef.current("SSE stopped"); }, abortActiveStream, appendChatError, resetForScope, invalidate,
-  }), [abortActiveStream, abortPendingChatRequest, addTimelineRef, appendChatError, chatError, chatHistoryError, chatHistoryLoading, chatHistoryRevision, chatId, chatInput, chatLifecycleState, chatSummaries, chatView, compactConversationsOpen, continueResponse, conversationNotice, createNewChat, deleteCurrentChat, deletingChatId, invalidate, loadChatThread, missingRoutedChatId, refreshChats, resetForScope, selectChat, setChatId, setChatInput, startSse, submitChat, updateDirectChatId]);
+  }), [abortActiveStream, abortPendingChatRequest, addTimelineRef, appendChatError, chatError, chatHistoryError, chatHistoryLoading, chatHistoryRevision, chatId, chatInput, chatLifecycleState, chatProgressHeartbeat, chatSummaries, chatView, compactConversationsOpen, continueResponse, conversationNotice, createNewChat, deleteCurrentChat, deletingChatId, invalidate, loadChatThread, missingRoutedChatId, refreshChats, resetForScope, selectChat, setChatId, setChatInput, startSse, submitChat, updateDirectChatId]);
 }
 
 function appendStreamTrace(appendTrace: (draft: CodingSessionTraceDraft) => void, event: SseEvent, safeEvent: SseEvent) {
