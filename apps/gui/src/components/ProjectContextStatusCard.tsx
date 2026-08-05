@@ -10,6 +10,23 @@ export type ProjectContextCardModel =
   | { status: "error"; message: string }
   | { status: "ready"; context: ProjectContextStatus; profile: ProjectContextProfile | null };
 
+const rebuildPollDelayMs = 500;
+const rebuildPollLimit = 12;
+
+function isUsableContext(context: ProjectContextStatus) {
+  return context.state === "ready";
+}
+
+function waitForPoll(signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    const timer = window.setTimeout(resolve, rebuildPollDelayMs);
+    signal.addEventListener("abort", () => {
+      window.clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
+}
+
 export function ProjectChatContextController({ projectId, chatId, draft, settings, generationKey, onSelectionChange, onReadyChange }: { projectId: string; chatId: string | null; draft: string; settings: RuntimeSettings; generationKey: string; onSelectionChange?: (selection: ProjectContextPlanningSelection | null) => void; onReadyChange?: (ready: boolean) => void }) {
   const [context, setContext] = useState<ProjectContextStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -17,11 +34,15 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
   const [error, setError] = useState<string | null>(null);
   const [promptOnly, setPromptOnly] = useState(false);
   const requestRef = useRef(0);
+  const statusAbortRef = useRef<AbortController | null>(null);
+  const buildAbortRef = useRef<AbortController | null>(null);
   const planning = useProjectContextPlanning({ projectId, chatId, draft, settings, generationKey, onSelectionChange, onReadyChange });
 
   const loadStatus = useCallback(async () => {
+    statusAbortRef.current?.abort();
     const request = ++requestRef.current;
     const controller = new AbortController();
+    statusAbortRef.current = controller;
     setLoading(true);
     const scoped = createProjectRuntimeSettings(settings, projectId, { generation: request, abortSignal: controller.signal });
     const result = await getProjectContextStatus(scoped);
@@ -33,14 +54,28 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
 
   useEffect(() => {
     setPromptOnly(false);
+    setContext(null);
+    setError(null);
+    setWorking(false);
     void loadStatus();
-    return () => { requestRef.current += 1; };
+    return () => {
+      requestRef.current += 1;
+      statusAbortRef.current?.abort();
+      buildAbortRef.current?.abort();
+    };
   }, [loadStatus, projectId]);
+
+  useEffect(() => {
+    if (!loading && (!context || !isUsableContext(context)) && planning.mode !== "manual_only") onReadyChange?.(!draft.trim());
+  }, [context, draft, loading, onReadyChange, planning.mode]);
 
   const build = useCallback(async () => {
     if (!context) return;
+    statusAbortRef.current?.abort();
+    buildAbortRef.current?.abort();
     const request = ++requestRef.current;
     const controller = new AbortController();
+    buildAbortRef.current = controller;
     const scoped = createProjectRuntimeSettings(settings, projectId, { generation: request, abortSignal: controller.signal });
     setWorking(true);
     setError(null);
@@ -53,9 +88,35 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
       setError("Project context could not be built. Try again or start without project context.");
       return;
     }
+    for (let attempt = 0; attempt < rebuildPollLimit; attempt += 1) {
+      if (attempt > 0) await waitForPoll(controller.signal);
+      if (request !== requestRef.current || controller.signal.aborted) return;
+      const status = await getProjectContextStatus(scoped);
+      if (request !== requestRef.current || controller.signal.aborted) return;
+      if (!status.ok) {
+        setWorking(false);
+        setContext(context);
+        setError("Project context status could not be checked after the rebuild. Try again or use prompt only.");
+        return;
+      }
+      setContext(status.data);
+      if (isUsableContext(status.data)) {
+        setWorking(false);
+        setError(null);
+        planning.invalidate();
+        return;
+      }
+      if (status.data.state !== "building") {
+        setWorking(false);
+        setContext(context);
+        setError("Project context rebuild did not become ready. Try again or use prompt only.");
+        return;
+      }
+    }
     setWorking(false);
-    await loadStatus();
-  }, [context, loadStatus, projectId, settings.baseUrl, settings.token, settings.runtimeAccess]);
+    setContext(context);
+    setError("Project context rebuild is taking too long. Try again or use prompt only.");
+  }, [context, planning.invalidate, projectId, settings.baseUrl, settings.token, settings.runtimeAccess]);
 
   const startWithoutContext = useCallback(() => {
     setPromptOnly(true);
@@ -64,10 +125,10 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
 
   if (loading) return <section className="project-chat-context-status compact-loading" aria-label="Project context" data-testid="project-context-entrypoint" aria-busy="true"><strong>Project context</strong><span className="subtle">Checking local cache…</span></section>;
   if (!context) return <section className="project-chat-context-status" aria-label="Project context" data-testid="project-context-entrypoint"><strong>Project context</strong><span className="subtle">{error}</span><button type="button" className="secondary-button" onClick={startWithoutContext}>Start without project context</button></section>;
-  if (context.state === "not_built" || context.state === "stale" || context.state === "migration_required" || context.state === "unavailable") return promptOnly
+  if (context.state === "not_built" || context.state === "stale" || context.state === "migration_required" || context.state === "unavailable") return promptOnly && planning.mode === "manual_only"
     ? <ProjectChatContextStatus context={context} planning={planning} />
     : <ProjectChatContextSetupCard state={context.state} working={working} error={error} onBuild={() => void build()} onStartWithoutContext={startWithoutContext} />;
-  if (context.state === "building") return <section className="project-chat-context-status" aria-label="Project context" data-testid="project-context-entrypoint" aria-busy="true"><strong>Project context</strong><span className="subtle">Building the local project cache…</span></section>;
+  if (context.state === "building") return <section className="project-chat-context-status stack" aria-label="Project context" data-testid="project-context-entrypoint" aria-busy="true"><strong>Project context</strong><span className="subtle">Building the local project cache…</span><button type="button" className="secondary-button" onClick={startWithoutContext}>Use prompt only</button></section>;
   return <ProjectChatContextStatus context={context} planning={planning} />;
 }
 

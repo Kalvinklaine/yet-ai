@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { buildContextManifestView, contextManifestEntryKey, manifestEntryToExplicitRef, manifestMatchesCorrelation } from "./contextManifestView";
 import { createProjectRuntimeSettings, getProject } from "./projectClient";
 import { getProjectContextStatus, planProjectContext, type ProjectContextExplicitRef, type ProjectContextMode, type ProjectContextPlan } from "./projectContextClient";
@@ -110,21 +110,21 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     publishReady(false);
     const [projectResult, statusResult] = await Promise.all([getProject(baseSettings, projectId, controller.signal), getProjectContextStatus(scoped)]);
     if (request !== requestRef.current || expectedCorrelation !== correlationRef.current) return;
-    if (!projectResult.ok || !statusResult.ok) {
+    if (!projectResult.ok || !statusResult.ok || statusResult.data.state !== "ready") {
       setPlan(null);
       setState("error");
       selectionCallbackRef.current?.(null);
-      publishReady(true);
+      publishReady(false);
       return;
     }
     revisionRef.current = projectResult.data.revision;
     const result = await planProjectContext(scoped, { query, mode, budget: projectContextPlanningBudget, explicitRefs: pinned, expectedInventoryGeneration: statusResult.data.inventoryGeneration, expectedProjectRevision: projectResult.data.revision });
     if (request !== requestRef.current || expectedCorrelation !== correlationRef.current) return;
-    if (!result.ok || !manifestMatchesCorrelation(result.data.manifest, projectId, statusResult.data.inventoryGeneration)) {
+    if (!result.ok || !["ready", "truncated"].includes(result.data.status) || result.data.mode !== mode || !manifestMatchesCorrelation(result.data.manifest, projectId, statusResult.data.inventoryGeneration)) {
       setPlan(null);
       setState("error");
       selectionCallbackRef.current?.(null);
-      publishReady(true);
+      publishReady(false);
       return;
     }
     const currentKeys = new Set(result.data.manifest.entries.map(contextManifestEntryKey));
@@ -138,7 +138,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     setModeState((current) => current.projectId === projectId ? current : { projectId, mode: "balanced" });
   }, [projectId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     requestRef.current += 1;
     abortRef.current?.abort();
     setPlan(null);
@@ -146,12 +146,12 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     setPinned([]);
     setState("idle");
     selectionCallbackRef.current?.(null);
-    publishReady(true);
-  }, [scopeIdentity]);
+    publishReady(!query || mode === "manual_only");
+  }, [publishReady, scopeIdentity]);
 
   const planningTrigger = JSON.stringify({ chatId, generationKey });
   useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 350);
+    const timer = window.setTimeout(() => void refresh(), 0);
     return () => {
       window.clearTimeout(timer);
       requestRef.current += 1;

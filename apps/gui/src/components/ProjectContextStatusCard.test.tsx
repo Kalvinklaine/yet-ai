@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProjectChatContextStatus, ProjectContextStatusCard, type ProjectContextCardModel } from "./ProjectContextStatusCard";
+import { ProjectChatContextController, ProjectChatContextStatus, ProjectContextStatusCard, type ProjectContextCardModel } from "./ProjectContextStatusCard";
 
 const projectId = "prj_abcdefghijklmnopqrstuA";
 const hash = `sha256:${"a".repeat(64)}`;
@@ -62,7 +62,86 @@ describe("ProjectContextStatusCard", () => {
     expect((container.querySelector("select") as HTMLSelectElement).value).toBe("balanced");
     expect(container.textContent).toContain("Cache generation 1");
   });
+
+  it("polls an accepted rebuild through building to ready", async () => {
+    vi.useFakeTimers();
+    let statusCall = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/projects/")) return json(project());
+      if (url.endsWith("/context/rebuild") && init?.method === "POST") return json(rebuild());
+      if (url.endsWith("/context/status")) {
+        statusCall += 1;
+        return json(contextStatus(statusCall === 1 ? "not_built" : statusCall === 2 ? "building" : "ready"));
+      }
+      throw new Error(`unexpected ${url}`);
+    }));
+    const container = await renderController("Prompt");
+    expect(container.textContent).toContain("Build project context");
+    await act(async () => { findButton(container, "Build project context").click(); await Promise.resolve(); await Promise.resolve(); });
+    expect(container.textContent).toContain("Building the local project cache");
+    await act(async () => { vi.advanceTimersByTime(500); await Promise.resolve(); await Promise.resolve(); });
+    expect(container.textContent).toContain("Planning…");
+  });
+
+  it("bounds rebuild polling and leaves retry and prompt-only recovery visible", async () => {
+    vi.useFakeTimers();
+    let statusCall = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v1/projects/")) return json(project());
+      if (url.endsWith("/context/rebuild") && init?.method === "POST") return json(rebuild());
+      if (url.endsWith("/context/status")) return json(contextStatus(statusCall++ === 0 ? "not_built" : "building"));
+      throw new Error(`unexpected ${url}`);
+    }));
+    const container = await renderController("Prompt", "not_built");
+    await act(async () => { findButton(container, "Build project context").click(); await Promise.resolve(); await Promise.resolve(); });
+    for (let index = 0; index < 12; index += 1) await act(async () => { vi.advanceTimersByTime(500); await Promise.resolve(); await Promise.resolve(); });
+    expect(container.textContent).toContain("taking too long");
+    expect(container.textContent).toContain("Build project context");
+    expect(container.textContent).toContain("Start without project context");
+  });
+
+  it("aborts stale status work on project switch and restores setup after leaving Manual-only", async () => {
+    const secondProjectId = "prj_BBBBBBBBBBBBBBBBBBBBBQ";
+    let firstSignal: AbortSignal | undefined;
+    let resolveFirst!: (response: Response) => void;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/context/status") && url.includes(projectId)) {
+        firstSignal = init?.signal ?? undefined;
+        return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+      }
+      return json(contextStatus("not_built", secondProjectId));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const container = await renderController("Prompt");
+    await act(async () => { root?.render(<ProjectChatContextController projectId={secondProjectId} chatId="chat-1" draft="Prompt" settings={settings} generationKey="2" />); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(firstSignal?.aborted).toBe(true);
+    await act(async () => resolveFirst(new Response(JSON.stringify(contextStatus("ready")), { status: 200 })));
+    expect(container.textContent).toContain("Build project context");
+    act(() => findButton(container, "Start without project context").click());
+    act(() => (container.querySelector("button[aria-controls='project-chat-context-advanced']") as HTMLButtonElement).click());
+    const select = container.querySelector("select") as HTMLSelectElement;
+    act(() => { select.value = "balanced"; select.dispatchEvent(new Event("change", { bubbles: true })); });
+    expect(container.querySelector("[data-testid='project-chat-context-setup']")).not.toBeNull();
+  });
 });
+
+const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+
+async function renderController(draft: string, initialState: "not_built" | "ready" = "not_built") {
+  const container = document.createElement("div"); document.body.append(container);
+  if (!(globalThis.fetch as any)?.mock) vi.stubGlobal("fetch", vi.fn(() => json(contextStatus(initialState))));
+  await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectChatContextController projectId={projectId} chatId="chat-1" draft={draft} settings={settings} generationKey="1" />); await Promise.resolve(); await Promise.resolve(); });
+  return container;
+}
+
+function findButton(container: HTMLElement, text: string) { return Array.from(container.querySelectorAll("button")).find((button) => button.textContent === text) as HTMLButtonElement; }
+function json(value: unknown) { return Promise.resolve(new Response(JSON.stringify(value), { status: 200 })); }
+function project() { return { projectId, displayName: "Test", status: "available", revision: "7", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false, providerAccess: "direct" }; }
+function rebuild() { return { protocolVersion: "2026-08-02", schemaVersion: 1, operationId: "context-rebuild-1", projectId, mode: "full", status: "accepted", expectedInventoryGeneration: 0, expectedProjectRevision: "7", cloudRequired: false }; }
+function contextStatus(state: "not_built" | "building" | "ready", targetProjectId = projectId) { return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId: targetProjectId, state, inventoryGeneration: state === "not_built" ? 0 : 1, cloudRequired: false, providerAccess: "direct" }; }
 
 function render(model: ProjectContextCardModel, overrides: Partial<React.ComponentProps<typeof ProjectContextStatusCard>> = {}) {
   const container = document.createElement("div"); document.body.append(container);

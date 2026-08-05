@@ -2924,7 +2924,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
     let submittedAttachedContext: AttachedContextState | null = null;
     let submittedExplicitContextBundle: ReturnType<typeof explicitContextBundleToChatContext> | undefined;
     return {
-      canSend: canSendChat,
+      canSend: canSendChat && (!projectId || !chatInput.trim() || projectContextReady),
       context: (targetChatId: string, targetRevision: number) => {
         const sendAttachedContext = attachedContextRef.current;
         const attachedContextAllowed = sendAttachedContext && (sendAttachedContext.excerpt || !attachedContextRequiresAcknowledgement(sendAttachedContext.payload) || attachedContextAcknowledged);

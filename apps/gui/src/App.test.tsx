@@ -3628,6 +3628,11 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("private");
     await act(async () => setTextareaValue(chatInput(), "Continue the existing chat"));
     await act(async () => {
+      vi.advanceTimersByTime(0);
+    });
+    await flushAsync();
+    expect(findButton("Send").disabled).toBe(false);
+    await act(async () => {
       findButton("Send").click();
       await Promise.resolve();
       await Promise.resolve();
@@ -14675,6 +14680,17 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
   if (projectContextMatch) {
     const state = options.projectContextState ?? "ready";
     return Promise.resolve(jsonResponse({ protocolVersion: "2026-08-02", schemaVersion: 1, projectId: projectContextMatch[1], state, inventoryGeneration: state === "not_built" ? 0 : 3, cloudRequired: false, providerAccess: "direct" }));
+  }
+  const projectContextPlanMatch = /\/p\/(prj_[A-Za-z0-9]+)\/v1\/context\/plan$/.exec(url);
+  if (projectContextPlanMatch && init?.method === "POST") {
+    const request = JSON.parse(String(init.body)) as { mode: "balanced" | "deep"; query: string };
+    const planId = "plan-app-test";
+    const contextHash = `sha256:${"a".repeat(64)}`;
+    return Promise.resolve(jsonResponse({
+      protocolVersion: "2026-08-02", schemaVersion: 1, planId, projectId: projectContextPlanMatch[1], mode: request.mode, queryLabel: request.query, status: "ready",
+      manifest: { protocolVersion: "2026-08-02", schemaVersion: 1, manifestId: "manifest-app-test", projectId: projectContextPlanMatch[1], planId, mode: request.mode, inventoryGeneration: 3, queryHash: contextHash, rankingVersion: "lexical-symbol-ranking-1", budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 0, usedChunks: 0, usedBytes: 0, usedEstimatedTokens: 0, truncated: false }, entries: [], omissions: [], redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 }, createdAt: "2026-08-02T12:00:00Z" },
+      createdAt: "2026-08-02T12:00:00Z", expiresAt: "2026-08-02T12:05:00Z", cloudRequired: false,
+    }));
   }
   const projectMatch = /\/v1\/projects\/(prj_[A-Za-z0-9]+)$/.exec(url);
   if (projectMatch) {
