@@ -321,6 +321,40 @@ describe("project lifecycle scope", () => {
     expect(container?.textContent).toContain("This is taking longer than expected");
   });
 
+  it("does not treat repeated SSE metadata as visible response progress", async () => {
+    vi.useFakeTimers();
+    let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const encoder = new TextEncoder();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/v1/chats/subscribe?chat_id=")) {
+        return Promise.resolve(new Response(new ReadableStream<Uint8Array>({ start(controller) { sseController = controller; }, cancel() {} }), { status: 200 }));
+      }
+      return mockRuntimeResponse(input, init, readyRuntimeOptions());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "Metadata is not progress"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => {
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 0, type: "snapshot", chatId: "chat-001", payload: {} })}\n\n`));
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 1, type: "stream_started", chatId: "chat-001", payload: {} })}\n\n`));
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(9_000);
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 2, type: "queue_updated", chatId: "chat-001", payload: {} })}\n\n`));
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 3, type: "runtime_updated", chatId: "chat-001", payload: {} })}\n\n`));
+      sseController?.enqueue(encoder.encode(`data: ${JSON.stringify({ seq: 4, type: "pause_required", chatId: "chat-001", payload: {} })}\n\n`));
+      await Promise.resolve();
+    });
+    expect(container?.textContent).not.toContain("This is taking longer than expected");
+
+    await act(async () => { vi.advanceTimersByTime(1_000); await Promise.resolve(); });
+    expect(container?.textContent).toContain("This is taking longer than expected");
+  });
+
   it("offers unusable project-context setup and prompt-only fallback without auto-send", async () => {
     mockRuntimeResponses({ ...readyRuntimeOptions(), projectContextState: "not_built" });
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });

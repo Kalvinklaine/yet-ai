@@ -42,6 +42,8 @@ describe("ChatContextDrawer", () => {
     expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ excludedSources: [{ kind: "file_chunk", chunkId: "chunk-1", contentHash: hash }], manifestId: "manifest-1" }));
     act(() => (buttons.find((button) => button.textContent === "Send with manual-only") as HTMLButtonElement).click());
     expect((container.querySelector("select") as HTMLSelectElement).value).toBe("manual_only");
+    expect(container.textContent).not.toContain("Refreshing context…");
+    expect(container.textContent).toContain("Refresh context");
     expect(onSelectionChange).toHaveBeenLastCalledWith(null);
     expect(localStorage.length).toBe(0); expect(sessionStorage.length).toBe(0);
   });

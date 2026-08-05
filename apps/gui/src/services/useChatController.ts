@@ -80,6 +80,16 @@ export function acceptsChatResult(lineage: ChatResultLineage): boolean {
     && lineage.scopeAccepted;
 }
 
+export function isVisibleChatProgressEvent(type: SseEvent["type"]): boolean {
+  return type === "stream_started"
+    || type === "stream_delta"
+    || type === "stream_finished"
+    || type === "message_added"
+    || type === "message_updated"
+    || type === "message_removed"
+    || type === "error";
+}
+
 export function useChatController({ initialChatId, projectId, routedChatId, hostReadyGeneration, navigateToChat, settingsRef, settingsRevisionRef, projectScopeController, addTimelineRef, appendTraceRef, resettersRef, onMissingRoutedChat }: ChatControllerInput) {
   const [chatError, setChatError] = useState<RuntimeError | null>(null);
   const [chatId, setChatIdState] = useState<string | null>(initialChatId);
@@ -172,7 +182,7 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
       onEvent: (event) => {
         if (activeStreamRef.current !== stream || stream.revision !== settingsRevisionRef.current || chatIdRef.current !== stream.chatId || !projectScopeController.accepts(stream.scopeCorrelation) || event.chatId !== stream.chatId) return;
         const safeEvent: SseEvent = { ...event, payload: sanitizeDisplayValue(event.payload) as Record<string, unknown> | undefined };
-        markChatProgress();
+        if (isVisibleChatProgressEvent(event.type)) markChatProgress();
         setChatView((current) => applyChatViewEvent(current, safeEvent));
         if (event.type === "stream_started" || event.type === "stream_delta") setChatLifecycleState("streaming");
         else if (event.type === "stream_finished") setChatLifecycleState("idle");

@@ -108,10 +108,40 @@ describe("useProjectContextPlanning", () => {
 
     expect(container.querySelector("[data-testid='state']")?.textContent).toBe("loading");
     act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "manual") as HTMLButtonElement).click());
+    expect(container.querySelector("[data-testid='state']")?.textContent).toBe("idle");
     expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
     await act(async () => { vi.advanceTimersByTime(350); await Promise.resolve(); });
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("Manual-only aborts in-flight planning and remains idle after the request resolves", async () => {
+    vi.useFakeTimers();
+    const resolvers: Array<(value: Response) => void> = [];
+    let projectSignal: AbortSignal | undefined;
+    const fetchMock = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+      projectSignal = init?.signal ?? undefined;
+      return new Promise<Response>((resolve) => { resolvers.push(resolve); });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Abort active work", settings, generationKey: "1" });
+    await act(async () => { vi.advanceTimersByTime(350); await Promise.resolve(); });
+
+    act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "manual") as HTMLButtonElement).click());
+    expect(projectSignal?.aborted).toBe(true);
+    expect(container.querySelector("[data-testid='mode']")?.textContent).toBe("manual_only");
+    expect(container.querySelector("[data-testid='state']")?.textContent).toBe("idle");
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
+
+    await act(async () => {
+      resolvers[0]?.(new Response(JSON.stringify(project()), { status: 200 }));
+      resolvers[1]?.(new Response(JSON.stringify(status()), { status: 200 }));
+      await Promise.resolve();
+    });
+    expect(container.querySelector("[data-testid='state']")?.textContent).toBe("idle");
+    expect(container.querySelector("[data-testid='selection']")?.textContent).toBe("none");
   });
 
   it("cleans up queued planning on unmount", async () => {

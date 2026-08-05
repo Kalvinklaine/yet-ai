@@ -213,11 +213,23 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
   }, [selection]);
 
   const setMode = useCallback((nextMode: ProjectContextMode) => {
+    if (nextMode === "manual_only") {
+      clearQueuedPlanning();
+      requestRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
+      completedCorrelationRef.current = "";
+      setPlan(null);
+      setState("idle");
+      selectionCallbackRef.current?.(null);
+      publishReady(true);
+      if (nextMode !== mode) setModeState({ projectId, mode: nextMode });
+      return;
+    }
     if (nextMode === mode) return;
     invalidate();
     setModeState({ projectId, mode: nextMode });
-    if (nextMode === "manual_only") publishReady(true);
-  }, [invalidate, mode, projectId, publishReady]);
+  }, [clearQueuedPlanning, invalidate, mode, projectId, publishReady]);
 
   const pin = useCallback((key: string) => {
     const entry = plan?.manifest.entries.find((item) => contextManifestEntryKey(item) === key);

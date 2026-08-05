@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { acceptsChatResult, type ChatResultLineage } from "./useChatController";
+import { acceptsChatResult, isVisibleChatProgressEvent, type ChatResultLineage } from "./useChatController";
 
 const currentLineage = (overrides: Partial<ChatResultLineage> = {}): ChatResultLineage => ({
   mounted: true,
@@ -41,5 +41,21 @@ describe("useChatController race lineage", () => {
       currentChatId: undefined,
     });
     expect(acceptsChatResult(lineage)).toBe(true);
+  });
+});
+
+describe("useChatController progress heartbeat", () => {
+  it("excludes metadata events that do not change visible response progress", () => {
+    expect(isVisibleChatProgressEvent("queue_updated")).toBe(false);
+    expect(isVisibleChatProgressEvent("runtime_updated")).toBe(false);
+    expect(isVisibleChatProgressEvent("pause_required")).toBe(false);
+    expect(isVisibleChatProgressEvent("thread_updated")).toBe(false);
+  });
+
+  it("includes streaming deltas and visible terminal progress", () => {
+    expect(isVisibleChatProgressEvent("stream_started")).toBe(true);
+    expect(isVisibleChatProgressEvent("stream_delta")).toBe(true);
+    expect(isVisibleChatProgressEvent("stream_finished")).toBe(true);
+    expect(isVisibleChatProgressEvent("error")).toBe(true);
   });
 });
