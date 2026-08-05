@@ -124,6 +124,9 @@ let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatAbortRequestCount = 0;
 let chatSubscriptionCount = 0;
+let projectContextStatusRequestCount = 0;
+let projectContextPlanRequestCount = 0;
+const projectContextPlanRequests = [];
 let projectPhaseRuntimeLogStart;
 let chatCommandRequestCountBeforeEditSmoke = 0;
 let demoModeEnabled = false;
@@ -821,22 +824,62 @@ async function enterJetBrainsProjectChat(page, frameLocator, requestId) {
   });
   if (await frameLocator.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) failures.push("JetBrains dashboard mounted a composer before explicit Start.");
   await frameLocator.getByRole("button", { name: "Start new chat", exact: true }).click();
-  await frameLocator.getByText("Project chat", { exact: true }).first().waitFor({ state: "visible", timeout: 5000 });
+  const projectChatShell = frameLocator.locator("main.app-shell.host-jetbrains[data-project-page='chat']");
+  await projectChatShell.waitFor({ state: "visible", timeout: 5000 }).catch(async (error) => {
+    throw new Error(`JetBrains project chat route did not become active after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(frameLocator)}`);
+  });
   chatCommandRequest = undefined;
   chatCommandRequestCount = 0;
   chatAbortRequestCount = 0;
   nextAssistantResponseContent = projectGuiSendResponse;
   const composer = frameLocator.getByPlaceholder("Ask about the current file, selection, or project...");
-  await composer.waitFor({ state: "visible", timeout: 5000 });
-  await frameLocator.getByRole("button", { name: "Send", exact: true }).waitFor({ state: "visible", timeout: 5000 });
+  await composer.waitFor({ state: "visible", timeout: 5000 }).catch(async (error) => {
+    throw new Error(`JetBrains project composer did not become visible after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(frameLocator)}`);
+  });
+  const send = frameLocator.getByRole("button", { name: "Send", exact: true });
+  await send.waitFor({ state: "visible", timeout: 5000 }).catch(async (error) => {
+    throw new Error(`JetBrains project Send did not become visible after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(frameLocator)}`);
+  });
+  if (chatCommandRequestCount !== 0) failures.push(`JetBrains project chat issued ${chatCommandRequestCount} command(s) before the explicit Send click.`);
+  const planCountBeforePrompt = projectContextPlanRequestCount;
   await composer.fill(projectGuiSendPrompt);
+  await waitForBalancedContextPlanAndEnabledSend(page, frameLocator, send, planCountBeforePrompt, "JetBrains project first message");
   await clickSendButtonWithActionability(frameLocator, "JetBrains project GUI Send evidence");
   await frameLocator.getByText(projectGuiSendResponse, { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("JetBrains project GUI Send did not render its SSE assistant response."));
   if (chatCommandRequestCount !== 1 || chatCommandRequest?.type !== "user_message" || chatCommandRequest?.payload?.content !== projectGuiSendPrompt) {
     failures.push(`JetBrains project GUI Send did not cause exactly one expected user command: count=${chatCommandRequestCount}, body=${JSON.stringify(chatCommandRequest)}.`);
   }
+  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection, "jetbrains-wrapper-plan", "jetbrains-wrapper-manifest", "JetBrains project GUI Send");
   demoModeEnabled = false;
+}
+
+async function waitForBalancedContextPlanAndEnabledSend(page, frameLocator, send, previousPlanCount, label) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const planned = projectContextPlanRequestCount > previousPlanCount
+      && projectContextPlanRequests.slice(previousPlanCount).some((request) => request?.mode === "balanced");
+    if (planned && await send.isEnabled().catch(() => false)) return;
+    await page.waitForTimeout(50);
+  }
+  throw new Error(`${label} did not complete automatic Balanced planning with enabled Send. ${await hostedProjectChatDiagnostic(frameLocator)}`);
+}
+
+async function hostedProjectChatDiagnostic(frameLocator) {
+  const state = await frameLocator.locator("body").evaluate(() => {
+    const shell = document.querySelector("main.app-shell");
+    const composer = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
+    const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
+    return {
+      route: shell?.getAttribute("data-project-page") ?? null,
+      hostClass: shell?.className ?? null,
+      composerVisible: composer instanceof HTMLElement && composer.getBoundingClientRect().height > 0,
+      sendVisible: send instanceof HTMLElement && send.getBoundingClientRect().height > 0,
+      sendDisabled: send instanceof HTMLButtonElement ? send.disabled : null,
+      bodySnippet: document.body.innerText.replace(/\s+/g, " ").slice(0, 1200),
+    };
+  }).catch((error) => ({ diagnosticError: messageOf(error) }));
+  return sanitizeEvidenceText(JSON.stringify({ state, projectContextStatusRequestCount, projectContextPlanRequestCount })).slice(0, 2200);
 }
 
 async function reloadJetBrainsLegacyWorkbench(page, frameLocator) {
@@ -3169,6 +3212,29 @@ async function startMockRuntimeServer() {
       json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
+    if (request.method === "GET" && scopedPath === "/v1/context/status") {
+      projectContextStatusRequestCount += 1;
+      json(response, 200, projectContextStatus());
+      return;
+    }
+    if (request.method === "POST" && scopedPath === "/v1/context/plan") {
+      let body;
+      try {
+        body = JSON.parse(await readRequestBody(request));
+      } catch {
+        json(response, 400, { error: "Invalid project context plan JSON" });
+        return;
+      }
+      runtimeLogEntry.body = body;
+      projectContextPlanRequestCount += 1;
+      projectContextPlanRequests.push(body);
+      if (!isCurrentBalancedContextPlanRequest(body)) {
+        json(response, 400, { error: "Invalid project context plan request" });
+        return;
+      }
+      json(response, 200, projectContextPlan(body));
+      return;
+    }
     if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
       let payload;
       if (demoModeFirstMessage) {
@@ -3555,6 +3621,67 @@ function readyDemoProvider() {
 
 function mockProjectSummary() {
   return { projectId, displayName: projectDisplayName, status: "available", revision: "1", createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
+}
+
+function projectContextStatus() {
+  return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state: "ready", inventoryGeneration: 1, cloudRequired: false, providerAccess: "direct" };
+}
+
+function isCurrentBalancedContextPlanRequest(body) {
+  return body !== null
+    && typeof body === "object"
+    && typeof body.query === "string"
+    && body.query.length > 0
+    && body.mode === "balanced"
+    && body.expectedInventoryGeneration === 1
+    && body.expectedProjectRevision === "1"
+    && Array.isArray(body.explicitRefs)
+    && body.budget !== null
+    && typeof body.budget === "object";
+}
+
+function projectContextPlan(body) {
+  const hash = `sha256:${"a".repeat(64)}`;
+  const createdAt = "2026-08-05T00:00:00Z";
+  return {
+    protocolVersion: "2026-08-02",
+    schemaVersion: 1,
+    planId: "jetbrains-wrapper-plan",
+    projectId,
+    mode: body.mode,
+    queryLabel: "JetBrains project first message",
+    status: "ready",
+    manifest: {
+      protocolVersion: "2026-08-02",
+      schemaVersion: 2,
+      manifestId: "jetbrains-wrapper-manifest",
+      projectId,
+      planId: "jetbrains-wrapper-plan",
+      mode: body.mode,
+      inventoryGeneration: 1,
+      queryHash: hash,
+      rankingVersion: "lexical-symbol-ranking-1",
+      budget: { ...body.budget, usedFiles: 1, usedChunks: 1, usedBytes: 32, usedEstimatedTokens: 8, truncated: false },
+      entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/main/kotlin/ContextSmoke.kt", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, symbol: "ContextSmoke", contentHash: hash, inclusionReason: "symbol_match", provenance: "symbol", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }],
+      omissions: [],
+      redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 },
+      createdAt,
+    },
+    createdAt,
+    expiresAt: "2026-08-05T00:05:00Z",
+    cloudRequired: false,
+  };
+}
+
+function assertCurrentPlannedContextSelection(selection, expectedPlanId, expectedManifestId, label) {
+  if (selection?.planId !== expectedPlanId
+    || selection?.manifestId !== expectedManifestId
+    || selection?.mode !== "balanced"
+    || selection?.expectedInventoryGeneration !== 1
+    || selection?.expectedProjectRevision !== "1"
+    || selection?.rankingVersion !== "lexical-symbol-ranking-1") {
+    failures.push(`${label} did not carry the current Balanced planned-context selection.`);
+  }
 }
 
 function readyDemoModel() {
@@ -4139,6 +4266,8 @@ function assertProjectScopedChatProxyCoverage() {
   const entries = runtimeRequestLog.slice(projectPhaseRuntimeLogStart ?? runtimeRequestLog.length);
   const expected = [
     ["GET", `/p/${projectId}/v1/project-memory`],
+    ["GET", `/p/${projectId}/v1/context/status`],
+    ["POST", `/p/${projectId}/v1/context/plan`],
     ["POST", `/p/${projectId}/v1/chats`],
     ["GET", `/p/${projectId}/v1/chats`],
     ["GET", `/p/${projectId}/v1/chats/chat-001`],

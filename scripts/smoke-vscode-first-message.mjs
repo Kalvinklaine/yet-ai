@@ -32,6 +32,9 @@ let chatCommandRequest;
 let chatCommandRequestCount = 0;
 let chatSubscriptionCount = 0;
 let chatCreated = false;
+let projectContextStatusRequestCount = 0;
+let projectContextPlanRequestCount = 0;
+const projectContextPlanRequests = [];
 let matchingUserMessageCommandReceived = false;
 let hostGeneration;
 let resolveMatchingUserMessageCommand;
@@ -150,17 +153,24 @@ try {
   if (consoleMessages.includes("Rejected invalid host bridge message")) {
     throw new Error("VS Code first-message host.ready was rejected by the GUI bridge contract.");
   }
+  if (chatCommandRequestCount !== 0 || chatSubscriptionCount !== 0) {
+    failures.push(`VS Code dashboard issued chat command/SSE traffic before explicit Start: commands=${chatCommandRequestCount}, subscriptions=${chatSubscriptionCount}.`);
+  }
   await startNewChat.click();
-  await page.getByText("Project chat", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
-  await page.locator("textarea").waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
-    const body = await page.locator("body").innerText().catch(() => "");
-    throw new Error(`Project chat did not mount its composer after Start new chat. ${messageOf(error)}\nVisible body excerpt: ${sanitizeDiagnosticText(body).slice(0, 4000)}`);
+  await page.locator("main.app-shell.host-vscode[data-project-page='chat']").waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
+    throw new Error(`VS Code project chat route did not become active after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
   });
-  await page.locator("main.app-shell.host-vscode").waitFor({ state: "attached", timeout: 10_000 });
+  const composer = page.getByPlaceholder("Ask about the current file, selection, or project...");
   await waitForLazyAppSubscriber(page);
   runtimeReady = true;
   await dispatchHostedWorkspaceAuthority(page, hostGeneration);
   await page.locator("[data-testid='ide-actions-drawer']").waitFor({ state: "attached", timeout: 20_000 });
+  await composer.waitFor({ state: "visible", timeout: 20_000 }).catch(async (error) => {
+    throw new Error(`VS Code project composer did not become visible after runtime readiness. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
+  });
+  await sendButton(page).waitFor({ state: "visible", timeout: 20_000 }).catch(async (error) => {
+    throw new Error(`VS Code project Send did not become visible after runtime readiness. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
+  });
   if (!observedRuntimeAuthorization) {
     failures.push("Mock runtime did not observe the VS Code host.ready runtime session token.");
   }
@@ -192,7 +202,12 @@ try {
   }, { version: bridgeVersion, text: contextText, requestId: hostGeneration });
   await expectVisibleActiveContext(page);
 
-  await page.getByPlaceholder("Ask about the current file, selection, or project...").fill(userMessageText);
+  const planCountBeforePrompt = projectContextPlanRequestCount;
+  await composer.fill(userMessageText);
+  await waitForBalancedContextPlanAndEnabledSend(page, planCountBeforePrompt);
+  if (chatCommandRequestCount !== 0 || matchingUserMessageCommandReceived) {
+    failures.push(`VS Code project chat issued ${chatCommandRequestCount} command(s) before the explicit Send click.`);
+  }
   await sendButton(page).click();
   await expectVisibleText(page, userMessageText, "visible user first message", 20_000);
   await expectVisibleText(page, assistantText, "mock SSE assistant response", 20_000);
@@ -213,6 +228,7 @@ try {
   if (chatCommandRequest?.payload?.context?.source !== "vscode" || chatCommandRequest?.payload?.context?.selection?.text !== contextText) {
     failures.push("Mock runtime did not receive the VS Code active context on the first message.");
   }
+  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection);
   assertProjectOwnedRuntimeRequestsScoped();
   assertAllRuntimeApiRequestsAuthorized();
 
@@ -318,6 +334,34 @@ async function waitForLazyAppSubscriber(page) {
   }));
 }
 
+async function waitForBalancedContextPlanAndEnabledSend(page, previousPlanCount) {
+  const deadline = Date.now() + 20_000;
+  while (Date.now() < deadline) {
+    const planned = projectContextPlanRequestCount > previousPlanCount
+      && projectContextPlanRequests.slice(previousPlanCount).some((request) => request?.mode === "balanced");
+    if (planned && await sendButton(page).isEnabled().catch(() => false)) return;
+    await page.waitForTimeout(50);
+  }
+  throw new Error(`VS Code first message did not complete automatic Balanced planning with enabled Send. ${await hostedProjectChatDiagnostic(page)}`);
+}
+
+async function hostedProjectChatDiagnostic(page) {
+  const state = await page.evaluate(() => {
+    const shell = document.querySelector("main.app-shell");
+    const composer = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
+    const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
+    return {
+      route: shell?.getAttribute("data-project-page") ?? null,
+      hostClass: shell?.className ?? null,
+      composerVisible: composer instanceof HTMLElement && composer.getBoundingClientRect().height > 0,
+      sendVisible: send instanceof HTMLElement && send.getBoundingClientRect().height > 0,
+      sendDisabled: send instanceof HTMLButtonElement ? send.disabled : null,
+      bodySnippet: document.body.innerText.replace(/\s+/g, " ").slice(0, 1200),
+    };
+  }).catch((error) => ({ diagnosticError: messageOf(error) }));
+  return sanitizeDiagnosticText(JSON.stringify({ state, projectContextStatusRequestCount, projectContextPlanRequestCount })).slice(0, 2200);
+}
+
 async function expectVisibleActiveContext(page) {
   await openComposerDrawer(page, "ide-actions-drawer", "VS Code active context bridge delivery");
   const contextDetails = page.locator("[data-testid='attached-context-active-details']").first();
@@ -416,6 +460,28 @@ async function startMockRuntimeServer() {
       json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
       return;
     }
+    if (request.method === "GET" && runtimePath === "/v1/context/status") {
+      projectContextStatusRequestCount += 1;
+      json(response, 200, projectContextStatus());
+      return;
+    }
+    if (request.method === "POST" && runtimePath === "/v1/context/plan") {
+      let body;
+      try {
+        body = JSON.parse(await readRequestBody(request));
+      } catch {
+        json(response, 400, { error: "Invalid project context plan JSON" });
+        return;
+      }
+      projectContextPlanRequestCount += 1;
+      projectContextPlanRequests.push(body);
+      if (!isCurrentBalancedContextPlanRequest(body)) {
+        json(response, 400, { error: "Invalid project context plan request" });
+        return;
+      }
+      json(response, 200, projectContextPlan(body));
+      return;
+    }
     if (request.method === "GET" && runtimePath === "/v1/agent-progress") {
       json(response, 200, { snapshots: [], cloudRequired: false, providerAccess: "direct" });
       return;
@@ -504,6 +570,67 @@ function mockProjectSummary() {
   return { projectId, displayName: projectDisplayName, status: "available", revision: "1", createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
 
+function projectContextStatus() {
+  return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state: "ready", inventoryGeneration: 1, cloudRequired: false, providerAccess: "direct" };
+}
+
+function isCurrentBalancedContextPlanRequest(body) {
+  return body !== null
+    && typeof body === "object"
+    && typeof body.query === "string"
+    && body.query.length > 0
+    && body.mode === "balanced"
+    && body.expectedInventoryGeneration === 1
+    && body.expectedProjectRevision === "1"
+    && Array.isArray(body.explicitRefs)
+    && body.budget !== null
+    && typeof body.budget === "object";
+}
+
+function projectContextPlan(body) {
+  const hash = `sha256:${"b".repeat(64)}`;
+  const createdAt = "2026-08-05T00:00:00Z";
+  return {
+    protocolVersion: "2026-08-02",
+    schemaVersion: 1,
+    planId: "vscode-first-message-plan",
+    projectId,
+    mode: body.mode,
+    queryLabel: "VS Code first message",
+    status: "ready",
+    manifest: {
+      protocolVersion: "2026-08-02",
+      schemaVersion: 2,
+      manifestId: "vscode-first-message-manifest",
+      projectId,
+      planId: "vscode-first-message-plan",
+      mode: body.mode,
+      inventoryGeneration: 1,
+      queryHash: hash,
+      rankingVersion: "lexical-symbol-ranking-1",
+      budget: { ...body.budget, usedFiles: 1, usedChunks: 1, usedBytes: 32, usedEstimatedTokens: 8, truncated: false },
+      entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/vscode-smoke.ts", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, symbol: "vscodeSmoke", contentHash: hash, inclusionReason: "symbol_match", provenance: "symbol", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }],
+      omissions: [],
+      redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 },
+      createdAt,
+    },
+    createdAt,
+    expiresAt: "2026-08-05T00:05:00Z",
+    cloudRequired: false,
+  };
+}
+
+function assertCurrentPlannedContextSelection(selection) {
+  if (selection?.planId !== "vscode-first-message-plan"
+    || selection?.manifestId !== "vscode-first-message-manifest"
+    || selection?.mode !== "balanced"
+    || selection?.expectedInventoryGeneration !== 1
+    || selection?.expectedProjectRevision !== "1"
+    || selection?.rankingVersion !== "lexical-symbol-ranking-1") {
+    failures.push("VS Code first message did not carry the current Balanced planned-context selection.");
+  }
+}
+
 function mockChatThread() {
   return { chatId, title: "VS Code first-message smoke", createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString(), messages: [] };
 }
@@ -514,8 +641,8 @@ function mockChatSummary() {
 }
 
 function isProjectOwnedRuntimePath(pathname) {
-  return /^\/v1\/(?:chats(?:\/|$)|project-memory(?:\/|$)|agent-progress(?:\/|$))/.test(pathname)
-    || /^\/p\/[^/]+\/v1\/(?:chats(?:\/|$)|project-memory(?:\/|$)|agent-progress(?:\/|$))/.test(pathname);
+  return /^\/v1\/(?:chats(?:\/|$)|project-memory(?:\/|$)|agent-progress(?:\/|$)|context(?:\/|$))/.test(pathname)
+    || /^\/p\/[^/]+\/v1\/(?:chats(?:\/|$)|project-memory(?:\/|$)|agent-progress(?:\/|$)|context(?:\/|$))/.test(pathname);
 }
 
 async function startStaticServer(staticRoot) {
@@ -789,6 +916,8 @@ function assertProjectOwnedRuntimeRequestsScoped() {
   }
   for (const expected of [
     { method: "POST", pathname: `${expectedPrefix}chats` },
+    { method: "GET", pathname: `${expectedPrefix}context/status` },
+    { method: "POST", pathname: `${expectedPrefix}context/plan` },
     { method: "POST", pathname: `${expectedPrefix}chats/${chatId}/commands` },
     { method: "GET", pathname: `${expectedPrefix}chats/subscribe` },
   ]) {
