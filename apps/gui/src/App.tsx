@@ -16,7 +16,7 @@ import { ControlledAgentWorkflowTranscriptPanel } from "./components/ControlledA
 import { EditProposalPanel, type ApplyResultState, type EditProposalState } from "./components/EditProposalPanel";
 import { IdeActionProposalPanel, IdeActionsPanel, VerificationCommandPanel, verificationOutputKey, type IdeActionAttemptState, type VerificationCommand } from "./components/IdeActionsPanel";
 import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalIdentityMatchesCandidate, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, isCompleteAssistantIdeActionProposalStatus, latestIdeActionProposalCandidateFromMessages, latestIdeActionProposalReviewFromMessages, parseAssistantIdeActionProposalContent, type IdeActionProposalState } from "./services/ideActionProposal";
-import { chatLifecycleLabels, chatRecoveryCodeForRuntimeError, type ChatLifecycleState } from "./services/chatLifecycle";
+import { chatLifecycleLabels, chatLifecycleLongWaitCopy, chatLifecycleLongWaitMs, chatRecoveryCodeForRuntimeError, isChatLifecyclePending, type ChatLifecycleState } from "./services/chatLifecycle";
 import { runtimeLifecycleDiagnostics, runtimeLifecycleHostCopy, type RuntimeLifecycleDiagnostics } from "./services/runtimeLifecycle";
 import { conversationHistoryStatusLabel } from "./services/conversationHistory";
 import { type ProviderAuthResponse, type ProviderAuthStatus } from "./services/providerAuthClient";
@@ -435,6 +435,9 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
   const [workspaceSnippetStatus, setWorkspaceSnippetStatus] = useState<string | null>(null);
   const [projectContextPlanningSelection, setProjectContextPlanningSelection] = useState<ProjectContextPlanningSelection | null>(null);
   const [projectContextReady, setProjectContextReady] = useState(true);
+  const [projectContextActivity, setProjectContextActivity] = useState<"idle" | "planning" | "failed" | "stopped">("idle");
+  const [projectContextStopSignal, setProjectContextStopSignal] = useState(0);
+  const [chatLifecycleLongWait, setChatLifecycleLongWait] = useState(false);
   const [projectMemoryTitle, setProjectMemoryTitle] = useState("");
   const [projectMemoryText, setProjectMemoryText] = useState("");
   const [projectMemoryTags, setProjectMemoryTags] = useState("");
@@ -3062,7 +3065,14 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       notes,
     };
   }, [activeConnectionError, activeModelError, activeProviderAuthStatus, activeSelectedDemoMode, apiKeyChatReady, apiKeyReadiness, bridgeHost, demoModeToggleLabel, enabledProviders, experimentalOauthChatReady, hostedRuntimeConnection, providerAuthMutationInFlight, runtimeConnected, runtimeRefreshInFlight, runtimeRefreshStatus, selectedModelDisplayName, selectedModelProviderId]);
-  const chatLifecycleLabel = chatLifecycleState === "idle"
+  const visibleChatLifecycleState: ChatLifecycleState = projectContextActivity === "planning" && !isChatLifecyclePending(chatLifecycleState)
+    ? "context_planning"
+    : projectContextActivity === "failed" && chatLifecycleState === "idle"
+      ? "failed"
+      : projectContextActivity === "stopped" && chatLifecycleState === "idle"
+        ? "stopped"
+        : chatLifecycleState;
+  const chatLifecycleLabel = visibleChatLifecycleState === "idle"
     ? canSendChat
       ? activeSelectedDemoMode
         ? "Demo Mode ready — local canned responses, no provider calls. Ready to send."
@@ -3070,7 +3080,22 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
       : runtimeConnected
         ? "Configure a provider/model or enable Demo Mode before sending."
         : "Connect the local runtime before sending."
-    : chatLifecycleLabels[chatLifecycleState];
+    : projectContextActivity === "failed" && visibleChatLifecycleState === "failed"
+      ? "Project context planning failed. Send without project context or retry planning."
+      : projectContextActivity === "stopped" && visibleChatLifecycleState === "stopped"
+        ? "Project context planning stopped. Send without project context or retry planning."
+        : chatLifecycleLabels[visibleChatLifecycleState];
+  const handleChatStop = useCallback(() => {
+    setProjectContextStopSignal((current) => current + 1);
+    stopSse();
+  }, [stopSse]);
+
+  useEffect(() => {
+    setChatLifecycleLongWait(false);
+    if (!isChatLifecyclePending(visibleChatLifecycleState)) return;
+    const timer = window.setTimeout(() => setChatLifecycleLongWait(true), chatLifecycleLongWaitMs);
+    return () => window.clearTimeout(timer);
+  }, [chatId, hostReadyGeneration, projectId, settingsRevision, visibleChatLifecycleState]);
   const tracePanelEntries = codingSessionTraceWithCheckpointDecision.slice(-12);
   const currentChatTitle = sanitizeDisplayText(activeChatSummary?.title ?? chatId ?? "New chat draft");
   const renderConversationList = (deleteHelpId: string) => (
@@ -3319,14 +3344,14 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                     {projectId && <a href={buildProjectRoute({ kind: "project", projectId, page: "chat" })}>Back to project chat list</a>}
                   </section>
                 ) : chatView.messages.length === 0 ? <ChatEmptyState runtimeConnected={runtimeConnected} canSendChat={canSendChat} providerReady={apiKeyChatReady || experimentalOauthChatReady} activeDemoMode={activeSelectedDemoMode} selectedModelDisplayName={selectedModelDisplayName} selectedModelProviderId={selectedModelProviderId} context={currentAttachedContext} hasLocalConversations={activeChatSummaries.length > 0} onProviderSetup={applyOpenAiApiPreset} onRefreshRuntime={() => void connect(true)} showSetupActions={projectPage === undefined} /> : chatView.messages.map((message, index) => <ChatBubble key={message.id} message={message} canContinue={Boolean(projectId && message.role === "assistant" && message.status === "interrupted" && message.continuation && index === chatView.messages.length - 1 && !activeStreamRef.current)} onContinue={() => void continueResponse(message.id)} activeEditProposal={activeEditProposal} rejectedEditProposalSourceMessageId={activeRejectedEditProposal?.sourceMessageId ?? null} activeIdeActionProposal={activeIdeActionProposal} rejectedIdeActionProposalSourceMessageId={activeRejectedIdeActionProposal?.sourceMessageId ?? null} />)}
-                <span className={`chat-lifecycle-state ${chatLifecycleState}`}>{chatLifecycleLabel}</span>
                 {chatView.messages.some((message) => message.role === "assistant" && message.status === "streaming") && <span className="subtle">Assistant is streaming…</span>}
               </div>
               <EditProposalPanel proposal={activeEditProposal} rejected={activeRejectedEditProposal} result={activeEditProposal ? applyResult : null} host={bridgeHost} pendingRequestId={pendingApplyRequestId} note={applyNote} onApply={submitEditProposal} onCancelPending={cancelPendingEditProposalApply} />
               {proposalHistory.entries.length > 0 && pendingApplyRequestId === null && <ProposalHistoryPanel history={proposalHistory} />}
               <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             </div>
-            {!routedChatMissing && projectId && <ProjectChatContextController projectId={projectId} chatId={chatId} draft={chatInput} settings={{ baseUrl, token, runtimeAccess }} generationKey={`${settingsRevision}:${hostReadyGeneration ?? "browser"}`} onSelectionChange={setProjectContextPlanningSelection} onReadyChange={setProjectContextReady} />}
+            {!routedChatMissing && <div className="chat-lifecycle-row" role="status" aria-live="polite" data-testid="chat-lifecycle-status"><span className={`chat-lifecycle-state ${visibleChatLifecycleState}`}>{chatLifecycleLabel}</span><button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={handleChatStop}>Stop</button>{chatLifecycleLongWait && <span className="chat-lifecycle-long-wait">{chatLifecycleLongWaitCopy(visibleChatLifecycleState)}</span>}</div>}
+            {!routedChatMissing && projectId && <ProjectChatContextController projectId={projectId} chatId={chatId} draft={chatInput} settings={{ baseUrl, token, runtimeAccess }} generationKey={`${settingsRevision}:${hostReadyGeneration ?? "browser"}`} stopSignal={projectContextStopSignal} onSelectionChange={setProjectContextPlanningSelection} onReadyChange={setProjectContextReady} onActivityChange={setProjectContextActivity} />}
             {!routedChatMissing && <form className="chat-composer" data-testid="chat-composer" onSubmit={(event) => void submitChatCommand(event, buildChatSendOptions())}>
               <div className="composer-input-area">
                 <div className="composer-context-chips" aria-label="Next-send context chips">
@@ -3345,7 +3370,6 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                 <textarea ref={chatInputRef} value={chatInput} onChange={(event) => { if (projectId && projectContextPlanningSelection) { setProjectContextPlanningSelection(null); } setUserChatInputDraft(event.target.value); }} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">
                   <button type="submit" disabled={!canSendChat || Boolean(projectId && chatInput.trim() && !projectContextReady)}>Send</button>
-                  <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>
                 </div>
               </div>
               {(projectPage === undefined || ideActionsAuthorized) && <div className="composer-tools">

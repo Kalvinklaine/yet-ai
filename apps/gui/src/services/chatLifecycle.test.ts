@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { chatLifecycleLabels, chatRecoveryCopyForCode, chatRecoveryCopyForRuntimeError, formatChatErrorMessage, type ChatLifecycleState } from "./chatLifecycle";
+import { chatLifecycleLabels, chatLifecycleLongWaitCopy, chatRecoveryCopyForCode, chatRecoveryCopyForRuntimeError, formatChatErrorMessage, isChatLifecyclePending, type ChatLifecycleState } from "./chatLifecycle";
 
 describe("chatLifecycle", () => {
   it("defines stable labels for all chat send and SSE states", () => {
-    const states: ChatLifecycleState[] = ["idle", "command_submitting", "command_accepted", "sse_connecting", "streaming", "stopped", "failed"];
+    const states: ChatLifecycleState[] = ["idle", "context_planning", "chat_creating", "command_submitting", "command_accepted", "sse_connecting", "streaming", "stopped", "failed"];
     for (const state of states) {
       expect(chatLifecycleLabels[state]).toEqual(expect.any(String));
       expect(chatLifecycleLabels[state].length).toBeGreaterThan(10);
@@ -12,6 +12,15 @@ describe("chatLifecycle", () => {
     expect(chatLifecycleLabels.streaming).toContain("Assistant is responding.");
     expect(chatLifecycleLabels.stopped).toContain("Response stopped locally.");
     expect(chatLifecycleLabels.failed).toContain("fix locally");
+  });
+
+  it("warns only for non-terminal lifecycle waits without inventing failure or retry", () => {
+    expect(isChatLifecyclePending("context_planning")).toBe(true);
+    expect(isChatLifecyclePending("chat_creating")).toBe(true);
+    expect(chatLifecycleLongWaitCopy("command_submitting")).toContain("no automatic retry");
+    expect(chatLifecycleLongWaitCopy("streaming")).toContain("Stop");
+    expect(chatLifecycleLongWaitCopy("stopped")).toBeNull();
+    expect(chatLifecycleLongWaitCopy("failed")).toBeNull();
   });
 
   it("returns actionable recovery copy for runtime, command, SSE, provider, and Stop cases", () => {

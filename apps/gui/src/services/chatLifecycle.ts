@@ -3,6 +3,8 @@ import { sanitizeDisplayText } from "./redaction";
 
 export type ChatLifecycleState =
   | "idle"
+  | "context_planning"
+  | "chat_creating"
   | "command_submitting"
   | "command_accepted"
   | "sse_connecting"
@@ -36,6 +38,8 @@ export type ProviderInvalidRequestReason = "format" | "model" | "endpoint" | "un
 
 export const chatLifecycleLabels: Record<ChatLifecycleState, string> = {
   idle: "Ready for local input.",
+  context_planning: "Planning bounded project context…",
+  chat_creating: "Creating the first project chat…",
   command_submitting: "Sending your message through the local runtime…",
   command_accepted: "Message accepted; opening the response stream…",
   sse_connecting: "Connecting to the local response stream…",
@@ -43,6 +47,22 @@ export const chatLifecycleLabels: Record<ChatLifecycleState, string> = {
   stopped: "Response stopped locally. Edit the prompt or send a new message.",
   failed: "Runtime or provider error. Review the message above, fix locally, then send again.",
 };
+
+export const chatLifecycleLongWaitMs = 10_000;
+
+export function isChatLifecyclePending(state: ChatLifecycleState): boolean {
+  return state === "context_planning"
+    || state === "chat_creating"
+    || state === "command_submitting"
+    || state === "command_accepted"
+    || state === "sse_connecting"
+    || state === "streaming";
+}
+
+export function chatLifecycleLongWaitCopy(state: ChatLifecycleState): string | null {
+  if (!isChatLifecyclePending(state)) return null;
+  return "This is taking longer than expected. You can Stop, then retry manually; no automatic retry has started.";
+}
 
 const chatRecoveryCopy: Record<ChatRecoveryCode, string> = {
   runtime_unavailable: "Recovery: Refresh runtime, verify the local runtime is running, then send again.",

@@ -2040,7 +2040,21 @@ pre,
   font-size: 13px;
 }
 
+.chat-lifecycle-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chat-lifecycle-long-wait {
+  color: #8a5a00;
+  font-size: 13px;
+}
+
 .chat-lifecycle-state.streaming,
+.chat-lifecycle-state.context_planning,
+.chat-lifecycle-state.chat_creating,
 .chat-lifecycle-state.command_accepted,
 .chat-lifecycle-state.sse_connecting,
 .chat-lifecycle-state.command_submitting {

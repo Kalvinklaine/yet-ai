@@ -33,6 +33,13 @@ type ActiveStream = {
   unregisterScopeCancellation: () => void;
 };
 
+type PendingChatRequest = {
+  controller: AbortController;
+  settings: ChatRuntimeSettings;
+  chatId: string | null;
+  unregisterScopeCancellation: () => void;
+};
+
 type AbortActiveStreamOptions = {
   finalizeStreaming?: boolean;
   addTimelineEntry?: boolean;
@@ -89,7 +96,8 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
   const [chatLifecycleState, setChatLifecycleState] = useState<ChatLifecycleState>("idle");
   const chatIdRef = useRef<string | null>(initialChatId);
   const chatHistoryAttemptRef = useRef(0);
-  const firstProjectChatCreateRef = useRef<{ token: symbol; revision: number; correlation: ProjectScopeCorrelation } | null>(null);
+  const firstProjectChatCreateRef = useRef<{ token: symbol; revision: number; correlation: ProjectScopeCorrelation; request: PendingChatRequest } | null>(null);
+  const pendingChatRequestRef = useRef<PendingChatRequest | null>(null);
   const activeStreamRef = useRef<ActiveStream | null>(null);
   const optimisticUserMessageCounterRef = useRef(0);
   const chatInputUserLineageRef = useRef(0);
@@ -122,6 +130,19 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     });
     if (addTimelineEntry) addTimelineRef.current(timelineMessage);
     return activeStream;
+  }, [addTimelineRef]);
+
+  const abortPendingChatRequest = useCallback(() => {
+    const pending = pendingChatRequestRef.current;
+    if (!pending) return false;
+    pending.unregisterScopeCancellation();
+    pending.controller.abort();
+    pendingChatRequestRef.current = null;
+    firstProjectChatCreateRef.current = null;
+    setChatHistoryLoading(false);
+    setChatLifecycleState("stopped");
+    addTimelineRef.current("Pending chat request stopped");
+    return true;
   }, [addTimelineRef]);
 
   const startSse = useCallback((targetChatId = chatIdRef.current) => {
@@ -270,8 +291,13 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     let createToken: symbol | null = null;
     if (!targetChatId && projectId) {
       const token = Symbol("first-project-chat"); const correlation = createProjectScopeCorrelation(projectScopeController.current()); createToken = token;
-      firstProjectChatCreateRef.current = { token, revision, correlation }; setChatLifecycleState("command_submitting"); setChatHistoryLoading(true); setChatHistoryError(null);
-      const created = await createChat(settings); const pending = firstProjectChatCreateRef.current;
+      const controller = new AbortController();
+      const request = { controller, settings, chatId: null, unregisterScopeCancellation: projectScopeController.registerCancellation(() => controller.abort()) };
+      pendingChatRequestRef.current = request;
+      firstProjectChatCreateRef.current = { token, revision, correlation, request }; setChatLifecycleState("chat_creating"); setChatHistoryLoading(true); setChatHistoryError(null);
+      const created = await createChat(settings, controller.signal); const pending = firstProjectChatCreateRef.current;
+      request.unregisterScopeCancellation();
+      if (pendingChatRequestRef.current === request) pendingChatRequestRef.current = null;
       if (!mountedRef.current || pending?.token !== token || pending.revision !== settingsRevisionRef.current || settingsRevisionRef.current !== revision || !projectScopeController.accepts(correlation) || chatIdRef.current !== null) { if (pending?.token === token) firstProjectChatCreateRef.current = null; return; }
       setChatHistoryLoading(false);
       if (!created.ok || !created.data.chatId?.trim()) {
@@ -285,9 +311,20 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     const context = typeof options.context === "function" ? options.context(targetChatId, revision) : options.context;
     const planningSelection = typeof options.planningSelection === "function" ? options.planningSelection(targetChatId, revision) : options.planningSelection;
     setChatLifecycleState("command_submitting"); const optimisticId = `${targetChatId}-optimistic-user-${++optimisticUserMessageCounterRef.current}`;
+    const commandController = new AbortController();
+    const commandRequest = { controller: commandController, settings, chatId: targetChatId, unregisterScopeCancellation: projectScopeController.registerCancellation(() => commandController.abort()) };
+    pendingChatRequestRef.current = commandRequest;
     appendTraceRef.current({ family: "chat.sendAccepted", title: "Send requested", status: "pending", summary: "User message submitted from the GUI.", details: { chatId: targetChatId, hasContext: Boolean(context), contextKind: context?.kind } });
     setChatView((current) => addAcceptedUserMessage(current, content, optimisticId));
-    const result = await sendUserMessage(settings, targetChatId, content, context, planningSelection);
+    const result = await sendUserMessage(settings, targetChatId, content, context, planningSelection, commandController.signal);
+    commandRequest.unregisterScopeCancellation();
+    if (pendingChatRequestRef.current === commandRequest) pendingChatRequestRef.current = null;
+    if (commandController.signal.aborted) {
+      if (firstProjectChatCreateRef.current?.token === createToken) firstProjectChatCreateRef.current = null;
+      setChatView((current) => removeOptimisticUserMessage(current, optimisticId));
+      if (chatInputUserLineageRef.current === lineage) setChatInputState(submittedInput);
+      return;
+    }
     if (!mountedRef.current || settingsRevisionRef.current !== revision || chatIdRef.current !== targetChatId) {
       if (firstProjectChatCreateRef.current?.token === createToken) firstProjectChatCreateRef.current = null;
       setChatView((current) => removeOptimisticUserMessage(current, optimisticId));
@@ -331,20 +368,22 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
   }, [addTimelineRef, appendChatError, chatView.messages, projectId, settingsRef, startSse]);
 
   const resetForScope = useCallback((nextChatId: string | null) => {
+    abortPendingChatRequest();
     abortActiveStream("SSE stopped for previous project", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false });
     firstProjectChatCreateRef.current = null; chatHistoryAttemptRef.current += 1; setChatId(nextChatId); setChatView(resetChatViewState(nextChatId ?? "")); setChatSummaries([]); setChatHistoryRevision(null); setChatHistoryError(null); setChatHistoryLoading(false); setMissingRoutedChatId(null); setDeletingChatId(null); setConversationNotice(null); setChatInputState(""); setChatLifecycleState("idle");
-  }, [abortActiveStream, setChatId]);
+  }, [abortActiveStream, abortPendingChatRequest, setChatId]);
   const invalidate = useCallback(() => {
+    abortPendingChatRequest();
     abortActiveStream("SSE stopped and abort requested for previous runtime settings"); firstProjectChatCreateRef.current = null; chatHistoryAttemptRef.current += 1;
     setChatLifecycleState("idle"); setChatHistoryRevision(null); setChatSummaries([]); setChatHistoryError(null); setChatHistoryLoading(false); setDeletingChatId(null);
-  }, [abortActiveStream]);
+  }, [abortActiveStream, abortPendingChatRequest]);
 
   useEffect(() => { if (routedChatId && routedChatId !== chatIdRef.current) { setMissingRoutedChatId(null); selectChat(routedChatId); } }, [routedChatId, selectChat]);
   const activeSummaryChatId = chatSummaries.find((summary) => summary.chatId === chatId)?.chatId;
   useEffect(() => {
     if (chatId && activeSummaryChatId && missingRoutedChatId !== chatId) void loadChatThread(chatId);
   }, [activeSummaryChatId, chatId, loadChatThread, missingRoutedChatId]);
-  useEffect(() => () => { abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false }); }, [abortActiveStream]);
+  useEffect(() => () => { abortPendingChatRequest(); abortActiveStream("SSE stopped and abort requested on cleanup", { finalizeStreaming: false, addTimelineEntry: false, reportAbortErrors: false }); }, [abortActiveStream, abortPendingChatRequest]);
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; firstProjectChatCreateRef.current = null; chatHistoryAttemptRef.current += 1; }; }, []);
 
   return useMemo(() => ({
@@ -352,8 +391,8 @@ export function useChatController({ initialChatId, projectId, routedChatId, host
     chatHistoryLoading, setChatHistoryLoading, missingRoutedChatId, setMissingRoutedChatId, deletingChatId, setDeletingChatId, conversationNotice, setConversationNotice,
     compactConversationsOpen, setCompactConversationsOpen, chatInput, setChatInput, chatView, setChatView, chatLifecycleState, setChatLifecycleState,
     chatHistoryAttemptRef, firstProjectChatCreateRef, activeStreamRef, refreshChats, loadChatThread, createNewChat, selectChat, updateDirectChatId, deleteCurrentChat,
-    submitChat, continueResponse, startSse, stopSse: () => { if (!abortActiveStream("SSE stopped and abort requested")) addTimelineRef.current("SSE stopped"); }, abortActiveStream, appendChatError, resetForScope, invalidate,
-  }), [abortActiveStream, addTimelineRef, appendChatError, chatError, chatHistoryError, chatHistoryLoading, chatHistoryRevision, chatId, chatInput, chatLifecycleState, chatSummaries, chatView, compactConversationsOpen, continueResponse, conversationNotice, createNewChat, deleteCurrentChat, deletingChatId, invalidate, loadChatThread, missingRoutedChatId, refreshChats, resetForScope, selectChat, setChatId, setChatInput, startSse, submitChat, updateDirectChatId]);
+    submitChat, continueResponse, startSse, stopSse: () => { if (!abortPendingChatRequest() && !abortActiveStream("SSE stopped and abort requested")) addTimelineRef.current("SSE stopped"); }, abortActiveStream, appendChatError, resetForScope, invalidate,
+  }), [abortActiveStream, abortPendingChatRequest, addTimelineRef, appendChatError, chatError, chatHistoryError, chatHistoryLoading, chatHistoryRevision, chatId, chatInput, chatLifecycleState, chatSummaries, chatView, compactConversationsOpen, continueResponse, conversationNotice, createNewChat, deleteCurrentChat, deletingChatId, invalidate, loadChatThread, missingRoutedChatId, refreshChats, resetForScope, selectChat, setChatId, setChatInput, startSse, submitChat, updateDirectChatId]);
 }
 
 function appendStreamTrace(appendTrace: (draft: CodingSessionTraceDraft) => void, event: SseEvent, safeEvent: SseEvent) {

@@ -207,6 +207,49 @@ describe("project lifecycle scope", () => {
     expect(findButton("Send").disabled).toBe(false);
   });
 
+  it("shows planning progress and keeps prompt-only fallback and Stop visible", async () => {
+    vi.useFakeTimers();
+    const planned = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/context/plan") && init?.method === "POST") return planned.promise;
+      return mockRuntimeResponse(input, init, readyRuntimeOptions());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "Slow context plan"));
+    await act(async () => { vi.advanceTimersByTime(350); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(container?.querySelector("[data-testid='chat-lifecycle-status']")?.textContent).toContain("Planning bounded project context");
+    expect(findButton("Send without project context")).toBeDefined();
+    expect(findButton("Stop")).toBeDefined();
+
+    await act(async () => findButton("Stop").click());
+    expect(container?.querySelector("[data-testid='chat-lifecycle-status']")?.textContent).toContain("Project context planning stopped");
+    expect(findButton("Send without project context")).toBeDefined();
+  });
+
+  it("shows a non-terminal long-wait warning and clears it after Stop", async () => {
+    vi.useFakeTimers();
+    const command = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes("/commands") && init?.method === "POST") return command.promise;
+      return mockRuntimeResponse(input, init, readyRuntimeOptions());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderApp();
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "Slow command"));
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+    expect(container?.textContent).toContain("Sending your message through the local runtime");
+    await act(async () => { vi.advanceTimersByTime(10_000); await Promise.resolve(); });
+    expect(container?.textContent).toContain("This is taking longer than expected");
+    expect(container?.textContent).toContain("no automatic retry");
+    await act(async () => findButton("Stop").click());
+    expect(container?.textContent).toContain("Response stopped locally");
+    expect(container?.textContent).not.toContain("This is taking longer than expected");
+  });
+
   it("offers unusable project-context setup and prompt-only fallback without auto-send", async () => {
     mockRuntimeResponses({ ...readyRuntimeOptions(), projectContextState: "not_built" });
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
@@ -271,6 +314,28 @@ describe("project lifecycle scope", () => {
     expect(navigate).toHaveBeenCalledWith({ kind: "project", projectId: projectA, page: "chat", chatId: "chat-engine-first" });
     expect(container?.querySelector(".chat-id-badge")?.textContent).toBe("chat-engine-first");
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat-001"))).toBe(false);
+  });
+
+  it("distinguishes first-chat creation from command submission and Stop cancels creation", async () => {
+    const create = deferred<Response>();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(`/p/${projectA}/v1/chats`) && init?.method === "POST") return create.promise;
+      return mockRuntimeResponse(input, init, { ...readyRuntimeOptions(), chats: [] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "Create then send"));
+    await waitForContextPlanning();
+    await act(async () => { findButton("Send").click(); await Promise.resolve(); });
+
+    expect(container?.querySelector("[data-testid='chat-lifecycle-status']")?.textContent).toContain("Creating the first project chat");
+    await act(async () => findButton("Stop").click());
+    expect(container?.querySelector("[data-testid='chat-lifecycle-status']")?.textContent).toContain("stopped");
+    create.resolve(jsonResponse(chatThread("chat-created-too-late", "Late", [])));
+    await flushAsync();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes("chat-created-too-late/commands"))).toBe(false);
+    expect(chatInput().value).toBe("Create then send");
   });
 
   it("rebinds draft editor context to the first engine chat and clears it after accepted Send", async () => {
@@ -8595,6 +8660,7 @@ describe("chat panel", () => {
       "chat-title-card chat-compact-header row",
       "debug-details",
       "chat-scroll-region",
+      "chat-lifecycle-row",
       "chat-composer",
     ]);
     expect(threadPane?.classList.contains("chat-thread-pane")).toBe(true);
@@ -10453,7 +10519,7 @@ describe("chat panel", () => {
     expect(browserStorageDump()).not.toContain(secret);
   });
 
-  it("Stop response with no active stream sends no abort", async () => {
+  it("Stop with no active request sends no abort", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderApp();
 
@@ -10461,7 +10527,7 @@ describe("chat panel", () => {
 
     expect(() => findButton("Stop SSE")).toThrow();
     await act(async () => {
-      findButton("Stop response").click();
+      findButton("Stop").click();
       await Promise.resolve();
     });
 
@@ -10476,7 +10542,7 @@ describe("chat panel", () => {
     expect(container?.textContent).toContain("SSE stopped");
   });
 
-  it("Stop response during active streaming sends abort and removes streaming indicator", async () => {
+  it("Stop during active streaming sends abort and removes streaming indicator", async () => {
     let sseController: ReadableStreamDefaultController<Uint8Array> | undefined;
     const encoder = new TextEncoder();
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
@@ -10533,7 +10599,7 @@ describe("chat panel", () => {
     expect(() => findButton("Stop SSE")).toThrow();
 
     await act(async () => {
-      findButton("Stop response").click();
+      findButton("Stop").click();
       await Promise.resolve();
     });
 

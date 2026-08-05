@@ -482,10 +482,11 @@ export function listChats(settings: ChatRuntimeSettings): Promise<RuntimeResult<
   return runtimeFetch<ChatListResponse>(settings, chatApiPath(settings, "/chats"));
 }
 
-export function createChat(settings: ChatRuntimeSettings): Promise<RuntimeResult<ChatThread>> {
+export function createChat(settings: ChatRuntimeSettings, signal?: AbortSignal): Promise<RuntimeResult<ChatThread>> {
   return runtimeFetch<ChatThread>(settings, chatApiPath(settings, "/chats"), {
     method: "POST",
     body: JSON.stringify({}),
+    signal,
   });
 }
 
@@ -545,6 +546,7 @@ export function sendUserMessage(
   content: string,
   context?: ChatContext,
   planningSelection?: ProjectContextPlanningSelection,
+  signal?: AbortSignal,
 ): Promise<RuntimeResult<ChatCommandResponse>> {
   const command: ChatCommand = {
     requestId: crypto.randomUUID(),
@@ -554,6 +556,7 @@ export function sendUserMessage(
   return runtimeFetch<ChatCommandResponse>(settings, chatApiPath(settings, `/chats/${encodeURIComponent(chatId)}/commands`), {
     method: "POST",
     body: JSON.stringify(command),
+    signal,
   });
 }
 

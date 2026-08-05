@@ -27,7 +27,7 @@ function waitForPoll(signal: AbortSignal) {
   });
 }
 
-export function ProjectChatContextController({ projectId, chatId, draft, settings, generationKey, onSelectionChange, onReadyChange }: { projectId: string; chatId: string | null; draft: string; settings: RuntimeSettings; generationKey: string; onSelectionChange?: (selection: ProjectContextPlanningSelection | null) => void; onReadyChange?: (ready: boolean) => void }) {
+export function ProjectChatContextController({ projectId, chatId, draft, settings, generationKey, stopSignal = 0, onSelectionChange, onReadyChange, onActivityChange }: { projectId: string; chatId: string | null; draft: string; settings: RuntimeSettings; generationKey: string; stopSignal?: number; onSelectionChange?: (selection: ProjectContextPlanningSelection | null) => void; onReadyChange?: (ready: boolean) => void; onActivityChange?: (activity: "idle" | "planning" | "failed" | "stopped") => void }) {
   const [context, setContext] = useState<ProjectContextStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -36,6 +36,7 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
   const requestRef = useRef(0);
   const statusAbortRef = useRef<AbortController | null>(null);
   const buildAbortRef = useRef<AbortController | null>(null);
+  const handledStopSignalRef = useRef(stopSignal);
   const planning = useProjectContextPlanning({ projectId, chatId, draft, settings, generationKey, enabled: context?.state === "ready", onSelectionChange, onReadyChange });
   const planningRefreshRef = useRef(planning.refresh);
   planningRefreshRef.current = planning.refresh;
@@ -104,6 +105,21 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
     if (!loading && (!context || !isUsableContext(context)) && planning.mode !== "manual_only") onReadyChange?.(!draft.trim());
   }, [context, draft, loading, onReadyChange, planning.mode]);
 
+  useEffect(() => {
+    if (!draft.trim() || planning.mode === "manual_only") onActivityChange?.("idle");
+    else if (planning.loading) onActivityChange?.("planning");
+    else if (planning.error) onActivityChange?.("failed");
+    else if (planning.state === "stopped") onActivityChange?.("stopped");
+    else onActivityChange?.("idle");
+  }, [draft, onActivityChange, planning.error, planning.loading, planning.mode, planning.state]);
+
+  useEffect(() => {
+    if (stopSignal > handledStopSignalRef.current) planning.cancel();
+    handledStopSignalRef.current = stopSignal;
+  }, [planning.cancel, stopSignal]);
+
+  useEffect(() => () => onActivityChange?.("idle"), [onActivityChange]);
+
   const build = useCallback(async () => {
     if (!context) return;
     statusAbortRef.current?.abort();
@@ -143,12 +159,13 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
 export function ProjectChatContextStatus({ context, planning }: { context: ProjectContextStatus; planning: ProjectContextPlanning }) {
   const [open, setOpen] = useState(false);
   const selectedCount = planning.view?.included.length ?? 0;
-  const status = planning.mode === "manual_only" ? "Prompt only" : planning.loading ? "Planning…" : planning.error ? "Plan unavailable" : planning.plan ? `${selectedCount} selected` : "Balanced automatic";
+  const status = planning.mode === "manual_only" ? "Prompt only" : planning.loading ? "Planning…" : planning.error ? "Plan unavailable" : planning.state === "stopped" ? "Planning stopped" : planning.plan ? `${selectedCount} selected` : "Balanced automatic";
   return <section className="project-chat-context-status" aria-label="Project context" data-testid="project-context-entrypoint">
     <button type="button" className="project-chat-context-trigger" aria-expanded={open} aria-controls="project-chat-context-advanced" onClick={() => setOpen((value) => !value)}>
       <span><strong>Project context</strong><span className="subtle">{status}</span></span>
       <span className={`badge ${planning.error ? "warn" : "ok"}`}>{modeLabel(planning.mode)}</span>
     </button>
+    {planning.mode !== "manual_only" && (planning.loading || planning.error || planning.state === "stopped") && <div className="project-chat-context-actions"><button type="button" className="secondary-button" onClick={planning.useManualFallback}>Send without project context</button>{!planning.loading && <button type="button" className="secondary-button" onClick={() => void planning.refresh()}>Retry planning</button>}</div>}
     {open && <div id="project-chat-context-advanced" className="project-chat-context-advanced stack">
       <label>Project context mode<select aria-label="Project context mode" value={planning.mode} onChange={(event) => planning.setMode(event.target.value as ProjectContextMode)}><option value="balanced">Balanced</option><option value="deep">Deep</option><option value="manual_only">Manual-only</option></select></label>
       <span className="subtle">This preference lasts for the current project session only. Explicit file and memory attachments remain separate.</span>

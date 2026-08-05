@@ -7,7 +7,7 @@ import type { ProjectContextPlanningSelection, ProjectContextSourceIdentity, Run
 export const projectContextPlanningBudget = { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 };
 export const projectContextPlanningDebounceMs = 350;
 
-type PlanningState = "idle" | "loading" | "error";
+type PlanningState = "idle" | "loading" | "error" | "stopped";
 
 type UseProjectContextPlanningInput = {
   projectId: string;
@@ -37,6 +37,7 @@ export type ProjectContextPlanning = {
   pin: (key: string) => void;
   exclude: (key: string) => void;
   useManualFallback: () => void;
+  cancel: () => void;
 };
 
 export function useProjectContextPlanning({ projectId, chatId, draft, settings, generationKey, enabled = true, onSelectionChange, onReadyChange }: UseProjectContextPlanningInput): ProjectContextPlanning {
@@ -219,5 +220,16 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
 
   const useManualFallback = useCallback(() => setMode("manual_only"), [setMode]);
 
-  return { mode, plan, view, state, loading: state === "loading", error: state === "error", ready, selection, excluded, pinned, setMode, refresh, invalidate, pin, exclude, useManualFallback };
+  const cancel = useCallback(() => {
+    if (state !== "loading") return;
+    requestRef.current += 1;
+    abortRef.current?.abort();
+    completedCorrelationRef.current = "";
+    setPlan(null);
+    setState("stopped");
+    selectionCallbackRef.current?.(null);
+    publishReady(!query || mode === "manual_only");
+  }, [mode, publishReady, query, state]);
+
+  return { mode, plan, view, state, loading: state === "loading", error: state === "error", ready, selection, excluded, pinned, setMode, refresh, invalidate, pin, exclude, useManualFallback, cancel };
 }
