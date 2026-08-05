@@ -5,6 +5,7 @@ import { getProjectContextStatus, planProjectContext, type ProjectContextExplici
 import type { ProjectContextPlanningSelection, ProjectContextSourceIdentity, RuntimeSettings } from "./runtimeClient";
 
 export const projectContextPlanningBudget = { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 };
+export const projectContextPlanningDebounceMs = 350;
 
 type PlanningState = "idle" | "loading" | "error";
 
@@ -14,6 +15,7 @@ type UseProjectContextPlanningInput = {
   draft: string;
   settings: RuntimeSettings;
   generationKey: string;
+  enabled?: boolean;
   onSelectionChange?: (selection: ProjectContextPlanningSelection | null) => void;
   onReadyChange?: (ready: boolean) => void;
 };
@@ -37,7 +39,7 @@ export type ProjectContextPlanning = {
   useManualFallback: () => void;
 };
 
-export function useProjectContextPlanning({ projectId, chatId, draft, settings, generationKey, onSelectionChange, onReadyChange }: UseProjectContextPlanningInput): ProjectContextPlanning {
+export function useProjectContextPlanning({ projectId, chatId, draft, settings, generationKey, enabled = true, onSelectionChange, onReadyChange }: UseProjectContextPlanningInput): ProjectContextPlanning {
   const [modeState, setModeState] = useState<{ projectId: string; mode: ProjectContextMode }>({ projectId, mode: "balanced" });
   const mode = modeState.projectId === projectId ? modeState.mode : "balanced";
   const [plan, setPlan] = useState<ProjectContextPlan | null>(null);
@@ -48,6 +50,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
   const requestRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
   const revisionRef = useRef("");
+  const completedCorrelationRef = useRef("");
   const selectionCallbackRef = useRef(onSelectionChange);
   const readyCallbackRef = useRef(onReadyChange);
   selectionCallbackRef.current = onSelectionChange;
@@ -82,7 +85,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     publishReady(!query);
   }, [publishReady, query]);
 
-  const refresh = useCallback(async () => {
+  const runPlanning = useCallback(async (force: boolean) => {
     abortRef.current?.abort();
     if (!query) {
       setPlan(null);
@@ -98,6 +101,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
       publishReady(true);
       return;
     }
+    if (!force && completedCorrelationRef.current === correlationRef.current) return;
     const request = ++requestRef.current;
     const expectedCorrelation = correlationRef.current;
     const controller = new AbortController();
@@ -131,8 +135,11 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     setExcluded((current) => new Set(Array.from(current).filter((key) => currentKeys.has(key))));
     setPlan(result.data);
     setState("idle");
+    completedCorrelationRef.current = expectedCorrelation;
     publishReady(true);
   }, [mode, pinnedFingerprint, projectId, publishReady, query, settings.baseUrl, settings.token, runtimeAccess]);
+
+  const refresh = useCallback(() => runPlanning(true), [runPlanning]);
 
   useEffect(() => {
     setModeState((current) => current.projectId === projectId ? current : { projectId, mode: "balanced" });
@@ -151,13 +158,14 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
 
   const planningTrigger = JSON.stringify({ chatId, generationKey });
   useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 0);
+    if (!enabled) return;
+    const timer = window.setTimeout(() => void runPlanning(false), projectContextPlanningDebounceMs);
     return () => {
       window.clearTimeout(timer);
       requestRef.current += 1;
       abortRef.current?.abort();
     };
-  }, [planningTrigger, refresh]);
+  }, [enabled, planningTrigger, runPlanning]);
 
   useEffect(() => () => {
     requestRef.current += 1;

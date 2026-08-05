@@ -80,6 +80,31 @@ async function advancePlanning() {
 }
 
 describe("useProjectContextPlanning", () => {
+  it("gates immediately and starts exactly one planning sequence at the 350ms boundary", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (init?.method === "POST") return response(plan());
+      return response(url.includes("/v1/projects/") ? project() : status());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const onReadyChange = vi.fn();
+    const settings = { baseUrl: "/", token: "", runtimeAccess: "same_origin_proxy" as const };
+    await renderHarness({ projectId, chatId: "chat-1", draft: "Find start", settings, generationKey: "1", onReadyChange });
+
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("false");
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(349); await Promise.resolve(); });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(container.querySelector("[data-testid='ready']")?.textContent).toBe("true");
+    expect(onReadyChange).toHaveBeenNthCalledWith(1, false);
+    expect(onReadyChange).toHaveBeenLastCalledWith(true);
+  });
+
   it("blocks a changed nonempty automatic draft immediately and stays blocked when planning fails", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn()

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createProjectRuntimeSettings, getProject } from "../services/projectClient";
+import { createProjectRuntimeSettings, getProject, type ProjectRuntimeSettings } from "../services/projectClient";
 import { getProjectContextStatus, rebuildProjectContext, type ProjectContextMode, type ProjectContextProfile, type ProjectContextStatus } from "../services/projectContextClient";
 import type { ProjectContextPlanningSelection, RuntimeSettings } from "../services/runtimeClient";
 import { useProjectContextPlanning, type ProjectContextPlanning } from "../services/useProjectContextPlanning";
@@ -36,10 +36,44 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
   const requestRef = useRef(0);
   const statusAbortRef = useRef<AbortController | null>(null);
   const buildAbortRef = useRef<AbortController | null>(null);
-  const planning = useProjectContextPlanning({ projectId, chatId, draft, settings, generationKey, onSelectionChange, onReadyChange });
+  const planning = useProjectContextPlanning({ projectId, chatId, draft, settings, generationKey, enabled: context?.state === "ready", onSelectionChange, onReadyChange });
+  const planningRefreshRef = useRef(planning.refresh);
+  planningRefreshRef.current = planning.refresh;
+
+  const pollBuilding = useCallback(async ({ request, controller, scoped, fallbackContext, waitBeforeFirstPoll }: { request: number; controller: AbortController; scoped: ProjectRuntimeSettings; fallbackContext: ProjectContextStatus; waitBeforeFirstPoll: boolean }) => {
+    setWorking(true);
+    for (let attempt = 0; attempt < rebuildPollLimit; attempt += 1) {
+      if (waitBeforeFirstPoll || attempt > 0) await waitForPoll(controller.signal);
+      if (request !== requestRef.current || controller.signal.aborted) return;
+      const status = await getProjectContextStatus(scoped);
+      if (request !== requestRef.current || controller.signal.aborted) return;
+      if (!status.ok) {
+        setWorking(false);
+        setContext(fallbackContext);
+        setError("Project context status could not be checked after the rebuild. Try again or use prompt only.");
+        return;
+      }
+      setContext(status.data);
+      if (isUsableContext(status.data)) {
+        setWorking(false);
+        setError(null);
+        await planningRefreshRef.current();
+        return;
+      }
+      if (status.data.state !== "building") {
+        setWorking(false);
+        setError("Project context rebuild did not become ready. Try again or use prompt only.");
+        return;
+      }
+    }
+    setWorking(false);
+    setContext(fallbackContext);
+    setError("Project context rebuild is taking too long. Try again or use prompt only.");
+  }, []);
 
   const loadStatus = useCallback(async () => {
     statusAbortRef.current?.abort();
+    buildAbortRef.current?.abort();
     const request = ++requestRef.current;
     const controller = new AbortController();
     statusAbortRef.current = controller;
@@ -50,7 +84,8 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
     setContext(result.ok ? result.data : null);
     setError(result.ok ? null : "Project context status is unavailable. You can continue with your prompt only.");
     setLoading(false);
-  }, [projectId, settings.baseUrl, settings.token, settings.runtimeAccess]);
+    if (result.ok && result.data.state === "building") await pollBuilding({ request, controller, scoped, fallbackContext: result.data, waitBeforeFirstPoll: true });
+  }, [pollBuilding, projectId, settings.baseUrl, settings.token, settings.runtimeAccess]);
 
   useEffect(() => {
     setPromptOnly(false);
@@ -88,35 +123,8 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
       setError("Project context could not be built. Try again or start without project context.");
       return;
     }
-    for (let attempt = 0; attempt < rebuildPollLimit; attempt += 1) {
-      if (attempt > 0) await waitForPoll(controller.signal);
-      if (request !== requestRef.current || controller.signal.aborted) return;
-      const status = await getProjectContextStatus(scoped);
-      if (request !== requestRef.current || controller.signal.aborted) return;
-      if (!status.ok) {
-        setWorking(false);
-        setContext(context);
-        setError("Project context status could not be checked after the rebuild. Try again or use prompt only.");
-        return;
-      }
-      setContext(status.data);
-      if (isUsableContext(status.data)) {
-        setWorking(false);
-        setError(null);
-        planning.invalidate();
-        return;
-      }
-      if (status.data.state !== "building") {
-        setWorking(false);
-        setContext(context);
-        setError("Project context rebuild did not become ready. Try again or use prompt only.");
-        return;
-      }
-    }
-    setWorking(false);
-    setContext(context);
-    setError("Project context rebuild is taking too long. Try again or use prompt only.");
-  }, [context, planning.invalidate, projectId, settings.baseUrl, settings.token, settings.runtimeAccess]);
+    await pollBuilding({ request, controller, scoped, fallbackContext: context, waitBeforeFirstPoll: false });
+  }, [context, pollBuilding, projectId, settings.baseUrl, settings.token, settings.runtimeAccess]);
 
   const startWithoutContext = useCallback(() => {
     setPromptOnly(true);
@@ -128,7 +136,7 @@ export function ProjectChatContextController({ projectId, chatId, draft, setting
   if (context.state === "not_built" || context.state === "stale" || context.state === "migration_required" || context.state === "unavailable") return promptOnly && planning.mode === "manual_only"
     ? <ProjectChatContextStatus context={context} planning={planning} />
     : <ProjectChatContextSetupCard state={context.state} working={working} error={error} onBuild={() => void build()} onStartWithoutContext={startWithoutContext} />;
-  if (context.state === "building") return <section className="project-chat-context-status stack" aria-label="Project context" data-testid="project-context-entrypoint" aria-busy="true"><strong>Project context</strong><span className="subtle">Building the local project cache…</span><button type="button" className="secondary-button" onClick={startWithoutContext}>Use prompt only</button></section>;
+  if (context.state === "building") return <section className="project-chat-context-status stack" aria-label="Project context" data-testid="project-context-entrypoint" aria-busy={working}><strong>Project context</strong><span className="subtle">{working ? "Building the local project cache…" : error ?? "Project context build needs a status refresh."}</span><div className="project-chat-context-actions"><button type="button" className="secondary-button" onClick={() => void loadStatus()}>{working ? "Refresh build status" : "Retry build status"}</button><button type="button" className="secondary-button" onClick={startWithoutContext}>Use prompt only</button></div></section>;
   return <ProjectChatContextStatus context={context} planning={planning} />;
 }
 

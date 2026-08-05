@@ -70,6 +70,7 @@ describe("ProjectContextStatusCard", () => {
       const url = String(input);
       if (url.includes("/v1/projects/")) return json(project());
       if (url.endsWith("/context/rebuild") && init?.method === "POST") return json(rebuild());
+      if (url.endsWith("/context/plan") && init?.method === "POST") return json(contextPlan());
       if (url.endsWith("/context/status")) {
         statusCall += 1;
         return json(contextStatus(statusCall === 1 ? "not_built" : statusCall === 2 ? "building" : "ready"));
@@ -80,8 +81,33 @@ describe("ProjectContextStatusCard", () => {
     expect(container.textContent).toContain("Build project context");
     await act(async () => { findButton(container, "Build project context").click(); await Promise.resolve(); await Promise.resolve(); });
     expect(container.textContent).toContain("Building the local project cache");
-    await act(async () => { vi.advanceTimersByTime(500); await Promise.resolve(); await Promise.resolve(); });
-    expect(container.textContent).toContain("Planning…");
+    await act(async () => { vi.advanceTimersByTime(500); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(container.textContent).toContain("1 selected");
+  });
+
+  it("recovers an initially building context through bounded polling and fresh planning", async () => {
+    vi.useFakeTimers();
+    let statusCall = 0;
+    const onReadyChange = vi.fn();
+    const onSelectionChange = vi.fn();
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/context/plan") && init?.method === "POST") return json(contextPlan());
+      if (url.includes("/v1/projects/")) return json(project());
+      if (url.endsWith("/context/status")) return json(contextStatus(statusCall++ === 0 ? "building" : "ready"));
+      throw new Error(`unexpected ${url}`);
+    }));
+    const container = document.createElement("div"); document.body.append(container);
+    await act(async () => { root = ReactDOM.createRoot(container); root.render(<ProjectChatContextController projectId={projectId} chatId="chat-1" draft="Prompt" settings={settings} generationKey="1" onReadyChange={onReadyChange} onSelectionChange={onSelectionChange} />); await Promise.resolve(); await Promise.resolve(); });
+    expect(container.textContent).toContain("Building the local project cache");
+    expect(container.textContent).toContain("Refresh build status");
+    expect(container.textContent).toContain("Use prompt only");
+
+    await act(async () => { vi.advanceTimersByTime(500); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(container.textContent).toContain("1 selected");
+    expect(onSelectionChange).toHaveBeenLastCalledWith(expect.objectContaining({ manifestId: "manifest-plan-1" }));
+    expect(onReadyChange).toHaveBeenLastCalledWith(true);
   });
 
   it("bounds rebuild polling and leaves retry and prompt-only recovery visible", async () => {
@@ -142,6 +168,7 @@ function json(value: unknown) { return Promise.resolve(new Response(JSON.stringi
 function project() { return { projectId, displayName: "Test", status: "available", revision: "7", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false, providerAccess: "direct" }; }
 function rebuild() { return { protocolVersion: "2026-08-02", schemaVersion: 1, operationId: "context-rebuild-1", projectId, mode: "full", status: "accepted", expectedInventoryGeneration: 0, expectedProjectRevision: "7", cloudRequired: false }; }
 function contextStatus(state: "not_built" | "building" | "ready", targetProjectId = projectId) { return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId: targetProjectId, state, inventoryGeneration: state === "not_built" ? 0 : 1, cloudRequired: false, providerAccess: "direct" }; }
+function contextPlan() { return { protocolVersion: "2026-08-02", schemaVersion: 1, planId: "plan-1", projectId, mode: "balanced", queryLabel: "Prompt", status: "ready", manifest: { protocolVersion: "2026-08-02", schemaVersion: 1, manifestId: "manifest-plan-1", projectId, planId: "plan-1", mode: "balanced", inventoryGeneration: 1, queryHash: hash, rankingVersion: "lexical-symbol-ranking-1", budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 1, usedChunks: 1, usedBytes: 10, usedEstimatedTokens: 3, truncated: false }, entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/main.ts", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, contentHash: hash, inclusionReason: "lexical_match", provenance: "lexical", redaction: "none", byteCount: 10, estimatedTokens: 3, rank: 1 }], omissions: [], redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 }, createdAt: "2026-08-02T12:00:00Z" }, createdAt: "2026-08-02T12:00:00Z", expiresAt: "2026-08-02T12:05:00Z", cloudRequired: false }; }
 
 function render(model: ProjectContextCardModel, overrides: Partial<React.ComponentProps<typeof ProjectContextStatusCard>> = {}) {
   const container = document.createElement("div"); document.body.append(container);

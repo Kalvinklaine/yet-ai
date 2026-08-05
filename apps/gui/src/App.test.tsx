@@ -192,6 +192,21 @@ describe("project lifecycle scope", () => {
     expect(container?.querySelector("[data-testid='project-context-entrypoint']")).toBeNull();
   });
 
+  it("blocks project Send immediately until the debounced planned context is ready", async () => {
+    vi.useFakeTimers();
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+    await act(async () => setTextareaValue(chatInput(), "Plan before send"));
+
+    expect(findButton("Send").disabled).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(349); await Promise.resolve(); });
+    expect(findButton("Send").disabled).toBe(true);
+    await act(async () => { vi.advanceTimersByTime(1); await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(findButton("Send").disabled).toBe(false);
+  });
+
   it("offers unusable project-context setup and prompt-only fallback without auto-send", async () => {
     mockRuntimeResponses({ ...readyRuntimeOptions(), projectContextState: "not_built" });
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
@@ -244,6 +259,7 @@ describe("project lifecycle scope", () => {
     act(() => root?.render(<App route={{ kind: "project", projectId: projectA, page: "chat" }} navigate={navigate} />));
     await flushAsync();
     await act(async () => setTextareaValue(chatInput(), "first project prompt"));
+    await waitForContextPlanning();
     await act(async () => {
       findButton("Send").click();
       await Promise.resolve();
@@ -275,6 +291,7 @@ describe("project lifecycle scope", () => {
     expect(container?.textContent).toContain("src/draft.ts");
 
     await act(async () => setTextareaValue(chatInput(), "send draft context"));
+    await waitForContextPlanning();
     await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
     await flushAsync();
 
@@ -306,6 +323,7 @@ describe("project lifecycle scope", () => {
     await act(async () => { findButton("Attach active file excerpt").click(); });
     await dispatchHostIdeActionResult("gui-active-file-excerpt-1", activeFileExcerptResultPayload({ path: "src/retry.ts", text: "export const retry = true;" }));
     await act(async () => setTextareaValue(chatInput(), "retry draft excerpt"));
+    await waitForContextPlanning();
 
     await act(async () => { findButton("Send").click(); await Promise.resolve(); });
     await flushAsync();
@@ -361,6 +379,7 @@ describe("project lifecycle scope", () => {
     await dispatchHostContextSnapshot({ selection: { text: "fresh project B context" } }, "ready-b");
     expect(container?.textContent).toContain("fresh project B context");
     await act(async () => setTextareaValue(chatInput(), "send project B context"));
+    await waitForContextPlanning();
     await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
     await flushAsync();
 
@@ -548,6 +567,7 @@ describe("project lifecycle scope", () => {
     expect(container?.textContent).not.toContain("snapshot missing id");
 
     await act(async () => setTextareaValue(chatInput(), "send current snapshot"));
+    await waitForContextPlanning();
     await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
     await flushAsync();
     const commandCall = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith(`/p/${projectA}/v1/chats/chat-snapshot-b/commands`) && init?.method === "POST");
@@ -587,6 +607,7 @@ describe("project lifecycle scope", () => {
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
     await flushAsync();
     await act(async () => setTextareaValue(chatInput(), "retry this prompt"));
+    await waitForContextPlanning();
     await act(async () => { findButton("Send").click(); await Promise.resolve(); });
     await flushAsync();
     expect(chatInput().value).toBe("retry this prompt");
@@ -614,6 +635,7 @@ describe("project lifecycle scope", () => {
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
     await flushAsync();
     await act(async () => setTextareaValue(chatInput(), "First project message"));
+    await waitForContextPlanning();
     await act(async () => {
       findButton("Send").click();
       await Promise.resolve();
@@ -642,6 +664,7 @@ describe("project lifecycle scope", () => {
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
     await flushAsync();
     await act(async () => setTextareaValue(chatInput(), "only once"));
+    await waitForContextPlanning();
     await act(async () => {
       findButton("Send").click();
       findButton("Send").click();
@@ -753,6 +776,7 @@ describe("project lifecycle scope", () => {
     expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/commands") && init?.method === "POST")).toBe(false);
 
     await act(async () => setTextareaValue(chatInput(), "Use the reviewed memory."));
+    await waitForContextPlanning();
     await act(async () => { findButton("Send").click(); await Promise.resolve(); await Promise.resolve(); });
     await flushAsync();
 
@@ -3628,7 +3652,7 @@ describe("provider secret boundary", () => {
     expect(container?.textContent).not.toContain("private");
     await act(async () => setTextareaValue(chatInput(), "Continue the existing chat"));
     await act(async () => {
-      vi.advanceTimersByTime(0);
+      vi.advanceTimersByTime(350);
     });
     await flushAsync();
     expect(findButton("Send").disabled).toBe(false);
@@ -14857,6 +14881,22 @@ async function flushAsync() {
   await act(async () => {
     await Promise.resolve();
   });
+}
+
+async function waitForContextPlanning() {
+  if (vi.isFakeTimers()) {
+    await act(async () => {
+      vi.advanceTimersByTime(350);
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return;
+  }
+  await act(async () => {
+    await new Promise((resolve) => window.setTimeout(resolve, 350));
+  });
+  await flushAsync();
 }
 
 function deferred<T>() {
