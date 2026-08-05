@@ -230,7 +230,15 @@ try {
   assertNoChatRuntimeBeforeExplicitStart("VS Code dashboard");
   if (await page.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) failures.push("VS Code dashboard mounted a composer before explicit Start.");
   await page.getByRole("button", { name: "Start new chat", exact: true }).click();
-  await expectBodyVisibleText(page, "Project chat", "VS Code explicit project chat entry");
+  await page.locator("main.app-shell.host-vscode[data-project-page='chat']").waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
+    throw new Error(`VS Code project chat route did not become active after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
+  });
+  await page.getByPlaceholder("Ask about the current file, selection, or project...").waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
+    throw new Error(`VS Code project composer did not become visible after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
+  });
+  await page.getByRole("button", { name: "Send", exact: true }).waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
+    throw new Error(`VS Code project Send did not become visible after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
+  });
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const legacyGuiReady = await waitForGuiMessage(page, "gui.ready");
   const legacyReadyRequestId = requireProductionHostedReadyRequestId(legacyGuiReady, "legacy reload bootstrap gui.ready");
@@ -1200,6 +1208,23 @@ async function controlDiagnostic(page, details) {
     }
   }).catch((error) => ({ pageDiagnosticError: messageOf(error) }));
   return sanitizeEvidenceText(JSON.stringify({ details, pageState })).slice(0, 2200);
+}
+
+async function hostedProjectChatDiagnostic(page) {
+  const state = await page.evaluate(() => {
+    const shell = document.querySelector("main.app-shell");
+    const composer = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
+    const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
+    return {
+      route: shell?.getAttribute("data-project-page") ?? null,
+      hostClass: shell?.className ?? null,
+      composerVisible: composer instanceof HTMLElement && composer.getBoundingClientRect().height > 0,
+      sendVisible: send instanceof HTMLElement && send.getBoundingClientRect().height > 0,
+      sendDisabled: send instanceof HTMLButtonElement ? send.disabled : null,
+      bodySnippet: document.body.innerText.replace(/\s+/g, " ").slice(0, 1200),
+    };
+  }).catch((error) => ({ diagnosticError: messageOf(error) }));
+  return sanitizeEvidenceText(JSON.stringify({ state })).slice(0, 2200);
 }
 
 async function dispatchHostMessage(page, message) {
