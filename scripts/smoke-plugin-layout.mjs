@@ -34,6 +34,7 @@ let guiServer;
 let runtimeServer;
 let browser;
 let chatCommandCount = 0;
+let contextPlanGate = null;
 const subscribers = new Map();
 
 verifyDrawerSummaryVisibleAreaContract();
@@ -111,13 +112,20 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
   await assertActionable(closeChatsButton, `${name} Chats drawer Close button`);
   await closeChatsButton.click();
 
-  await clickActionableButton(page, explainSelectionButton, `${name} Explain selection button`, { viewportName: name, controlLabel: "Explain selection" });
-  await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
-  const promptOnlyFallback = page.getByRole("button", { name: "Send without project context", exact: true });
-  await promptOnlyFallback.waitFor({ state: "visible", timeout: 5000 });
-  const planningMetrics = await collectLayoutMetrics(page, { width, height, name: `${name}-planning`, host });
-  assertRequiredControlLayout(planningMetrics, `${name} planning controls`);
-  await clickActionableButton(page, promptOnlyFallback, `${name} Send without project context button`, { viewportName: name, controlLabel: "Send without project context" });
+  const planningGate = holdNextContextPlan(name);
+  try {
+    await clickActionableButton(page, explainSelectionButton, `${name} Explain selection button`, { viewportName: name, controlLabel: "Explain selection" });
+    await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
+    await planningGate.waitForRequest();
+    const promptOnlyFallback = page.getByRole("button", { name: "Send without project context", exact: true });
+    await promptOnlyFallback.waitFor({ state: "visible", timeout: 5000 });
+    const planningMetrics = await collectLayoutMetrics(page, { width, height, name: `${name}-planning`, host });
+    assert(planningMetrics.requiredControls.fallback.present, `${name} planning fallback was not present while its context plan request was held`);
+    assertRequiredControlLayout(planningMetrics, `${name} planning controls`);
+    await clickActionableButton(page, promptOnlyFallback, `${name} Send without project context button`, { viewportName: name, controlLabel: "Send without project context" });
+  } finally {
+    planningGate.release();
+  }
   const sendButton = page.getByRole("button", { name: "Send", exact: true });
   await requireActionableButton(page, sendButton, `${name} Send button with expanded Coding Actions drawer`, name);
   const expandedDrawerMetrics = await collectLayoutMetrics(page, { width, height, name: `${name}-expanded-drawer`, host });
@@ -913,7 +921,12 @@ async function startRuntimeServer() {
     if (request.method === "GET" && runtimePath === "/v1/context/status") return json(response, 200, { protocolVersion: "2026-08-02", schemaVersion: 1, projectId: SMOKE_PROJECT_ID, state: "ready", inventoryGeneration: 1, cloudRequired: false, providerAccess: "direct" });
     if (request.method === "POST" && runtimePath === "/v1/context/plan") {
       const body = JSON.parse(await readBody(request));
-      await new Promise((resolve) => setTimeout(resolve, 650));
+      const gate = contextPlanGate;
+      if (gate) {
+        contextPlanGate = null;
+        gate.started.resolve();
+        await gate.released.promise;
+      }
       return json(response, 200, contextPlan(body));
     }
     if (request.method === "GET" && url.pathname === "/v1/projects") return json(response, 200, { projects: [{ projectId: SMOKE_PROJECT_ID, displayName: SMOKE_PROJECT_DISPLAY_NAME, status: "available", revision: "1", createdAt: now(), lastOpenedAt: now(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" }], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
@@ -953,6 +966,33 @@ function sse(response, chat) { response.writeHead(200, corsHeaders({ "content-ty
 function pushSse(chatId, event) { for (const response of subscribers.get(chatId) ?? []) response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`); }
 function demoModel() { return { id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } }; }
 function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel()], capabilities: { chat: true, completion: false, embeddings: false } }; }
+function holdNextContextPlan(label) {
+  if (contextPlanGate) throw new Error(`Cannot hold ${label} context planning while another plan gate is armed.`);
+  const started = deferred();
+  const released = deferred();
+  contextPlanGate = { started, released };
+  let didRelease = false;
+  return {
+    waitForRequest: async () => {
+      let timeout;
+      try {
+        await Promise.race([
+          started.promise,
+          new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`${label} context planning request did not reach the held mock endpoint`)), 5000); }),
+        ]);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    release: () => {
+      if (didRelease) return;
+      didRelease = true;
+      if (contextPlanGate?.started === started) contextPlanGate = null;
+      released.resolve();
+    },
+  };
+}
+function deferred() { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; }
 function contextPlan(body) { const hash = `sha256:${"a".repeat(64)}`; return { protocolVersion: "2026-08-02", schemaVersion: 1, planId: "plugin-layout-plan", projectId: SMOKE_PROJECT_ID, mode: body.mode ?? "balanced", queryLabel: "Compact layout prompt", status: "ready", manifest: { protocolVersion: "2026-08-02", schemaVersion: 1, manifestId: `plugin-layout-manifest-${randomUUID()}`, projectId: SMOKE_PROJECT_ID, planId: "plugin-layout-plan", mode: body.mode ?? "balanced", inventoryGeneration: 1, queryHash: hash, rankingVersion: "layout-smoke", budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 1, usedChunks: 1, usedBytes: 32, usedEstimatedTokens: 8, truncated: false }, entries: [{ kind: "file_chunk", chunkId: "layout-chunk", sourceRef: "src/plugin-layout.ts", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, contentHash: hash, inclusionReason: "lexical_match", provenance: "lexical", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }], omissions: [], redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 }, createdAt: now() }, createdAt: now(), expiresAt: "2026-05-29T07:21:30Z", cloudRequired: false }; }
 async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
 async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
