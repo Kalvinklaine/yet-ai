@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import http from "node:http";
@@ -155,6 +155,8 @@ const projectRevision = "1";
 const projectContextRankingVersion = "lexical-symbol-ranking-1";
 const projectContextDefaultBudget = { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 };
 const projectContextDefaultExplicitRefs = [];
+const projectGuiSendQueryHash = "sha256:c76cc88deba6582cb44a50222a16ddef02844628108c8a0ac9d318be1cf874a6";
+let frozenProjectContextDispatchPlan;
 
 const scrollIntoViewIfNeeded = async (locator) => {
   await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
@@ -193,6 +195,7 @@ if (gradleCommandSelfCheck) {
 
 assertJetBrainsParityContract();
 assertProjectContextPlanCorrelationSelfCheck();
+assertProjectContextDispatchFreezeSelfCheck();
 runSameNonceRetryEvidenceSelfCheck();
 await requireFreshPackagedGui();
 
@@ -851,27 +854,29 @@ async function enterJetBrainsProjectChat(page, frameLocator, requestId) {
   if (chatCommandRequestCount !== 0) failures.push(`JetBrains project chat issued ${chatCommandRequestCount} command(s) before the explicit Send click.`);
   const planCountBeforePrompt = projectContextPlanRequestCount;
   await composer.fill(projectGuiSendPrompt);
-  await waitForBalancedContextPlanAndEnabledSend(page, frameLocator, send, planCountBeforePrompt, "JetBrains project first message");
+  const frozenDispatchPlan = await waitForBalancedContextPlanAndEnabledSend(page, frameLocator, send, planCountBeforePrompt, "JetBrains project first message");
+  frozenProjectContextDispatchPlan = frozenDispatchPlan;
   await clickSendButtonWithActionability(frameLocator, "JetBrains project GUI Send evidence");
   await frameLocator.getByText(projectGuiSendResponse, { exact: true }).first().waitFor({ state: "visible", timeout: 5000 })
     .catch(() => failures.push("JetBrains project GUI Send did not render its SSE assistant response."));
   if (chatCommandRequestCount !== 1 || chatCommandRequest?.type !== "user_message" || chatCommandRequest?.payload?.content !== projectGuiSendPrompt) {
     failures.push(`JetBrains project GUI Send did not cause exactly one expected user command: count=${chatCommandRequestCount}, body=${JSON.stringify(chatCommandRequest)}.`);
   }
-  const latestAcceptedPlan = projectContextPlanRequests.at(-1);
-  if (latestAcceptedPlan?.request?.query !== projectGuiSendPrompt) {
-    failures.push("JetBrains latest accepted project context plan was not for the exact first-message prompt.");
+  if (frozenDispatchPlan.accepted.request.query !== projectGuiSendPrompt) {
+    failures.push("JetBrains frozen project context plan was not for the exact first-message prompt.");
   }
-  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection, latestAcceptedPlan, "JetBrains project GUI Send");
+  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection, frozenDispatchPlan.accepted, "JetBrains project GUI Send");
   demoModeEnabled = false;
 }
 
 async function waitForBalancedContextPlanAndEnabledSend(page, frameLocator, send, previousPlanCount, label) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const planned = projectContextPlanRequestCount > previousPlanCount
-      && projectContextPlanRequests.slice(previousPlanCount).some((accepted) => accepted.request.query === projectGuiSendPrompt);
-    if (planned && await send.isEnabled().catch(() => false)) return;
+    const hasAcceptedPlan = projectContextPlanRequests.slice(previousPlanCount).some((record) => record.request.query === projectGuiSendPrompt);
+    if (hasAcceptedPlan && await send.isEnabled().catch(() => false)) {
+      const latestAccepted = projectContextPlanRequests.slice(previousPlanCount).filter((record) => record.request.query === projectGuiSendPrompt).at(-1);
+      return freezeAcceptedDispatchPlan(latestAccepted, projectContextPlanRequests.length);
+    }
     await page.waitForTimeout(50);
   }
   throw new Error(`${label} did not complete automatic Balanced planning with enabled Send. ${await hostedProjectChatDiagnostic(frameLocator)}`);
@@ -3258,7 +3263,11 @@ async function startMockRuntimeServer() {
       const sequence = projectContextPlanRequestCount + 1;
       const plan = projectContextPlan(body, sequence);
       projectContextPlanRequestCount = sequence;
-      projectContextPlanRequests.push({ sequence, request: body, plan });
+      const accepted = { sequence, request: body, plan };
+      projectContextPlanRequests.push(accepted);
+      if (frozenProjectContextDispatchPlan && hasNewerAcceptedPlan(frozenProjectContextDispatchPlan, accepted, projectContextPlanRequests.length)) {
+        failures.push("JetBrains accepted a newer project context plan after Send readiness was frozen and before the command POST was observed.");
+      }
       json(response, 200, plan);
       return;
     }
@@ -3389,6 +3398,12 @@ async function startMockRuntimeServer() {
       runtimeLogEntry.body = parsedBody;
       chatCommandRequestCount += 1;
       chatCommandRequest = parsedBody;
+      if (chatCommandRequest?.type === "user_message" && chatCommandRequest?.payload?.content === projectGuiSendPrompt && frozenProjectContextDispatchPlan) {
+        if (hasNewerAcceptedPlan(frozenProjectContextDispatchPlan, projectContextPlanRequests.at(-1), projectContextPlanRequests.length)) {
+          failures.push("JetBrains observed a newer accepted project context plan before the frozen-plan command POST.");
+        }
+        frozenProjectContextDispatchPlan = undefined;
+      }
       if (chatCommandRequest?.type === "abort") {
         chatAbortRequestCount += 1;
       }
@@ -3685,10 +3700,13 @@ function assertProjectContextPlanCorrelationSelfCheck() {
   ]) {
     assertDeepEqual(isCurrentBalancedContextPlanRequest(request), false, `JetBrains rejected ${label} context plan request`);
   }
+  assertDeepEqual(queryHash(projectGuiSendPrompt), projectGuiSendQueryHash, "JetBrains exact UTF-8 query hash");
+  assertDeepEqual(queryHash(`${projectGuiSendPrompt} changed`) === projectGuiSendQueryHash, false, "JetBrains changed UTF-8 query hash");
 }
 
 function projectContextPlan(body, sequence) {
-  const hash = `sha256:${"a".repeat(64)}`;
+  const exactQueryHash = queryHash(body.query);
+  const contentHash = `sha256:${"a".repeat(64)}`;
   const createdAt = "2026-08-05T00:00:00Z";
   const planId = `jetbrains-wrapper-plan-${sequence}`;
   const manifestId = `jetbrains-wrapper-manifest-${sequence}`;
@@ -3708,10 +3726,10 @@ function projectContextPlan(body, sequence) {
       planId,
       mode: body.mode,
       inventoryGeneration: projectContextInventoryGeneration,
-      queryHash: hash,
+      queryHash: exactQueryHash,
       rankingVersion: projectContextRankingVersion,
       budget: { ...body.budget, usedFiles: 1, usedChunks: 1, usedBytes: 32, usedEstimatedTokens: 8, truncated: false },
-      entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/main/kotlin/ContextSmoke.kt", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, symbol: "ContextSmoke", contentHash: hash, inclusionReason: "symbol_match", provenance: "symbol", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }],
+      entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/main/kotlin/ContextSmoke.kt", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, symbol: "ContextSmoke", contentHash, inclusionReason: "symbol_match", provenance: "symbol", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }],
       omissions: [],
       redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 },
       createdAt,
@@ -3720,6 +3738,29 @@ function projectContextPlan(body, sequence) {
     expiresAt: "2026-08-05T00:05:00Z",
     cloudRequired: false,
   };
+}
+
+function queryHash(query) {
+  return `sha256:${createHash("sha256").update(query, "utf8").digest("hex")}`;
+}
+
+function freezeAcceptedDispatchPlan(accepted, acceptedCount) {
+  return Object.freeze({ accepted, acceptedCount, acceptedSequence: accepted.sequence });
+}
+
+function hasNewerAcceptedPlan(frozen, latestAccepted, acceptedCount) {
+  return acceptedCount > frozen.acceptedCount || (latestAccepted?.sequence ?? 0) > frozen.acceptedSequence;
+}
+
+function assertProjectContextDispatchFreezeSelfCheck() {
+  const accepted = { sequence: 4, request: { query: projectGuiSendPrompt }, plan: { planId: "plan-4" } };
+  const frozen = freezeAcceptedDispatchPlan(accepted, 4);
+  const acceptedPlans = [accepted, { ...accepted, sequence: 5, plan: { planId: "plan-5" } }];
+  assertDeepEqual(frozen.accepted, accepted, "JetBrains frozen accepted dispatch plan identity");
+  assertDeepEqual(frozen.accepted.plan.planId, "plan-4", "JetBrains frozen dispatch selection after redundant planning");
+  assertDeepEqual(acceptedPlans.at(-1).plan.planId, "plan-5", "JetBrains redundant latest accepted plan self-check");
+  assertDeepEqual(hasNewerAcceptedPlan(frozen, accepted, 4), false, "JetBrains unchanged frozen dispatch plan");
+  assertDeepEqual(hasNewerAcceptedPlan(frozen, acceptedPlans.at(-1), acceptedPlans.length), true, "JetBrains newer accepted dispatch plan");
 }
 
 function assertCurrentPlannedContextSelection(selection, accepted, label) {

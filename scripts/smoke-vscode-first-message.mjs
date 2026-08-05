@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import http from "node:http";
@@ -28,6 +28,7 @@ const projectRevision = "1";
 const projectContextRankingVersion = "lexical-symbol-ranking-1";
 const projectContextDefaultBudget = { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 };
 const projectContextDefaultExplicitRefs = [];
+const userMessageQueryHash = "sha256:73840563dd31671aeea3ba40468fa88744125c3843940b38e06f56beb173c63f";
 const failures = [];
 const consoleMessages = [];
 let runtimeReady = true;
@@ -40,6 +41,7 @@ let chatCreated = false;
 let projectContextStatusRequestCount = 0;
 let projectContextPlanRequestCount = 0;
 const projectContextPlanRequests = [];
+let frozenProjectContextDispatchPlan;
 let matchingUserMessageCommandReceived = false;
 let hostGeneration;
 let resolveMatchingUserMessageCommand;
@@ -51,6 +53,7 @@ if (packageJson.scripts?.["smoke:gui-runtime-e2e"] !== "node scripts/smoke-gui-r
   failures.push("Root package.json must keep smoke:gui-runtime-e2e available as the deeper local mock-provider runtime/chat verification path.");
 }
 assertProjectContextPlanCorrelationSelfCheck();
+assertProjectContextDispatchFreezeSelfCheck();
 
 await requirePackagedGui();
 const { chromium } = await requireChromium();
@@ -210,7 +213,8 @@ try {
 
   const planCountBeforePrompt = projectContextPlanRequestCount;
   await composer.fill(userMessageText);
-  await waitForBalancedContextPlanAndEnabledSend(page, planCountBeforePrompt);
+  const frozenDispatchPlan = await waitForBalancedContextPlanAndEnabledSend(page, planCountBeforePrompt);
+  frozenProjectContextDispatchPlan = frozenDispatchPlan;
   if (chatCommandRequestCount !== 0 || matchingUserMessageCommandReceived) {
     failures.push(`VS Code project chat issued ${chatCommandRequestCount} command(s) before the explicit Send click.`);
   }
@@ -234,11 +238,10 @@ try {
   if (chatCommandRequest?.payload?.context?.source !== "vscode" || chatCommandRequest?.payload?.context?.selection?.text !== contextText) {
     failures.push("Mock runtime did not receive the VS Code active context on the first message.");
   }
-  const latestAcceptedPlan = projectContextPlanRequests.at(-1);
-  if (latestAcceptedPlan?.request?.query !== userMessageText) {
-    failures.push("VS Code latest accepted project context plan was not for the exact first-message prompt.");
+  if (frozenDispatchPlan.accepted.request.query !== userMessageText) {
+    failures.push("VS Code frozen project context plan was not for the exact first-message prompt.");
   }
-  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection, latestAcceptedPlan);
+  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection, frozenDispatchPlan.accepted);
   assertProjectOwnedRuntimeRequestsScoped();
   assertAllRuntimeApiRequestsAuthorized();
 
@@ -347,9 +350,11 @@ async function waitForLazyAppSubscriber(page) {
 async function waitForBalancedContextPlanAndEnabledSend(page, previousPlanCount) {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
-    const planned = projectContextPlanRequestCount > previousPlanCount
-      && projectContextPlanRequests.slice(previousPlanCount).some((accepted) => accepted.request.query === userMessageText);
-    if (planned && await sendButton(page).isEnabled().catch(() => false)) return;
+    const hasAcceptedPlan = projectContextPlanRequests.slice(previousPlanCount).some((record) => record.request.query === userMessageText);
+    if (hasAcceptedPlan && await sendButton(page).isEnabled().catch(() => false)) {
+      const latestAccepted = projectContextPlanRequests.slice(previousPlanCount).filter((record) => record.request.query === userMessageText).at(-1);
+      return freezeAcceptedDispatchPlan(latestAccepted, projectContextPlanRequests.length);
+    }
     await page.waitForTimeout(50);
   }
   throw new Error(`VS Code first message did not complete automatic Balanced planning with enabled Send. ${await hostedProjectChatDiagnostic(page)}`);
@@ -491,7 +496,11 @@ async function startMockRuntimeServer() {
       const sequence = projectContextPlanRequestCount + 1;
       const plan = projectContextPlan(body, sequence);
       projectContextPlanRequestCount = sequence;
-      projectContextPlanRequests.push({ sequence, request: body, plan });
+      const accepted = { sequence, request: body, plan };
+      projectContextPlanRequests.push(accepted);
+      if (frozenProjectContextDispatchPlan && hasNewerAcceptedPlan(frozenProjectContextDispatchPlan, accepted, projectContextPlanRequests.length)) {
+        failures.push("VS Code accepted a newer project context plan after Send readiness was frozen and before the command POST was observed.");
+      }
       json(response, 200, plan);
       return;
     }
@@ -522,6 +531,12 @@ async function startMockRuntimeServer() {
     if (request.method === "POST" && commandMatch) {
       chatCommandRequestCount += 1;
       chatCommandRequest = JSON.parse(await readRequestBody(request));
+      if (isMatchingUserMessageCommand(chatCommandRequest) && frozenProjectContextDispatchPlan) {
+        if (hasNewerAcceptedPlan(frozenProjectContextDispatchPlan, projectContextPlanRequests.at(-1), projectContextPlanRequests.length)) {
+          failures.push("VS Code observed a newer accepted project context plan before the frozen-plan command POST.");
+        }
+        frozenProjectContextDispatchPlan = undefined;
+      }
       const commandChatId = decodeURIComponent(commandMatch[1]);
       if (commandChatId !== chatId) failures.push(`Chat command used ${commandChatId} instead of the engine-created chat ID.`);
       if (isMatchingUserMessageCommand(chatCommandRequest)) {
@@ -618,10 +633,13 @@ function assertProjectContextPlanCorrelationSelfCheck() {
   ]) {
     if (isCurrentBalancedContextPlanRequest(request)) throw new Error(`VS Code context plan self-check accepted ${label}.`);
   }
+  if (queryHash(userMessageText) !== userMessageQueryHash) throw new Error("VS Code exact UTF-8 query hash self-check failed.");
+  if (queryHash(`${userMessageText} changed`) === userMessageQueryHash) throw new Error("VS Code changed UTF-8 query hash self-check failed.");
 }
 
 function projectContextPlan(body, sequence) {
-  const hash = `sha256:${"b".repeat(64)}`;
+  const exactQueryHash = queryHash(body.query);
+  const contentHash = `sha256:${"b".repeat(64)}`;
   const createdAt = "2026-08-05T00:00:00Z";
   const planId = `vscode-first-message-plan-${sequence}`;
   const manifestId = `vscode-first-message-manifest-${sequence}`;
@@ -641,10 +659,10 @@ function projectContextPlan(body, sequence) {
       planId,
       mode: body.mode,
       inventoryGeneration: projectContextInventoryGeneration,
-      queryHash: hash,
+      queryHash: exactQueryHash,
       rankingVersion: projectContextRankingVersion,
       budget: { ...body.budget, usedFiles: 1, usedChunks: 1, usedBytes: 32, usedEstimatedTokens: 8, truncated: false },
-      entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/vscode-smoke.ts", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, symbol: "vscodeSmoke", contentHash: hash, inclusionReason: "symbol_match", provenance: "symbol", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }],
+      entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/vscode-smoke.ts", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, symbol: "vscodeSmoke", contentHash, inclusionReason: "symbol_match", provenance: "symbol", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }],
       omissions: [],
       redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 },
       createdAt,
@@ -653,6 +671,28 @@ function projectContextPlan(body, sequence) {
     expiresAt: "2026-08-05T00:05:00Z",
     cloudRequired: false,
   };
+}
+
+function queryHash(query) {
+  return `sha256:${createHash("sha256").update(query, "utf8").digest("hex")}`;
+}
+
+function freezeAcceptedDispatchPlan(accepted, acceptedCount) {
+  return Object.freeze({ accepted, acceptedCount, acceptedSequence: accepted.sequence });
+}
+
+function hasNewerAcceptedPlan(frozen, latestAccepted, acceptedCount) {
+  return acceptedCount > frozen.acceptedCount || (latestAccepted?.sequence ?? 0) > frozen.acceptedSequence;
+}
+
+function assertProjectContextDispatchFreezeSelfCheck() {
+  const accepted = { sequence: 4, request: { query: userMessageText }, plan: { planId: "plan-4" } };
+  const frozen = freezeAcceptedDispatchPlan(accepted, 4);
+  const acceptedPlans = [accepted, { ...accepted, sequence: 5, plan: { planId: "plan-5" } }];
+  if (frozen.accepted !== accepted) throw new Error("VS Code frozen accepted dispatch plan identity self-check failed.");
+  if (frozen.accepted.plan.planId !== "plan-4" || acceptedPlans.at(-1).plan.planId !== "plan-5") throw new Error("VS Code frozen dispatch selection self-check failed.");
+  if (hasNewerAcceptedPlan(frozen, accepted, 4)) throw new Error("VS Code unchanged frozen dispatch plan self-check failed.");
+  if (!hasNewerAcceptedPlan(frozen, acceptedPlans.at(-1), acceptedPlans.length)) throw new Error("VS Code newer accepted dispatch plan self-check failed.");
 }
 
 function assertCurrentPlannedContextSelection(selection, accepted) {
