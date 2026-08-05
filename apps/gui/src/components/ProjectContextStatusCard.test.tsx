@@ -1,7 +1,7 @@
 import React, { act } from "react";
 import ReactDOM from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProjectContextStatusCard, type ProjectContextCardModel } from "./ProjectContextStatusCard";
+import { ProjectChatContextStatus, ProjectContextStatusCard, type ProjectContextCardModel } from "./ProjectContextStatusCard";
 
 const projectId = "prj_abcdefghijklmnopqrstuA";
 const hash = `sha256:${"a".repeat(64)}`;
@@ -42,6 +42,25 @@ describe("ProjectContextStatusCard", () => {
     act(() => { root?.render(<ProjectContextStatusCard model={ready("ready", profile())} rebuilding={false} rebuildError={null} onRebuild={rebuild} />); });
     act(() => (Array.from(container.querySelectorAll("button")).find((button) => button.textContent === "Rebuild project context") as HTMLButtonElement).click());
     expect(rebuild).toHaveBeenCalledOnce();
+  });
+
+  it("renders one compact Balanced entrypoint with bounded metadata", () => {
+    const context = ready("ready", profile());
+    if (context.status !== "ready") throw new Error("expected ready context");
+    const planning = {
+      mode: "balanced", plan: null, view: null, state: "idle", loading: false, error: false, ready: true, selection: null,
+      excluded: new Set<string>(), pinned: [], setMode: vi.fn(), refresh: vi.fn(), invalidate: vi.fn(), pin: vi.fn(), exclude: vi.fn(), useManualFallback: vi.fn(),
+    } as any;
+    const container = document.createElement("div"); document.body.append(container);
+    act(() => { root = ReactDOM.createRoot(container); root.render(<ProjectChatContextStatus context={context.context} planning={planning} />); });
+
+    expect(container.querySelectorAll("[data-testid='project-context-entrypoint']")).toHaveLength(1);
+    expect(container.textContent).toContain("Project context");
+    expect(container.textContent).toContain("Balanced automatic");
+    expect(container.querySelector("select")).toBeNull();
+    act(() => (container.querySelector("button[aria-controls='project-chat-context-advanced']") as HTMLButtonElement).click());
+    expect((container.querySelector("select") as HTMLSelectElement).value).toBe("balanced");
+    expect(container.textContent).toContain("Cache generation 1");
   });
 });
 

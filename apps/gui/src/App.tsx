@@ -77,7 +77,7 @@ import { useRuntimeController, type ProviderTestState, type RuntimeConnectionSou
 import { useChatController, type ChatControllerResetters } from "./services/useChatController";
 import { mergeLaunchMemoryBundleItems, useProjectLaunchController } from "./services/useProjectLaunchController";
 import { useControlledExecutionController } from "./services/useControlledExecutionController";
-import { ChatContextDrawer } from "./components/ChatContextDrawer";
+import { ProjectChatContextController } from "./components/ProjectContextStatusCard";
 
 export { mergeLaunchMemoryBundleItems } from "./services/useProjectLaunchController";
 
@@ -3326,6 +3326,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
               {proposalHistory.entries.length > 0 && pendingApplyRequestId === null && <ProposalHistoryPanel history={proposalHistory} />}
               <IdeActionProposalPanel proposal={activeIdeActionProposal} host={bridgeHost} pending={pendingIdeActionRequestIdRef.current !== null} onRun={(payload) => requestIdeAction(payload, "gui-ide-proposal-action")} />
             </div>
+            {!routedChatMissing && projectId && <ProjectChatContextController projectId={projectId} chatId={chatId} draft={chatInput} settings={{ baseUrl, token, runtimeAccess }} generationKey={`${settingsRevision}:${hostReadyGeneration ?? "browser"}`} onSelectionChange={setProjectContextPlanningSelection} onReadyChange={setProjectContextReady} />}
             {!routedChatMissing && <form className="chat-composer" data-testid="chat-composer" onSubmit={(event) => void submitChatCommand(event, buildChatSendOptions())}>
               <div className="composer-input-area">
                 <div className="composer-context-chips" aria-label="Next-send context chips">
@@ -3341,8 +3342,7 @@ export function App({ route = { kind: "legacy" }, navigate, runtimeSettings, onR
                   <span className="subtle">Unsent one-shot context. Review it here, then click Send explicitly or remove it from the explicit context controls.</span>
                   {explicitContextBundleStatus && <span className="subtle">{sanitizeDisplayText(explicitContextBundleStatus)}</span>}
                 </section>}
-                {projectId && <ChatContextDrawer projectId={projectId} chatId={chatId} draft={chatInput} settings={{ baseUrl, token, runtimeAccess }} generationKey={`${settingsRevision}:${hostReadyGeneration ?? "browser"}`} onSelectionChange={setProjectContextPlanningSelection} onReadyChange={setProjectContextReady} />}
-                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => { if (projectId && projectContextPlanningSelection) { setProjectContextPlanningSelection(null); setProjectContextReady(false); } setUserChatInputDraft(event.target.value); }} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
+                <textarea ref={chatInputRef} value={chatInput} onChange={(event) => { if (projectId && projectContextPlanningSelection) { setProjectContextPlanningSelection(null); } setUserChatInputDraft(event.target.value); }} placeholder={canSendChat ? "Ask about the current file, selection, or project..." : "Connect the runtime and configure a provider to start chatting..."} />
                 <div className="row chat-actions">
                   <button type="submit" disabled={!canSendChat || Boolean(projectId && chatInput.trim() && !projectContextReady)}>Send</button>
                   <button type="button" className="secondary-button" data-testid="chat-stop-response" onClick={stopSse}>Stop response</button>

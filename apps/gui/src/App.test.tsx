@@ -178,14 +178,32 @@ describe("project lifecycle scope", () => {
   const projectA = "prj_AAAAAAAAAAAAAAAAAAAAAA" as never;
   const projectB = "prj_BBBBBBBBBBBBBBBBBBBBBQ" as never;
 
-  it("shows the context-plan drawer only in project chat", async () => {
+  it("keeps one compact project-context entrypoint outside the composer only in project chat", async () => {
     mockRuntimeResponses(readyRuntimeOptions());
     renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
     await flushAsync();
-    expect(container?.querySelector("[data-testid='chat-context-drawer']")).not.toBeNull();
+    const entrypoints = container?.querySelectorAll("[data-testid='project-context-entrypoint']") ?? [];
+    expect(entrypoints).toHaveLength(1);
+    expect(container?.querySelector("[data-testid='chat-context-drawer']")).toBeNull();
+    expect(container?.querySelector("[data-testid='chat-composer'] [data-testid='project-context-entrypoint']")).toBeNull();
+    expect(entrypoints[0].textContent).toContain("Balanced automatic");
     await act(async () => root?.render(<App route={{ kind: "legacy" }} />));
     await flushAsync();
-    expect(container?.querySelector("[data-testid='chat-context-drawer']")).toBeNull();
+    expect(container?.querySelector("[data-testid='project-context-entrypoint']")).toBeNull();
+  });
+
+  it("offers unusable project-context setup and prompt-only fallback without auto-send", async () => {
+    mockRuntimeResponses({ ...readyRuntimeOptions(), projectContextState: "not_built" });
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+
+    expect(container?.querySelector("[data-testid='project-chat-context-setup']")?.textContent).toContain("Build project context");
+    expect(container?.textContent).toContain("Start without project context");
+    expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/commands") && init?.method === "POST")).toBe(false);
+    await act(async () => findButton("Start without project context").click());
+    expect(container?.querySelectorAll("[data-testid='project-context-entrypoint']")).toHaveLength(1);
+    expect(container?.textContent).toContain("Prompt only");
+    expect(findButton("Send").disabled).toBe(false);
   });
 
   it("keeps an empty project in draft without synthetic chat requests", async () => {
@@ -14161,6 +14179,7 @@ type MockRuntimeOptions = {
   agentProgressStatus?: number;
   agentProgressError?: string;
   projectMemoryNotes?: unknown[];
+  projectContextState?: "not_built" | "building" | "ready" | "stale" | "migration_required" | "unavailable";
 };
 
 function providerAuthResponse(status: ProviderAuthStatus): ProviderAuthResponse {
@@ -14652,6 +14671,15 @@ function lastUserMessageBody() {
 
 function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undefined, options: MockRuntimeOptions = {}) {
   const url = String(input);
+  const projectContextMatch = /\/p\/(prj_[A-Za-z0-9]+)\/v1\/context\/status$/.exec(url);
+  if (projectContextMatch) {
+    const state = options.projectContextState ?? "ready";
+    return Promise.resolve(jsonResponse({ protocolVersion: "2026-08-02", schemaVersion: 1, projectId: projectContextMatch[1], state, inventoryGeneration: state === "not_built" ? 0 : 3, cloudRequired: false, providerAccess: "direct" }));
+  }
+  const projectMatch = /\/v1\/projects\/(prj_[A-Za-z0-9]+)$/.exec(url);
+  if (projectMatch) {
+    return Promise.resolve(jsonResponse({ projectId: projectMatch[1], displayName: "Test project", status: "available", revision: "7", createdAt: "2026-01-01T00:00:00Z", lastOpenedAt: null, rootAvailable: true, cloudRequired: false, providerAccess: "direct" }));
+  }
   if (url.endsWith("/v1/provider-auth/openai/status")) {
     if (options.authStatusCode) {
       return Promise.resolve(jsonResponse({ error: "raw-secret should not appear" }, options.authStatusCode));

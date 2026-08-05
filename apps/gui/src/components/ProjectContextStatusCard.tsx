@@ -1,9 +1,100 @@
-import type { ProjectContextProfile, ProjectContextStatus } from "../services/projectContextClient";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createProjectRuntimeSettings, getProject } from "../services/projectClient";
+import { getProjectContextStatus, rebuildProjectContext, type ProjectContextMode, type ProjectContextProfile, type ProjectContextStatus } from "../services/projectContextClient";
+import type { ProjectContextPlanningSelection, RuntimeSettings } from "../services/runtimeClient";
+import { useProjectContextPlanning, type ProjectContextPlanning } from "../services/useProjectContextPlanning";
+import { ProjectChatContextSetupCard } from "./ProjectChatContextSetupCard";
 
 export type ProjectContextCardModel =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "ready"; context: ProjectContextStatus; profile: ProjectContextProfile | null };
+
+export function ProjectChatContextController({ projectId, chatId, draft, settings, generationKey, onSelectionChange, onReadyChange }: { projectId: string; chatId: string | null; draft: string; settings: RuntimeSettings; generationKey: string; onSelectionChange?: (selection: ProjectContextPlanningSelection | null) => void; onReadyChange?: (ready: boolean) => void }) {
+  const [context, setContext] = useState<ProjectContextStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [promptOnly, setPromptOnly] = useState(false);
+  const requestRef = useRef(0);
+  const planning = useProjectContextPlanning({ projectId, chatId, draft, settings, generationKey, onSelectionChange, onReadyChange });
+
+  const loadStatus = useCallback(async () => {
+    const request = ++requestRef.current;
+    const controller = new AbortController();
+    setLoading(true);
+    const scoped = createProjectRuntimeSettings(settings, projectId, { generation: request, abortSignal: controller.signal });
+    const result = await getProjectContextStatus(scoped);
+    if (request !== requestRef.current || controller.signal.aborted) return;
+    setContext(result.ok ? result.data : null);
+    setError(result.ok ? null : "Project context status is unavailable. You can continue with your prompt only.");
+    setLoading(false);
+  }, [projectId, settings.baseUrl, settings.token, settings.runtimeAccess]);
+
+  useEffect(() => {
+    setPromptOnly(false);
+    void loadStatus();
+    return () => { requestRef.current += 1; };
+  }, [loadStatus, projectId]);
+
+  const build = useCallback(async () => {
+    if (!context) return;
+    const request = ++requestRef.current;
+    const controller = new AbortController();
+    const scoped = createProjectRuntimeSettings(settings, projectId, { generation: request, abortSignal: controller.signal });
+    setWorking(true);
+    setError(null);
+    const project = await getProject(settings, projectId, controller.signal);
+    if (request !== requestRef.current || controller.signal.aborted) return;
+    const result = project.ok ? await rebuildProjectContext(scoped, { expectedInventoryGeneration: context.inventoryGeneration, expectedProjectRevision: project.data.revision }) : project;
+    if (request !== requestRef.current || controller.signal.aborted) return;
+    if (!result.ok) {
+      setWorking(false);
+      setError("Project context could not be built. Try again or start without project context.");
+      return;
+    }
+    setWorking(false);
+    await loadStatus();
+  }, [context, loadStatus, projectId, settings.baseUrl, settings.token, settings.runtimeAccess]);
+
+  const startWithoutContext = useCallback(() => {
+    setPromptOnly(true);
+    planning.useManualFallback();
+  }, [planning.useManualFallback]);
+
+  if (loading) return <section className="project-chat-context-status compact-loading" aria-label="Project context" data-testid="project-context-entrypoint" aria-busy="true"><strong>Project context</strong><span className="subtle">Checking local cache…</span></section>;
+  if (!context) return <section className="project-chat-context-status" aria-label="Project context" data-testid="project-context-entrypoint"><strong>Project context</strong><span className="subtle">{error}</span><button type="button" className="secondary-button" onClick={startWithoutContext}>Start without project context</button></section>;
+  if (context.state === "not_built" || context.state === "stale" || context.state === "migration_required" || context.state === "unavailable") return promptOnly
+    ? <ProjectChatContextStatus context={context} planning={planning} />
+    : <ProjectChatContextSetupCard state={context.state} working={working} error={error} onBuild={() => void build()} onStartWithoutContext={startWithoutContext} />;
+  if (context.state === "building") return <section className="project-chat-context-status" aria-label="Project context" data-testid="project-context-entrypoint" aria-busy="true"><strong>Project context</strong><span className="subtle">Building the local project cache…</span></section>;
+  return <ProjectChatContextStatus context={context} planning={planning} />;
+}
+
+export function ProjectChatContextStatus({ context, planning }: { context: ProjectContextStatus; planning: ProjectContextPlanning }) {
+  const [open, setOpen] = useState(false);
+  const selectedCount = planning.view?.included.length ?? 0;
+  const status = planning.mode === "manual_only" ? "Prompt only" : planning.loading ? "Planning…" : planning.error ? "Plan unavailable" : planning.plan ? `${selectedCount} selected` : "Balanced automatic";
+  return <section className="project-chat-context-status" aria-label="Project context" data-testid="project-context-entrypoint">
+    <button type="button" className="project-chat-context-trigger" aria-expanded={open} aria-controls="project-chat-context-advanced" onClick={() => setOpen((value) => !value)}>
+      <span><strong>Project context</strong><span className="subtle">{status}</span></span>
+      <span className={`badge ${planning.error ? "warn" : "ok"}`}>{modeLabel(planning.mode)}</span>
+    </button>
+    {open && <div id="project-chat-context-advanced" className="project-chat-context-advanced stack">
+      <label>Project context mode<select aria-label="Project context mode" value={planning.mode} onChange={(event) => planning.setMode(event.target.value as ProjectContextMode)}><option value="balanced">Balanced</option><option value="deep">Deep</option><option value="manual_only">Manual-only</option></select></label>
+      <span className="subtle">This preference lasts for the current project session only. Explicit file and memory attachments remain separate.</span>
+      {planning.mode === "manual_only" ? <span>Prompt-only fallback is active. No automatic project context will be sent.</span> : <>
+        <div className="project-chat-context-metadata" aria-label="Bounded project context metadata">
+          <span>Cache generation {context.inventoryGeneration}</span>
+          <span>{selectedCount} selected item{selectedCount === 1 ? "" : "s"}</span>
+          {planning.view && <span>{planning.view.budget}</span>}
+        </div>
+        <div className="project-chat-context-actions"><button type="button" className="secondary-button" onClick={() => void planning.refresh()} disabled={planning.loading}>{planning.loading ? "Planning…" : "Refresh planned context"}</button><button type="button" className="secondary-button" onClick={planning.useManualFallback}>Use prompt only</button></div>
+        {planning.error && <span className="error" role="alert">Planned context is unavailable. Use prompt only or retry.</span>}
+      </>}
+    </div>}
+  </section>;
+}
 
 export function ProjectContextStatusCard({ model, rebuilding, rebuildError, onRebuild }: { model: ProjectContextCardModel; rebuilding: boolean; rebuildError: string | null; onRebuild: () => void }) {
   if (model.status === "loading") return <section className="project-context-card" aria-labelledby="project-context-heading" aria-busy="true"><h2 id="project-context-heading">Project Context</h2><p role="status">Loading local structural evidence…</p></section>;
@@ -38,6 +129,11 @@ export function ProjectContextStatusCard({ model, rebuilding, rebuildError, onRe
       {rebuildError && <p role="alert">{rebuildError}</p>}
     </section>
   );
+}
+
+function modeLabel(mode: ProjectContextMode) {
+  if (mode === "manual_only") return "manual-only";
+  return mode;
 }
 
 function stateCopy(state: ProjectContextStatus["state"]) {

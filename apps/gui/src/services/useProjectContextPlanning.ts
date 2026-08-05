@@ -91,6 +91,13 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
       publishReady(true);
       return;
     }
+    if (mode === "manual_only") {
+      setPlan(null);
+      setState("idle");
+      selectionCallbackRef.current?.(null);
+      publishReady(true);
+      return;
+    }
     const request = ++requestRef.current;
     const expectedCorrelation = correlationRef.current;
     const controller = new AbortController();
@@ -139,7 +146,7 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     setPinned([]);
     setState("idle");
     selectionCallbackRef.current?.(null);
-    publishReady(!query);
+    publishReady(true);
   }, [scopeIdentity]);
 
   const planningTrigger = JSON.stringify({ chatId, generationKey });
@@ -180,7 +187,8 @@ export function useProjectContextPlanning({ projectId, chatId, draft, settings, 
     if (nextMode === mode) return;
     invalidate();
     setModeState({ projectId, mode: nextMode });
-  }, [invalidate, mode, projectId]);
+    if (nextMode === "manual_only") publishReady(true);
+  }, [invalidate, mode, projectId, publishReady]);
 
   const pin = useCallback((key: string) => {
     const entry = plan?.manifest.entries.find((item) => contextManifestEntryKey(item) === key);
