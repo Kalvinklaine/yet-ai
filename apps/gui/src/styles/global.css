@@ -1332,6 +1332,27 @@ pre,
   padding: 14px;
 }
 
+.host-vscode[data-project-page="chat"] > [data-testid="project-chat-boundary"],
+.host-jetbrains[data-project-page="chat"] > [data-testid="project-chat-boundary"] {
+  display: none;
+}
+
+.host-vscode[data-project-page="chat"] > div,
+.host-jetbrains[data-project-page="chat"] > div {
+  min-height: 0;
+}
+
+.host-vscode[data-project-page="chat"] .chat-primary-card,
+.host-jetbrains[data-project-page="chat"] .chat-primary-card {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 24px);
+  min-height: 0;
+  max-height: calc(100vh - 24px);
+  overflow: hidden;
+  padding: 14px;
+}
+
 .host-vscode > .chat-primary-card,
 .host-jetbrains > .chat-primary-card {
   grid-row: 1;
@@ -1455,7 +1476,11 @@ pre,
 
 .project-chat-context-status,
 .project-chat-context-setup {
+  flex: 0 0 auto;
   min-width: 0;
+  max-height: 112px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid #d8e1f6;
   border-radius: 14px;
   background: #fbfcff;
@@ -1513,6 +1538,7 @@ pre,
 
 .project-chat-context-actions button {
   flex: 0 1 auto;
+  min-height: 36px;
   max-width: 100%;
   white-space: normal;
 }
@@ -1687,7 +1713,7 @@ pre,
 .host-vscode .chat-scroll-region,
 .host-jetbrains .chat-scroll-region {
   flex: 1 1 auto;
-  min-height: 300px;
+  min-height: min(160px, 30vh);
   padding-right: 2px;
   padding-bottom: 8px;
 }
@@ -1719,7 +1745,7 @@ pre,
 .host-jetbrains .chat-composer {
   flex: 0 0 auto;
   height: auto;
-  max-height: 232px !important;
+  max-height: min(220px, 44vh) !important;
   margin-top: 4px;
   margin-bottom: 6px;
   padding: 12px;
@@ -1732,7 +1758,7 @@ pre,
   flex: 0 1 auto;
   height: auto;
   min-block-size: 48px;
-  max-height: 86px !important;
+  max-height: min(56px, 12vh) !important;
   gap: 6px;
 }
 
@@ -1824,6 +1850,7 @@ pre,
 .host-vscode .chat-actions button,
 .host-jetbrains .chat-actions button {
   flex: 0 0 auto;
+  min-height: 36px;
   padding: 7px 10px;
 }
 
@@ -2042,9 +2069,19 @@ pre,
 
 .chat-lifecycle-row {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+  max-height: 84px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.chat-lifecycle-row button {
+  flex: 0 0 auto;
+  min-height: 36px;
 }
 
 .chat-lifecycle-long-wait {

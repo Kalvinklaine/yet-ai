@@ -192,6 +192,32 @@ describe("project lifecycle scope", () => {
     expect(container?.querySelector("[data-testid='project-context-entrypoint']")).toBeNull();
   });
 
+  it("keeps compact project context, lifecycle, and send controls in normal DOM flow", async () => {
+    mockRuntimeResponses(readyRuntimeOptions());
+    renderAppRoute({ kind: "project", projectId: projectA, page: "chat" });
+    await flushAsync();
+
+    const thread = container?.querySelector(".chat-thread-pane");
+    const lifecycle = container?.querySelector("[data-testid='chat-lifecycle-status']");
+    const context = container?.querySelector("[data-testid='project-context-entrypoint']");
+    const composer = container?.querySelector("[data-testid='chat-composer']");
+    expect(thread).toBeTruthy();
+    expect(Array.from(thread?.children ?? []).slice(-4)).toEqual([
+      container?.querySelector(".chat-scroll-region"),
+      lifecycle,
+      context,
+      composer,
+    ]);
+    expect(lifecycle?.contains(findButton("Stop"))).toBe(true);
+    expect(composer?.contains(findButton("Send"))).toBe(true);
+    expect(composer?.contains(chatInput())).toBe(true);
+    expect(context?.getAttribute("aria-label")).toBe("Project context");
+    expect(context?.querySelector("[aria-expanded='false']")).not.toBeNull();
+    expect(getComputedStyle(lifecycle as Element).position).not.toBe("absolute");
+    expect(getComputedStyle(context as Element).position).not.toBe("absolute");
+    expect(getComputedStyle(composer as Element).position).not.toBe("absolute");
+  });
+
   it("blocks project Send immediately until the debounced planned context is ready", async () => {
     vi.useFakeTimers();
     mockRuntimeResponses(readyRuntimeOptions());

@@ -16,10 +16,13 @@ const JETBRAINS_SMOKE_PANEL_ID = "plugin-layout-smoke";
 const BRIDGE_VERSION = "2026-05-15";
 const SMOKE_PROJECT_ID = "prj_abcdefghijklmnopqrstuA";
 const SMOKE_PROJECT_DISPLAY_NAME = "Plugin Layout Workspace";
-const LAYOUT_CONTRACT_VERSION = "T-772-plugin-layout-thresholds";
+const LAYOUT_CONTRACT_VERSION = "T-4-project-context-compact-layout";
 const LAYOUT_THRESHOLDS = Object.freeze({
   maxContextHeight: 112,
-  maxComposerScrollGap: 32,
+  minTextareaHeight: 56,
+  minChatScrollHeight: 120,
+  minControlHeight: 36,
+  maxComposerControlStackGap: 180,
   hosts: Object.freeze({
     vscode: Object.freeze({ minComposerLowerOffset: 0, maxComposerScrollOverlap: 1 }),
     jetbrains: Object.freeze({ minComposerLowerOffset: -16, maxComposerScrollOverlap: 316 }),
@@ -110,6 +113,11 @@ async function exercisePluginViewport({ chromium, width, height, name, host }) {
 
   await clickActionableButton(page, explainSelectionButton, `${name} Explain selection button`, { viewportName: name, controlLabel: "Explain selection" });
   await expectComposerValue(page, "Explain the selected code", `${name} Coding Actions prompt`);
+  const promptOnlyFallback = page.getByRole("button", { name: "Send without project context", exact: true });
+  await promptOnlyFallback.waitFor({ state: "visible", timeout: 5000 });
+  const planningMetrics = await collectLayoutMetrics(page, { width, height, name: `${name}-planning`, host });
+  assertRequiredControlLayout(planningMetrics, `${name} planning controls`);
+  await clickActionableButton(page, promptOnlyFallback, `${name} Send without project context button`, { viewportName: name, controlLabel: "Send without project context" });
   const sendButton = page.getByRole("button", { name: "Send", exact: true });
   await requireActionableButton(page, sendButton, `${name} Send button with expanded Coding Actions drawer`, name);
   const expandedDrawerMetrics = await collectLayoutMetrics(page, { width, height, name: `${name}-expanded-drawer`, host });
@@ -154,10 +162,12 @@ function assertLayoutMetrics(metrics, label, height, host) {
   assert(host !== "jetbrains" || !metrics.hostBrowserClass, `${label} incorrectly kept host-browser class in JetBrains scenario`);
   assert(metrics.sendVisible && metrics.sendWithinViewport && metrics.sendEnabled, `${label} Send is not visible/enabled within viewport: ${JSON.stringify(metrics.sendRect)}`);
   assert(metrics.textareaVisible && metrics.textareaWithinViewport, `${label} textarea is not visible within viewport: ${JSON.stringify(metrics.textareaRect)}`);
-  assert(metrics.chatScrollHeight >= 160, `${label} chat-scroll-region too short: ${metrics.chatScrollHeight}`);
+  assert(metrics.chatScrollHeight >= LAYOUT_THRESHOLDS.minChatScrollHeight, `${label} chat-scroll-region too short: ${metrics.chatScrollHeight}`);
   assert(metrics.composerHeight <= 240, `${label} composer too tall: ${metrics.composerHeight}`);
   assert(metrics.composerBottom <= height + 1, `${label} composer extends below viewport: ${metrics.composerBottom} > ${height}`);
   assert(metrics.contextDetailsOpen === false || metrics.contextDetailsOpen === null, `${label} active editor context details should be collapsed`);
+  assert(metrics.projectContextExpanded === false, `${label} project-context detail should stay collapsed`);
+  assert(metrics.textareaRect?.height >= LAYOUT_THRESHOLDS.minTextareaHeight, `${label} textarea lost useful height: ${JSON.stringify(metrics.textareaRect)}`);
   const maxContextHeight = LAYOUT_THRESHOLDS.maxContextHeight;
   assert(metrics.contextHeight <= maxContextHeight, `${label} active editor context dominates composer: ${metrics.contextHeight}, maxContextHeight=${maxContextHeight}`);
   assert(metrics.composerAfterScroll, `${label} composer does not follow chat scroll region in DOM order`);
@@ -165,10 +175,28 @@ function assertLayoutMetrics(metrics, label, height, host) {
   assert(hostThresholds, `${label} has no layout thresholds for host: ${host}`);
   const minComposerLowerOffset = hostThresholds.minComposerLowerOffset;
   assert(metrics.composerTop - metrics.scrollTop > minComposerLowerOffset, `${label} composer is not placed in the lower chat area: scrollTop=${metrics.scrollTop}, scrollHeight=${metrics.chatScrollHeight}, composerTop=${metrics.composerTop}, minComposerLowerOffset=${minComposerLowerOffset}`);
-  const maxComposerScrollGap = LAYOUT_THRESHOLDS.maxComposerScrollGap;
+  const maxComposerScrollGap = LAYOUT_THRESHOLDS.maxComposerControlStackGap;
   const maxComposerScrollOverlap = hostThresholds.maxComposerScrollOverlap;
-  assert(metrics.composerScrollGap <= maxComposerScrollGap, `${label} composer detached from chat scroll region: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollGap=${metrics.composerScrollGap}, maxComposerScrollGap=${maxComposerScrollGap}`);
+  assert(metrics.composerScrollGap <= maxComposerScrollGap, `${label} controls between chat scroll and composer exceed the bounded stack: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollGap=${metrics.composerScrollGap}, maxComposerControlStackGap=${maxComposerScrollGap}`);
   assert(metrics.composerScrollOverlap <= maxComposerScrollOverlap, `${label} composer overlaps chat scroll region too deeply: scrollBottom=${metrics.scrollBottom}, composerTop=${metrics.composerTop}, composerBottom=${metrics.composerBottom}, composerScrollOverlap=${metrics.composerScrollOverlap}, maxComposerScrollOverlap=${maxComposerScrollOverlap}`);
+  assertRequiredControlLayout(metrics, label);
+}
+
+function assertRequiredControlLayout(metrics, label) {
+  for (const control of ["projectContext", "lifecycle", "textarea", "send", "stop"]) {
+    const state = metrics.requiredControls[control];
+    assert(state?.visible && state.withinViewport, `${label} ${control} is clipped or outside the viewport: ${JSON.stringify(state)}`);
+  }
+  if (metrics.requiredControls.fallback.present) {
+    assert(metrics.requiredControls.fallback.visible && metrics.requiredControls.fallback.withinViewport, `${label} manual fallback is clipped: ${JSON.stringify(metrics.requiredControls.fallback)}`);
+  }
+  assert(metrics.requiredControls.send.rect.height >= LAYOUT_THRESHOLDS.minControlHeight, `${label} Send hit target is too short`);
+  assert(metrics.requiredControls.stop.rect.height >= LAYOUT_THRESHOLDS.minControlHeight, `${label} Stop hit target is too short`);
+  assert(metrics.requiredControls.fallback.present === false || metrics.requiredControls.fallback.rect.height >= LAYOUT_THRESHOLDS.minControlHeight, `${label} manual fallback hit target is too short`);
+  assert(metrics.requiredControls.send.hitTarget, `${label} Send center is not hit-testable`);
+  assert(metrics.requiredControls.stop.hitTarget, `${label} Stop center is not hit-testable`);
+  assert(metrics.requiredControls.fallback.present === false || metrics.requiredControls.fallback.hitTarget, `${label} manual fallback center is not hit-testable`);
+  assert(metrics.requiredControlOverlaps.length === 0, `${label} required controls overlap: ${JSON.stringify(metrics.requiredControlOverlaps)}`);
 }
 
 async function waitForActiveSelectedContext(page) {
@@ -555,11 +583,39 @@ async function collectLayoutMetrics(page, scenario) {
     const scrollElement = document.querySelector(".chat-scroll-region");
     const composerElement = document.querySelector(".chat-composer");
     const ideActionsDrawer = document.querySelector("[data-testid='ide-actions-drawer']");
+    const projectContext = document.querySelector("[data-testid='project-context-entrypoint']");
+    const lifecycle = document.querySelector("[data-testid='chat-lifecycle-status']");
+    const stop = document.querySelector("[data-testid='chat-stop-response']");
+    const fallback = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send without project context");
     const scroll = rect(".chat-scroll-region");
     const composer = rect(".chat-composer");
     const context = rect(".attached-context-card");
     const sendRect = send instanceof HTMLElement ? rectForElement(send) : null;
     const textareaRect = textarea instanceof HTMLElement ? rectForElement(textarea) : null;
+    const requiredElements = { projectContext, lifecycle, textarea, send, stop, fallback };
+    const requiredControls = Object.fromEntries(Object.entries(requiredElements).map(([key, element]) => {
+      const elementRect = element instanceof HTMLElement ? rectForElement(element) : null;
+      const style = element instanceof HTMLElement ? getComputedStyle(element) : null;
+      return [key, {
+        present: element instanceof HTMLElement,
+        visible: Boolean(elementRect && style && style.visibility !== "hidden" && style.display !== "none" && elementRect.width > 0 && elementRect.height > 0),
+        withinViewport: withinViewport(elementRect),
+        hitTarget: element instanceof HTMLButtonElement ? isHitTarget(element, elementRect) : null,
+        rect: elementRect,
+      }];
+    }));
+    const overlapKeys = Object.keys(requiredElements).filter((key) => requiredControls[key].present);
+    const requiredControlOverlaps = [];
+    for (let leftIndex = 0; leftIndex < overlapKeys.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < overlapKeys.length; rightIndex += 1) {
+        const leftKey = overlapKeys[leftIndex];
+        const rightKey = overlapKeys[rightIndex];
+        if ((leftKey === "lifecycle" && rightKey === "stop") || (leftKey === "projectContext" && rightKey === "fallback")) continue;
+        const leftRect = requiredControls[leftKey].rect;
+        const rightRect = requiredControls[rightKey].rect;
+        if (leftRect && rightRect && leftRect.left < rightRect.right && leftRect.right > rightRect.left && leftRect.top < rightRect.bottom && leftRect.bottom > rightRect.top) requiredControlOverlaps.push(`${leftKey}:${rightKey}`);
+      }
+    }
     return {
       ...scenarioInfo,
       bodyText: document.body.innerText.replace(/\s+/g, " ").slice(0, 500),
@@ -588,12 +644,20 @@ async function collectLayoutMetrics(page, scenario) {
       composerAfterScroll: scrollElement instanceof HTMLElement && composerElement instanceof HTMLElement && Boolean(scrollElement.compareDocumentPosition(composerElement) & Node.DOCUMENT_POSITION_FOLLOWING),
       contextHeight: context?.height ?? 0,
       contextDetailsOpen: details instanceof HTMLDetailsElement ? details.open : null,
+      projectContextExpanded: projectContext?.querySelector("button[aria-controls='project-chat-context-advanced']")?.getAttribute("aria-expanded") === "true",
+      requiredControls,
+      requiredControlOverlaps,
       localStorageKeys: Object.keys(localStorage),
       sessionStorageKeys: Object.keys(sessionStorage),
     };
     function rectForElement(element) {
       const box = element.getBoundingClientRect();
       return { top: box.top, bottom: box.bottom, left: box.left, right: box.right, width: box.width, height: box.height };
+    }
+    function isHitTarget(element, box) {
+      if (!box) return false;
+      const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+      return top === element || element.contains(top);
     }
     function heroState(element) {
       if (!(element instanceof HTMLElement)) return "absent";
@@ -658,7 +722,7 @@ async function enterCurrentWorkspaceChat(page, name) {
   const startNew = page.getByRole("button", { name: "Start new chat", exact: true });
   await requireActionableButton(page, startNew, `${name} Start new chat button`, name);
   await startNew.click();
-  await page.getByText("Project chat", { exact: true }).waitFor({ state: "visible", timeout: 10_000 });
+  await page.locator("main.app-shell[data-project-page='chat']").waitFor({ state: "visible", timeout: 10_000 });
   await composer.waitFor({ state: "visible", timeout: 10_000 })
     .catch(async () => { throw new Error(`${name} project chat lost the original pre-dashboard host authority after Start new chat: ${await contextDiagnostic(page)}`); });
 }
@@ -846,6 +910,12 @@ async function startRuntimeServer() {
     if (request.method === "GET" && runtimePath === "/v1/providers") return json(response, 200, { providers: [demoProvider()], cloudRequired: false, providerAccess: "direct" });
     if (request.method === "GET" && runtimePath === "/v1/provider-auth/openai/status") return json(response, 200, { provider: "openai", configured: false, status: "login_unavailable", authSource: "none", supportsLogin: false, supportsApiKey: true, cloudRequired: false, message: "No account login." });
     if (request.method === "GET" && runtimePath === "/v1/project-memory") return json(response, 200, { notes: [], cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "GET" && runtimePath === "/v1/context/status") return json(response, 200, { protocolVersion: "2026-08-02", schemaVersion: 1, projectId: SMOKE_PROJECT_ID, state: "ready", inventoryGeneration: 1, cloudRequired: false, providerAccess: "direct" });
+    if (request.method === "POST" && runtimePath === "/v1/context/plan") {
+      const body = JSON.parse(await readBody(request));
+      await new Promise((resolve) => setTimeout(resolve, 650));
+      return json(response, 200, contextPlan(body));
+    }
     if (request.method === "GET" && url.pathname === "/v1/projects") return json(response, 200, { projects: [{ projectId: SMOKE_PROJECT_ID, displayName: SMOKE_PROJECT_DISPLAY_NAME, status: "available", revision: "1", createdAt: now(), lastOpenedAt: now(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" }], legacyUnscopedAvailable: false, cloudRequired: false, providerAccess: "direct" });
     if (request.method === "GET" && url.pathname === `/v1/projects/${SMOKE_PROJECT_ID}`) return json(response, 200, { projectId: SMOKE_PROJECT_ID, displayName: SMOKE_PROJECT_DISPLAY_NAME, status: "available", revision: "1", createdAt: now(), lastOpenedAt: now(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" });
     if (request.method === "GET" && runtimePath === "/v1/agent-progress") return json(response, 200, { snapshots: [], cloudRequired: false, providerAccess: "direct" });
@@ -883,6 +953,7 @@ function sse(response, chat) { response.writeHead(200, corsHeaders({ "content-ty
 function pushSse(chatId, event) { for (const response of subscribers.get(chatId) ?? []) response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`); }
 function demoModel() { return { id: "yet-demo-chat", displayName: "Yet AI Demo Chat", providerId: "yet-demo", capabilities: { chat: true, streaming: true, tools: false, reasoning: false }, readiness: { status: "ready" } }; }
 function demoProvider() { return { id: "yet-demo", kind: "demo-local", displayName: "Yet AI Demo Mode", enabled: true, baseUrl: "local-runtime-demo-mode", auth: { type: "none", configured: true }, models: [demoModel()], capabilities: { chat: true, completion: false, embeddings: false } }; }
+function contextPlan(body) { const hash = `sha256:${"a".repeat(64)}`; return { protocolVersion: "2026-08-02", schemaVersion: 1, planId: "plugin-layout-plan", projectId: SMOKE_PROJECT_ID, mode: body.mode ?? "balanced", queryLabel: "Compact layout prompt", status: "ready", manifest: { protocolVersion: "2026-08-02", schemaVersion: 1, manifestId: `plugin-layout-manifest-${randomUUID()}`, projectId: SMOKE_PROJECT_ID, planId: "plugin-layout-plan", mode: body.mode ?? "balanced", inventoryGeneration: 1, queryHash: hash, rankingVersion: "layout-smoke", budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 1, usedChunks: 1, usedBytes: 32, usedEstimatedTokens: 8, truncated: false }, entries: [{ kind: "file_chunk", chunkId: "layout-chunk", sourceRef: "src/plugin-layout.ts", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, contentHash: hash, inclusionReason: "lexical_match", provenance: "lexical", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }], omissions: [], redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 }, createdAt: now() }, createdAt: now(), expiresAt: "2026-05-29T07:21:30Z", cloudRequired: false }; }
 async function listen(server) { await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); }); const address = server.address(); if (!address || typeof address === "string") throw new Error("Server did not bind to a TCP port."); return { port: address.port, close: () => new Promise((resolve) => server.close(resolve)) }; }
 async function expectVisibleText(page, text, label, timeout = 20_000) { const visible = await page.getByText(text, { exact: false }).first().waitFor({ state: "visible", timeout }).then(() => true).catch(() => false); assert(visible, `Missing visible ${label}: ${text}`); }
 async function expectComposerValue(page, text, label) { const ok = await page.getByPlaceholder("Ask about the current file, selection, or project...").evaluate((element, expected) => element instanceof HTMLTextAreaElement && element.value.includes(expected), text).catch(() => false); assert(ok, `Missing ${label} in composer: ${text}`); }
