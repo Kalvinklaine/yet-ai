@@ -51,6 +51,7 @@ const bundleExcerptOneText = "export const vscodeBundleOne = 1;";
 const bundleExcerptTwoText = "export const vscodeBundleTwo = 2;";
 const bundlePrompt = "Use the attached VS Code multi-file context bundle.";
 const afterBundlePrompt = "Send after VS Code multi-file context bundle clears.";
+const routeEntryDraft = `VS Code route-local draft ${randomUUID()}`;
 const memoryNoteId = "mem-vscode-parity-001";
 const memoryNoteTitle = "VS Code parity memory";
 const memoryNoteText = "Remember the local first VS Code parity surface.";
@@ -230,15 +231,25 @@ try {
   assertNoChatRuntimeBeforeExplicitStart("VS Code dashboard");
   if (await page.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) failures.push("VS Code dashboard mounted a composer before explicit Start.");
   await page.getByRole("button", { name: "Start new chat", exact: true }).click();
-  await page.locator("main.app-shell.host-vscode[data-project-page='chat']").waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
+  const chatShell = page.locator("main.app-shell.host-vscode[data-project-page='chat']");
+  await chatShell.waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
     throw new Error(`VS Code project chat route did not become active after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
   });
-  await page.getByPlaceholder("Ask about the current file, selection, or project...").waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
+  const routeComposer = chatShell.getByPlaceholder("Ask about the current file, selection, or project...");
+  const routeSend = chatShell.getByRole("button", { name: "Send", exact: true });
+  await routeComposer.waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
     throw new Error(`VS Code project composer did not become visible after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
   });
-  await page.getByRole("button", { name: "Send", exact: true }).waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
+  await routeSend.waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
     throw new Error(`VS Code project Send did not become visible after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
   });
+  const routeEntryCommandCount = countChatCommandPosts();
+  await routeComposer.fill(routeEntryDraft);
+  if (await routeComposer.inputValue() !== routeEntryDraft) failures.push("VS Code route-local composer did not retain the harmless entry draft.");
+  if (!(await routeSend.isDisabled())) failures.push("VS Code route-local Send was enabled despite the current auth-mismatch readiness state.");
+  await routeComposer.fill("");
+  if (await routeComposer.inputValue() !== "") failures.push("VS Code route-local composer did not clear the harmless entry draft.");
+  if (countChatCommandPosts() !== routeEntryCommandCount) failures.push("VS Code route-local draft usability proof issued a chat command before explicit Send.");
   await page.goto(`${guiBaseUrl}${hostedChatPath}`, { waitUntil: "domcontentloaded" });
   const legacyGuiReady = await waitForGuiMessage(page, "gui.ready");
   const legacyReadyRequestId = requireProductionHostedReadyRequestId(legacyGuiReady, "legacy reload bootstrap gui.ready");
@@ -1212,16 +1223,16 @@ async function controlDiagnostic(page, details) {
 
 async function hostedProjectChatDiagnostic(page) {
   const state = await page.evaluate(() => {
-    const shell = document.querySelector("main.app-shell");
-    const composer = document.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
-    const send = Array.from(document.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Send");
+    const shell = document.querySelector("main.app-shell.host-vscode[data-project-page='chat']");
+    const composer = shell?.querySelector("textarea[placeholder='Ask about the current file, selection, or project...']");
+    const send = Array.from(shell?.querySelectorAll("button") ?? []).find((button) => button.textContent?.trim() === "Send");
     return {
       route: shell?.getAttribute("data-project-page") ?? null,
       hostClass: shell?.className ?? null,
       composerVisible: composer instanceof HTMLElement && composer.getBoundingClientRect().height > 0,
       sendVisible: send instanceof HTMLElement && send.getBoundingClientRect().height > 0,
       sendDisabled: send instanceof HTMLButtonElement ? send.disabled : null,
-      bodySnippet: document.body.innerText.replace(/\s+/g, " ").slice(0, 1200),
+      shellSnippet: shell?.innerText.replace(/\s+/g, " ").slice(0, 1200) ?? null,
     };
   }).catch((error) => ({ diagnosticError: messageOf(error) }));
   return sanitizeEvidenceText(JSON.stringify({ state })).slice(0, 2200);
@@ -1836,9 +1847,9 @@ function sanitizeEvidenceText(text) {
   return redactSecrets(text)
     .replaceAll(activeContextSelection, "[redacted-active-selection]")
     .replaceAll(liveContextSelection, "[redacted-live-selection]")
-    .replace(/\/Users\/[^\s)]+/g, "[redacted-absolute-path]")
-    .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]")
-    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]");
+    .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]")
+    .replace(/(^|[\s("'=:\[])\/(?:[^\s/)"'<>]+\/)+[^\s)"'<>]*/g, "$1[redacted-absolute-path]")
+    .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]");
 }
 
 function redactUrl(value) {
