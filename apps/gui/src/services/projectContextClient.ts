@@ -73,20 +73,7 @@ export type ProjectContextPlanRequest = {
   expectedInventoryGeneration: number;
   expectedProjectRevision: string;
 };
-export type ProjectContextManifestEntry = {
-  kind: "file_chunk" | "active_editor" | "memory_note" | "verification_output" | "continuation_prefix";
-  chunkId?: string;
-  sourceRef?: string;
-  range?: ContextRange;
-  symbol?: string;
-  editorSnapshotId?: string;
-  memoryNoteId?: string;
-  verificationResultId?: string;
-  commandId?: "repository-check" | "gui-app-tests" | "engine-chat-tests";
-  assistantMessageId?: string;
-  generationId?: string;
-  contentHash?: string;
-  contentPrefixHash?: string;
+type ProjectContextManifestEntryBase = {
   inclusionReason: "profile_candidate" | "lexical_match" | "symbol_match" | "path_match" | "explicit_user_selection" | "continuity_context";
   provenance: "inventory" | "profile" | "lexical" | "symbol" | "explicit_user" | "continuation";
   redaction: "none" | "metadata_only" | "content_redacted";
@@ -94,8 +81,15 @@ export type ProjectContextManifestEntry = {
   estimatedTokens: number;
   rank: number;
 };
+export type ProjectContextManifestEntry = ProjectContextManifestEntryBase & (
+  | { kind: "file_chunk"; chunkId: string; sourceRef: string; range: ContextRange; symbol?: string; contentHash: string }
+  | { kind: "active_editor"; editorSnapshotId: string; sourceRef: string; range: ContextRange; contentHash: string; inclusionReason: "explicit_user_selection"; provenance: "explicit_user" }
+  | { kind: "memory_note"; memoryNoteId: string; contentHash: string; inclusionReason: "explicit_user_selection"; provenance: "explicit_user" }
+  | { kind: "verification_output"; verificationResultId: string; commandId: "repository-check" | "gui-app-tests" | "engine-chat-tests"; contentHash: string; inclusionReason: "explicit_user_selection"; provenance: "explicit_user" }
+  | { kind: "continuation_prefix"; assistantMessageId: string; generationId: string; contentPrefixHash: string; inclusionReason: "continuity_context"; provenance: "continuation" }
+);
 export type ProjectContextManifest = {
-  protocolVersion: typeof protocolVersion; schemaVersion: 1; manifestId: string; projectId: string; profileId?: string; planId: string; mode: ProjectContextMode;
+  protocolVersion: typeof protocolVersion; schemaVersion: 2; manifestId: string; projectId: string; profileId?: string; planId: string; mode: ProjectContextMode;
   inventoryGeneration: number; queryHash: string; rankingVersion: "lexical-symbol-ranking-1";
   budget: ProjectContextPlanRequest["budget"] & { usedFiles: number; usedChunks: number; usedBytes: number; usedEstimatedTokens: number; truncated: boolean };
   entries: ProjectContextManifestEntry[];
@@ -103,7 +97,7 @@ export type ProjectContextManifest = {
   redaction: { metadataOnlyCount: number; contentRedactedCount: number; omittedCount: number };
   createdAt: string;
 };
-export type ProjectContextPlan = { protocolVersion: typeof protocolVersion; schemaVersion: 1; planId: string; projectId: string; mode: ProjectContextMode; queryLabel: string; status: "ready" | "truncated" | "blocked" | "stale"; manifest: ProjectContextManifest; createdAt: string; expiresAt: string; cloudRequired: false };
+export type ProjectContextPlan = { protocolVersion: typeof protocolVersion; schemaVersion: 1; planId: string; projectId: string; mode: ProjectContextMode; queryLabel: string; status: "ready" | "truncated" | "blocked" | "stale"; manifest: ProjectContextManifest; continuity?: { turnId: string; assistantMessageId: string; generationId: string; continuationOfGenerationId?: string; contentPrefixHash: string }; createdAt: string; expiresAt: string; cloudRequired: false };
 
 export async function getProjectContextStatus(settings: ProjectRuntimeSettings): Promise<RuntimeResult<ProjectContextStatus>> {
   return scopedValidated(await runtimeFetch<unknown>(settings, `${settings.apiBase}/context/status`), parseStatus, settings.projectScope.projectId);
@@ -158,6 +152,7 @@ function parseRebuild(value: unknown): ProjectContextRebuildResponse | null {
 function parsePlan(value: unknown): ProjectContextPlan | null {
   if (!record(value) || !exact(value, ["protocolVersion", "schemaVersion", "planId", "projectId", "mode", "queryLabel", "status", "manifest", "createdAt", "expiresAt", "cloudRequired", "continuity"])) return null;
   if (value.protocolVersion !== protocolVersion || value.schemaVersion !== 1 || !validId(value.planId) || !projectId(value.projectId) || !oneOf(value.mode, ["manual_only", "balanced", "deep"]) || !safeText(value.queryLabel, 240) || !oneOf(value.status, ["ready", "truncated", "blocked", "stale"]) || !time(value.createdAt) || !time(value.expiresAt) || value.cloudRequired !== false) return null;
+  if (value.continuity !== undefined && !continuity(value.continuity)) return null;
   const manifest = parseManifest(value.manifest);
   if (!manifest || manifest.projectId !== value.projectId || manifest.planId !== value.planId || manifest.mode !== value.mode) return null;
   return { ...value, manifest } as ProjectContextPlan;
@@ -165,32 +160,38 @@ function parsePlan(value: unknown): ProjectContextPlan | null {
 
 function parseManifest(value: unknown): ProjectContextManifest | null {
   if (!record(value) || !exact(value, ["protocolVersion", "schemaVersion", "manifestId", "projectId", "profileId", "planId", "mode", "inventoryGeneration", "queryHash", "rankingVersion", "budget", "entries", "omissions", "redaction", "createdAt"])) return null;
-  if (value.protocolVersion !== protocolVersion || value.schemaVersion !== 1 || !validId(value.manifestId) || !projectId(value.projectId) || !validId(value.planId) || (value.profileId !== undefined && !validId(value.profileId)) || !oneOf(value.mode, ["manual_only", "balanced", "deep"]) || !count(value.inventoryGeneration) || !hash(value.queryHash) || value.rankingVersion !== "lexical-symbol-ranking-1" || !time(value.createdAt)) return null;
+  if (value.protocolVersion !== protocolVersion || value.schemaVersion !== 2 || !validId(value.manifestId) || !projectId(value.projectId) || !validId(value.planId) || (value.profileId !== undefined && !validId(value.profileId)) || !oneOf(value.mode, ["manual_only", "balanced", "deep"]) || !count(value.inventoryGeneration) || !hash(value.queryHash) || value.rankingVersion !== "lexical-symbol-ranking-1" || !time(value.createdAt)) return null;
   if (!budget(value.budget) || !Array.isArray(value.entries) || value.entries.length > 256 || !value.entries.every(manifestEntry) || !Array.isArray(value.omissions) || value.omissions.length > 256 || !value.omissions.every(omission) || !redaction(value.redaction)) return null;
   return value as ProjectContextManifest;
 }
 
 function manifestEntry(value: unknown): value is ProjectContextManifestEntry {
-  if (!record(value) || !oneOf(value.kind, ["file_chunk", "active_editor", "memory_note", "verification_output", "continuation_prefix"]) || !oneOf(value.inclusionReason, ["profile_candidate", "lexical_match", "symbol_match", "path_match", "explicit_user_selection", "continuity_context"]) || !oneOf(value.provenance, ["inventory", "profile", "lexical", "symbol", "explicit_user", "continuation"]) || !oneOf(value.redaction, ["none", "metadata_only", "content_redacted"]) || !count(value.byteCount) || !count(value.estimatedTokens) || !positiveCount(value.rank)) return false;
-  if (value.sourceRef !== undefined && !relativePath(value.sourceRef)) return false;
-  if (value.range !== undefined && !textRange(value.range)) return false;
-  if (value.symbol !== undefined && !safeText(value.symbol, 240)) return false;
-  for (const key of ["editorSnapshotId", "memoryNoteId", "verificationResultId", "assistantMessageId", "generationId"]) if (value[key] !== undefined && !validId(value[key])) return false;
-  if (value.commandId !== undefined && !oneOf(value.commandId, ["repository-check", "gui-app-tests", "engine-chat-tests"])) return false;
-  if (value.contentHash !== undefined && !hash(value.contentHash)) return false;
-  if (value.contentPrefixHash !== undefined && !hash(value.contentPrefixHash)) return false;
-  return (value.kind === "file_chunk" && string(value.chunkId) && /^chunk-[1-9][0-9]*$/.test(value.chunkId) && relativePath(value.sourceRef) && textRange(value.range) && hash(value.contentHash))
-    || (value.kind === "active_editor" && validId(value.editorSnapshotId) && relativePath(value.sourceRef) && textRange(value.range) && hash(value.contentHash))
-    || (value.kind === "memory_note" && validId(value.memoryNoteId) && hash(value.contentHash))
-    || (value.kind === "verification_output" && validId(value.verificationResultId) && oneOf(value.commandId, ["repository-check", "gui-app-tests", "engine-chat-tests"]) && hash(value.contentHash))
-    || (value.kind === "continuation_prefix" && validId(value.assistantMessageId) && validId(value.generationId) && hash(value.contentPrefixHash));
+  if (!record(value) || !oneOf(value.redaction, ["none", "metadata_only", "content_redacted"]) || !boundedCount(value.byteCount, 1_048_576) || !boundedCount(value.estimatedTokens, 200_000) || !boundedPositiveCount(value.rank, 256)) return false;
+  const common = ["kind", "inclusionReason", "provenance", "redaction", "byteCount", "estimatedTokens", "rank"];
+  if (value.kind === "file_chunk") return exact(value, [...common, "chunkId", "sourceRef", "range", "symbol", "contentHash"])
+    && string(value.chunkId) && /^chunk-[1-9][0-9]*$/.test(value.chunkId) && relativePath(value.sourceRef) && textRange(value.range)
+    && (value.symbol === undefined || safeText(value.symbol, 240)) && hash(value.contentHash)
+    && oneOf(value.inclusionReason, ["profile_candidate", "lexical_match", "symbol_match", "path_match", "explicit_user_selection"])
+    && oneOf(value.provenance, ["inventory", "profile", "lexical", "symbol", "explicit_user"]);
+  if (value.kind === "active_editor") return exact(value, [...common, "editorSnapshotId", "sourceRef", "range", "contentHash"])
+    && validId(value.editorSnapshotId) && relativePath(value.sourceRef) && textRange(value.range) && hash(value.contentHash)
+    && value.inclusionReason === "explicit_user_selection" && value.provenance === "explicit_user";
+  if (value.kind === "memory_note") return exact(value, [...common, "memoryNoteId", "contentHash"])
+    && validId(value.memoryNoteId) && hash(value.contentHash) && value.inclusionReason === "explicit_user_selection" && value.provenance === "explicit_user";
+  if (value.kind === "verification_output") return exact(value, [...common, "verificationResultId", "commandId", "contentHash"])
+    && validId(value.verificationResultId) && oneOf(value.commandId, ["repository-check", "gui-app-tests", "engine-chat-tests"]) && hash(value.contentHash)
+    && value.inclusionReason === "explicit_user_selection" && value.provenance === "explicit_user";
+  return value.kind === "continuation_prefix" && exact(value, [...common, "assistantMessageId", "generationId", "contentPrefixHash"])
+    && validId(value.assistantMessageId) && validId(value.generationId) && hash(value.contentPrefixHash)
+    && value.inclusionReason === "continuity_context" && value.provenance === "continuation";
 }
 
-function budget(value: unknown) { return record(value) && exact(value, ["maxFiles", "maxChunks", "maxBytes", "maxEstimatedTokens", "usedFiles", "usedChunks", "usedBytes", "usedEstimatedTokens", "truncated"]) && positiveCount(value.maxFiles) && positiveCount(value.maxChunks) && positiveCount(value.maxBytes) && positiveCount(value.maxEstimatedTokens) && count(value.usedFiles) && count(value.usedChunks) && count(value.usedBytes) && count(value.usedEstimatedTokens) && typeof value.truncated === "boolean"; }
+function budget(value: unknown) { return record(value) && exact(value, ["maxFiles", "maxChunks", "maxBytes", "maxEstimatedTokens", "usedFiles", "usedChunks", "usedBytes", "usedEstimatedTokens", "truncated"]) && boundedPositiveCount(value.maxFiles, 64) && boundedPositiveCount(value.maxChunks, 256) && boundedPositiveCount(value.maxBytes, 1_048_576) && boundedPositiveCount(value.maxEstimatedTokens, 200_000) && boundedCount(value.usedFiles, 64) && boundedCount(value.usedChunks, 256) && boundedCount(value.usedBytes, 1_048_576) && boundedCount(value.usedEstimatedTokens, 200_000) && typeof value.truncated === "boolean"; }
 function omission(value: unknown) { return record(value) && exact(value, ["sourceRef", "reason", "provenance", "detail"]) && (value.sourceRef === undefined || relativePath(value.sourceRef)) && oneOf(value.reason, ["ignored", "secret_like", "binary", "generated", "dependency", "oversized", "symlink", "outside_root", "unsupported_type", "budget_exhausted", "stale_hash", "policy_denied"]) && oneOf(value.provenance, ["inventory", "profile", "lexical", "symbol", "explicit_user", "continuation"]) && (value.detail === undefined || safeText(value.detail, 240)); }
 function redaction(value: unknown) { return record(value) && exact(value, ["metadataOnlyCount", "contentRedactedCount", "omittedCount"]) && count(value.metadataOnlyCount) && count(value.contentRedactedCount) && count(value.omittedCount); }
 function textRange(value: unknown): value is ContextRange { return record(value) && exact(value, ["start", "end"]) && position(value.start) && position(value.end); }
-function position(value: unknown): value is ContextPosition { return record(value) && exact(value, ["line", "character"]) && count(value.line) && count(value.character); }
+function position(value: unknown): value is ContextPosition { return record(value) && exact(value, ["line", "character"]) && count(value.line) && boundedCount(value.character, 1_000_000); }
+function continuity(value: unknown) { return record(value) && exact(value, ["turnId", "assistantMessageId", "generationId", "continuationOfGenerationId", "contentPrefixHash"]) && validId(value.turnId) && validId(value.assistantMessageId) && validId(value.generationId) && (value.continuationOfGenerationId === undefined || validId(value.continuationOfGenerationId)) && hash(value.contentPrefixHash); }
 function validId(value: unknown): value is string { return string(value) && idPattern.test(value); }
 
 function counts(value: unknown): value is ProjectContextCounts { return record(value) && exact(value, ["eligibleFiles", "indexedFiles", "omittedFiles", "chunks", "symbols"]) && count(value.eligibleFiles) && count(value.indexedFiles) && count(value.omittedFiles) && count(value.chunks) && count(value.symbols); }
@@ -203,6 +204,8 @@ function string(value: unknown): value is string { return typeof value === "stri
 function oneOf<T extends string>(value: unknown, values: readonly T[]): value is T { return typeof value === "string" && values.includes(value as T); }
 function count(value: unknown): value is number { return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= 10_000_000; }
 function positiveCount(value: unknown): value is number { return count(value) && value >= 1; }
+function boundedCount(value: unknown, max: number): value is number { return count(value) && value <= max; }
+function boundedPositiveCount(value: unknown, max: number): value is number { return positiveCount(value) && value <= max; }
 function projectId(value: unknown): value is string { return string(value) && parseProjectId(value) !== null; }
 function hash(value: unknown): value is string { return string(value) && hashPattern.test(value); }
 function relativePath(value: unknown): value is string { return string(value) && value.length <= 512 && relativePathPattern.test(value); }

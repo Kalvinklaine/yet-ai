@@ -14909,7 +14909,7 @@ function mockRuntimeResponse(input: RequestInfo | URL, init: RequestInit | undef
     const contextHash = `sha256:${"a".repeat(64)}`;
     return Promise.resolve(jsonResponse({
       protocolVersion: "2026-08-02", schemaVersion: 1, planId, projectId: projectContextPlanMatch[1], mode: request.mode, queryLabel: request.query, status: "ready",
-      manifest: { protocolVersion: "2026-08-02", schemaVersion: 1, manifestId: "manifest-app-test", projectId: projectContextPlanMatch[1], planId, mode: request.mode, inventoryGeneration: 3, queryHash: contextHash, rankingVersion: "lexical-symbol-ranking-1", budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 0, usedChunks: 0, usedBytes: 0, usedEstimatedTokens: 0, truncated: false }, entries: [], omissions: [], redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 }, createdAt: "2026-08-02T12:00:00Z" },
+      manifest: { protocolVersion: "2026-08-02", schemaVersion: 2, manifestId: "manifest-app-test", projectId: projectContextPlanMatch[1], planId, mode: request.mode, inventoryGeneration: 3, queryHash: contextHash, rankingVersion: "lexical-symbol-ranking-1", budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 0, usedChunks: 0, usedBytes: 0, usedEstimatedTokens: 0, truncated: false }, entries: [], omissions: [], redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 }, createdAt: "2026-08-02T12:00:00Z" },
       createdAt: "2026-08-02T12:00:00Z", expiresAt: "2026-08-02T12:05:00Z", cloudRequired: false,
     }));
   }

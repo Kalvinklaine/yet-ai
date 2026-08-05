@@ -71,9 +71,45 @@ describe("projectContextClient", () => {
     fetchMock.mockResolvedValueOnce(json({ ...plan, manifest: { ...plan.manifest, entries: [{ ...plan.manifest.entries[0], sourceRef: "/Users/private/main.rs" }] } }));
     expect(await planProjectContext(settings, request)).toMatchObject({ ok: false, error: { status: "protocol" } });
   });
+
+  it("rejects old manifests and missing or invalid required v2 fields", async () => {
+    const plan = contextPlan();
+    const continuation = plan.manifest.entries[4];
+    fetchMock
+      .mockResolvedValueOnce(json({ ...plan, manifest: { ...plan.manifest, schemaVersion: 1 } }))
+      .mockResolvedValueOnce(json({ ...plan, manifest: { ...plan.manifest, entries: [{ ...continuation, contentPrefixHash: undefined }] } }))
+      .mockResolvedValueOnce(json({ ...plan, manifest: { ...plan.manifest, entries: [{ ...plan.manifest.entries[1], provenance: "lexical" }] } }))
+      .mockResolvedValueOnce(json({ ...plan, manifest: { ...plan.manifest, budget: { ...plan.manifest.budget, maxFiles: 65 } } }))
+      .mockResolvedValueOnce(json({ ...plan, manifest: { ...plan.manifest, unexpected: true } }));
+    vi.stubGlobal("fetch", fetchMock); vi.stubGlobal("location", new URL("http://localhost/projects"));
+    const request = { query: "Find runtime", mode: "balanced" as const, budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 }, explicitRefs: [], expectedInventoryGeneration: 1, expectedProjectRevision: "7" };
+
+    for (let index = 0; index < 5; index += 1) {
+      expect(await planProjectContext(settings, request)).toMatchObject({ ok: false, error: { status: "protocol" } });
+    }
+  });
 });
 
 function status() { return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state: "ready", inventoryGeneration: 1, profileId: "profile-1", counts: { eligibleFiles: 3, indexedFiles: 2, omittedFiles: 1, chunks: 0, symbols: 0 }, freshness: { status: "current", pendingChanges: 0 }, cloudRequired: false, providerAccess: "direct" }; }
 function profile() { return { protocolVersion: "2026-08-02", schemaVersion: 1, profileId: "profile-1", projectId, inventoryGeneration: 1, profileHash: hash, summary: "Local project profile derived from structural inventory evidence.", summaryProvenance: [{ sourceRef: "src/main.rs", contentHash: hash }], facts: [{ kind: "language", label: "Rust source files", sourceRef: "src/main.rs", contentHash: hash, provenance: "structural_inventory" }], createdAt: "2026-08-02T12:00:00Z", cloudRequired: false }; }
-function contextPlan() { return { protocolVersion: "2026-08-02", schemaVersion: 1, planId: "plan-1", projectId, mode: "balanced", queryLabel: "Find runtime", status: "ready", manifest: { protocolVersion: "2026-08-02", schemaVersion: 1, manifestId: "manifest-1", projectId, planId: "plan-1", mode: "balanced", inventoryGeneration: 1, queryHash: hash, rankingVersion: "lexical-symbol-ranking-1", budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 1, usedChunks: 1, usedBytes: 40, usedEstimatedTokens: 10, truncated: false }, entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/main.rs", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, contentHash: hash, inclusionReason: "lexical_match", provenance: "lexical", redaction: "none", byteCount: 40, estimatedTokens: 10, rank: 1 }], omissions: [], redaction: { metadataOnlyCount: 0, contentRedactedCount: 0, omittedCount: 0 }, createdAt: "2026-08-02T12:00:00Z" }, createdAt: "2026-08-02T12:00:00Z", expiresAt: "2026-08-02T12:05:00Z", cloudRequired: false }; }
+function contextPlan() {
+  const range = { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } };
+  return {
+    protocolVersion: "2026-08-02", schemaVersion: 1, planId: "plan-1", projectId, mode: "balanced", queryLabel: "Find runtime", status: "ready",
+    manifest: {
+      protocolVersion: "2026-08-02", schemaVersion: 2, manifestId: "manifest-1", projectId, profileId: "profile-1", planId: "plan-1", mode: "balanced", inventoryGeneration: 1, queryHash: hash, rankingVersion: "lexical-symbol-ranking-1",
+      budget: { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000, usedFiles: 2, usedChunks: 5, usedBytes: 200, usedEstimatedTokens: 50, truncated: false },
+      entries: [
+        { kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/main.rs", range, contentHash: hash, inclusionReason: "lexical_match", provenance: "lexical", redaction: "none", byteCount: 40, estimatedTokens: 10, rank: 1 },
+        { kind: "active_editor", editorSnapshotId: "snapshot-1", sourceRef: "src/lib.rs", range, contentHash: hash, inclusionReason: "explicit_user_selection", provenance: "explicit_user", redaction: "metadata_only", byteCount: 40, estimatedTokens: 10, rank: 2 },
+        { kind: "memory_note", memoryNoteId: "memory-1", contentHash: hash, inclusionReason: "explicit_user_selection", provenance: "explicit_user", redaction: "metadata_only", byteCount: 40, estimatedTokens: 10, rank: 3 },
+        { kind: "verification_output", verificationResultId: "result-1", commandId: "repository-check", contentHash: hash, inclusionReason: "explicit_user_selection", provenance: "explicit_user", redaction: "metadata_only", byteCount: 40, estimatedTokens: 10, rank: 4 },
+        { kind: "continuation_prefix", assistantMessageId: "message-1", generationId: "generation-1", contentPrefixHash: hash, inclusionReason: "continuity_context", provenance: "continuation", redaction: "metadata_only", byteCount: 40, estimatedTokens: 10, rank: 5 },
+      ],
+      omissions: [{ sourceRef: "build/output.txt", reason: "generated", provenance: "inventory", detail: "Generated output is excluded." }],
+      redaction: { metadataOnlyCount: 4, contentRedactedCount: 0, omittedCount: 1 }, createdAt: "2026-08-02T12:00:00Z",
+    },
+    createdAt: "2026-08-02T12:00:00Z", expiresAt: "2026-08-02T12:05:00Z", cloudRequired: false,
+  };
+}
 function json(value: unknown) { return new Response(JSON.stringify(value), { status: 200 }); }

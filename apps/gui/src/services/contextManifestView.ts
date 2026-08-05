@@ -60,11 +60,18 @@ export function manifestEntryToExplicitRef(entry: ProjectContextManifestEntry) {
 }
 
 function entryView(entry: ProjectContextManifestEntry): ContextManifestEntryView {
-  return { key: contextManifestEntryKey(entry), label: entryLabel(entry), range: entry.range ? `${entry.range.start.line + 1}:${entry.range.start.character + 1}–${entry.range.end.line + 1}:${entry.range.end.character + 1}` : undefined, symbol: entry.symbol, reason: entry.inclusionReason, provenance: entry.provenance, redaction: entry.redaction, estimatedTokens: entry.estimatedTokens };
+  const range = entry.kind === "file_chunk" || entry.kind === "active_editor"
+    ? `${entry.range.start.line + 1}:${entry.range.start.character + 1}–${entry.range.end.line + 1}:${entry.range.end.character + 1}`
+    : undefined;
+  const symbol = entry.kind === "file_chunk" ? entry.symbol : undefined;
+  return { key: contextManifestEntryKey(entry), label: entryLabel(entry), range, symbol, reason: entry.inclusionReason, provenance: entry.provenance, redaction: entry.redaction, estimatedTokens: entry.estimatedTokens };
 }
 
 function entryLabel(entry: ProjectContextManifestEntry): string {
-  return entry.sourceRef ?? entry.memoryNoteId ?? entry.verificationResultId ?? entry.assistantMessageId ?? entry.kind;
+  if (entry.kind === "file_chunk" || entry.kind === "active_editor") return entry.sourceRef;
+  if (entry.kind === "memory_note") return entry.memoryNoteId;
+  if (entry.kind === "verification_output") return entry.verificationResultId;
+  return entry.assistantMessageId;
 }
 
 export function manifestMatchesCorrelation(manifest: ProjectContextManifest, projectId: string, generation: number): boolean {
