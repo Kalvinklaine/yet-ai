@@ -127,6 +127,8 @@ let chatSubscriptionCount = 0;
 let projectContextStatusRequestCount = 0;
 let projectContextPlanRequestCount = 0;
 const projectContextPlanRequests = [];
+let unscopedProjectContextStatusRequestCount = 0;
+let unscopedProjectContextPlanRequestCount = 0;
 let projectPhaseRuntimeLogStart;
 let chatCommandRequestCountBeforeEditSmoke = 0;
 let demoModeEnabled = false;
@@ -148,6 +150,11 @@ const maxPendingDiagnostics = 16;
 const safeProxySegment = /^[A-Za-z0-9_-]+$/;
 const projectGuiSendPrompt = "Send through the real JetBrains project composer.";
 const projectGuiSendResponse = "JetBrains project GUI Send smoke";
+const projectContextInventoryGeneration = 1;
+const projectRevision = "1";
+const projectContextRankingVersion = "lexical-symbol-ranking-1";
+const projectContextDefaultBudget = { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 };
+const projectContextDefaultExplicitRefs = [];
 
 const scrollIntoViewIfNeeded = async (locator) => {
   await locator.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
@@ -185,6 +192,7 @@ if (gradleCommandSelfCheck) {
 }
 
 assertJetBrainsParityContract();
+assertProjectContextPlanCorrelationSelfCheck();
 runSameNonceRetryEvidenceSelfCheck();
 await requireFreshPackagedGui();
 
@@ -850,7 +858,11 @@ async function enterJetBrainsProjectChat(page, frameLocator, requestId) {
   if (chatCommandRequestCount !== 1 || chatCommandRequest?.type !== "user_message" || chatCommandRequest?.payload?.content !== projectGuiSendPrompt) {
     failures.push(`JetBrains project GUI Send did not cause exactly one expected user command: count=${chatCommandRequestCount}, body=${JSON.stringify(chatCommandRequest)}.`);
   }
-  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection, "jetbrains-wrapper-plan", "jetbrains-wrapper-manifest", "JetBrains project GUI Send");
+  const latestAcceptedPlan = projectContextPlanRequests.at(-1);
+  if (latestAcceptedPlan?.request?.query !== projectGuiSendPrompt) {
+    failures.push("JetBrains latest accepted project context plan was not for the exact first-message prompt.");
+  }
+  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection, latestAcceptedPlan, "JetBrains project GUI Send");
   demoModeEnabled = false;
 }
 
@@ -858,7 +870,7 @@ async function waitForBalancedContextPlanAndEnabledSend(page, frameLocator, send
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const planned = projectContextPlanRequestCount > previousPlanCount
-      && projectContextPlanRequests.slice(previousPlanCount).some((request) => request?.mode === "balanced");
+      && projectContextPlanRequests.slice(previousPlanCount).some((accepted) => accepted.request.query === projectGuiSendPrompt);
     if (planned && await send.isEnabled().catch(() => false)) return;
     await page.waitForTimeout(50);
   }
@@ -3123,6 +3135,18 @@ async function startMockRuntimeServer() {
     }
     const runtimeLogEntry = { method: request.method ?? "GET", pathname: requestUrl.pathname, authorized, browserPath: request.headers["x-yet-ai-smoke-browser-path"], browserOrigin: request.headers.origin };
     runtimeRequestLog.push(runtimeLogEntry);
+    if (projectPhaseRuntimeLogStart !== undefined && requestUrl.pathname === "/v1/context/status") {
+      unscopedProjectContextStatusRequestCount += 1;
+      failures.push(`JetBrains project phase used forbidden unscoped runtime path ${request.method ?? "GET"} ${requestUrl.pathname}.`);
+      json(response, 404, { error: "Project context requests must be scoped." });
+      return;
+    }
+    if (projectPhaseRuntimeLogStart !== undefined && requestUrl.pathname === "/v1/context/plan") {
+      unscopedProjectContextPlanRequestCount += 1;
+      failures.push(`JetBrains project phase used forbidden unscoped runtime path ${request.method ?? "GET"} ${requestUrl.pathname}.`);
+      json(response, 404, { error: "Project context requests must be scoped." });
+      return;
+    }
     if (projectPhaseRuntimeLogStart !== undefined && (/^\/v1\/chats(?:\/|$)/.test(requestUrl.pathname) || requestUrl.pathname === "/v1/project-memory")) {
       failures.push(`JetBrains project phase used forbidden unscoped runtime path ${request.method ?? "GET"} ${requestUrl.pathname}.`);
       json(response, 404, { error: "Project requests must be scoped." });
@@ -3226,13 +3250,16 @@ async function startMockRuntimeServer() {
         return;
       }
       runtimeLogEntry.body = body;
-      projectContextPlanRequestCount += 1;
-      projectContextPlanRequests.push(body);
       if (!isCurrentBalancedContextPlanRequest(body)) {
+        failures.push("JetBrains project context mock rejected a plan request that did not exactly match the current first-message prompt and planning controls.");
         json(response, 400, { error: "Invalid project context plan request" });
         return;
       }
-      json(response, 200, projectContextPlan(body));
+      const sequence = projectContextPlanRequestCount + 1;
+      const plan = projectContextPlan(body, sequence);
+      projectContextPlanRequestCount = sequence;
+      projectContextPlanRequests.push({ sequence, request: body, plan });
+      json(response, 200, plan);
       return;
     }
     if (request.method === "GET" && requestUrl.pathname === "/v1/provider-auth/openai/status") {
@@ -3620,47 +3647,69 @@ function readyDemoProvider() {
 }
 
 function mockProjectSummary() {
-  return { projectId, displayName: projectDisplayName, status: "available", revision: "1", createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
+  return { projectId, displayName: projectDisplayName, status: "available", revision: projectRevision, createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
 
 function projectContextStatus() {
-  return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state: "ready", inventoryGeneration: 1, cloudRequired: false, providerAccess: "direct" };
+  return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state: "ready", inventoryGeneration: projectContextInventoryGeneration, cloudRequired: false, providerAccess: "direct" };
 }
 
 function isCurrentBalancedContextPlanRequest(body) {
   return body !== null
     && typeof body === "object"
-    && typeof body.query === "string"
-    && body.query.length > 0
+    && body.query === projectGuiSendPrompt
     && body.mode === "balanced"
-    && body.expectedInventoryGeneration === 1
-    && body.expectedProjectRevision === "1"
-    && Array.isArray(body.explicitRefs)
-    && body.budget !== null
-    && typeof body.budget === "object";
+    && body.expectedInventoryGeneration === projectContextInventoryGeneration
+    && body.expectedProjectRevision === projectRevision
+    && deepEqual(body.explicitRefs, projectContextDefaultExplicitRefs)
+    && deepEqual(body.budget, projectContextDefaultBudget)
+    && deepEqual(Object.keys(body).sort(), ["budget", "expectedInventoryGeneration", "expectedProjectRevision", "explicitRefs", "mode", "query"]);
 }
 
-function projectContextPlan(body) {
+function assertProjectContextPlanCorrelationSelfCheck() {
+  const current = {
+    query: projectGuiSendPrompt,
+    mode: "balanced",
+    budget: projectContextDefaultBudget,
+    explicitRefs: projectContextDefaultExplicitRefs,
+    expectedInventoryGeneration: projectContextInventoryGeneration,
+    expectedProjectRevision: projectRevision,
+  };
+  assertDeepEqual(isCurrentBalancedContextPlanRequest(current), true, "JetBrains exact context plan request");
+  for (const [label, request] of [
+    ["stale query", { ...current, query: `${projectGuiSendPrompt} stale` }],
+    ["wrong budget", { ...current, budget: { ...projectContextDefaultBudget, maxFiles: 11 } }],
+    ["wrong explicit refs", { ...current, explicitRefs: [{ kind: "memory_note", memoryNoteId: "stale" }] }],
+    ["wrong generation", { ...current, expectedInventoryGeneration: projectContextInventoryGeneration + 1 }],
+    ["wrong revision", { ...current, expectedProjectRevision: `${projectRevision}-stale` }],
+  ]) {
+    assertDeepEqual(isCurrentBalancedContextPlanRequest(request), false, `JetBrains rejected ${label} context plan request`);
+  }
+}
+
+function projectContextPlan(body, sequence) {
   const hash = `sha256:${"a".repeat(64)}`;
   const createdAt = "2026-08-05T00:00:00Z";
+  const planId = `jetbrains-wrapper-plan-${sequence}`;
+  const manifestId = `jetbrains-wrapper-manifest-${sequence}`;
   return {
     protocolVersion: "2026-08-02",
     schemaVersion: 1,
-    planId: "jetbrains-wrapper-plan",
+    planId,
     projectId,
     mode: body.mode,
-    queryLabel: "JetBrains project first message",
+    queryLabel: body.query,
     status: "ready",
     manifest: {
       protocolVersion: "2026-08-02",
       schemaVersion: 2,
-      manifestId: "jetbrains-wrapper-manifest",
+      manifestId,
       projectId,
-      planId: "jetbrains-wrapper-plan",
+      planId,
       mode: body.mode,
-      inventoryGeneration: 1,
+      inventoryGeneration: projectContextInventoryGeneration,
       queryHash: hash,
-      rankingVersion: "lexical-symbol-ranking-1",
+      rankingVersion: projectContextRankingVersion,
       budget: { ...body.budget, usedFiles: 1, usedChunks: 1, usedBytes: 32, usedEstimatedTokens: 8, truncated: false },
       entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/main/kotlin/ContextSmoke.kt", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, symbol: "ContextSmoke", contentHash: hash, inclusionReason: "symbol_match", provenance: "symbol", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }],
       omissions: [],
@@ -3673,14 +3722,18 @@ function projectContextPlan(body) {
   };
 }
 
-function assertCurrentPlannedContextSelection(selection, expectedPlanId, expectedManifestId, label) {
-  if (selection?.planId !== expectedPlanId
-    || selection?.manifestId !== expectedManifestId
+function assertCurrentPlannedContextSelection(selection, accepted, label) {
+  if (!accepted
+    || selection?.planId !== accepted.plan.planId
+    || selection?.manifestId !== accepted.plan.manifest.manifestId
     || selection?.mode !== "balanced"
-    || selection?.expectedInventoryGeneration !== 1
-    || selection?.expectedProjectRevision !== "1"
-    || selection?.rankingVersion !== "lexical-symbol-ranking-1") {
-    failures.push(`${label} did not carry the current Balanced planned-context selection.`);
+    || selection?.expectedInventoryGeneration !== projectContextInventoryGeneration
+    || selection?.expectedProjectRevision !== projectRevision
+    || selection?.queryHash !== accepted.plan.manifest.queryHash
+    || selection?.rankingVersion !== projectContextRankingVersion
+    || !deepEqual(selection?.budget, accepted.request.budget)
+    || !deepEqual(selection?.explicitRefs, accepted.request.explicitRefs)) {
+    failures.push(`${label} did not carry the exact latest accepted Balanced planned-context selection.`);
   }
 }
 
@@ -4290,6 +4343,10 @@ function assertProjectScopedChatProxyCoverage() {
   if (unscoped.length > 0) failures.push(`JetBrains project phase observed unscoped chat fallback: ${formatRuntimeRequestLog(unscoped)}.`);
   const unscopedMemory = entries.filter((entry) => entry.pathname === "/v1/project-memory");
   if (unscopedMemory.length > 0) failures.push(`JetBrains project phase observed unscoped project-memory fallback: ${formatRuntimeRequestLog(unscopedMemory)}.`);
+  const unscopedContext = entries.filter((entry) => entry.pathname === "/v1/context/status" || entry.pathname === "/v1/context/plan");
+  if (unscopedContext.length > 0 || unscopedProjectContextStatusRequestCount !== 0 || unscopedProjectContextPlanRequestCount !== 0) {
+    failures.push(`JetBrains project phase observed unscoped context traffic: status=${unscopedProjectContextStatusRequestCount}, plan=${unscopedProjectContextPlanRequestCount}, requests=${formatRuntimeRequestLog(unscopedContext)}.`);
+  }
 }
 
 function countRuntimeRequests(method, pathname) {

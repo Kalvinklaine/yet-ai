@@ -23,6 +23,11 @@ const contextSentinel = `VSCODE_CONTEXT_SENTINEL_${randomUUID()}`;
 const contextText = "safe short VS Code selected text for first-message context";
 const userMessageText = "Say hello through VS Code packaged GUI smoke.";
 const assistantText = "VS Code packaged smoke response.";
+const projectContextInventoryGeneration = 1;
+const projectRevision = "1";
+const projectContextRankingVersion = "lexical-symbol-ranking-1";
+const projectContextDefaultBudget = { maxFiles: 12, maxChunks: 32, maxBytes: 131072, maxEstimatedTokens: 24000 };
+const projectContextDefaultExplicitRefs = [];
 const failures = [];
 const consoleMessages = [];
 let runtimeReady = true;
@@ -45,6 +50,7 @@ const matchingUserMessageCommand = new Promise((resolve) => {
 if (packageJson.scripts?.["smoke:gui-runtime-e2e"] !== "node scripts/smoke-gui-runtime-e2e.mjs") {
   failures.push("Root package.json must keep smoke:gui-runtime-e2e available as the deeper local mock-provider runtime/chat verification path.");
 }
+assertProjectContextPlanCorrelationSelfCheck();
 
 await requirePackagedGui();
 const { chromium } = await requireChromium();
@@ -228,7 +234,11 @@ try {
   if (chatCommandRequest?.payload?.context?.source !== "vscode" || chatCommandRequest?.payload?.context?.selection?.text !== contextText) {
     failures.push("Mock runtime did not receive the VS Code active context on the first message.");
   }
-  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection);
+  const latestAcceptedPlan = projectContextPlanRequests.at(-1);
+  if (latestAcceptedPlan?.request?.query !== userMessageText) {
+    failures.push("VS Code latest accepted project context plan was not for the exact first-message prompt.");
+  }
+  assertCurrentPlannedContextSelection(chatCommandRequest?.payload?.planningSelection, latestAcceptedPlan);
   assertProjectOwnedRuntimeRequestsScoped();
   assertAllRuntimeApiRequestsAuthorized();
 
@@ -338,7 +348,7 @@ async function waitForBalancedContextPlanAndEnabledSend(page, previousPlanCount)
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
     const planned = projectContextPlanRequestCount > previousPlanCount
-      && projectContextPlanRequests.slice(previousPlanCount).some((request) => request?.mode === "balanced");
+      && projectContextPlanRequests.slice(previousPlanCount).some((accepted) => accepted.request.query === userMessageText);
     if (planned && await sendButton(page).isEnabled().catch(() => false)) return;
     await page.waitForTimeout(50);
   }
@@ -473,13 +483,16 @@ async function startMockRuntimeServer() {
         json(response, 400, { error: "Invalid project context plan JSON" });
         return;
       }
-      projectContextPlanRequestCount += 1;
-      projectContextPlanRequests.push(body);
       if (!isCurrentBalancedContextPlanRequest(body)) {
+        failures.push("VS Code project context mock rejected a plan request that did not exactly match the current first-message prompt and planning controls.");
         json(response, 400, { error: "Invalid project context plan request" });
         return;
       }
-      json(response, 200, projectContextPlan(body));
+      const sequence = projectContextPlanRequestCount + 1;
+      const plan = projectContextPlan(body, sequence);
+      projectContextPlanRequestCount = sequence;
+      projectContextPlanRequests.push({ sequence, request: body, plan });
+      json(response, 200, plan);
       return;
     }
     if (request.method === "GET" && runtimePath === "/v1/agent-progress") {
@@ -567,47 +580,69 @@ function demoModeDisabledResponse() {
 }
 
 function mockProjectSummary() {
-  return { projectId, displayName: projectDisplayName, status: "available", revision: "1", createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
+  return { projectId, displayName: projectDisplayName, status: "available", revision: projectRevision, createdAt: new Date(0).toISOString(), lastOpenedAt: new Date(0).toISOString(), rootAvailable: true, cloudRequired: false, providerAccess: "direct" };
 }
 
 function projectContextStatus() {
-  return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state: "ready", inventoryGeneration: 1, cloudRequired: false, providerAccess: "direct" };
+  return { protocolVersion: "2026-08-02", schemaVersion: 1, projectId, state: "ready", inventoryGeneration: projectContextInventoryGeneration, cloudRequired: false, providerAccess: "direct" };
 }
 
 function isCurrentBalancedContextPlanRequest(body) {
   return body !== null
     && typeof body === "object"
-    && typeof body.query === "string"
-    && body.query.length > 0
+    && body.query === userMessageText
     && body.mode === "balanced"
-    && body.expectedInventoryGeneration === 1
-    && body.expectedProjectRevision === "1"
-    && Array.isArray(body.explicitRefs)
-    && body.budget !== null
-    && typeof body.budget === "object";
+    && body.expectedInventoryGeneration === projectContextInventoryGeneration
+    && body.expectedProjectRevision === projectRevision
+    && deepEqual(body.explicitRefs, projectContextDefaultExplicitRefs)
+    && deepEqual(body.budget, projectContextDefaultBudget)
+    && deepEqual(Object.keys(body).sort(), ["budget", "expectedInventoryGeneration", "expectedProjectRevision", "explicitRefs", "mode", "query"]);
 }
 
-function projectContextPlan(body) {
+function assertProjectContextPlanCorrelationSelfCheck() {
+  const current = {
+    query: userMessageText,
+    mode: "balanced",
+    budget: projectContextDefaultBudget,
+    explicitRefs: projectContextDefaultExplicitRefs,
+    expectedInventoryGeneration: projectContextInventoryGeneration,
+    expectedProjectRevision: projectRevision,
+  };
+  if (!isCurrentBalancedContextPlanRequest(current)) throw new Error("VS Code exact context plan request self-check failed.");
+  for (const [label, request] of [
+    ["stale query", { ...current, query: `${userMessageText} stale` }],
+    ["wrong budget", { ...current, budget: { ...projectContextDefaultBudget, maxFiles: 11 } }],
+    ["wrong explicit refs", { ...current, explicitRefs: [{ kind: "memory_note", memoryNoteId: "stale" }] }],
+    ["wrong generation", { ...current, expectedInventoryGeneration: projectContextInventoryGeneration + 1 }],
+    ["wrong revision", { ...current, expectedProjectRevision: `${projectRevision}-stale` }],
+  ]) {
+    if (isCurrentBalancedContextPlanRequest(request)) throw new Error(`VS Code context plan self-check accepted ${label}.`);
+  }
+}
+
+function projectContextPlan(body, sequence) {
   const hash = `sha256:${"b".repeat(64)}`;
   const createdAt = "2026-08-05T00:00:00Z";
+  const planId = `vscode-first-message-plan-${sequence}`;
+  const manifestId = `vscode-first-message-manifest-${sequence}`;
   return {
     protocolVersion: "2026-08-02",
     schemaVersion: 1,
-    planId: "vscode-first-message-plan",
+    planId,
     projectId,
     mode: body.mode,
-    queryLabel: "VS Code first message",
+    queryLabel: body.query,
     status: "ready",
     manifest: {
       protocolVersion: "2026-08-02",
       schemaVersion: 2,
-      manifestId: "vscode-first-message-manifest",
+      manifestId,
       projectId,
-      planId: "vscode-first-message-plan",
+      planId,
       mode: body.mode,
-      inventoryGeneration: 1,
+      inventoryGeneration: projectContextInventoryGeneration,
       queryHash: hash,
-      rankingVersion: "lexical-symbol-ranking-1",
+      rankingVersion: projectContextRankingVersion,
       budget: { ...body.budget, usedFiles: 1, usedChunks: 1, usedBytes: 32, usedEstimatedTokens: 8, truncated: false },
       entries: [{ kind: "file_chunk", chunkId: "chunk-1", sourceRef: "src/vscode-smoke.ts", range: { start: { line: 0, character: 0 }, end: { line: 1, character: 0 } }, symbol: "vscodeSmoke", contentHash: hash, inclusionReason: "symbol_match", provenance: "symbol", redaction: "none", byteCount: 32, estimatedTokens: 8, rank: 1 }],
       omissions: [],
@@ -620,15 +655,23 @@ function projectContextPlan(body) {
   };
 }
 
-function assertCurrentPlannedContextSelection(selection) {
-  if (selection?.planId !== "vscode-first-message-plan"
-    || selection?.manifestId !== "vscode-first-message-manifest"
+function assertCurrentPlannedContextSelection(selection, accepted) {
+  if (!accepted
+    || selection?.planId !== accepted.plan.planId
+    || selection?.manifestId !== accepted.plan.manifest.manifestId
     || selection?.mode !== "balanced"
-    || selection?.expectedInventoryGeneration !== 1
-    || selection?.expectedProjectRevision !== "1"
-    || selection?.rankingVersion !== "lexical-symbol-ranking-1") {
-    failures.push("VS Code first message did not carry the current Balanced planned-context selection.");
+    || selection?.expectedInventoryGeneration !== projectContextInventoryGeneration
+    || selection?.expectedProjectRevision !== projectRevision
+    || selection?.queryHash !== accepted.plan.manifest.queryHash
+    || selection?.rankingVersion !== projectContextRankingVersion
+    || !deepEqual(selection?.budget, accepted.request.budget)
+    || !deepEqual(selection?.explicitRefs, accepted.request.explicitRefs)) {
+    failures.push("VS Code first message did not carry the exact latest accepted Balanced planned-context selection.");
   }
+}
+
+function deepEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function mockChatThread() {
