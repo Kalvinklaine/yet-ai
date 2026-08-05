@@ -111,6 +111,7 @@ const consoleMessages = [];
 let observedRuntimeAuthorization = false;
 let demoModeEnabled = !demoModeFirstMessage;
 
+requireSanitizerSelfChecks();
 await requirePackagedGui();
 const renderProductionWebviewHtml = await loadProductionWebviewRenderer();
 const { chromium } = await requireChromium();
@@ -230,6 +231,7 @@ try {
   await expectBodyVisibleText(page, "Start new chat", "VS Code explicit chat entry");
   assertNoChatRuntimeBeforeExplicitStart("VS Code dashboard");
   if (await page.getByPlaceholder("Ask about the current file, selection, or project...").count() !== 0) failures.push("VS Code dashboard mounted a composer before explicit Start.");
+  const routeEntryCommandCount = countChatCommandPosts();
   await page.getByRole("button", { name: "Start new chat", exact: true }).click();
   const chatShell = page.locator("main.app-shell.host-vscode[data-project-page='chat']");
   await chatShell.waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
@@ -243,7 +245,7 @@ try {
   await routeSend.waitFor({ state: "visible", timeout: 10_000 }).catch(async (error) => {
     throw new Error(`VS Code project Send did not become visible after Start new chat. ${messageOf(error)} ${await hostedProjectChatDiagnostic(page)}`);
   });
-  const routeEntryCommandCount = countChatCommandPosts();
+  if (countChatCommandPosts() !== routeEntryCommandCount) failures.push("VS Code Start new chat issued a chat command before route-local Send.");
   await routeComposer.fill(routeEntryDraft);
   if (await routeComposer.inputValue() !== routeEntryDraft) failures.push("VS Code route-local composer did not retain the harmless entry draft.");
   if (!(await routeSend.isDisabled())) failures.push("VS Code route-local Send was enabled despite the current auth-mismatch readiness state.");
@@ -1843,12 +1845,42 @@ function redactSecrets(text) {
   return redacted.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]");
 }
 
+function requireSanitizerSelfChecks() {
+  const redactedCases = [
+    ["macOS user path", "open /Users/synthetic-user/project/src/main.ts now", "open [redacted-absolute-path] now"],
+    ["Linux user path", "open /home/synthetic-user/project/src/main.ts now", "open [redacted-absolute-path] now"],
+    ["temporary root ending", "root=/tmp/", "root=[redacted-absolute-path]"],
+    ["private path", "root=/private/var/folders/synthetic/cache", "root=[redacted-absolute-path]"],
+    ["variable-data path", "root=/var/log/synthetic.log", "root=[redacted-absolute-path]"],
+    ["configuration root ending", "root=/etc", "root=[redacted-absolute-path]"],
+    ["optional software path", "root=/opt/synthetic/bin", "root=[redacted-absolute-path]"],
+    ["mount path", "root=/mnt/synthetic/workspace", "root=[redacted-absolute-path]"],
+    ["volume path", "root=/Volumes/Synthetic/workspace", "root=[redacted-absolute-path]"],
+  ];
+  const preservedCases = [
+    ["project context API route", `/p/${projectId}/v1/context/plan`],
+    ["hosted chat route", hostedChatPath],
+    ["relative workspace path", "src/main.ts"],
+  ];
+  const failedLabels = [];
+  for (const [label, input, expected] of redactedCases) {
+    if (sanitizeEvidenceText(input) !== expected) failedLabels.push(label);
+  }
+  for (const [label, input] of preservedCases) {
+    if (sanitizeEvidenceText(input) !== input) failedLabels.push(label);
+  }
+  if (failedLabels.length > 0) {
+    console.error(`VS Code wrapper browser smoke failed: evidence sanitizer self-check failed (${failedLabels.join(", ")}).`);
+    process.exit(1);
+  }
+}
+
 function sanitizeEvidenceText(text) {
   return redactSecrets(text)
     .replaceAll(activeContextSelection, "[redacted-active-selection]")
     .replaceAll(liveContextSelection, "[redacted-live-selection]")
     .replace(/file:\/\/[^\s)]+/g, "[redacted-file-url]")
-    .replace(/(^|[\s("'=:\[])\/(?:[^\s/)"'<>]+\/)+[^\s)"'<>]*/g, "$1[redacted-absolute-path]")
+    .replace(/(^|[\s("'=:\[])\/(?:Users|home|tmp|private|var|etc|opt|mnt|Volumes)(?:\/[^\s)"'<>]*)?(?=$|[\s)"'<>.,;:}\]])/g, "$1[redacted-absolute-path]")
     .replace(/[A-Z]:\\[^\s)]+/g, "[redacted-absolute-path]");
 }
 
