@@ -7431,8 +7431,10 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain(answer);
+    expect(container?.textContent).not.toContain("Edit proposal blocked");
     expect(container?.textContent).not.toContain("Edit proposal detected but rejected");
     expect(container?.textContent).not.toContain("IDE action proposal blocked");
+    expect(container?.querySelector(".rejection-summary-card")).toBeNull();
     expect(container?.querySelector(".edit-proposal-card")).toBeNull();
     expect(container?.querySelector(".ide-action-proposal-card")).toBeNull();
   });
