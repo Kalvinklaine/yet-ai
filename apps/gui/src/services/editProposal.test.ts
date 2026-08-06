@@ -323,6 +323,48 @@ describe("analyzeEditProposalContent", () => {
     expect(analyzeEditProposalContent(JSON.stringify({ action: "describe", summary: "Project overview" }))).toEqual({ state: "none" });
     expect(analyzeEditProposalContent(JSON.stringify({ action: "plan", summary: "Explain workspace" }))).toEqual({ state: "none" });
   });
+
+  it.each([
+    { workspaceRelativePath: "src/main.ts", summary: "Project entry point" },
+    { cloudRequired: false, summary: "Local file metadata" },
+    { textReplacements: 2, summary: "Replacement count metadata" },
+    { workspaceRelativePath: "src/main.ts", textReplacements: [] },
+    { requiresUserConfirmation: true, summary: "Review preference metadata" },
+  ])("returns none for benign file metadata JSON %#", (metadata) => {
+    expect(analyzeEditProposalContent(JSON.stringify(metadata))).toEqual({ state: "none" });
+  });
+
+  it.each([
+    { requiresUserConfirmation: false, edits: "malformed" },
+    { edits: [] },
+    { edit: { workspaceRelativePath: "src/main.ts", textReplacements: [] } },
+  ])("rejects malformed direct edit-shaped JSON %#", (payload) => {
+    expect(analyzeEditProposalContent(JSON.stringify(payload))).toEqual({
+      state: "rejected",
+      diagnostic: { reasonCode: "invalid_payload", message: expect.any(String) },
+    });
+  });
+
+  it("rejects command smuggling only when real edit structure is present", () => {
+    expect(analyzeEditProposalContent(JSON.stringify({ command: "describe", workspaceRelativePath: "src/main.ts" }))).toEqual({ state: "none" });
+    expect(analyzeEditProposalContent(JSON.stringify({ command: "npm test", edits: [] }))).toEqual({
+      state: "rejected",
+      diagnostic: { reasonCode: "command_tool_smuggling", message: expect.any(String) },
+    });
+  });
+
+  it("keeps malformed explicit apply envelopes fail closed", () => {
+    const envelope = {
+      type: "gui.applyWorkspaceEditRequest",
+      version: bridgeVersion,
+      payload: { requiresUserConfirmation: true, edits: [{ workspaceRelativePath: "../secret.ts", textReplacements: [] }] },
+    };
+
+    expect(analyzeEditProposalContent(JSON.stringify(envelope))).toEqual({
+      state: "rejected",
+      diagnostic: { reasonCode: "invalid_payload", message: expect.any(String) },
+    });
+  });
 });
 
 describe("editProposalRejectedRecoveryGuidance", () => {

@@ -136,7 +136,7 @@ export function analyzeEditProposalContent(content: string): EditProposalAnalysi
   if ("type" in parsed || "version" in parsed || "payload" in parsed) {
     return rejected("envelope_like_direct_payload");
   }
-  if (hasCommandToolSmuggling(parsed)) {
+  if (hasCommandToolSmuggling(parsed) && isProposalLikeParsedValue(parsed)) {
     return rejected("command_tool_smuggling");
   }
   if (isApplyWorkspaceEditPayload(parsed)) {
@@ -403,7 +403,23 @@ function isProposalLikeParsedValue(value: unknown): boolean {
   if (!isPlainObject(value)) {
     return false;
   }
-  return "requiresUserConfirmation" in value || "edits" in value || "workspaceRelativePath" in value || "textReplacements" in value;
+  if ("requiresUserConfirmation" in value && "edits" in value) {
+    return true;
+  }
+  if (Array.isArray(value.edits)) {
+    return true;
+  }
+  return hasNestedEditStructure(value.edit);
+}
+
+function hasNestedEditStructure(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => hasNestedEditStructure(item));
+  }
+  if (!isPlainObject(value)) {
+    return false;
+  }
+  return typeof value.workspaceRelativePath === "string" && Array.isArray(value.textReplacements);
 }
 
 function analyzePlanToPatchProposal(value: Record<string, unknown>): EditProposalAnalysis {

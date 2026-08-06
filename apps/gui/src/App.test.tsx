@@ -7423,6 +7423,20 @@ describe("active editor attached context", () => {
     expect(container?.textContent).not.toContain("Read-only IDE action proposal");
   });
 
+  it("renders benign assistant file metadata JSON without blocked proposal cards", async () => {
+    const answer = JSON.stringify({ workspaceRelativePath: "src/main.ts", summary: "Project entry point" });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "File metadata", 1)], chatThreads: { "chat-001": chatThread("chat-001", "File metadata", [chatMessage("chat-001", "assistant-1", "assistant", answer)]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain(answer);
+    expect(container?.textContent).not.toContain("Edit proposal detected but rejected");
+    expect(container?.textContent).not.toContain("IDE action proposal blocked");
+    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+    expect(container?.querySelector(".ide-action-proposal-card")).toBeNull();
+  });
+
   it("runs JetBrains read-only IDE action proposal only after click", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;
