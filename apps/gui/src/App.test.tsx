@@ -7407,8 +7407,12 @@ describe("active editor attached context", () => {
     await flushAsync();
 
     expect(container?.textContent).toContain(answer);
+    expect(container?.textContent).not.toContain("Edit proposal blocked");
     expect(container?.textContent).not.toContain("IDE action proposal blocked");
     expect(container?.textContent).not.toContain("The IDE action proposal JSON is not valid.");
+    expect(container?.querySelector(".rejection-summary-card")).toBeNull();
+    expect(container?.querySelector(".edit-proposal-card")).toBeNull();
+    expect(container?.querySelector(".ide-action-proposal-card")).toBeNull();
   });
 
   it("renders benign assistant action JSON without a blocked IDE proposal", async () => {
