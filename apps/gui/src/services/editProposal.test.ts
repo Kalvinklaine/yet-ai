@@ -328,7 +328,6 @@ describe("analyzeEditProposalContent", () => {
     { workspaceRelativePath: "src/main.ts", summary: "Project entry point" },
     { cloudRequired: false, summary: "Local file metadata" },
     { textReplacements: 2, summary: "Replacement count metadata" },
-    { workspaceRelativePath: "src/main.ts", textReplacements: [] },
     { requiresUserConfirmation: true, summary: "Review preference metadata" },
   ])("returns none for benign file metadata JSON %#", (metadata) => {
     expect(analyzeEditProposalContent(JSON.stringify(metadata))).toEqual({ state: "none" });
@@ -337,7 +336,10 @@ describe("analyzeEditProposalContent", () => {
   it.each([
     { requiresUserConfirmation: false, edits: "malformed" },
     { edits: [] },
+    { edit: { workspaceRelativePath: "src/main.ts" } },
     { edit: { workspaceRelativePath: "src/main.ts", textReplacements: [] } },
+    { workspaceRelativePath: "src/main.ts", textReplacements: [] },
+    { range: { start: { line: 0, character: 0 } }, replacementText: "replacement" },
   ])("rejects malformed direct edit-shaped JSON %#", (payload) => {
     expect(analyzeEditProposalContent(JSON.stringify(payload))).toEqual({
       state: "rejected",
@@ -348,6 +350,14 @@ describe("analyzeEditProposalContent", () => {
   it("rejects command smuggling only when real edit structure is present", () => {
     expect(analyzeEditProposalContent(JSON.stringify({ command: "describe", workspaceRelativePath: "src/main.ts" }))).toEqual({ state: "none" });
     expect(analyzeEditProposalContent(JSON.stringify({ command: "npm test", edits: [] }))).toEqual({
+      state: "rejected",
+      diagnostic: { reasonCode: "command_tool_smuggling", message: expect.any(String) },
+    });
+    expect(analyzeEditProposalContent(JSON.stringify({ command: "npm test", workspaceRelativePath: "src/main.ts", textReplacements: [] }))).toEqual({
+      state: "rejected",
+      diagnostic: { reasonCode: "command_tool_smuggling", message: expect.any(String) },
+    });
+    expect(analyzeEditProposalContent(JSON.stringify({ tool: "apply_patch", edit: { workspaceRelativePath: "src/main.ts" } }))).toEqual({
       state: "rejected",
       diagnostic: { reasonCode: "command_tool_smuggling", message: expect.any(String) },
     });

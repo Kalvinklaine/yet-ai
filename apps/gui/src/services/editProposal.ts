@@ -403,23 +403,18 @@ function isProposalLikeParsedValue(value: unknown): boolean {
   if (!isPlainObject(value)) {
     return false;
   }
-  if ("requiresUserConfirmation" in value && "edits" in value) {
+  if ("edit" in value || "edits" in value) {
     return true;
   }
-  if (Array.isArray(value.edits)) {
+  if ("workspaceRelativePath" in value && "textReplacements" in value) {
     return true;
   }
-  return hasNestedEditStructure(value.edit);
-}
-
-function hasNestedEditStructure(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some((item) => hasNestedEditStructure(item));
+  if ("range" in value && "replacementText" in value) {
+    return true;
   }
-  if (!isPlainObject(value)) {
-    return false;
-  }
-  return typeof value.workspaceRelativePath === "string" && Array.isArray(value.textReplacements);
+  return Object.values(value).some((item) => Array.isArray(item)
+    ? item.some((entry) => isProposalLikeParsedValue(entry))
+    : isProposalLikeParsedValue(item));
 }
 
 function analyzePlanToPatchProposal(value: Record<string, unknown>): EditProposalAnalysis {
