@@ -7411,6 +7411,18 @@ describe("active editor attached context", () => {
     expect(container?.textContent).not.toContain("The IDE action proposal JSON is not valid.");
   });
 
+  it("renders benign assistant action JSON without a blocked IDE proposal", async () => {
+    const answer = JSON.stringify({ action: "describe", summary: "Project overview" });
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Action data", 1)], chatThreads: { "chat-001": chatThread("chat-001", "Action data", [chatMessage("chat-001", "assistant-1", "assistant", answer)]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain(answer);
+    expect(container?.textContent).not.toContain("IDE action proposal blocked");
+    expect(container?.textContent).not.toContain("Read-only IDE action proposal");
+  });
+
   it("runs JetBrains read-only IDE action proposal only after click", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;

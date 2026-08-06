@@ -403,7 +403,7 @@ function isProposalLikeParsedValue(value: unknown): boolean {
   if (!isPlainObject(value)) {
     return false;
   }
-  return "requiresUserConfirmation" in value || "edits" in value || "summary" in value || "cloudRequired" in value || "workspaceRelativePath" in value || "textReplacements" in value;
+  return "requiresUserConfirmation" in value || "edits" in value || "workspaceRelativePath" in value || "textReplacements" in value;
 }
 
 function analyzePlanToPatchProposal(value: Record<string, unknown>): EditProposalAnalysis {

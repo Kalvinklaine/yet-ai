@@ -318,6 +318,11 @@ describe("analyzeEditProposalContent", () => {
       expect(analysis.diagnostic).toEqual({ reasonCode: "no_json", message: expect.any(String) });
     }
   });
+
+  it("returns none for benign action JSON", () => {
+    expect(analyzeEditProposalContent(JSON.stringify({ action: "describe", summary: "Project overview" }))).toEqual({ state: "none" });
+    expect(analyzeEditProposalContent(JSON.stringify({ action: "plan", summary: "Explain workspace" }))).toEqual({ state: "none" });
+  });
 });
 
 describe("editProposalRejectedRecoveryGuidance", () => {

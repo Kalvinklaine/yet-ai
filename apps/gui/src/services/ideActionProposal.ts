@@ -249,7 +249,14 @@ function looksLikeIdeActionProposalText(value: string): boolean {
 }
 
 function looksLikeIdeActionProposalObject(value: Record<string, unknown>): boolean {
-  return value.type === "assistant.ideActionProposal" || "action" in value || "requiresUserConfirmation" in value || "workspaceRelativePath" in value || "range" in value;
+  if (value.type === "assistant.ideActionProposal") {
+    return true;
+  }
+  return isRecognizedIdeAction(value.action) && ("requiresUserConfirmation" in value || "workspaceRelativePath" in value || "range" in value || "version" in value);
+}
+
+function isRecognizedIdeAction(value: unknown): boolean {
+  return value === "getContextSnapshot" || value === "openWorkspaceFile" || value === "revealWorkspaceRange" || isUnsafeIdeAction(value);
 }
 
 function isUnsafeIdeAction(value: unknown): boolean {

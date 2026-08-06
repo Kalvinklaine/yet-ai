@@ -59,9 +59,36 @@ describe("ideActionProposal", () => {
     expect(analyzeAssistantIdeActionProposalContent(content)).toEqual({ state: "none" });
   });
 
-  it("does not classify benign JSON with only a summary", () => {
+  it("does not classify benign JSON with generic action values", () => {
     expect(analyzeAssistantIdeActionProposalContent(JSON.stringify({ summary: "Project overview" }))).toEqual({ state: "none" });
+    expect(analyzeAssistantIdeActionProposalContent(JSON.stringify({ action: "describe", summary: "Project overview" }))).toEqual({ state: "none" });
+    expect(analyzeAssistantIdeActionProposalContent(JSON.stringify({ action: "plan", summary: "Explain workspace" }))).toEqual({ state: "none" });
     expect(analyzeAssistantIdeActionProposalContent('{"type":"projectOverview","action":"describe"')).toEqual({ state: "none" });
+  });
+
+  it("requires a proposal structural marker for recognized action objects", () => {
+    expect(analyzeAssistantIdeActionProposalContent(JSON.stringify({ action: "openWorkspaceFile", summary: "Explain navigation" }))).toEqual({ state: "none" });
+    expect(analyzeAssistantIdeActionProposalContent(JSON.stringify({ action: "shell", summary: "Explain shell support" }))).toEqual({ state: "none" });
+  });
+
+  it("rejects explicitly typed proposals with unsupported actions", () => {
+    const analysis = analyzeAssistantIdeActionProposalContent(JSON.stringify({ ...base, action: "describe" }));
+
+    expect(analysis.state).toBe("rejected");
+    if (analysis.state === "rejected") {
+      expect(analysis.diagnostic.reasonCode).toBe("unsafe_action");
+    }
+  });
+
+  it("rejects structurally proposal-shaped unsafe action objects", () => {
+    for (const proposal of [
+      { action: "shell", requiresUserConfirmation: true },
+      { action: "git", version: "2026-05-15" },
+      { action: "applyWorkspaceEdit", workspaceRelativePath: "src/App.tsx" },
+      { action: "runVerificationCommand", range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } } },
+    ]) {
+      expect(analyzeAssistantIdeActionProposalContent(JSON.stringify(proposal)).state).toBe("rejected");
+    }
   });
 
   it("rejects malformed explicit structured proposal attempts", () => {
