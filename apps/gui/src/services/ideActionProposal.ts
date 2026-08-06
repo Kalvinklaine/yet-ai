@@ -241,11 +241,15 @@ function diagnosticMessage(reasonCode: IdeActionProposalRejectedReasonCode): str
 }
 
 function looksLikeIdeActionProposalText(value: string): boolean {
-  return /assistant\.ideActionProposal|gui\.ideActionRequest|workspaceRelativePath|revealWorkspaceRange|openWorkspaceFile|getContextSnapshot|runVerificationCommand|applyWorkspaceEdit|editWorkspaceFile|\b(?:shell|git|task|tool)\b/i.test(value);
+  const hasStructuredSyntax = /```(?:json)?|[\[{]/i.test(value);
+  if (!hasStructuredSyntax) {
+    return false;
+  }
+  return /assistant\.ideActionProposal|gui\.ideActionRequest|["']type["']\s*:\s*["']assistant\.ideActionProposal["']|["']action["']\s*:\s*["'](?:getContextSnapshot|openWorkspaceFile|revealWorkspaceRange|shell|git|task|tool|applyWorkspaceEdit|editWorkspaceFile|getActiveFileExcerpt|runVerificationCommand|searchWorkspaceSnippets)["']|["'](?:requiresUserConfirmation|workspaceRelativePath|range)["']\s*:/i.test(value);
 }
 
 function looksLikeIdeActionProposalObject(value: Record<string, unknown>): boolean {
-  return "action" in value || "requiresUserConfirmation" in value || "workspaceRelativePath" in value || "range" in value || "summary" in value;
+  return value.type === "assistant.ideActionProposal" || "action" in value || "requiresUserConfirmation" in value || "workspaceRelativePath" in value || "range" in value;
 }
 
 function isUnsafeIdeAction(value: unknown): boolean {

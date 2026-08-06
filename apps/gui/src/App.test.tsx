@@ -7399,6 +7399,18 @@ describe("active editor attached context", () => {
     expect(Array.from(container?.querySelectorAll("button") ?? []).map((button) => button.textContent)).not.toContain("Run read-only IDE action");
   });
 
+  it("renders an ordinary assistant project description without a blocked IDE proposal", async () => {
+    const answer = "This project provides developer tools for tasks, Git workflows, shell integrations, and workspace navigation such as openWorkspaceFile and revealWorkspaceRange.";
+    mockRuntimeResponses({ ...readyRuntimeOptions(), chats: [chatSummary("chat-001", "Project overview", 2)], chatThreads: { "chat-001": chatThread("chat-001", "Project overview", [chatMessage("chat-001", "user-1", "user", "What is this project about?"), chatMessage("chat-001", "assistant-1", "assistant", answer)]) } });
+    renderApp();
+    await flushAsync();
+    await flushAsync();
+
+    expect(container?.textContent).toContain(answer);
+    expect(container?.textContent).not.toContain("IDE action proposal blocked");
+    expect(container?.textContent).not.toContain("The IDE action proposal JSON is not valid.");
+  });
+
   it("runs JetBrains read-only IDE action proposal only after click", async () => {
     const postIntellijMessage = vi.fn();
     window.postIntellijMessage = postIntellijMessage;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, latestIdeActionProposalCandidateFromMessages, parseAssistantIdeActionProposalContent, toIdeActionRequestPayload, type IdeActionProposalSourceMessage, type IdeActionProposalState } from "./ideActionProposal";
+import { analyzeAssistantIdeActionProposalContent, describeIdeActionProposal, ideActionProposalMatchesCandidate, ideActionProposalPayloadKey, latestIdeActionProposalCandidateFromMessages, latestIdeActionProposalReviewFromMessages, parseAssistantIdeActionProposalContent, toIdeActionRequestPayload, type IdeActionProposalSourceMessage, type IdeActionProposalState } from "./ideActionProposal";
 
 const base = {
   type: "assistant.ideActionProposal",
@@ -51,6 +51,29 @@ describe("ideActionProposal", () => {
     expect(parseAssistantIdeActionProposalContent(`\`\`\`json\n${json}\n\`\`\``)).toBeNull();
     expect(parseAssistantIdeActionProposalContent(`Please confirm ${json}`)).toBeNull();
     expect(parseAssistantIdeActionProposalContent(`${json}\nThanks.`)).toBeNull();
+  });
+
+  it("does not classify ordinary coding prose from generic words or action names", () => {
+    const content = "This project uses a workspace tool for each task, Git hooks, and shell scripts. It can explain getContextSnapshot, openWorkspaceFile, and revealWorkspaceRange without requesting an IDE action.";
+
+    expect(analyzeAssistantIdeActionProposalContent(content)).toEqual({ state: "none" });
+  });
+
+  it("does not classify benign JSON with only a summary", () => {
+    expect(analyzeAssistantIdeActionProposalContent(JSON.stringify({ summary: "Project overview" }))).toEqual({ state: "none" });
+    expect(analyzeAssistantIdeActionProposalContent('{"type":"projectOverview","action":"describe"')).toEqual({ state: "none" });
+  });
+
+  it("rejects malformed explicit structured proposal attempts", () => {
+    const analysis = analyzeAssistantIdeActionProposalContent('{"type":"assistant.ideActionProposal","action":"openWorkspaceFile"');
+
+    expect(analysis).toEqual({
+      state: "rejected",
+      diagnostic: {
+        reasonCode: "invalid_json",
+        message: "The IDE action proposal JSON is not valid.",
+      },
+    });
   });
 
   it("rejects arrays, primitives, unknown fields, and extra requestId", () => {
@@ -157,6 +180,13 @@ describe("ideActionProposal", () => {
       assistantMessage("a1", JSON.stringify(contextProposal)),
       assistantMessage("a2", JSON.stringify({ ...base, action: "shell" })),
     ])).toBeNull();
+  });
+
+  it("clears the latest proposal review when a normal assistant message follows", () => {
+    expect(latestIdeActionProposalReviewFromMessages([
+      assistantMessage("a1", JSON.stringify(contextProposal)),
+      assistantMessage("a2", "The project uses local tools, Git, tasks, shell helpers, and workspace navigation."),
+    ])).toEqual({ state: "none" });
   });
 
   it("ignores incomplete or streaming assistant messages while deriving candidates", () => {
