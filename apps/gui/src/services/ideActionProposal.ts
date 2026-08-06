@@ -252,7 +252,23 @@ function looksLikeIdeActionProposalObject(value: Record<string, unknown>): boole
   if (value.type === "assistant.ideActionProposal") {
     return true;
   }
-  return isRecognizedIdeAction(value.action) && ("requiresUserConfirmation" in value || "workspaceRelativePath" in value || "range" in value || "version" in value);
+  return isRecognizedIdeAction(value.action) && ("requiresUserConfirmation" in value || "workspaceRelativePath" in value || "range" in value || "version" in value || hasActionSpecificProposalMarker(value));
+}
+
+function hasActionSpecificProposalMarker(value: Record<string, unknown>): boolean {
+  if (value.action === "runVerificationCommand") {
+    return "commandId" in value;
+  }
+  if (value.action === "searchWorkspaceSnippets") {
+    return "query" in value || "queryLabel" in value || "snippets" in value;
+  }
+  if (value.action === "getActiveFileExcerpt") {
+    return "context" in value || "contextAttachment" in value || "request" in value || "payload" in value;
+  }
+  if (value.action === "shell" || value.action === "git" || value.action === "task" || value.action === "tool" || value.action === "applyWorkspaceEdit" || value.action === "editWorkspaceFile") {
+    return ["command", "commandId", "tool", "toolName", "edit", "edits", "request", "payload", "args", "arguments", "input", "textReplacements"].some((key) => key in value);
+  }
+  return false;
 }
 
 function isRecognizedIdeAction(value: unknown): boolean {

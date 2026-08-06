@@ -71,6 +71,23 @@ describe("ideActionProposal", () => {
     expect(analyzeAssistantIdeActionProposalContent(JSON.stringify({ action: "shell", summary: "Explain shell support" }))).toEqual({ state: "none" });
   });
 
+  it("rejects unsafe actions with their action-specific structured fields", () => {
+    for (const proposal of [
+      { action: "runVerificationCommand", commandId: "repository-check" },
+      { action: "searchWorkspaceSnippets", query: "chat composer" },
+      { action: "searchWorkspaceSnippets", queryLabel: "chat composer", snippets: [] },
+      { action: "getActiveFileExcerpt", contextAttachment: { workspaceRelativePath: "src/App.tsx" } },
+      { action: "shell", command: "npm test" },
+      { action: "git", request: { operation: "status" } },
+      { action: "task", payload: { taskId: "task-1" } },
+      { action: "tool", tool: { name: "read_file" } },
+      { action: "applyWorkspaceEdit", edits: [] },
+      { action: "editWorkspaceFile", edit: { workspaceRelativePath: "src/App.tsx" } },
+    ]) {
+      expect(analyzeAssistantIdeActionProposalContent(JSON.stringify(proposal)).state).toBe("rejected");
+    }
+  });
+
   it("rejects explicitly typed proposals with unsupported actions", () => {
     const analysis = analyzeAssistantIdeActionProposalContent(JSON.stringify({ ...base, action: "describe" }));
 
